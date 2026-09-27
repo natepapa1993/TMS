@@ -266,6 +266,16 @@
       ]
     },
     {
+      "id": "F-9",
+      "name": "Reporting: owner's six numbers (revenue per truck, empty %, margin, loads at risk, crossings pending, expiring documents) + AR, breakdowns by truck / driver / customer / lane / carrier / week with drill-down to the loads, CSV export, per entity, company time zone",
+      "milestone": "M7",
+      "status": "done",
+      "tests": [
+        "src/domain/reports.test.ts",
+        "e2e/billing.spec.ts"
+      ]
+    },
+    {
       "id": "F-7.2",
       "name": "QuickBooks export: IIF for Desktop, CSV lists for Online; invoices, receipts, carrier bills + payments, driver settlements; runs stamp what went out; reopen",
       "milestone": "M5",

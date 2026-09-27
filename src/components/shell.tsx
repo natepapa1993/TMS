@@ -12,6 +12,7 @@ const NAV = [
   { href: "/crossing", label: "Crossing", icon: "⇄" },
   { href: "/compliance", label: "Compliance", icon: "✓" },
   { href: "/billing", label: "Billing", icon: "$" },
+  { href: "/reports", label: "Reports", icon: "▤" },
   { href: "/settings", label: "Settings", icon: "⚙" },
 ];
 

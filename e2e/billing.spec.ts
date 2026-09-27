@@ -1,4 +1,4 @@
-// Features: F-7 F-7.2 billing & settlements through the browser — charges, docs gate, invoice issue/send/receipt, AR, carrier bill three-way, driver statement, driver app pay, company settings
+// Features: F-7 F-7.2 F-9 billing & settlements through the browser, ending with the QuickBooks export and the owner's reports — charges, docs gate, invoice issue/send/receipt, AR, carrier bill three-way, driver statement, driver app pay, company settings
 import { test, expect, type Page } from "@playwright/test";
 import path from "node:path";
 import { signupFresh, quickAdd, future } from "./helpers";
@@ -288,4 +288,26 @@ test("billing day: charges, docs gate, invoice to paid, AR, carrier three-way wi
   await expect(page.locator("button:has-text('Create export')")).toBeDisabled();
   await page.locator("label:has-text('Only what has not been exported yet') input").uncheck();
   await expect(page.getByTestId("export-preview")).toContainText("1 invoices");
+
+  // ---- reports: the six numbers from the same loads; drill-down to the order
+  await page.goto("/reports");
+  const six = page.getByTestId("six");
+  await expect(six).toContainText("$2,750.00"); // 1,850 + 900 on one active unit
+  await expect(six).toContainText("2 loads");
+  await expect(six.locator("a", { hasText: "Margin" })).toContainText(/\d+(\.\d)?%/);
+  const truckRow = page.locator("tr", { hasText: "Unit 2104" });
+  await expect(truckRow).toContainText("$1,850.00");
+  await expect(truckRow).toContainText("420");
+  await page.click(".stage-tab:has-text('By carrier')");
+  await expect(page.locator("tr", { hasText: "Lone Star Freight" })).toContainText("$900.00");
+  await expect(page.locator("tr", { hasText: "Lone Star Freight" })).toContainText("$441.00"); // what we paid, after quick-pay
+  await page.click(".stage-tab:has-text('By customer')");
+  await page.locator("tr", { hasText: "RXO" }).click();
+  await expect(page.getByRole("dialog")).toContainText("RXO · 2 loads");
+  await expect(page.getByRole("dialog")).toContainText(o1);
+  await expect(page.getByRole("dialog")).toContainText(o2);
+  await page.keyboard.press("Escape");
+  const csv = await (await page.request.get(`/api/reports?by=truck&from=${new Date(Date.now() - 30 * 86400_000).toISOString().slice(0, 10)}&to=${new Date(Date.now() + 86400_000).toISOString().slice(0, 10)}`)).text();
+  expect(csv.split("\n")[0]).toBe("truck,loads,revenue,cost,margin,margin_pct,miles");
+  expect(csv).toContain("Unit 2104,1,1850.00,");
 });
