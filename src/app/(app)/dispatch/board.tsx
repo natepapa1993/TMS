@@ -43,7 +43,7 @@ export type Row = { order: Order; stops: Stop[]; legs: Leg[]; openFlags: Flag[];
 
 export type BoardData = {
   rows: Row[];
-  customers: { id: string; name: string; kind: string }[];
+  customers: { id: string; name: string; kind: string; note: string | null }[];
   carriers: { id: string; name: string; country: string; doNotUse: boolean }[];
   drivers: { id: string; name: string; driverType: string; currentTruckId: string | null }[];
   trucks: { id: string; unitNumber: string; status: string }[];
@@ -329,6 +329,7 @@ function SidePanel({ r, data, busy, canDispatch, onClose, onPopup, run }: { r: R
   const nl = nextLeg(r);
   const hold = r.order.state === "exception";
   const closed = r.order.state === "cancelled";
+  const customerNote = data.customers.find((c) => c.id === (r.order.customerId ?? r.order.brokerId))?.note?.trim() || null;
 
   // The one primary action for where this order is right now.
   let primary: { label: string; onClick: () => void; tone?: "primary" | "plain" } | null = null;
@@ -356,6 +357,11 @@ function SidePanel({ r, data, busy, canDispatch, onClose, onPopup, run }: { r: R
             ✕
           </button>
         </div>
+        {customerNote && (
+          <div className="mx-4 mb-3 rounded-lg border border-teal/30 bg-teal-soft/40 px-3 py-2 text-[12.5px] whitespace-pre-wrap" data-testid="customer-note">
+            <b>{r.customerName}:</b> {customerNote}
+          </div>
+        )}
         {hold && r.order.holdReason && <div className="mt-2 text-[12.5px] px-2.5 py-1.5 rounded-md bg-amber-soft text-amber font-semibold">Hold: {r.order.holdReason}</div>}
         {r.openFlags.map((f) => (
           <div key={f.id} className={`mt-2 text-[12.5px] px-2.5 py-1.5 rounded-md font-semibold ${f.level === "red" ? "bg-red-soft text-red" : "bg-amber-soft text-amber"}`}>

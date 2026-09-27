@@ -25,9 +25,9 @@ type Data = {
   truck: { unitNumber: string; mxPlateClass: string | null; usPlate: string | null; mxPlate: string | null } | null;
   driver: { name: string } | null;
   coDriver: { name: string } | null;
-  customer: { name: string } | null;
+  customer: { name: string; knowledgeMd?: string | null } | null;
   broker: { name: string; patente: string | null } | null;
-  port: { name: string } | null;
+  port: { name: string; knowledgeMd?: string | null } | null;
   people: Record<string, string>;
   docFields: Record<string, { key: string; label: string; kind?: string }[]>;
   checkLabel: Record<string, string>;
@@ -108,6 +108,22 @@ export function CrossingWorkbench({ data }: { data: Data }) {
           )}
         </div>
       </div>
+      {(data.port?.knowledgeMd || data.customer?.knowledgeMd) && (
+        <div className="grid md:grid-cols-2 gap-3 mb-4" data-testid="knowledge">
+          {data.port?.knowledgeMd && (
+            <div className="rounded-lg border border-teal/30 bg-teal-soft/40 px-3 py-2 text-[13px] whitespace-pre-wrap">
+              <div className="eyebrow mb-0.5">{data.port.name} · what to know</div>
+              {data.port.knowledgeMd}
+            </div>
+          )}
+          {data.customer?.knowledgeMd && (
+            <div className="rounded-lg border border-teal/30 bg-teal-soft/40 px-3 py-2 text-[13px] whitespace-pre-wrap">
+              <div className="eyebrow mb-0.5">{data.customer.name} · what to know</div>
+              {data.customer.knowledgeMd}
+            </div>
+          )}
+        </div>
+      )}
 
       <div className="grid grid-cols-[300px_1fr_340px] gap-4 items-start">
         {/* checklist */}

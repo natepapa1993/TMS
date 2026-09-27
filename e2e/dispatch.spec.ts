@@ -236,6 +236,11 @@ test("signed-out visitor is sent to login; wrong password is refused without say
 test("book it again: a copy of an order is a new draft with the same shape and nothing from the old load", async ({ page }) => {
   await signupFresh(page);
   await quickAdd(page, "customers", "Add customer", { name: "RXO", kind: "broker" });
+  // what dispatch should know about this customer shows on every one of their orders
+  await page.click("table a:has-text('RXO')");
+  await page.locator("#f-knowledgeMd").fill("Wants a tracking link on every load. POD within 24h.");
+  await page.click("button:has-text('Save changes')");
+  await expect(page.getByRole("status")).toContainText("Saved");
   await page.goto("/dispatch");
   await page.keyboard.press("n");
   const d = page.getByRole("dialog");
@@ -247,6 +252,7 @@ test("book it again: a copy of an order is a new draft with the same shape and n
   await d.locator("button:has-text('Create & book')").click();
   await expect(page.getByRole("status")).toContainText("Order created");
   const panel = page.locator("aside").last();
+  await expect(panel.getByTestId("customer-note")).toContainText("POD within 24h");
   await panel.locator("summary:has-text('Details')").click();
   await panel.locator("a:has-text('Open order')").click();
   await page.waitForURL("**/orders/**", { waitUntil: "commit" });
