@@ -347,3 +347,37 @@ export async function saveIncident(ctx: Ctx, id: string | null, v: Partial<typeo
   await writeAudit(db, ctx, "incident", row.id, "create", undefined, safe.description.slice(0, 120));
   return row;
 }
+
+// ---------- read a document before it is filed ----------
+
+/**
+ * Read a licence, medical card, FAST card, insurance certificate… with the AI extractor before the
+ * upload, so the expiry, number and holder are typed by the model and confirmed by the person. Nothing
+ * is stored here; the upload that follows carries what the person accepted.
+ */
+export async function readSubjectDocument(ctx: Ctx, kind: SubjectKind, typeName: string, file: { fileName: string; mimeType: string; bytes: Buffer }, fetchImpl?: typeof fetch) {
+  assertCtx(ctx);
+  requirePermission(ctx, "records.edit");
+  if (!file.bytes?.length) throw new ValidationError("empty file", "file");
+  const [integ] = await db.select().from(s.integrations).where(and(eq(s.integrations.tenantId, ctx.tenantId), eq(s.integrations.provider, "extractor"))).limit(1);
+  if (!integ?.enabled || !integ.config.apiKey) return { ran: false as const, reason: "AI extractor not connected (Settings → Integrations)" };
+  const { extractWithModel } = await import("@/integrations/extractor");
+  const fields = [
+    { key: "holder", label: `Name of the ${kind} the document belongs to` },
+    { key: "number", label: "Document, licence or policy number" },
+    { key: "issuedAt", label: "Issue date", kind: "datetime" as const },
+    { key: "expiresAt", label: "Expiry date", kind: "datetime" as const },
+  ];
+  try {
+    const r = await extractWithModel({ apiKey: integ.config.apiKey, model: integ.config.model || undefined }, { code: typeName, label: typeName, mimeType: file.mimeType, bytes: file.bytes }, fields, fetchImpl);
+    await db.update(s.integrations).set({ lastRunAt: new Date(), lastError: null, lastResult: `${r.model} · ${typeName}` }).where(eq(s.integrations.id, integ.id));
+    const v = (k: string) => {
+      const x = r.fields[k];
+      return x && x.value != null && x.value !== "" ? { value: String(x.value), confidence: x.confidence } : null;
+    };
+    return { ran: true as const, model: r.model, holder: v("holder"), number: v("number"), issuedAt: v("issuedAt"), expiresAt: v("expiresAt") };
+  } catch (e) {
+    await db.update(s.integrations).set({ lastRunAt: new Date(), lastError: (e as Error).message }).where(eq(s.integrations.id, integ.id));
+    return { ran: false as const, reason: (e as Error).message };
+  }
+}

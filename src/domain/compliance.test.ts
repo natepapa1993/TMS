@@ -1,5 +1,5 @@
 // Features: F-6 compliance — engine, subject documents, snooze, 24-h override, where it bites (assign picker), digest, incidents
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, vi, afterEach } from "vitest";
 import { truncateAll, makeTenant } from "@/test/helpers";
 import { create, update } from "@/data/records";
 import { db } from "@/db/client";
@@ -161,5 +161,30 @@ describe("engine (spec §6.1)", () => {
     await C.saveIncident(a, inc.id, { ...inc, status: "closed" });
     expect((await C.listIncidents(a))[0].status).toBe("closed");
     expect((await C.listIncidents(await makeTenant("C"))).length).toBe(0);
+  });
+});
+
+describe("read a document before filing it", () => {
+  afterEach(() => vi.unstubAllGlobals());
+  it("not connected says so; connected, the model's dates and number come back for the person to confirm; a failure is a reason, not a crash", async () => {
+    const pdf = Buffer.from("%PDF-1.4 licence");
+    expect(await C.readSubjectDocument(a, "driver", "Licencia federal", { fileName: "lic.pdf", mimeType: "application/pdf", bytes: pdf })).toMatchObject({ ran: false, reason: expect.stringMatching(/not connected/) });
+    const { integrations } = await import("@/db/schema");
+    const { newId } = await import("@/lib/ids");
+    await db.insert(integrations).values({ id: newId(), tenantId: a.tenantId, provider: "extractor", enabled: true, config: { apiKey: "sk-ant-test" } });
+    let prompt = "";
+    vi.stubGlobal("fetch", async (_url: string, init: RequestInit) => {
+      const body = JSON.parse(init.body as string) as { messages: { content: { type: string; text?: string }[] }[] };
+      prompt = body.messages[0].content.find((x) => x.type === "text")!.text!;
+      return new Response(JSON.stringify({ model: "claude-sonnet-4-5", usage: { input_tokens: 500 }, content: [{ type: "tool_use", name: "record_fields", input: { holder: { value: "Benjamín Xochihua", confidence: 0.9 }, number: { value: "MX-0001", confidence: 0.95 }, issuedAt: { value: null, confidence: 0 }, expiresAt: { value: "2027-03-31T00:00:00Z", confidence: 0.85 } } }] }), { status: 200 });
+    });
+    const r = await C.readSubjectDocument(a, "driver", "Licencia federal", { fileName: "lic.pdf", mimeType: "application/pdf", bytes: pdf });
+    expect(r).toMatchObject({ ran: true, model: "claude-sonnet-4-5", holder: { value: "Benjamín Xochihua" }, number: { value: "MX-0001" }, issuedAt: null, expiresAt: { value: "2027-03-31T00:00:00Z", confidence: 0.85 } });
+    expect(prompt).toContain("Licencia federal");
+    expect(prompt).toContain("Expiry date");
+    vi.stubGlobal("fetch", async () => new Response(JSON.stringify({ error: { message: "overloaded" } }), { status: 529 }));
+    expect(await C.readSubjectDocument(a, "driver", "Licencia federal", { fileName: "lic.pdf", mimeType: "application/pdf", bytes: pdf })).toMatchObject({ ran: false, reason: expect.stringMatching(/529/) });
+    const [integ] = await db.select().from(integrations).where(eq(integrations.tenantId, a.tenantId));
+    expect(integ.lastError).toMatch(/529/);
   });
 });

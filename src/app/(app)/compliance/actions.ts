@@ -50,3 +50,13 @@ export async function saveIncidentAction(id: string | null, v: { occurredAt: str
   if (r.ok) revalidatePath("/compliance/incidents");
   return r;
 }
+
+/** Read the chosen file with the AI extractor before it is uploaded: expiry, number, holder, for the person to confirm. */
+export async function readSubjectDocAction(kind: SubjectKind, typeName: string, form: FormData) {
+  return act(async (ctx) => {
+    const file = form.get("file");
+    if (!(file instanceof File) || file.size === 0) throw Object.assign(new Error("pick a file first"), { name: "ValidationError", field: "file" });
+    const mime = file.type || (file.name.toLowerCase().endsWith(".pdf") ? "application/pdf" : "image/jpeg");
+    return C.readSubjectDocument(ctx, kind, typeName, { fileName: file.name, mimeType: mime, bytes: Buffer.from(await file.arrayBuffer()) });
+  });
+}

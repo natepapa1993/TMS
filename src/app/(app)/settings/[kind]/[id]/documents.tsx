@@ -6,7 +6,7 @@ import { useRouter } from "next/navigation";
 import { Modal, Pill, Spinner, Toast, useToast } from "@/components/ui";
 import type { ComplianceItem } from "@/db/schema";
 import type { SubjectKind } from "@/domain/compliance";
-import { uploadSubjectDocAction } from "@/app/(app)/compliance/actions";
+import { uploadSubjectDocAction, readSubjectDocAction } from "@/app/(app)/compliance/actions";
 
 type Doc = { id: string; documentTypeId: string | null; fileName: string; status: string; version: number; expiresAt: string | null; issuedAt: string | null; number: string | null; source: string; createdAt: string };
 type DocType = { id: string; name: string; tracksExpiry: boolean; required: boolean; blocksDispatch: boolean };
@@ -20,6 +20,23 @@ export function SubjectDocuments({ kind, subjectId, docs, types, status, canEdit
   const [pending, start] = useTransition();
   const [err, setErr] = useState<string | null>(null);
   const [name, setName] = useState<string | null>(null);
+  const [read, setRead] = useState<{ note: string; err?: boolean } | null>(null);
+  const [reading, setReading] = useState(false);
+  const [vals, setVals] = useState({ expiresAt: "", issuedAt: "", number: "" });
+  const readWithAi = async () => {
+    setReading(true);
+    setRead(null);
+    const fd = new FormData(ref.current!);
+    const r = await call(() => readSubjectDocAction(kind, openType?.name ?? "document", fd));
+    setReading(false);
+    if (!r.ok) return setRead({ note: r.error, err: true });
+    if (!r.data.ran) return setRead({ note: r.data.reason, err: true });
+    const d = r.data;
+    const day = (v: { value: string } | null) => (v ? v.value.slice(0, 10) : "");
+    setVals((x) => ({ expiresAt: day(d.expiresAt) || x.expiresAt, issuedAt: day(d.issuedAt) || x.issuedAt, number: d.number?.value || x.number }));
+    const got = [d.expiresAt && "expiry", d.issuedAt && "issue date", d.number && "number", d.holder && `holder "${d.holder.value}"`].filter(Boolean);
+    setRead({ note: got.length ? `Read by ${d.model}: ${got.join(", ")}. Check them against the document before uploading.` : `${d.model} could not read this one; type the dates.` });
+  };
   const ref = useRef<HTMLFormElement>(null);
   const typeName = (id: string | null) => types.find((x) => x.id === id)?.name ?? "document";
   const active = docs.filter((d) => d.status !== "superseded");
@@ -123,18 +140,26 @@ export function SubjectDocuments({ kind, subjectId, docs, types, status, canEdit
               <input type="file" name="file" accept="application/pdf,image/jpeg,image/png" className="hidden" onChange={(e) => setName(e.target.files?.[0]?.name ?? null)} />
               <div className="font-semibold">{name ?? "Choose a PDF or photo"}</div>
             </label>
+            {name && (
+              <div className="flex items-center gap-2 flex-wrap">
+                <button type="button" className="btn btn-sm" disabled={reading} onClick={readWithAi}>
+                  {reading ? <Spinner /> : "Read with AI"}
+                </button>
+                {read && <span className={`text-[12.5px] ${read.err ? "text-red" : "text-teal"}`} data-testid="ai-read">{read.note}</span>}
+              </div>
+            )}
             <div className="grid grid-cols-3 gap-2">
               <div>
                 <label className="label">Expires{openType?.tracksExpiry ? " *" : ""}</label>
-                <input type="date" name="expiresAt" className="input" />
+                <input type="date" name="expiresAt" className="input" value={vals.expiresAt} onChange={(e) => setVals({ ...vals, expiresAt: e.target.value })} />
               </div>
               <div>
                 <label className="label">Issued</label>
-                <input type="date" name="issuedAt" className="input" />
+                <input type="date" name="issuedAt" className="input" value={vals.issuedAt} onChange={(e) => setVals({ ...vals, issuedAt: e.target.value })} />
               </div>
               <div>
                 <label className="label">Number</label>
-                <input name="number" className="input" />
+                <input name="number" className="input" value={vals.number} onChange={(e) => setVals({ ...vals, number: e.target.value })} />
               </div>
             </div>
             <input name="notes" className="input" placeholder="Note (optional)" />

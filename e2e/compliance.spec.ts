@@ -58,6 +58,8 @@ test("safety director day: a blocking rule, the driver goes red everywhere, uplo
   await page.locator("#documents").locator("button:has-text('upload')").first().click();
   const up = page.getByRole("dialog");
   await up.locator("input[type=file]").setInputFiles(path.join(__dirname, "fixtures", "bol.pdf"));
+  await up.locator("button:has-text('Read with AI')").click(); // offered before the upload; honest when nothing is connected
+  await expect(up.getByTestId("ai-read")).toContainText("not connected");
   await up.locator("input[name=expiresAt]").fill(future(200));
   await up.locator("input[name=number]").fill("MED-77");
   await up.locator("button:has-text('Upload')").last().click();
