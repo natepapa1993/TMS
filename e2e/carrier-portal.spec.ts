@@ -76,18 +76,25 @@ test("carrier's day: one link, accept the offer, run the load, get paid, keep do
   await page.locator(".row[role=button]").first().click();
   await expect(panel).toContainText("Luis accepted · driver Pedro Ruiz");
   // walk the load from the portal
-  for (const label of ["Rolling to pickup", "Arrived at pickup", "Loaded — leaving", "En route to delivery", "Arrived at delivery", "Delivered — empty"]) {
+  for (const label of ["Rolling to pickup", "Arrived at pickup", "Loaded — leaving", "En route to delivery", "Arrived at delivery"]) {
     const btn = load.locator("button.btn-primary.btn-lg");
     await expect(btn).toContainText(label);
     await btn.click();
     await phone.waitForTimeout(300);
   }
+  // at the delivery the POD goes up from the card, before the last button
+  await expect(load).toContainText("Send POD");
+  await load.locator("input[type=file]").setInputFiles(path.join(__dirname, "fixtures", "bol.pdf"));
+  await expect(phone.locator("body")).toContainText("POD received for 26-00001");
+  await expect(load).toContainText("✓ POD on file");
+  await load.locator("button.btn-primary.btn-lg").click();
   await expect(phone.locator("body")).toContainText("Nothing assigned right now");
 
   // pay: the delivered load is waiting for their invoice
   await phone.click(".stage-tab:has-text('Pay')");
   const pay = phone.locator(".card", { hasText: "26-00001" });
   await expect(pay).toContainText("Send your invoice");
+  await expect(pay).toContainText("✓ POD on file");
   await pay.locator("button:has-text('Send invoice')").click();
   const inv = phone.getByRole("dialog");
   await expect(inv.locator("input[name=amount]")).toHaveValue("450.00");
@@ -101,6 +108,7 @@ test("carrier's day: one link, accept the offer, run the load, get paid, keep do
   const row = page.locator("tr", { hasText: "Transportes Garza" });
   await expect(row).toContainText("received");
   await expect(row).toContainText("G-1001");
+  await expect(row).toContainText("POD ✓"); // the carrier's own POD satisfies the three-way check
 
   // documents: the COI is missing → upload from the portal → compliance goes green on both sides
   await phone.click(".stage-tab:has-text('Documents')");

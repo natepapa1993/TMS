@@ -50,7 +50,7 @@ export function CarrierPortalCard({ carrierId, url, whatsapp, email, score, canE
           </button>
         )}
       </div>
-      <div className="help mt-1">Offers, their loads with one-tap steps and driver details, rate cons, invoicing against the leg, COI / W-9 uploads straight into compliance, and their score.</div>
+      <div className="help mt-1">Offers, their loads with one-tap steps and driver details, the POD from the delivery, rate cons, invoicing against the leg, COI / W-9 uploads straight into compliance, and their score.</div>
       <div className="eyebrow mt-4 mb-1">Scorecard · last {score.days} days</div>
       <div className="grid grid-cols-3 gap-2 text-center">
         <div>

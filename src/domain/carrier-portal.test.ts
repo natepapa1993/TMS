@@ -65,11 +65,23 @@ describe("carrier portal", () => {
     await P.portalSetDriver(a.tenantId, f.garza, mx, { driverName: "Pedro Ruiz", driverPhone: "+52 81 555 0101", unitNumber: "MX-77", trailerNumber: "10743" });
     v = await P.carrierPortalView(a.tenantId, f.garza);
     expect(v.active[0].trailerNumber).toBe("10743");
-    for (const st of ["at_pickup", "loaded", "en_route", "at_delivery", "completed"] as const) await P.portalAdvance(a.tenantId, f.garza, mx, st);
+    for (const st of ["at_pickup", "loaded", "en_route"] as const) await P.portalAdvance(a.tenantId, f.garza, mx, st);
+    // the POD only once at the delivery; their leg only
+    const jpg = Buffer.from("jpg fixture");
+    await expect(P.portalUploadPod(a.tenantId, f.garza, mx, { fileName: "pod.jpg", mimeType: "image/jpeg", bytes: jpg })).rejects.toThrow(/at the delivery/);
+    await P.portalAdvance(a.tenantId, f.garza, mx, "at_delivery");
+    await expect(P.portalUploadPod(a.tenantId, f.lone, mx, { fileName: "pod.jpg", mimeType: "image/jpeg", bytes: jpg })).rejects.toBeInstanceOf(NotFoundError);
+    v = await P.carrierPortalView(a.tenantId, f.garza);
+    expect(v.active[0].podOnFile).toBe(false);
+    await P.portalUploadPod(a.tenantId, f.garza, mx, { fileName: "pod.jpg", mimeType: "image/jpeg", bytes: jpg });
+    v = await P.carrierPortalView(a.tenantId, f.garza);
+    expect(v.active[0].podOnFile).toBe(true);
+    await P.portalAdvance(a.tenantId, f.garza, mx, "completed");
     v = await P.carrierPortalView(a.tenantId, f.garza);
     expect(v.active).toHaveLength(0);
     expect(v.completed).toHaveLength(1);
     expect(v.completed[0].bill).toMatchObject({ state: "expected", expectedCents: 45000 });
+    expect(v.completed[0].podOnFile).toBe(true);
 
     // rate con PDF for the leg, not for another carrier
     const pdf = await P.rateConPdf(a.tenantId, f.garza, mx);
@@ -83,7 +95,8 @@ describe("carrier portal", () => {
     expect(bill.carrierInvoiceDocId).toBeTruthy();
     const chk = await B.threeWay(a, bill.id);
     expect(chk.invoiced).toBe(45000);
-    await B.approveCarrierBill(a, bill.id, { approvedCents: 45000, allowNoPod: true });
+    expect(chk.podPresent).toBe(true); // the carrier's own POD satisfies the three-way check
+    await B.approveCarrierBill(a, bill.id, { approvedCents: 45000 });
     await expect(P.portalSubmitInvoice(a.tenantId, f.garza, mx, { amountCents: 45000, invoiceNumber: "G-1001" })).rejects.toThrow(/already approved/);
     v = await P.carrierPortalView(a.tenantId, f.garza);
     expect(v.completed[0].bill?.state).toBe("approved");

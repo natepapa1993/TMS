@@ -175,6 +175,24 @@ function photoTargets(order: { id: string; kind: string }, shipments: { id: stri
   return [order.id];
 }
 
+/**
+ * The orders a POD for this leg belongs to, for whoever is uploading it (driver app, carrier portal, office):
+ * the order itself, or on a tailgate trip every shipment getting off at the leg's stops — at one stop when
+ * `stopId` is given, otherwise anywhere between the leg's first and last stop.
+ */
+export async function podTargetsForLeg(tenantId: string, leg: { orderId: string; fromStopId: string | null; toStopId: string | null }, stopId: string | null = null) {
+  const [order] = await db.select({ id: s.orders.id, kind: s.orders.kind }).from(s.orders).where(and(eq(s.orders.tenantId, tenantId), eq(s.orders.id, leg.orderId))).limit(1);
+  if (!order) throw new NotFoundError("order", leg.orderId);
+  if (order.kind !== "trip") return [order.id];
+  const stops = await db.select({ id: s.stops.id, seq: s.stops.seq }).from(s.stops).where(and(eq(s.stops.tenantId, tenantId), eq(s.stops.orderId, order.id))).orderBy(s.stops.seq);
+  const shipments = await db.select({ id: s.orders.id, tripId: s.orders.tripId, deliveryStopId: s.orders.deliveryStopId }).from(s.orders).where(and(eq(s.orders.tenantId, tenantId), eq(s.orders.tripId, order.id)));
+  if (stopId) return photoTargets(order, shipments, stopId);
+  const from = stops.find((x) => x.id === leg.fromStopId)?.seq ?? -Infinity;
+  const to = stops.find((x) => x.id === leg.toStopId)?.seq ?? Infinity;
+  const onLeg = new Set(stops.filter((x) => x.seq > from && x.seq <= to).map((x) => x.id));
+  return shipments.filter((x) => x.deliveryStopId && onLeg.has(x.deliveryStopId)).map((x) => x.id);
+}
+
 export type DriverPhoto = { code: "POD" | "SEAL_PHOTO"; fileName: string; mimeType: string; bytes: Buffer };
 
 /**

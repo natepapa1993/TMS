@@ -165,6 +165,21 @@ export async function portalUploadAction(token: string, form: FormData): Promise
   }
 }
 
+export async function portalPodAction(token: string, legId: string, form: FormData): Promise<ActionResult<{ count: number }>> {
+  const c = await carrierFromToken(token);
+  if (!c) return { ok: false, error: "invalid link", code: "not_found" };
+  try {
+    const file = form.get("file");
+    if (!(file instanceof File) || file.size === 0) throw Object.assign(new Error("pick the POD file · elige el archivo del POD"), { name: "ValidationError", field: "file" });
+    const { portalUploadPod } = await import("@/domain/carrier-portal");
+    const mime = file.type || (file.name.toLowerCase().endsWith(".pdf") ? "application/pdf" : "image/jpeg");
+    const rows = await portalUploadPod(c.tenantId, c.carrierId, legId, { fileName: file.name || "pod.jpg", mimeType: mime, bytes: Buffer.from(await file.arrayBuffer()) });
+    return { ok: true, data: { count: rows.length } };
+  } catch (e) {
+    return toError(e);
+  }
+}
+
 export async function portalInvoiceAction(token: string, legId: string, form: FormData): Promise<ActionResult<{ state: string }>> {
   const c = await carrierFromToken(token);
   if (!c) return { ok: false, error: "invalid link", code: "not_found" };

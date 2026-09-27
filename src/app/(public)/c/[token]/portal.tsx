@@ -5,7 +5,7 @@ import { ZoneProvider, useWhen } from "@/components/zone";
 import { call } from "@/lib/client-call";
 import { useRouter } from "next/navigation";
 import { Pill, Modal } from "@/components/ui";
-import { portalRespondAction, portalAdvanceAction, portalDriverAction, portalUploadAction, portalInvoiceAction } from "../../actions";
+import { portalRespondAction, portalAdvanceAction, portalDriverAction, portalUploadAction, portalInvoiceAction, portalPodAction } from "../../actions";
 import type { LegState } from "@/db/schema";
 
 /** The partner carrier's page (spec Module 10): offers, loads, pay, documents, score. English with Spanish under it. */
@@ -13,7 +13,7 @@ import type { LegState } from "@/db/schema";
 type Place = { name: string; city: string | null; state: string | null; country: string; windowStart: string | null; windowEnd: string | null; contact: string | null; notes: string | null } | null;
 type Offer = { id: string; legId: string; orderNumber: string; type: string; rateCents: number | null; currency: string; expiresAt: string; message: string | null; from: Place; to: Place; equipment: string | null; cargoNote: string | null };
 type Bill = { id: string; state: string; expectedCents: number; invoicedCents: number | null; approvedCents: number | null; paidCents: number | null; paidAt: string | null; payDate: string | null; shortPayNote: string | null; carrierInvoiceNumber: string | null } | null;
-type Leg = { id: string; seq: number; type: string; state: string; stateLabel: string; next: { to: LegState; en: string; es: string } | null; orderNumber: string; equipment: string | null; cargoNote: string | null; refs: Record<string, string>; rateCents: number | null; from: Place; to: Place; driverName: string | null; driverPhone: string | null; unitNumber: string | null; trailerNumber: string | null; completedAt: string | null; bill: Bill };
+type Leg = { id: string; seq: number; type: string; state: string; stateLabel: string; next: { to: LegState; en: string; es: string } | null; orderNumber: string; equipment: string | null; cargoNote: string | null; refs: Record<string, string>; rateCents: number | null; from: Place; to: Place; driverName: string | null; driverPhone: string | null; unitNumber: string | null; trailerNumber: string | null; completedAt: string | null; podOnFile: boolean; bill: Bill };
 type Data = {
   company: string;
   carrier: { id: string; name: string; country: string; doNotUse: boolean };
@@ -255,6 +255,7 @@ function LegCard({ token, l, onDone }: { token: string; l: Leg; onDone: (t: stri
           {l.driverName ? "Change" : "Set driver"}
         </button>
       </div>
+      {l.state === "at_delivery" && <PodButton token={token} leg={l} onDone={onDone} />}
       {l.next && (
         <button
           className="btn btn-primary btn-lg w-full justify-center mt-3"
@@ -324,6 +325,7 @@ function PayCard({ token, l, onDone }: { token: string; l: Leg; onDone: (t: stri
       <a className="text-teal font-semibold text-[12.5px]" href={`/c/${token}/ratecon/${l.id}`} target="_blank" rel="noreferrer">
         Rate confirmation PDF
       </a>
+      <PodButton token={token} leg={l} onDone={onDone} />
       {open && (
         <Modal open onClose={() => setOpen(false)} title={`Invoice for ${l.orderNumber} · Factura`} footer={<><button className="btn" onClick={() => setOpen(false)}>Cancel</button><button className="btn btn-primary" disabled={pending} onClick={() => start(async () => { setErr(null); const r = await call(() => portalInvoiceAction(token, l.id, new FormData(ref.current!))); if (r.ok) { setOpen(false); onDone("Invoice received — we check it against the rate confirmation and the POD. · Factura recibida."); } else setErr(r.error); })}>Send · Enviar</button></>}>
           <form ref={ref} className="space-y-2" onSubmit={(e) => e.preventDefault()}>
@@ -342,6 +344,7 @@ function PayCard({ token, l, onDone }: { token: string; l: Leg; onDone: (t: stri
               <input name="file" type="file" accept="application/pdf,image/jpeg,image/png" className="hidden" />
               <div className="font-semibold text-[13px]">Attach the invoice PDF (optional) · Adjunta la factura</div>
             </label>
+            {!l.podOnFile && <div className="text-[12.5px] text-amber font-semibold">No POD on file for this load yet — we pay on a clean POD; send it from the card behind this. · Falta el POD.</div>}
             {err && <div className="error">{err}</div>}
           </form>
         </Modal>
@@ -420,5 +423,37 @@ function DocsPanel({ token, data, onDone }: { token: string; data: Data; onDone:
         </div>
       )}
     </div>
+  );
+}
+
+/** The carrier's POD for a leg: one pick, straight onto the order; a check once it is there. */
+function PodButton({ token, leg, onDone }: { token: string; leg: Leg; onDone: (t: string, err?: boolean) => void }) {
+  const [busy, setBusy] = useState(false);
+  const [just, setJust] = useState(false);
+  const ok = leg.podOnFile || just;
+  return (
+    <label className={`btn btn-sm mt-2 ${ok ? "btn-ghost text-teal" : ""}`} data-testid={`pod-${leg.id}`}>
+      <input
+        type="file"
+        accept="image/*,application/pdf"
+        className="hidden"
+        disabled={busy}
+        onChange={async (e) => {
+          const f = e.target.files?.[0];
+          if (!f) return;
+          setBusy(true);
+          const fd = new FormData();
+          fd.set("file", f);
+          const r = await call(() => portalPodAction(token, leg.id, fd));
+          setBusy(false);
+          e.target.value = "";
+          if (r.ok) {
+            setJust(true);
+            onDone(`POD received for ${leg.orderNumber} · POD recibido`);
+          } else onDone(r.error, true);
+        }}
+      />
+      {busy ? "Sending… · Enviando…" : ok ? "✓ POD on file · another · otro" : "📎 Send POD · Mandar POD"}
+    </label>
   );
 }

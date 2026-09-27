@@ -70,7 +70,7 @@ const SECTIONS: { id: string; title: string; href: string; body: (string | { rul
     body: [
       "EDI partners receive 204 tenders (over HTTP or a VAN mailbox over SFTP) that become draft orders with a 997 and a 990 back; every milestone goes out as a 214 and every issued invoice as a 210. Nothing leaves without a row in the log.",
       "WhatsApp Business carries tenders, packets and tracking links and brings replies onto the load. Messages shows what came in (WhatsApp replies and what drivers write from their app) with a Reply that reaches the driver, and, under Sent, everything that went out with the provider's state.",
-      "Each carrier and each customer has one permanent link (on their record): carriers see offers, their loads with one-tap milestones, rate cons, their pay and their documents; customers see their loads with tracking, PODs, invoices and can request a load, which lands on Dispatch as a flagged draft.",
+      "Each carrier and each customer has one permanent link (on their record): carriers see offers, their loads with one-tap milestones and the POD sent from the delivery (it is what their bill's three-way check waits for), rate cons, their pay and their documents; customers see their loads with tracking, PODs, invoices and can request a load, which lands on Dispatch as a flagged draft.",
     ],
   },
   {

@@ -68,6 +68,17 @@ export async function carrierPortalView(tenantId: string, carrierId: string, now
   const stopById = new Map(stops.map((x) => [x.id, x]));
   const orderById = new Map(orders.map((o) => [o.id, o]));
   const acceptedTenders = legs.length ? await db.select().from(s.tenders).where(and(eq(s.tenders.tenantId, tenantId), inArray(s.tenders.legId, legs.map((l) => l.id)), eq(s.tenders.state, "accepted"))).orderBy(desc(s.tenders.respondedAt)) : [];
+  // a POD on file for the leg's order (on a trip: for every shipment delivering on the leg)
+  const podOn = new Set<string>();
+  if (legs.length) {
+    const { podTargetsForLeg } = await import("./tracking");
+    const targetsByLeg = new Map<string, string[]>();
+    for (const l of legs) targetsByLeg.set(l.id, await podTargetsForLeg(tenantId, l).catch(() => [l.orderId]));
+    const all = [...new Set([...targetsByLeg.values()].flat())];
+    const pods = all.length ? await db.select({ subjectId: s.documents.subjectId }).from(s.documents).where(and(eq(s.documents.tenantId, tenantId), eq(s.documents.subjectKind, "order"), inArray(s.documents.subjectId, all), eq(s.documents.code, "POD"), inArray(s.documents.status, ["present", "verified"]))) : [];
+    const have = new Set(pods.map((p) => p.subjectId));
+    for (const [legId, targets] of targetsByLeg) if (targets.length && targets.every((id) => have.has(id))) podOn.add(legId);
+  }
   const legView = (l: typeof s.legs.$inferSelect) => {
     const o = orderById.get(l.orderId);
     const bill = bills.find((b) => b.legId === l.id);
@@ -94,6 +105,7 @@ export async function carrierPortalView(tenantId: string, carrierId: string, now
       unitNumber: at?.unitNumber ?? null,
       trailerNumber: at?.trailerNumber ?? null,
       completedAt: l.completedAt,
+      podOnFile: podOn.has(l.id),
       bill: bill ? { id: bill.id, state: bill.state, expectedCents: bill.expectedCents + bill.accessorialCents, invoicedCents: bill.invoicedCents, approvedCents: bill.approvedCents, paidCents: bill.paidCents, paidAt: bill.paidAt, payDate: bill.payDate, shortPayNote: bill.shortPayNote, carrierInvoiceNumber: bill.carrierInvoiceNumber } : null,
     };
   };
@@ -202,6 +214,20 @@ export async function portalUploadDocument(tenantId: string, carrierId: string, 
   const ctx = systemCtx(tenantId);
   await loadCarrier(tenantId, carrierId);
   return uploadSubjectDocument(ctx, "carrier", carrierId, { ...input, source: "carrier_portal" });
+}
+
+/** The carrier sends the POD for a leg they ran (at the delivery or after): the document our three-way check and the customer's invoice wait for. */
+export async function portalUploadPod(tenantId: string, carrierId: string, legId: string, file: { fileName: string; mimeType: string; bytes: Buffer }) {
+  const ctx = systemCtx(tenantId);
+  const l = await ownLeg(tenantId, carrierId, legId);
+  if (!["at_delivery", "completed"].includes(l.state)) throw new ValidationError("send the POD once the load is at the delivery · manda el POD al llegar a la entrega");
+  const { podTargetsForLeg } = await import("./tracking");
+  const targets = await podTargetsForLeg(tenantId, l, l.state === "at_delivery" ? l.toStopId : null);
+  if (!targets.length) throw new ValidationError("no shipment delivers on this leg");
+  const rows = [];
+  for (const orderId of targets) rows.push(await uploadOrderDocument(ctx, orderId, { code: "POD", fileName: file.fileName, mimeType: file.mimeType, bytes: file.bytes, source: "carrier_portal" }));
+  await db.insert(s.legEvents).values({ id: newId(), tenantId, legId: l.id, orderId: l.orderId, kind: "document", source: "carrier", verified: false, note: `POD from the carrier portal${targets.length > 1 ? ` (${targets.length} shipments)` : ""}` });
+  return rows;
 }
 
 /** The carrier bills a completed leg: amount, their invoice number, the PDF. Lands as "received" for the three-way check. */
