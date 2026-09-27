@@ -13,8 +13,8 @@ import type { LegState } from "@/db/schema";
  * Seal and POD photos at the stop, renewals of their own documents, and a line to dispatch (spec §5.2).
  */
 
-type Stop = { id: string; name: string; type: string; country: string; address: { line1?: string; city?: string; state?: string } | null; windowStart: string | null; windowEnd: string | null; contact: string | null; notes: string | null; arrivedAt?: string | null; departedAt?: string | null };
-type Item = { leg: { id: string; seq: number; type: string; state: LegState }; order: { orderNumber: string; equipment: string; cargoNote: string | null; refs: Record<string, string> }; from: Stop | null; to: Stop | null; mids?: Stop[]; truck: { unitNumber: string } | null; next: { to: LegState; label: string; es: string } | null; crossing: { id: string; state: string; trailerNumber: string | null; packetToken: string | null; nextStep: string | null } | null; docs: { pod: boolean; seal: boolean } };
+type Stop = { id: string; name: string; type: string; country: string; address: { line1?: string; city?: string; state?: string } | null; windowStart: string | null; windowEnd: string | null; contact: string | null; notes: string | null; arrivedAt?: string | null; departedAt?: string | null; sealIn?: string | null; sealOut?: string | null };
+type Item = { leg: { id: string; seq: number; type: string; state: LegState }; order: { orderNumber: string; equipment: string; cargoNote: string | null; refs: Record<string, string> }; from: Stop | null; to: Stop | null; mids?: Stop[]; truck: { unitNumber: string } | null; next: { to: LegState; label: string; es: string } | null; crossing: { id: string; state: string; trailerNumber: string | null; packetToken: string | null; nextStep: string | null } | null; docs: { pod: boolean; seal: boolean }; sealExpected: string | null };
 const XSTEP: Record<string, { en: string; es: string }> = { departed_yard: { en: "Departed the yard", es: "Salí del patio" }, at_mx_customs: { en: "At Mexican customs", es: "En aduana mexicana" }, in_us_customs: { en: "At US customs", es: "En aduana americana" }, cleared: { en: "Cleared — US side", es: "Liberado — lado americano" } };
 const XLABEL: Record<string, string> = { packet_sent: "Packet sent · Paquete enviado", departed_yard: "Departed yard · Salió del patio", at_mx_customs: "MX customs · Aduana MX", in_us_customs: "US customs · Aduana US", cleared: "Cleared · Liberado", held: "Held · Detenido", returned: "Returned · Regresado" };
 type OwnItem = { key: string; label: string; status: string; expiresAt: string | null; documentTypeId: string | null; tracksExpiry: boolean; pending: { fileName: string; at: string } | null; rejected: { reason: string; at: string } | null };
@@ -52,7 +52,16 @@ export function DriverApp({ token, data }: { token: string; data: Data }) {
   const [holding, setHolding] = useState(false);
   const [holdReason, setHoldReason] = useState("");
   const [sel, setSel] = useState<string | null>(null);
+  const [seal, setSeal] = useState("");
   const cur = data.items.find((i) => i.leg.id === sel) ?? data.current;
+  // when a seal goes on (leaving a stop loaded) or comes off (opening at a stop), the driver types the number with the step
+  const sealAsk: { label: string; es: string } | null = !cur?.next
+    ? null
+    : cur.next.to === "loaded" || (cur.leg.state === "en_route" && (cur.mids ?? []).some((m) => m.arrivedAt && !m.departedAt))
+      ? { label: "Seal applied", es: "Sello puesto" }
+      : cur.next.to === "at_delivery" || (cur.leg.state === "en_route" && (cur.mids ?? []).some((m) => !m.arrivedAt))
+        ? { label: "Seal found", es: "Sello encontrado" }
+        : null;
   const lastPing = useRef(0);
 
   // location: one fix on open, then every 2 minutes while the page is visible
@@ -81,10 +90,11 @@ export function DriverApp({ token, data }: { token: string; data: Data }) {
       if (!cur) return;
       const fix = await getFix(6000);
       setGps(fix ? "on" : "off");
-      const r = await driverStepAction(token, cur.leg.id, { lat: fix?.lat ?? null, lng: fix?.lng ?? null, accuracyM: fix?.accuracyM ?? null, decline, declineReason: decline ? reason : null });
+      const r = await driverStepAction(token, cur.leg.id, { lat: fix?.lat ?? null, lng: fix?.lng ?? null, accuracyM: fix?.accuracyM ?? null, decline, declineReason: decline ? reason : null, seal: seal.trim() || null });
       if (r.ok) {
         setDeclining(false);
         setReason("");
+        setSeal("");
         router.refresh();
       } else setErr(r.error);
     });
@@ -143,6 +153,12 @@ export function DriverApp({ token, data }: { token: string; data: Data }) {
           <div className="px-5 pb-5">
             {cur.leg.state === "at_pickup" && <PhotoButton token={token} legId={cur.leg.id} code="SEAL_PHOTO" done={cur.docs.seal} label="Seal photo · Foto del sello" onDone={() => router.refresh()} />}
             {(cur.leg.state === "at_delivery" || (cur.leg.state === "en_route" && (cur.mids ?? []).some((m) => m.arrivedAt && !m.departedAt))) && <PhotoButton token={token} legId={cur.leg.id} code="POD" done={cur.docs.pod} label="POD photo · Foto del POD" onDone={() => router.refresh()} />}
+            {sealAsk && (
+              <div className="mb-3" data-testid="seal">
+                <input className="input mono" placeholder={`${sealAsk.label} # · ${sealAsk.es}`} value={seal} onChange={(e) => setSeal(e.target.value)} aria-label={sealAsk.label} />
+                {sealAsk.label === "Seal found" && cur.sealExpected && <div className="text-[12px] text-muted mt-1">Should be {cur.sealExpected} · Debe ser {cur.sealExpected}</div>}
+              </div>
+            )}
             {cur.next ? (
               <button className="btn btn-primary w-full justify-center flex-col gap-0" style={{ height: 72, fontSize: 18 }} onClick={() => step(false)} disabled={pending || declining}>
                 {pending ? "…" : cur.next.label}

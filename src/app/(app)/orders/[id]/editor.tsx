@@ -8,7 +8,7 @@ import { Confirm, Toast, useToast } from "@/components/ui";
 
 const REF_LABEL: Record<string, string> = { rate_con: "Rate con", po: "PO", asn: "ASN", shipment: "Shipment", reference: "Reference" };
 type Order = { id: string; state: string; kind?: string; customerId: string | null; brokerId: string | null; billingEntityId: string | null; equipment: string; rateCents: number | null; rateTbd: boolean; currency: string; fuelRule: string; fuelPct: number | null; tollsFeesCents: number | null; refs: Record<string, string>; cargoNote: string | null; updatedAt: string };
-type Stop = { id: string; type: string; name: string; country: string; address: { line1?: string; city?: string; state?: string; postalCode?: string; country?: string } | null; windowStart: string | null; windowEnd: string | null; appointment: boolean; contact: string | null; notes: string | null; arrivedAt: string | null; departedAt: string | null };
+type Stop = { id: string; type: string; name: string; country: string; address: { line1?: string; city?: string; state?: string; postalCode?: string; country?: string } | null; windowStart: string | null; windowEnd: string | null; appointment: boolean; contact: string | null; notes: string | null; arrivedAt: string | null; departedAt: string | null; sealIn?: string | null; sealOut?: string | null };
 
 const toLocal = (s: string | null) => (s ? new Date(new Date(s).getTime() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 16) : "");
 const fmtAddr = (a: Stop["address"]) => (a ? [a.line1, a.city, [a.state, a.postalCode].filter(Boolean).join(" "), a.country].filter(Boolean).join(", ") : "");
@@ -141,7 +141,7 @@ export function OrderEditor({ order, customers, entities, readOnly }: { order: O
 export function StopEditor({ orderId, index, stop, readOnly }: { orderId: string; index: number; stop: Stop; readOnly: boolean }) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
-  const [f, setF] = useState({ name: stop.name, address: fmtAddr(stop.address), country: stop.country, windowStart: toLocal(stop.windowStart), windowEnd: toLocal(stop.windowEnd), appointment: stop.appointment, contact: stop.contact ?? "", notes: stop.notes ?? "" });
+  const [f, setF] = useState({ name: stop.name, address: fmtAddr(stop.address), country: stop.country, windowStart: toLocal(stop.windowStart), windowEnd: toLocal(stop.windowEnd), appointment: stop.appointment, contact: stop.contact ?? "", notes: stop.notes ?? "", sealIn: stop.sealIn ?? "", sealOut: stop.sealOut ?? "" });
   const [err, setErr] = useState<string | null>(null);
   const [pending, start] = useTransition();
   const done = !!stop.departedAt;
@@ -158,6 +158,7 @@ export function StopEditor({ orderId, index, stop, readOnly }: { orderId: string
             {stop.windowStart ? ` · ${new Date(stop.windowStart).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}` : ""}
             {stop.arrivedAt ? ` · in ${new Date(stop.arrivedAt).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })}` : ""}
             {stop.departedAt ? ` · out ${new Date(stop.departedAt).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })}` : ""}
+            {stop.sealIn || stop.sealOut ? <span className="mono"> · seal {stop.sealIn ? `in ${stop.sealIn}` : ""}{stop.sealIn && stop.sealOut ? " / " : ""}{stop.sealOut ? `out ${stop.sealOut}` : ""}</span> : ""}
           </div>
         </div>
         <span className="text-faint">{open ? "▴" : "▾"}</span>
@@ -189,9 +190,19 @@ export function StopEditor({ orderId, index, stop, readOnly }: { orderId: string
               <input className="input" value={f.contact} onChange={(e) => setF({ ...f, contact: e.target.value })} />
             </div>
           </div>
-          <div className="mt-2">
-            <label className="label">Notes for the driver</label>
-            <input className="input" value={f.notes} onChange={(e) => setF({ ...f, notes: e.target.value })} />
+          <div className="grid grid-cols-[1fr_120px_120px] gap-2 mt-2">
+            <div>
+              <label className="label">Notes for the driver</label>
+              <input className="input" value={f.notes} onChange={(e) => setF({ ...f, notes: e.target.value })} />
+            </div>
+            <div>
+              <label className="label">Seal found</label>
+              <input className="input mono" value={f.sealIn} onChange={(e) => setF({ ...f, sealIn: e.target.value })} aria-label="Seal found" placeholder="on opening" />
+            </div>
+            <div>
+              <label className="label">Seal applied</label>
+              <input className="input mono" value={f.sealOut} onChange={(e) => setF({ ...f, sealOut: e.target.value })} aria-label="Seal applied" placeholder="on leaving" />
+            </div>
           </div>
           {!readOnly && (
             <div className="flex justify-end items-center gap-3 mt-3">

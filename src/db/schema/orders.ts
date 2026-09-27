@@ -120,6 +120,8 @@ export const stops = pgTable(
     notes: text("notes"),
     arrivedAt: timestamp("arrived_at", { withTimezone: true }),
     departedAt: timestamp("departed_at", { withTimezone: true }),
+    sealIn: text("seal_in"), // the seal found when the trailer was opened here
+    sealOut: text("seal_out"), // the seal applied when it left here; the next stop's seal_in should match
     ...audit(),
   },
   (t) => [index("stops_tenant_order").on(t.tenantId, t.orderId)],

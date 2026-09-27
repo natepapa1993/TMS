@@ -103,9 +103,17 @@ export async function driverToday(tenantId: string, driverId: string) {
     const next = mid ? { to: leg.state, label: `${mid.which === "arrived" ? "Arrived at" : "Leaving"} ${mid.stop.name}`, es: `${mid.which === "arrived" ? "Llegué a" : "Saliendo de"} ${mid.stop.name}` } : nextStep(leg.state);
     const mids = midStops(leg, stops.filter((x) => x.orderId === leg.orderId));
     const stopId = currentStopId(leg, mids);
+    const orderStops = stops.filter((x) => x.orderId === leg.orderId);
+    const sealExpected = (() => {
+      // what the driver should find on the trailer at the next opening: the last seal applied before this leg's next stop
+      const nextStopId = leg.state === "en_route" ? (mids.find((m) => !m.arrivedAt)?.id ?? leg.toStopId) : ["loaded"].includes(leg.state) ? leg.toStopId : null;
+      const seq = orderStops.find((x) => x.id === nextStopId)?.seq;
+      if (seq == null) return null;
+      return [...orderStops].filter((x) => x.seq < seq && x.sealOut).sort((p, q) => q.seq - p.seq)[0]?.sealOut ?? null;
+    })();
     const podTargets = photoTargets(order, shipments, stopId);
     const docs = { pod: podTargets.length > 0 && podTargets.every((id) => photos.some((d) => d.subjectId === id && d.code === "POD")), seal: photos.some((d) => d.subjectId === order.id && d.code === "SEAL_PHOTO") };
-    return { leg, order: { id: order.id, orderNumber: order.orderNumber, equipment: order.equipment, cargoNote: order.cargoNote, refs: order.refs, state: order.state }, from, to, mids, truck, next, crossing, docs };
+    return { leg, order: { id: order.id, orderNumber: order.orderNumber, equipment: order.equipment, cargoNote: order.cargoNote, refs: order.refs, state: order.state }, from, to, mids, truck, next, crossing, docs, sealExpected };
   });
   // the leg the driver is on = first non-dispatched active leg, else the first offered one
   const current = items.find((i) => i.leg.state !== "dispatched") ?? items[0] ?? null;
@@ -125,7 +133,7 @@ export function nextStep(state: LegState): { to: LegState; label: string; es: st
   return map[state] ?? null;
 }
 
-export type DriverStepInput = { lat?: number | string | null; lng?: number | string | null; accuracyM?: number | null; note?: string | null; decline?: boolean; declineReason?: string | null; crossingStep?: string | null; crossingHold?: string | null };
+export type DriverStepInput = { lat?: number | string | null; lng?: number | string | null; accuracyM?: number | null; note?: string | null; decline?: boolean; declineReason?: string | null; crossingStep?: string | null; crossingHold?: string | null; seal?: string | null };
 
 /** The driver pressed the button. Verified when the phone gave us a position. */
 export async function driverStep(tenantId: string, driverId: string, legId: string, input: DriverStepInput) {
@@ -151,11 +159,11 @@ export async function driverStep(tenantId: string, driverId: string, legId: stri
   if (leg.state === "en_route") {
     const stops = await db.select().from(s.stops).where(and(eq(s.stops.tenantId, tenantId), eq(s.stops.orderId, leg.orderId)));
     const mid = pendingMidStop(leg, stops);
-    if (mid) return stampStop(ctx, leg.id, mid.stop.id, mid.which, { source: "driver_app", verified: hasPos, lat: hasPos ? String(Number(input.lat).toFixed(6)) : undefined, lng: hasPos ? String(Number(input.lng).toFixed(6)) : undefined, note: input.note ?? undefined });
+    if (mid) return stampStop(ctx, leg.id, mid.stop.id, mid.which, { source: "driver_app", verified: hasPos, lat: hasPos ? String(Number(input.lat).toFixed(6)) : undefined, lng: hasPos ? String(Number(input.lng).toFixed(6)) : undefined, note: input.note ?? undefined, seal: input.seal ?? null });
   }
   const step = nextStep(leg.state);
   if (!step) throw new ValidationError("nothing further on this leg");
-  return advanceLeg(ctx, leg.id, step.to, { source: "driver_app", verified: hasPos, lat: hasPos ? String(Number(input.lat).toFixed(6)) : undefined, lng: hasPos ? String(Number(input.lng).toFixed(6)) : undefined, note: input.note ?? undefined });
+  return advanceLeg(ctx, leg.id, step.to, { source: "driver_app", verified: hasPos, lat: hasPos ? String(Number(input.lat).toFixed(6)) : undefined, lng: hasPos ? String(Number(input.lng).toFixed(6)) : undefined, note: input.note ?? undefined, seal: input.seal ?? null });
 }
 
 /** The stop the driver is standing at, if any: the delivery once arrived, a mid stop between arrive and depart, the pickup while loading. */

@@ -10,7 +10,7 @@ import { DispatchLinks } from "../../d/[token]/app";
 /** The partner carrier's driver: one load, one big button, Spanish under English, GPS with every press and every 2 minutes. */
 
 type Stop = { id: string; name: string; type: string; country: string; address: { line1?: string; city?: string; state?: string } | null; windowStart: string | null; windowEnd: string | null; contact: string | null; notes: string | null; arrivedAt: string | null; departedAt: string | null };
-type Data = { company: string; dispatchPhone: string | null; carrier: string; driverName: string | null; leg: { id: string; state: string; stateLabel: string; type: string; done: boolean }; order: { orderNumber: string; equipment: string | null; cargoNote: string | null }; from: Stop | null; to: Stop | null; mids: Stop[]; next: { to: string; en: string; es: string } | null; podOnFile: boolean };
+type Data = { company: string; dispatchPhone: string | null; carrier: string; driverName: string | null; leg: { id: string; state: string; stateLabel: string; type: string; done: boolean }; order: { orderNumber: string; equipment: string | null; cargoNote: string | null }; from: Stop | null; to: Stop | null; mids: Stop[]; sealExpected: string | null; next: { to: string; en: string; es: string } | null; podOnFile: boolean };
 type Fix = { lat: number; lng: number; accuracyM: number | null; speedMph: number | null; heading: number | null };
 
 function getFix(timeout = 8000): Promise<Fix | null> {
@@ -32,8 +32,16 @@ export function CarrierDriverApp({ token, data }: { token: string; data: Data })
   const [pending, start] = useTransition();
   const [err, setErr] = useState<string | null>(null);
   const [gps, setGps] = useState<"unknown" | "on" | "off">("unknown");
+  const [seal, setSeal] = useState("");
   const lastPing = useRef(0);
   const live = !data.leg.done;
+  const sealAsk: { label: string; es: string } | null = !data.next
+    ? null
+    : data.next.to === "loaded" || (data.leg.state === "en_route" && data.mids.some((m) => m.arrivedAt && !m.departedAt))
+      ? { label: "Seal applied", es: "Sello puesto" }
+      : data.next.to === "at_delivery" || (data.leg.state === "en_route" && data.mids.some((m) => !m.arrivedAt))
+        ? { label: "Seal found", es: "Sello encontrado" }
+        : null;
 
   useEffect(() => {
     if (!live) return;
@@ -60,9 +68,11 @@ export function CarrierDriverApp({ token, data }: { token: string; data: Data })
       setErr(null);
       const fix = await getFix(6000);
       setGps(fix ? "on" : "off");
-      const r = await carrierDriverStepAction(token, { lat: fix?.lat ?? null, lng: fix?.lng ?? null, accuracyM: fix?.accuracyM ?? null });
-      if (r.ok) router.refresh();
-      else setErr(r.error);
+      const r = await carrierDriverStepAction(token, { lat: fix?.lat ?? null, lng: fix?.lng ?? null, accuracyM: fix?.accuracyM ?? null, seal: seal.trim() || null });
+      if (r.ok) {
+        setSeal("");
+        router.refresh();
+      } else setErr(r.error);
     });
   const st = data.leg.state;
   const atDelivery = st === "at_delivery" || (st === "en_route" && data.mids.some((m) => m.arrivedAt && !m.departedAt));
@@ -98,6 +108,12 @@ export function CarrierDriverApp({ token, data }: { token: string; data: Data })
         </div>
         <div className="px-5 pb-5">
           {atDelivery && <PodButton token={token} done={data.podOnFile} onDone={() => router.refresh()} />}
+          {sealAsk && (
+            <div className="mb-3" data-testid="seal">
+              <input className="input mono" placeholder={`${sealAsk.label} # · ${sealAsk.es}`} value={seal} onChange={(e) => setSeal(e.target.value)} aria-label={sealAsk.label} />
+              {sealAsk.label === "Seal found" && data.sealExpected && <div className="text-[12px] text-muted mt-1">Should be {data.sealExpected} · Debe ser {data.sealExpected}</div>}
+            </div>
+          )}
           {data.next ? (
             <button className="btn btn-primary w-full justify-center flex-col gap-0" style={{ height: 72, fontSize: 18 }} onClick={step} disabled={pending}>
               {pending ? "…" : data.next.en}

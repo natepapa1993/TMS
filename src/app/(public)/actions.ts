@@ -124,12 +124,12 @@ export async function portalRespondAction(token: string, tenderId: string, r: Te
   }
 }
 
-export async function portalAdvanceAction(token: string, legId: string, to: LegState, note?: string): Promise<ActionResult<{ state: string }>> {
+export async function portalAdvanceAction(token: string, legId: string, to: LegState, note?: string, seal?: string | null): Promise<ActionResult<{ state: string }>> {
   const c = await carrierFromToken(token);
   if (!c) return { ok: false, error: "invalid link", code: "not_found" };
   try {
     const { portalAdvance } = await import("@/domain/carrier-portal");
-    const leg = await portalAdvance(c.tenantId, c.carrierId, legId, to, note ?? null);
+    const leg = await portalAdvance(c.tenantId, c.carrierId, legId, to, note ?? null, seal ?? null);
     return { ok: true, data: { state: leg.state } };
   } catch (e) {
     return toError(e);
@@ -196,7 +196,7 @@ export async function portalInvoiceAction(token: string, legId: string, form: Fo
 
 // ---------- the partner carrier's driver (one leg) ----------
 
-export async function carrierDriverStepAction(token: string, input: { lat?: number | null; lng?: number | null; accuracyM?: number | null }): Promise<ActionResult<{ state: string }>> {
+export async function carrierDriverStepAction(token: string, input: { lat?: number | null; lng?: number | null; accuracyM?: number | null; seal?: string | null }): Promise<ActionResult<{ state: string }>> {
   const t = await resolveToken(token, "carrier_driver");
   if (!t) return { ok: false, error: "This link is no longer valid. Ask your dispatcher for a new one.", code: "not_found" };
   try {

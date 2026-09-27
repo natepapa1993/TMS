@@ -200,17 +200,17 @@ async function ownLeg(tenantId: string, carrierId: string, legId: string) {
 }
 
 /** The carrier's dispatcher moves the leg one step (their driver may not have our app). */
-export async function portalAdvance(tenantId: string, carrierId: string, legId: string, to: s.LegState, note?: string | null) {
+export async function portalAdvance(tenantId: string, carrierId: string, legId: string, to: s.LegState, note?: string | null, seal?: string | null) {
   const ctx = systemCtx(tenantId);
   const l = await ownLeg(tenantId, carrierId, legId);
   if (l.state === "en_route" && to === "en_route") {
     // a stop in between: "next" clocks it (arrive, then leave) before the delivery
     const stops = await db.select().from(s.stops).where(eq(s.stops.orderId, l.orderId));
-    if (pendingMidStop(l, stops)) return advanceLeg(ctx, legId, "next", { source: "carrier", verified: false, note: note ?? undefined });
+    if (pendingMidStop(l, stops)) return advanceLeg(ctx, legId, "next", { source: "carrier", verified: false, note: note ?? undefined, seal: seal ?? null });
   }
   const next = NEXT[l.state];
   if (!next || next.to !== to) throw new ValidationError(`this load is ${LEG_LABEL[l.state]}; the next step is ${next ? LEG_LABEL[next.to] : "none"}`);
-  return advanceLeg(ctx, legId, to, { source: "carrier", verified: false, note: note ?? undefined });
+  return advanceLeg(ctx, legId, to, { source: "carrier", verified: false, note: note ?? undefined, seal: seal ?? null });
 }
 
 // ---------- the partner carrier's driver, on one leg ----------
@@ -257,19 +257,26 @@ export async function carrierDriverView(tenantId: string, legId: string) {
     from: stop(l.fromStopId),
     to: stop(l.toStopId),
     mids: midStops(l, stops).map((m) => stop(m.id)!),
+    sealExpected: (() => {
+      const mids = midStops(l, stops);
+      const nextStopId = l.state === "en_route" ? (mids.find((m) => !m.arrivedAt)?.id ?? l.toStopId) : l.state === "loaded" ? l.toStopId : null;
+      const seq = stops.find((x) => x.id === nextStopId)?.seq;
+      if (seq == null) return null;
+      return [...stops].filter((x) => x.seq < seq && x.sealOut).sort((p, q) => q.seq - p.seq)[0]?.sealOut ?? null;
+    })(),
     next,
     podOnFile: !!(await db.select({ id: s.documents.id }).from(s.documents).where(and(eq(s.documents.tenantId, tenantId), eq(s.documents.subjectKind, "order"), eq(s.documents.subjectId, l.orderId), eq(s.documents.code, "POD"), inArray(s.documents.status, ["present", "verified"]))).limit(1)).length,
   };
 }
 
 /** The carrier's driver pressed the button: a position when the phone gave one, and the step, verified when it did. */
-export async function carrierDriverStep(tenantId: string, legId: string, input: { lat?: number | null; lng?: number | null; accuracyM?: number | null }) {
+export async function carrierDriverStep(tenantId: string, legId: string, input: { lat?: number | null; lng?: number | null; accuracyM?: number | null; seal?: string | null }) {
   const ctx = systemCtx(tenantId);
   const [l] = await db.select().from(s.legs).where(and(eq(s.legs.tenantId, tenantId), eq(s.legs.id, legId))).limit(1);
   if (!l || !l.carrierId) throw new NotFoundError("load", legId);
   const hasPos = input.lat != null && input.lng != null;
   if (hasPos) await recordPosition(ctx, { source: "phone", lat: input.lat!, lng: input.lng!, accuracyM: input.accuracyM ?? null, legId: l.id }).catch(() => null);
-  const ev = { source: "carrier" as const, verified: hasPos, lat: hasPos ? String(Number(input.lat).toFixed(6)) : undefined, lng: hasPos ? String(Number(input.lng).toFixed(6)) : undefined, note: "from the driver's phone" };
+  const ev = { source: "carrier" as const, verified: hasPos, lat: hasPos ? String(Number(input.lat).toFixed(6)) : undefined, lng: hasPos ? String(Number(input.lng).toFixed(6)) : undefined, note: "from the driver's phone", seal: input.seal ?? null };
   if (l.state === "en_route") {
     const stops = await db.select().from(s.stops).where(eq(s.stops.orderId, l.orderId));
     if (pendingMidStop(l, stops)) return advanceLeg(ctx, legId, "next", ev);

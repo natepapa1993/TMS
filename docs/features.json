@@ -415,6 +415,16 @@
       ]
     },
     {
+      "id": "F-5.13",
+      "name": "Seal continuity: seal applied / seal found recorded at each stop from the driver app, the carrier's driver link, the carrier portal or the office; red seal_mismatch flag naming both stops, cleared on correction; printed on the trip manifest",
+      "milestone": "M1",
+      "status": "done",
+      "tests": [
+        "src/domain/orders.test.ts",
+        "e2e/tracking.spec.ts"
+      ]
+    },
+    {
       "id": "F-7.6",
       "name": "The owner's Monday email: last week's six numbers, top customers and trucks",
       "milestone": "M7",

@@ -41,6 +41,8 @@ type Leg = typeof s.legs.$inferSelect;
 export type StopInput = {
   type: StopType;
   name: string;
+  sealIn?: string | null;
+  sealOut?: string | null;
   locationId?: string | null;
   address?: Stop["address"];
   country?: string;
@@ -368,18 +370,50 @@ export async function updateStop(ctx: Ctx, stopId: string, values: Partial<StopI
     const order = await loadOrder(tx, ctx, before.orderId);
     if (["paid", "cancelled"].includes(order.state)) throw new ValidationError(`a ${order.state} order is read-only`);
     if (values.name !== undefined && !values.name?.trim()) throw new ValidationError("a stop needs a name", "name");
-    const allowed = ["name", "locationId", "address", "country", "windowStart", "windowEnd", "appointment", "contact", "refs", "notes", "type"] as const;
+    const allowed = ["name", "locationId", "address", "country", "windowStart", "windowEnd", "appointment", "contact", "refs", "notes", "type", "sealIn", "sealOut"] as const;
     const safe: Record<string, unknown> = {};
     for (const k of allowed) if (k in values) safe[k] = values[k];
     if (typeof safe.name === "string") safe.name = safe.name.trim();
+    for (const k of ["sealIn", "sealOut"] as const) if (k in safe) safe[k] = typeof safe[k] === "string" && (safe[k] as string).trim() ? (safe[k] as string).trim() : null;
     const [after] = await tx
       .update(s.stops)
       .set({ ...safe, updatedAt: new Date(), updatedBy: ctx.userId })
       .where(and(eq(s.stops.tenantId, ctx.tenantId), eq(s.stops.id, stopId)))
       .returning();
     await writeAudit(tx, ctx, "stop", stopId, "update", diff(before as unknown as Record<string, unknown>, after as unknown as Record<string, unknown>));
+    if ("sealIn" in safe || "sealOut" in safe) await checkSealContinuity(tx, ctx, before.orderId);
     return after;
   });
+}
+
+/**
+ * Seal continuity (spec §12 "seal continuity across stops recorded at each open/close"): the seal a
+ * stop was left with must be the seal found at the next stop. A difference is a red flag on the
+ * order naming both; a correction clears it. Runs whenever a seal is recorded, from any app.
+ */
+export async function checkSealContinuity(tx: Tx | typeof db, ctx: Ctx, orderId: string) {
+  const stops = await tx.select().from(s.stops).where(and(eq(s.stops.tenantId, ctx.tenantId), eq(s.stops.orderId, orderId))).orderBy(s.stops.seq);
+  const open = await tx.select().from(s.flags).where(and(eq(s.flags.tenantId, ctx.tenantId), eq(s.flags.orderId, orderId), eq(s.flags.code, "seal_mismatch"), sql`${s.flags.clearedAt} is null`));
+  let opened = 0;
+  let cleared = 0;
+  for (let i = 1; i < stops.length; i++) {
+    // the seal to match is the last one applied before this stop (a stop with no seal recorded is skipped, not a break)
+    const prev = [...stops.slice(0, i)].reverse().find((x) => x.sealOut);
+    const cur = stops[i];
+    const existing = open.find((f) => (f.data as { stopId?: string } | null)?.stopId === cur.id);
+    const mismatch = !!prev?.sealOut && !!cur.sealIn && prev.sealOut.trim().toUpperCase() !== cur.sealIn.trim().toUpperCase();
+    if (mismatch && !existing) {
+      await tx.insert(s.flags).values({ id: newId(), tenantId: ctx.tenantId, orderId, code: "seal_mismatch", level: "red", title: `Seal ${prev!.sealOut} applied at ${prev!.name}; ${cur.sealIn} found at ${cur.name}`, detail: "The trailer was opened between the two, or a number was typed wrong. Check with the driver and the receiver before the load moves on; fix the number on the stop if it was a typo.", owner: "dispatch", data: { stopId: cur.id, expected: prev!.sealOut, found: cur.sealIn } });
+      const legs = await tx.select({ id: s.legs.id, fromStopId: s.legs.fromStopId, toStopId: s.legs.toStopId }).from(s.legs).where(eq(s.legs.orderId, orderId)).orderBy(s.legs.seq);
+      const legId = (legs.find((l) => l.toStopId === cur.id || l.fromStopId === cur.id) ?? legs[0])?.id;
+      if (legId) await tx.insert(s.legEvents).values({ id: newId(), tenantId: ctx.tenantId, legId, orderId, kind: "flag", source: "system", verified: false, note: `Seal mismatch at ${cur.name}: expected ${prev!.sealOut}, found ${cur.sealIn}` });
+      opened++;
+    } else if (!mismatch && existing) {
+      await tx.update(s.flags).set({ clearedAt: new Date(), clearedBy: ctx.userId ?? "system" }).where(eq(s.flags.id, existing.id));
+      cleared++;
+    }
+  }
+  return { opened, cleared };
 }
 
 export async function orderTimeline(ctx: Ctx, orderId: string) {
@@ -634,7 +668,7 @@ export async function declineLeg(ctx: Ctx, legId: string, reason: string, source
   });
 }
 
-export type AdvanceEvent = { source?: EventSource; verified?: boolean; at?: Date; lat?: string; lng?: string; note?: string; data?: Record<string, unknown> };
+export type AdvanceEvent = { source?: EventSource; verified?: boolean; at?: Date; lat?: string; lng?: string; note?: string; data?: Record<string, unknown>; seal?: string | null };
 
 // ---------- intermediate stops (a tailgate leg with three or more stops) ----------
 
@@ -671,12 +705,14 @@ export async function stampStop(ctx: Ctx, legId: string, stopId: string, which: 
     if (which === "departed" && !stop.arrivedAt) throw new ValidationError(`arrive at ${stop.name} first`);
     if (which === "departed" && stop.departedAt) throw new ValidationError(`already left ${stop.name}`);
     const at = ev.at ?? new Date();
+    const seal = ev.seal?.trim() || null;
     await tx
       .update(s.stops)
-      .set({ ...(which === "arrived" ? { arrivedAt: at } : { departedAt: at }), updatedAt: new Date(), updatedBy: ctx.userId })
+      .set({ ...(which === "arrived" ? { arrivedAt: at, ...(seal ? { sealIn: seal } : {}) } : { departedAt: at, ...(seal ? { sealOut: seal } : {}) }), updatedAt: new Date(), updatedBy: ctx.userId })
       .where(eq(s.stops.id, stop.id));
-    await tx.insert(s.legEvents).values({ id: newId(), tenantId: ctx.tenantId, legId: leg.id, orderId: leg.orderId, at, kind: "stop", fromState: leg.state, toState: leg.state, source: ev.source ?? "dispatcher", verified: ev.verified ?? false, lat: ev.lat, lng: ev.lng, userId: ctx.userId, note: `${which === "arrived" ? "Arrived at" : "Left"} ${stop.name}`, data: { stopId: stop.id, which } });
+    await tx.insert(s.legEvents).values({ id: newId(), tenantId: ctx.tenantId, legId: leg.id, orderId: leg.orderId, at, kind: "stop", fromState: leg.state, toState: leg.state, source: ev.source ?? "dispatcher", verified: ev.verified ?? false, lat: ev.lat, lng: ev.lng, userId: ctx.userId, note: `${which === "arrived" ? "Arrived at" : "Left"} ${stop.name}${seal ? ` · seal ${seal}` : ""}`, data: { stopId: stop.id, which, seal } });
     await writeAudit(tx, ctx, "stop", stop.id, "update", { [which === "arrived" ? "arrivedAt" : "departedAt"]: { from: null, to: at } }, `${which === "arrived" ? "arrived at" : "left"} ${stop.name} · leg ${leg.seq}`);
+    if (seal) await checkSealContinuity(tx, ctx, leg.orderId);
     await recomputeOrder(tx, ctx, leg.orderId);
     return leg;
   });
@@ -712,9 +748,12 @@ export async function advanceLeg(ctx: Ctx, legId: string, to: LegState | "next",
     const after = await setLegState(tx, ctx, leg, target, { ...ev, at }, extra);
 
     const stopId = target === "at_pickup" ? leg.fromStopId : target === "at_delivery" ? leg.toStopId : target === "loaded" ? leg.fromStopId : target === "completed" ? leg.toStopId : null;
+    const seal = ev.seal?.trim() || null;
     if (stopId) {
-      const set = target === "at_pickup" || target === "at_delivery" ? { arrivedAt: at } : { departedAt: at };
+      const arriving = target === "at_pickup" || target === "at_delivery";
+      const set = arriving ? { arrivedAt: at, ...(seal ? { sealIn: seal } : {}) } : { departedAt: at, ...(seal ? { sealOut: seal } : {}) };
       await tx.update(s.stops).set({ ...set, updatedAt: new Date(), updatedBy: ctx.userId }).where(and(eq(s.stops.tenantId, ctx.tenantId), eq(s.stops.id, stopId)));
+      if (seal) await checkSealContinuity(tx, ctx, leg.orderId);
     }
     await recomputeOrder(tx, ctx, leg.orderId, target === "completed" ? at : undefined);
     return after;

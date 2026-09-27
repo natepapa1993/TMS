@@ -207,7 +207,9 @@ function LegCard({ token, l, onDone }: { token: string; l: Leg; onDone: (t: stri
   const [driver, setDriver] = useState(false);
   const [f, setF] = useState({ driverName: l.driverName ?? "", driverPhone: l.driverPhone ?? "", unitNumber: l.unitNumber ?? "", trailerNumber: l.trailerNumber ?? "", by: "" });
   const [err, setErr] = useState<string | null>(null);
+  const [seal, setSeal] = useState("");
   const [pending, start] = useTransition();
+  const sealAsk = l.next?.to === "loaded" ? "Seal applied # · Sello puesto" : l.next?.to === "at_delivery" ? "Seal found # · Sello encontrado" : null;
   return (
     <div className="card p-4">
       <div className="flex items-center justify-between gap-2">
@@ -280,15 +282,18 @@ function LegCard({ token, l, onDone }: { token: string; l: Leg; onDone: (t: stri
         </div>
       )}
       {l.state === "at_delivery" && <PodButton token={token} leg={l} onDone={onDone} />}
+      {sealAsk && <input className="input mono mt-3" placeholder={sealAsk} value={seal} onChange={(e) => setSeal(e.target.value)} aria-label={sealAsk.split(" #")[0]} />}
       {l.next && (
         <button
           className="btn btn-primary btn-lg w-full justify-center mt-3"
           disabled={pending}
           onClick={() =>
             start(async () => {
-              const r = await portalAdvanceAction(token, l.id, l.next!.to);
-              if (r.ok) onDone(`${l.orderNumber}: ${l.next!.en} · ${l.next!.es}`);
-              else onDone(r.error, true);
+              const r = await portalAdvanceAction(token, l.id, l.next!.to, undefined, seal.trim() || null);
+              if (r.ok) {
+                setSeal("");
+                onDone(`${l.orderNumber}: ${l.next!.en} · ${l.next!.es}`);
+              } else onDone(r.error, true);
             })
           }
         >

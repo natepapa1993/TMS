@@ -1,4 +1,4 @@
-// Features: F-4 F-5 F-5.11 — tender by email link, driver app (steps, seal + POD photos, a line to dispatch), customer tracking link, all through the browser
+// Features: F-4 F-5 F-5.11 F-5.13 — tender by email link, driver app (steps, seal + POD photos, a line to dispatch), customer tracking link, all through the browser
 import { test, expect, type Page } from "@playwright/test";
 import path from "node:path";
 import { signupFresh, quickAdd, future } from "./helpers";
@@ -128,16 +128,23 @@ test("driver app: link from Fleet, one button per step with GPS, customer tracki
   await phone.getByTestId("chat").locator("button:has-text('Send')").click();
   await expect(phone.getByTestId("chat")).toContainText("Shipper says 40 min more");
   await expect(phone.getByTestId("chat")).toContainText("sent · enviado");
-  // seal photo while loading: one tap, a check
+  // seal photo while loading: one tap, a check; and the seal number goes on with the step
   await expect(big).toContainText("Loaded — leaving");
   await expect(phone.getByTestId("photo-POD")).toHaveCount(0);
   await phone.getByTestId("photo-SEAL_PHOTO").locator("input[type=file]").setInputFiles(bol);
   await expect(phone.getByTestId("photo-SEAL_PHOTO")).toContainText("✓ Seal · Sello on file", { timeout: 10000 });
-  for (const label of ["Loaded — leaving", "En route to delivery", "Arrived at delivery"]) {
-    await expect(big).toContainText(label);
-    await big.click();
-    await phone.waitForTimeout(400);
-  }
+  await phone.getByLabel("Seal applied").fill("MX-4471");
+  await big.click();
+  await phone.waitForTimeout(400);
+  await expect(big).toContainText("En route to delivery");
+  await big.click();
+  await phone.waitForTimeout(400);
+  // at the delivery the driver reads the seal on the doors: the app says what it should be
+  await expect(big).toContainText("Arrived at delivery");
+  await expect(phone.getByTestId("seal")).toContainText("Should be MX-4471");
+  await phone.getByLabel("Seal found").fill("MX-9999"); // not the same seal
+  await big.click();
+  await phone.waitForTimeout(400);
   // at the delivery: the POD photo is asked for before the last button
   await expect(big).toContainText("Delivered — empty");
   await expect(phone.locator("body")).toContainText("No POD photo yet");
@@ -170,6 +177,7 @@ test("driver app: link from Fleet, one button per step with GPS, customer tracki
   await page.click(".row[role=button]");
   await expect(panel.locator(".rounded-lg.border").nth(1)).toContainText("Delivered");
   await expect(panel).toContainText("Assign MX leg"); // MX leg was never covered; it is first in line
+  await expect(panel).toContainText("Seal MX-4471 applied at Border yard (MX); MX-9999 found at Laredo yard"); // red, on the panel
 
   // the photos are the order's documents; the message is in Messages, on the order, and the reply reaches the phone
   await page.goto("/messages");
@@ -188,6 +196,8 @@ test("driver app: link from Fleet, one button per step with GPS, customer tracki
   await expect(page.locator("body")).toContainText("SEAL_PHOTO");
   await expect(page.locator("body")).toContainText("POD");
   await expect(page.locator("body")).toContainText("POD photo from the driver app at Laredo yard");
+  await expect(page.locator("body")).toContainText("seal out MX-4471"); // recorded on the stops
+  await expect(page.locator("body")).toContainText("seal in MX-9999");
   await expect(page.locator("body")).toContainText("Dispatch to Benjamín Xochihua: OK, tell them");
   const ctx3 = await browser.newContext();
   const phone2 = await ctx3.newPage();

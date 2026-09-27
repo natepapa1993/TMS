@@ -1,10 +1,10 @@
-// Features: F-1.5 F-2.1 F-2.2 F-2.3 F-3.1 F-3.2 F-11.1 F-11.2 F-11.3 F-11.4 F-11.5 F-15 F-16 F-2.9 F-2.10
+// Features: F-1.5 F-2.1 F-2.2 F-2.3 F-3.1 F-3.2 F-11.1 F-11.2 F-11.3 F-11.4 F-11.5 F-15 F-16 F-2.9 F-2.10 F-5.13
 import { describe, it, expect, beforeEach } from "vitest";
 import { truncateAll, makeTenant } from "@/test/helpers";
 import { create } from "@/data/records";
 import { db } from "@/db/client";
 import { auditLog, legEvents, flags, stops as stopsTable } from "@/db/schema";
-import { and, eq, asc } from "drizzle-orm";
+import { and, eq, asc, sql } from "drizzle-orm";
 import {
   createOrder,
   bookOrder,
@@ -25,6 +25,7 @@ import {
   board,
   getOrder,
   updateOrder,
+  updateStop,
   ValidationError,
   EligibilityError,
   NotFoundError,
@@ -251,6 +252,49 @@ describe("dispatch → delivered (T1)", () => {
     const evs = await db.select().from(legEvents).where(eq(legEvents.orderId, o.order.id)).orderBy(asc(legEvents.recordedAt));
     expect(evs.filter((e) => e.source === "gps" && e.verified).length).toBe(6);
     expect(evs.filter((e) => e.legId === crossing.id && e.lat === "27.5").length).toBeGreaterThan(0);
+  });
+
+  it("seal continuity: the seal applied at a stop must be the seal found at the next; a difference is a red flag, a corrected number clears it", async () => {
+    const o = await crossBorderOrder(a);
+    const [mx, crossing, us] = o.legs;
+    await planLeg(a, mx.id, { kind: "carrier", carrierId: fleet.garza, carrierRateCents: 45000 });
+    await planLeg(a, crossing.id, { kind: "truck", truckId: fleet.t2117, driverId: fleet.benja, coDriverId: fleet.martin });
+    await planLeg(a, us.id, { kind: "truck", truckId: fleet.t2104, driverId: fleet.reyes });
+    await dispatchLeg(a, mx.id);
+    await acceptLeg(a, mx.id, "carrier");
+    for (const st of ["en_route_to_pickup", "at_pickup"] as const) await advanceLeg(a, mx.id, st, { source: "carrier" });
+    await advanceLeg(a, mx.id, "loaded", { source: "carrier", seal: " MX-4471 " }); // sealed at the plant
+    for (const st of ["en_route"] as const) await advanceLeg(a, mx.id, st, { source: "carrier" });
+    await advanceLeg(a, mx.id, "at_delivery", { source: "carrier", seal: "MX-4471" }); // intact at the border yard
+    await advanceLeg(a, mx.id, "completed", { source: "carrier" });
+    let g = await getOrder(a, o.order.id);
+    expect(g.stops[0].sealOut).toBe("MX-4471");
+    expect(g.stops[1].sealIn).toBe("MX-4471");
+    expect((await db.select().from(flags).where(and(eq(flags.orderId, o.order.id), eq(flags.code, "seal_mismatch")))).length).toBe(0);
+    // the crossing driver finds a different seal at the Laredo yard
+    await dispatchLeg(a, crossing.id);
+    await advanceLeg(a, crossing.id, "next", { source: "driver_app" });
+    for (const st of ["en_route_to_pickup", "at_pickup", "loaded", "en_route"] as const) await advanceLeg(a, crossing.id, st, { source: "driver_app" });
+    await advanceLeg(a, crossing.id, "at_delivery", { source: "driver_app", seal: "mx-9999" });
+    let f = await db.select().from(flags).where(and(eq(flags.orderId, o.order.id), eq(flags.code, "seal_mismatch")));
+    expect(f.length).toBe(1);
+    expect(f[0].level).toBe("red");
+    expect(f[0].title).toBe("Seal MX-4471 applied at Planta Monterrey; mx-9999 found at Laredo Yard");
+    expect(f[0].clearedAt).toBeNull();
+    const evs = await db.select().from(legEvents).where(and(eq(legEvents.orderId, o.order.id), eq(legEvents.kind, "flag")));
+    expect(evs.some((e) => e.note?.includes("Seal mismatch at Laredo Yard"))).toBe(true);
+    // a typo: the office corrects the number on the stop and the flag clears; case does not matter
+    g = await getOrder(a, o.order.id);
+    await updateStop(a, g.stops[2].id, { sealIn: "mx-4471" });
+    f = await db.select().from(flags).where(and(eq(flags.orderId, o.order.id), eq(flags.code, "seal_mismatch")));
+    expect(f[0].clearedAt).not.toBeNull();
+    // a genuine break stays: a new seal applied at the yard, read right downstream
+    await advanceLeg(a, crossing.id, "completed", { source: "driver_app", seal: "US-100" });
+    await dispatchLeg(a, us.id);
+    await acceptLeg(a, us.id);
+    for (const st of ["en_route_to_pickup", "at_pickup", "loaded", "en_route"] as const) await advanceLeg(a, us.id, st);
+    await advanceLeg(a, us.id, "at_delivery", { seal: "US-100" });
+    expect((await db.select().from(flags).where(and(eq(flags.orderId, o.order.id), eq(flags.code, "seal_mismatch"), sql`cleared_at is null`))).length).toBe(0);
   });
 
   it("cannot dispatch an unplanned leg, cannot skip forward steps, cannot go backwards", async () => {

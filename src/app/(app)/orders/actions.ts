@@ -13,7 +13,7 @@ const touch = (id?: string) => {
   if (id) revalidatePath(`/orders/${id}`);
 };
 
-export type StopForm = { type: StopType; name: string; address: string; country: string; windowStart: string; windowEnd: string; appointment: boolean; contact: string; notes: string };
+export type StopForm = { type: StopType; name: string; address: string; country: string; windowStart: string; windowEnd: string; appointment: boolean; contact: string; notes: string; sealIn?: string; sealOut?: string };
 
 function toStopInput(st: StopForm) {
   return {
@@ -107,6 +107,8 @@ export async function updateStopAction(orderId: string, stopId: string, st: Part
     if (st.appointment !== undefined) patch.appointment = st.appointment;
     if (st.contact !== undefined) patch.contact = st.contact || null;
     if (st.notes !== undefined) patch.notes = st.notes || null;
+    if (st.sealIn !== undefined) patch.sealIn = st.sealIn || null;
+    if (st.sealOut !== undefined) patch.sealOut = st.sealOut || null;
     return O.updateStop(ctx, stopId, patch);
   });
   if (r.ok) touch(orderId);

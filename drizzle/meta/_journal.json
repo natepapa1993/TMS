@@ -113,6 +113,13 @@
       "when": 1790505452024,
       "tag": "0015_customer_required_refs",
       "breakpoints": true
+    },
+    {
+      "idx": 16,
+      "version": "7",
+      "when": 1790505714891,
+      "tag": "0016_stop_seals",
+      "breakpoints": true
     }
   ]
 }
