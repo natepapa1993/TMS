@@ -43,7 +43,13 @@ export type InvoiceSnapshot = {
   terms: string;
   currency: string;
   exchangeRate: number | null;
+  /** a summary invoice: one row per load */
+  loads?: { orderNumber: string; refs: string; from: string; to: string; pickedUp: string | null; delivered: string | null; amountCents: number }[];
+  /** notice of assignment when the invoice is factored */
+  factor?: { name: string; notice: string } | null;
 };
+
+export type InvoiceDelivery = { at: string; method: string; to: string | null; reference: string | null; by: string | null; batchId?: string | null };
 
 export const invoices = pgTable(
   "invoices",
@@ -78,6 +84,9 @@ export const invoices = pgTable(
     payWhenPaid: boolean("pay_when_paid").notNull().default(false),
     notes: text("notes"),
     exportedAt: timestamp("exported_at", { withTimezone: true }), // last accounting export that carried it
+    factored: boolean("factored").notNull().default(false),
+    deliveries: jsonb("deliveries").$type<InvoiceDelivery[]>().notNull().default(sql`'[]'::jsonb`),
+    batchId: text("batch_id"),
     ...audit(),
   },
   (t) => [index("invoices_tenant_state").on(t.tenantId, t.state), index("invoices_tenant_customer").on(t.tenantId, t.customerId), uniqueIndex("invoices_tenant_number").on(t.tenantId, t.number)],
@@ -242,4 +251,82 @@ export const payPlans = pgTable(
     ...audit(),
   },
   (t) => [index("pay_plans_tenant").on(t.tenantId)],
+);
+
+/** A billing run (many invoices made, issued and sent together) or a schedule of accounts sent to the factor. */
+export const invoiceBatches = pgTable(
+  "invoice_batches",
+  {
+    id: id(),
+    tenantId: tenantId(),
+    kind: text("kind").notNull().default("billing"), // billing | factor_schedule
+    number: integer("number").notNull(),
+    invoiceIds: text("invoice_ids").array().notNull().default([]),
+    totalCents: integer("total_cents").notNull().default(0),
+    currency: text("currency").notNull().default("USD"),
+    sentTo: text("sent_to"),
+    storageKey: text("storage_key"), // the schedule PDF
+    note: text("note"),
+    ...audit(),
+  },
+  (t) => [index("invoice_batches_tenant").on(t.tenantId, t.kind), uniqueIndex("invoice_batches_tenant_kind_number").on(t.tenantId, t.kind, t.number)],
+);
+
+/** A fuel purchase for IFTA: where, how much, on which truck. Gallons in thousandths (a liter purchase is converted). */
+export const fuelPurchases = pgTable(
+  "fuel_purchases",
+  {
+    id: id(),
+    tenantId: tenantId(),
+    truckId: text("truck_id"),
+    driverId: text("driver_id"),
+    purchasedAt: timestamp("purchased_at", { withTimezone: true }).notNull(),
+    jurisdiction: text("jurisdiction").notNull(), // US state / Canadian province code, MX for Mexico
+    gallonsMilli: integer("gallons_milli").notNull(),
+    fuelType: text("fuel_type").notNull().default("diesel"), // diesel | gasoline | def (DEF is not taxable fuel)
+    amountCents: integer("amount_cents"),
+    currency: text("currency").notNull().default("USD"),
+    vendor: text("vendor"),
+    city: text("city"),
+    receiptNumber: text("receipt_number"),
+    taxPaid: boolean("tax_paid").notNull().default(true), // bought at the pump with fuel tax (bulk untaxed = false)
+    source: text("source").notNull().default("manual"), // manual | import | card
+    notes: text("notes"),
+    ...audit(),
+  },
+  (t) => [index("fuel_purchases_tenant_at").on(t.tenantId, t.purchasedAt), index("fuel_purchases_tenant_truck").on(t.tenantId, t.truckId)],
+);
+
+/** Miles by jurisdiction per truck per day: computed from GPS or the legs, or entered from a trip sheet. Miles in tenths. */
+export const iftaMiles = pgTable(
+  "ifta_miles",
+  {
+    id: id(),
+    tenantId: tenantId(),
+    quarter: text("quarter").notNull(), // 2026Q3
+    truckId: text("truck_id").notNull(),
+    date: text("date").notNull(), // YYYY-MM-DD in the company's zone
+    jurisdiction: text("jurisdiction").notNull(),
+    milesTenths: integer("miles_tenths").notNull(),
+    source: text("source").notNull(), // gps | leg_estimate | eld | trip_sheet
+    legId: text("leg_id"),
+    note: text("note"),
+    ...audit(),
+  },
+  (t) => [index("ifta_miles_tenant_quarter").on(t.tenantId, t.quarter, t.truckId)],
+);
+
+/** The quarter's fuel tax rate per jurisdiction (from the IFTA rate matrix), in ten-thousandths of a dollar per gallon. */
+export const iftaRates = pgTable(
+  "ifta_rates",
+  {
+    id: id(),
+    tenantId: tenantId(),
+    quarter: text("quarter").notNull(),
+    jurisdiction: text("jurisdiction").notNull(),
+    rateE4: integer("rate_e4").notNull(), // 0.2000 $/gal = 2000
+    surchargeE4: integer("surcharge_e4"), // a surcharge on taxable gallons (some states)
+    ...audit(),
+  },
+  (t) => [uniqueIndex("ifta_rates_tenant_quarter_j").on(t.tenantId, t.quarter, t.jurisdiction)],
 );

@@ -1,6 +1,6 @@
 import { and, eq, lt, sql } from "drizzle-orm";
 import { db, type Tx } from "@/db/client";
-import { outbox, integrations, type OutboxMeta } from "@/db/schema";
+import { outbox, integrations, documentBlobs, type OutboxMeta } from "@/db/schema";
 import { sendWhatsApp, type WaConfig } from "@/integrations/whatsapp";
 import { newId } from "./ids";
 import type { Ctx } from "./context";
@@ -22,7 +22,8 @@ export async function enqueue(ctx: Ctx, m: OutboundMessage, tx: Tx | typeof db =
   return row;
 }
 
-type Provider = { send(m: { to: string; subject: string; text: string; html?: string; from: string }): Promise<{ id: string }> };
+type Attachment = { filename: string; content: string }; // base64
+type Provider = { send(m: { to: string; subject: string; text: string; html?: string; from: string; cc?: string[]; attachments?: Attachment[] }): Promise<{ id: string }> };
 
 async function resendFor(tenantId: string): Promise<{ provider: Provider; from: string } | null> {
   const [row] = await db.select().from(integrations).where(and(eq(integrations.tenantId, tenantId), eq(integrations.provider, "resend"))).limit(1);
@@ -36,7 +37,7 @@ async function resendFor(tenantId: string): Promise<{ provider: Provider; from: 
         const res = await fetch("https://api.resend.com/emails", {
           method: "POST",
           headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
-          body: JSON.stringify({ from: m.from, to: [m.to], subject: m.subject, text: m.text, html: m.html }),
+          body: JSON.stringify({ from: m.from, to: [m.to], subject: m.subject, text: m.text, html: m.html, ...(m.cc?.length ? { cc: m.cc } : {}), ...(m.attachments?.length ? { attachments: m.attachments } : {}) }),
         });
         if (!res.ok) throw new Error(`resend ${res.status}: ${(await res.text()).slice(0, 300)}`);
         return (await res.json()) as { id: string };
@@ -93,7 +94,12 @@ export async function deliverQueued(limit = 25) {
         logged++;
         continue;
       }
-      const { id } = await r.provider.send({ to: m.to, subject: m.subject ?? "", text: m.body, html: m.html ?? undefined, from: r.from });
+      const attachments: Attachment[] = [];
+      for (const a of m.meta?.attachments ?? []) {
+        const [b] = await db.select({ bytes: documentBlobs.bytes }).from(documentBlobs).where(and(eq(documentBlobs.tenantId, m.tenantId), eq(documentBlobs.id, a.storageKey.replace(/^blob:/, "")))).limit(1);
+        if (b) attachments.push({ filename: a.fileName, content: Buffer.from(b.bytes).toString("base64") });
+      }
+      const { id } = await r.provider.send({ to: m.to, subject: m.subject ?? "", text: m.body, html: m.html ?? undefined, from: r.from, cc: m.meta?.cc, attachments });
       await db.update(outbox).set({ state: "sent", providerId: id, sentAt: new Date(), attempts: sql`${outbox.attempts} + 1` }).where(eq(outbox.id, m.id));
       sent++;
     } catch (e) {

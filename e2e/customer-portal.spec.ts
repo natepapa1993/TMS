@@ -72,9 +72,12 @@ test("customer's day: one link, a load tracked to delivered, the POD and the inv
 
   // we run it; the customer sees delivered, then the POD, then the invoice
   await walkToDelivered(page, o1);
-  await phone.reload();
-  await phone.locator(".stage-tab", { hasText: "Delivered" }).click();
-  await expect(phone.getByTestId("load-card").filter({ hasText: o1 })).toContainText("Delivered");
+  await phone.reload({ waitUntil: "networkidle" });
+  // the tab can be clicked before the page hydrates: click until the delivered load shows
+  await expect(async () => {
+    await phone.locator(".stage-tab", { hasText: "Delivered" }).click();
+    await expect(phone.getByTestId("load-card").filter({ hasText: o1 })).toContainText("Delivered", { timeout: 2000 });
+  }).toPass({ timeout: 15_000 });
   await expect(phone.getByTestId("load-card").filter({ hasText: o1 }).locator("a:has-text('Proof of delivery')")).toHaveCount(0);
   await page.goto("/billing");
   await page.locator("tr", { hasText: o1 }).locator("button.pill-red:has-text('POD')").click();

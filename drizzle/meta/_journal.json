@@ -183,6 +183,20 @@
       "when": 1790529371286,
       "tag": "0025_customer_rates_fuel",
       "breakpoints": true
+    },
+    {
+      "idx": 26,
+      "version": "7",
+      "when": 1790530669762,
+      "tag": "0026_batch_invoicing",
+      "breakpoints": true
+    },
+    {
+      "idx": 27,
+      "version": "7",
+      "when": 1790531734432,
+      "tag": "0027_ifta",
+      "breakpoints": true
     }
   ]
 }

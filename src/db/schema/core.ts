@@ -100,6 +100,12 @@ export const billingEntities = pgTable(
     nextInvoiceNumber: integer("next_invoice_number").notNull().default(1),
     isDefault: boolean("is_default").notNull().default(false),
     terms: text("terms"),
+    // factoring: invoices assigned to a factor carry its remit-to and the notice of assignment, and go to it
+    factorName: text("factor_name"),
+    factorEmail: text("factor_email"),
+    factorRemitTo: jsonb("factor_remit_to").$type<Address>(),
+    factorAll: boolean("factor_all").notNull().default(false), // every customer's invoices go to the factor unless the customer says otherwise
+    factorNotice: text("factor_notice"), // the notice-of-assignment wording on the invoice
     ...audit(),
   },
   (t) => [index("billing_entities_tenant").on(t.tenantId)],
@@ -175,6 +181,11 @@ export const customers = pgTable(
     detentionRateCents: integer("detention_rate_cents"), // per hour; blank = 75.00
     reminderDays: jsonb("reminder_days").$type<number[]>(), // days past due; blank = [3,10,20]; [] = opted out
     qbName: text("qb_name"), // QuickBooks customer name; blank = name
+    invoiceMode: text("invoice_mode").notNull().default("per_load"), // per_load | summary (one invoice for every load billed together)
+    invoiceDelivery: text("invoice_delivery").notNull().default("auto"), // auto | email | factor | edi | portal | mail
+    invoiceCc: text("invoice_cc"), // more addresses, comma separated
+    invoiceDocs: jsonb("invoice_docs").$type<string[]>(), // documents sent with the invoice; blank = the docs required before invoicing
+    portalUrl: text("portal_url"), // where invoices are uploaded, for portal customers
     mxBrokerId: text("mx_broker_id"),
     usBrokerId: text("us_broker_id"),
     knowledgeMd: text("knowledge_md"),

@@ -147,7 +147,7 @@ test("billing day: charges, docs gate, invoice to paid, AR, carrier three-way wi
   await expect(page.getByRole("status")).toContainText("Issued");
   await expect(page.locator("main")).toContainText("247-000001");
   await expect(page.locator("main")).toContainText("$1,850.00");
-  await page.click("button:has-text('Send to customer')");
+  await page.click("button:has-text('Send invoice')");
   await expect(page.getByRole("dialog").locator("input[type=email]")).toHaveValue("ap@rxo.test");
   await page.getByRole("dialog").locator("button:has-text('Send')").click();
   await expect(page.getByRole("status")).toContainText("Sent");

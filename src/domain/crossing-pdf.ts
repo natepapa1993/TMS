@@ -20,15 +20,15 @@ export async function buildPacketPdf(input: { title: string; parts: PacketPart[]
   });
   for (const p of input.parts) {
     if (p.mimeType === "application/pdf") {
-      let src: PDFDocument;
+      let pages;
       try {
-        src = await PDFDocument.load(p.bytes, { ignoreEncryption: true });
+        const src = await PDFDocument.load(p.bytes, { ignoreEncryption: true });
+        pages = await out.copyPages(src, src.getPageIndices());
       } catch {
         const page = out.addPage([612, 792]);
         page.drawText(pdfText(`${p.name}: file could not be read as a PDF`), { x: 54, y: 720, size: 12, font: body, color: rgb(0.7, 0.1, 0.1) });
         continue;
       }
-      const pages = await out.copyPages(src, src.getPageIndices());
       for (const pg of pages) out.addPage(pg);
     } else if (p.mimeType === "image/jpeg" || p.mimeType === "image/png") {
       const img = p.mimeType === "image/jpeg" ? await out.embedJpg(p.bytes) : await out.embedPng(p.bytes);

@@ -317,9 +317,27 @@ export async function issueInvoice(ctx: Ctx, invoiceId: string, opts: { issuedAt
   if (inv.currency === "MXN" && !opts.exchangeRate) throw new ValidationError("an exchange rate is required for a MXN invoice", "exchangeRate");
   const stops = inv.orderIds.length === 1 ? await db.select().from(s.stops).where(eq(s.stops.orderId, inv.orderIds[0])).orderBy(s.stops.seq) : [];
   const refs: Record<string, string> = {};
-  for (const o of orders) for (const [k, v] of Object.entries(o.refs)) if (v) refs[orders.length > 1 ? `${o.orderNumber} ${k}` : k] = v;
+  if (orders.length === 1) for (const [k, v] of Object.entries(orders[0].refs)) if (v) refs[k] = v;
+  // a summary invoice: one row per load with its references, lane and dates
+  let loads: InvoiceSnapshot["loads"];
+  if (orders.length > 1) {
+    const allStops = await db.select().from(s.stops).where(inArray(s.stops.orderId, orders.map((o) => o.id))).orderBy(s.stops.seq);
+    const place = (st?: typeof allStops[number]) => (st ? [st.address?.city || st.name, st.address?.state].filter(Boolean).join(", ") : "");
+    loads = [...orders]
+      .sort((p, q) => p.orderNumber.localeCompare(q.orderNumber))
+      .map((o) => {
+        const st = allStops.filter((x) => x.orderId === o.id);
+        const first = st.find((x) => x.type === "pickup") ?? st[0];
+        const last = [...st].reverse().find((x) => x.type === "delivery") ?? st[st.length - 1];
+        return { orderNumber: o.orderNumber, refs: Object.values(o.refs).filter(Boolean).join(" / "), from: place(first), to: place(last), pickedUp: first?.departedAt?.toISOString().slice(0, 10) ?? null, delivered: (last?.arrivedAt ?? o.deliveredAt)?.toISOString().slice(0, 10) ?? null, amountCents: lines.filter((l) => l.orderId === o.id).reduce((a, l) => a + l.amountCents, 0) };
+      });
+  }
+  // factored: the factor's remit-to and the notice of assignment go on the invoice
+  const { deliveryForInvoice } = await import("./invoicing");
+  const factored = entity.factorName ? (await deliveryForInvoice(ctx, inv.customerId, entity.id)).method === "factor" : false;
+  const remitTo = factored && entity.factorRemitTo ? (entity.factorRemitTo as Record<string, string | undefined>) : ((entity.remitTo as Record<string, string | undefined>) ?? null);
   const snapshot: InvoiceSnapshot = {
-    entity: { legalName: entity.legalName, dba: entity.dba, taxId: entity.taxId, remitTo: (entity.remitTo as Record<string, string | undefined>) ?? null, mc: entity.mcNumber, dot: entity.dotNumber },
+    entity: { legalName: entity.legalName, dba: entity.dba, taxId: entity.taxId, remitTo, mc: entity.mcNumber, dot: entity.dotNumber },
     billTo: { name: customer.name, email: customer.billingEmail, kind: customer.kind },
     refs,
     stops: stops.map((st) => ({ seq: st.seq, type: st.type, name: st.name, city: st.address?.city ?? null, state: st.address?.state ?? null, country: st.country, departedAt: st.departedAt?.toISOString() ?? null, arrivedAt: st.arrivedAt?.toISOString() ?? null })),
@@ -327,6 +345,8 @@ export async function issueInvoice(ctx: Ctx, invoiceId: string, opts: { issuedAt
     terms: `Net ${inv.termsDays}`,
     currency: inv.currency,
     exchangeRate: opts.exchangeRate ?? null,
+    ...(loads ? { loads } : {}),
+    factor: factored ? { name: entity.factorName!, notice: entity.factorNotice?.trim() || `This invoice has been assigned to and must be paid only to ${entity.factorName}. Payment to anyone else does not discharge the debt.` } : null,
   };
   const subtotal = lines.reduce((a, l) => a + l.amountCents, 0);
   const dueAt = new Date(issuedAt.getTime() + inv.termsDays * 86400_000);
@@ -337,7 +357,7 @@ export async function issueInvoice(ctx: Ctx, invoiceId: string, opts: { issuedAt
     await tx.update(s.billingEntities).set({ nextInvoiceNumber: ent.n + 1 }).where(eq(s.billingEntities.id, entity.id));
     const pdf = await buildInvoicePdf({ number, issuedAt, dueAt, snapshot, subtotalCents: subtotal, totalCents: subtotal });
     const [blob] = await tx.insert(s.documentBlobs).values({ id: newId(), tenantId: ctx.tenantId, sha256: createHash("sha256").update(pdf).digest("hex"), mimeType: "application/pdf", sizeBytes: pdf.length, bytes: Buffer.from(pdf) }).returning({ id: s.documentBlobs.id });
-    const [after] = await tx.update(s.invoices).set({ state: "issued", number, issuedAt, dueAt, subtotalCents: subtotal, totalCents: subtotal, snapshot, exchangeRate: opts.exchangeRate ? Math.round(opts.exchangeRate * 10000) : null, pdfStorageKey: `blob:${blob.id}`, updatedAt: new Date(), updatedBy: ctx.userId }).where(eq(s.invoices.id, inv.id)).returning();
+    const [after] = await tx.update(s.invoices).set({ state: "issued", number, issuedAt, dueAt, subtotalCents: subtotal, totalCents: subtotal, snapshot, factored, exchangeRate: opts.exchangeRate ? Math.round(opts.exchangeRate * 10000) : null, pdfStorageKey: `blob:${blob.id}`, updatedAt: new Date(), updatedBy: ctx.userId }).where(eq(s.invoices.id, inv.id)).returning();
     for (const oid of inv.orderIds) {
       const [o] = await tx.select().from(s.orders).where(eq(s.orders.id, oid)).limit(1);
       if (o && o.state !== "invoiced") {
@@ -358,20 +378,10 @@ export async function issueInvoice(ctx: Ctx, invoiceId: string, opts: { issuedAt
   return issued;
 }
 
+/** Email the invoice with its documents (the customer's billing email, or `to`). Other routes: invoicing.deliverInvoice. */
 export async function sendInvoice(ctx: Ctx, invoiceId: string, to?: string | null) {
-  assertCtx(ctx);
-  requirePermission(ctx, "billing.issue");
-  const { invoice: inv, customer, entity } = await invoiceById(ctx, invoiceId);
-  if (!["issued", "sent", "partially_paid"].includes(inv.state)) throw new TransitionError("order", inv.state, "sent", "issue the invoice first");
-  const addr = to ?? customer?.billingEmail ?? null;
-  if (!addr) throw new ValidationError(`${customer?.name ?? "customer"} has no billing email`, "to");
-  const link = publicUrl(`/i/${inv.token}`);
-  const body = [`${customer?.name},`, ``, `Please find invoice ${inv.number} from ${entity?.legalName} for ${(inv.totalCents / 100).toLocaleString("en-US", { style: "currency", currency: inv.currency })}, due ${inv.dueAt?.toISOString().slice(0, 10)}.`, ``, `Download the PDF: ${link}`, ``, `Reference: ${inv.number}`].join("\n");
-  await enqueue(ctx, { channel: "email", to: addr, subject: `Invoice ${inv.number} · ${entity?.dba || entity?.legalName}`, body, subjectKind: "invoice", subjectId: inv.id });
-  await deliverQueued().catch(() => null);
-  const [after] = await db.update(s.invoices).set({ state: inv.state === "issued" ? "sent" : inv.state, sentAt: new Date(), sentTo: addr, updatedAt: new Date(), updatedBy: ctx.userId }).where(eq(s.invoices.id, inv.id)).returning();
-  await writeAudit(db, ctx, "invoice", inv.id, "transition", { state: { from: inv.state, to: after.state } }, `sent to ${addr}`);
-  return after;
+  const { deliverInvoice } = await import("./invoicing");
+  return deliverInvoice(ctx, invoiceId, { method: "email", to: to ?? null });
 }
 
 export async function invoiceByToken(token: string) {

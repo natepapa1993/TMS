@@ -7,6 +7,7 @@ import { useRouter } from "next/navigation";
 import { Confirm, Modal, Pill, Toast, useToast } from "@/components/ui";
 import { formatCents } from "@/data/fields";
 import { createInvoiceAction, acceptMismatchAction, uploadOrderDocAction } from "./actions";
+import { BillingRun } from "./run";
 
 type Row = { order: { id: string; orderNumber: string; state: string; currency: string; deliveredAt: string | null }; customerName: string | null; entityName: string | null; chargesCents: number; rateConCents: number | null; mismatch: boolean; requiredDocs: { code: string; present: boolean }[]; requiredRefs: { key: string; present: boolean }[]; docsComplete: boolean; ageDays: number; invoiceId: string | null; paperSays: string | null };
 
@@ -17,6 +18,7 @@ export function Queue({ rows, role }: { rows: Row[]; role: string }) {
   const [mismatchFor, setMismatchFor] = useState<Row | null>(null);
   const [uploadFor, setUploadFor] = useState<{ orderId: string; code: string } | null>(null);
   const [pending, start] = useTransition();
+  const [runFor, setRunFor] = useState<string[] | null>(null);
   const canBill = ["owner", "billing"].includes(role);
   const eligible = rows.filter((r) => r.docsComplete && !r.mismatch && !r.invoiceId);
   const run = (label: string, fn: () => Promise<{ ok: boolean; error?: string; data?: unknown }>) =>
@@ -31,8 +33,8 @@ export function Queue({ rows, role }: { rows: Row[]; role: string }) {
     <>
       {canBill && (
         <div className="flex items-center gap-2 mb-3">
-          <button className="btn btn-primary" disabled={!sel.length || pending} onClick={() => start(async () => { let made = 0; const skipped: string[] = []; for (const id of sel) { const r = await createInvoiceAction([id]); if (r.ok) made++; else skipped.push(`${rows.find((x) => x.order.id === id)?.order.orderNumber}: ${r.error}`); } setSel([]); if (skipped.length) t.err(`${made} invoice(s) created; skipped ${skipped.join(" · ")}`); else t.ok(`${made} invoice(s) created`); router.refresh(); })}>
-            Create invoices ({sel.length})
+          <button className="btn btn-primary" disabled={!sel.length || pending} onClick={() => setRunFor(sel)}>
+            Bill selected ({sel.length})
           </button>
           <button className="btn btn-ghost btn-sm" onClick={() => setSel(eligible.map((r) => r.order.id))}>
             Select all eligible ({eligible.length})
@@ -126,6 +128,17 @@ export function Queue({ rows, role }: { rows: Row[]; role: string }) {
       <Confirm open={!!mismatchFor} onClose={() => setMismatchFor(null)} title={`Charges ${formatCents(mismatchFor?.chargesCents ?? 0)} vs rate con ${formatCents(mismatchFor?.rateConCents ?? 0)}`} body="Accept ours only with the customer's approval on file (email, revised rate con). Or open the order and fix the charges." needReason="Why the difference is billable" confirmLabel="Accept our charges" onConfirm={(note) => { const r = mismatchFor!; setMismatchFor(null); run("Accepted — the note is on the order", () => acceptMismatchAction(r.order.id, note)); }} />
       {uploadFor && (
         <UploadDoc orderId={uploadFor.orderId} code={uploadFor.code} onClose={() => setUploadFor(null)} onDone={() => { setUploadFor(null); t.ok("Uploaded"); router.refresh(); }} />
+      )}
+      {runFor && (
+        <BillingRun
+          orderIds={runFor}
+          onClose={() => setRunFor(null)}
+          onDone={() => {
+            setRunFor(null);
+            setSel([]);
+            router.refresh();
+          }}
+        />
       )}
       <Toast message={t.toast?.message ?? null} tone={t.toast?.tone} onDone={t.clear} />
     </>

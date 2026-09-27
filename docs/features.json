@@ -617,10 +617,13 @@
     },
     {
       "id": "F-21.4",
-      "name": "Batch and summary invoicing; invoice delivery by email / factor / EDI / portal",
+      "name": "Billing runs (preview, create, issue and send many loads at once), summary invoices per customer, invoice + documents packet by email with CC, factoring (remit-to, notice of assignment, schedule of accounts to the factor), EDI 210, portal and mail recorded",
       "milestone": "M21",
-      "status": "planned",
-      "tests": []
+      "status": "done",
+      "tests": [
+        "src/domain/invoicing.test.ts",
+        "e2e/invoicing.spec.ts"
+      ]
     },
     {
       "id": "F-21.5",

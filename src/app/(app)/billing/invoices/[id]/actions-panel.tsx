@@ -4,16 +4,16 @@ import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Confirm, Modal, Toast, useToast } from "@/components/ui";
 import { formatCents } from "@/data/fields";
-import { issueInvoiceAction, sendInvoiceAction, receiptAction, voidInvoiceAction, creditMemoAction, disputeInvoiceAction, promiseToPayAction } from "../../actions";
+import { issueInvoiceAction, deliverInvoiceAction, receiptAction, voidInvoiceAction, creditMemoAction, disputeInvoiceAction, promiseToPayAction } from "../../actions";
 
-type Inv = { id: string; state: string; currency: string; openCents: number; billingEmail: string | null; promiseToPayAt: string | null; payWhenPaid: boolean; number: string | null };
+type Inv = { id: string; state: string; currency: string; openCents: number; billingEmail: string | null; promiseToPayAt: string | null; payWhenPaid: boolean; number: string | null; method: string; portalUrl: string | null; factorName: string | null; factorEmail: string | null };
 
 export function InvoiceActions({ inv, role }: { inv: Inv; role: string }) {
   const router = useRouter();
   const t = useToast();
   const [pending, start] = useTransition();
   const [popup, setPopup] = useState<null | "receipt" | "credit" | "void" | "dispute" | "send" | "issue">(null);
-  const [f, setF] = useState({ amount: "", receivedAt: new Date().toISOString().slice(0, 10), method: "ach", reference: "", note: "", to: inv.billingEmail ?? "", rate: "", ptp: inv.promiseToPayAt?.slice(0, 10) ?? "" });
+  const [f, setF] = useState({ amount: "", receivedAt: new Date().toISOString().slice(0, 10), method: "ach", reference: "", note: "", to: inv.billingEmail ?? "", rate: "", dmethod: inv.method, ptp: inv.promiseToPayAt?.slice(0, 10) ?? "" });
   const can = ["owner", "billing"].includes(role);
   const run = (label: string, fn: () => Promise<{ ok: boolean; error?: string }>) =>
     start(async () => {
@@ -38,7 +38,7 @@ export function InvoiceActions({ inv, role }: { inv: Inv; role: string }) {
       )}
       {["issued", "sent", "partially_paid"].includes(s) && (
         <button className="btn btn-primary w-full justify-center" onClick={() => setPopup("send")}>
-          {s === "issued" ? "Send to customer" : "Resend"}
+          {s === "issued" ? "Send invoice" : "Send again"}
         </button>
       )}
       {["issued", "sent", "partially_paid", "disputed"].includes(s) && (
@@ -103,10 +103,72 @@ export function InvoiceActions({ inv, role }: { inv: Inv; role: string }) {
         </div>
         <div className="help mt-2">Partial receipts are fine. Over-payment is refused.</div>
       </Modal>
-      <Modal open={popup === "send"} onClose={() => setPopup(null)} title="Send invoice" footer={<><button className="btn" onClick={() => setPopup(null)}>Cancel</button><button className="btn btn-primary" disabled={pending} onClick={() => run("Sent", () => sendInvoiceAction(inv.id, f.to))}>Send</button></>}>
-        <label className="label">To</label>
-        <input className="input" type="email" value={f.to} onChange={(e) => setF({ ...f, to: e.target.value })} />
-        <div className="help mt-2">Email with a link to the PDF. EDI 210 and portal upload arrive with the customer&apos;s channel settings.</div>
+      <Modal
+        open={popup === "send"}
+        onClose={() => setPopup(null)}
+        title="Send invoice"
+        footer={
+          <>
+            <button className="btn" onClick={() => setPopup(null)}>
+              Cancel
+            </button>
+            <button className="btn btn-primary" disabled={pending} onClick={() => run(f.dmethod === "portal" || f.dmethod === "mail" ? "Recorded" : "Sent", () => deliverInvoiceAction(inv.id, { method: f.dmethod, to: f.dmethod === "email" || f.dmethod === "portal" ? f.to : "", reference: f.reference }))}>
+              {f.dmethod === "portal" || f.dmethod === "mail" ? "Record" : "Send"}
+            </button>
+          </>
+        }
+      >
+        <div className="space-y-3">
+          <div>
+            <label className="label" htmlFor="d-method">
+              Send by
+            </label>
+            <select id="d-method" className="select" value={f.dmethod} onChange={(e) => setF({ ...f, dmethod: e.target.value, to: e.target.value === "portal" ? inv.portalUrl ?? "" : e.target.value === "email" ? inv.billingEmail ?? "" : f.to })}>
+              <option value="email">Email with the documents attached</option>
+              <option value="factor" disabled={!inv.factorName}>
+                Factoring company{inv.factorName ? ` (${inv.factorName})` : " — none set up"}
+              </option>
+              <option value="edi">EDI 210</option>
+              <option value="portal">Uploaded to their portal</option>
+              <option value="mail">Mailed</option>
+            </select>
+          </div>
+          {f.dmethod === "email" && (
+            <div>
+              <label className="label" htmlFor="d-to">
+                To
+              </label>
+              <input id="d-to" className="input" type="email" value={f.to} onChange={(e) => setF({ ...f, to: e.target.value })} />
+              <div className="help">The invoice and its POD / BOL in one PDF, plus a link to download it. The customer&apos;s CC addresses are copied.</div>
+            </div>
+          )}
+          {f.dmethod === "factor" && <div className="help">Goes to {inv.factorEmail ?? "the factor"} on a schedule of accounts with its documents. To send several together, use Invoices → To the factor.</div>}
+          {f.dmethod === "edi" && <div className="help">Sends the 210 to the customer&apos;s EDI partner.</div>}
+          {(f.dmethod === "portal" || f.dmethod === "mail") && (
+            <>
+              {f.dmethod === "portal" && (
+                <div>
+                  <label className="label" htmlFor="d-to">
+                    Portal
+                  </label>
+                  <input id="d-to" className="input" value={f.to} onChange={(e) => setF({ ...f, to: e.target.value })} placeholder="https://" />
+                  {inv.portalUrl && (
+                    <a className="help text-teal" href={inv.portalUrl} target="_blank" rel="noreferrer">
+                      Open their portal
+                    </a>
+                  )}
+                </div>
+              )}
+              <div>
+                <label className="label" htmlFor="d-ref">
+                  {f.dmethod === "portal" ? "Portal confirmation #" : "Tracking # or note"}
+                </label>
+                <input id="d-ref" className="input" value={f.reference} onChange={(e) => setF({ ...f, reference: e.target.value })} />
+              </div>
+              <div className="help">Download the packet (invoice + documents) from the top of the page, then record it here.</div>
+            </>
+          )}
+        </div>
       </Modal>
       <Modal open={popup === "issue"} onClose={() => setPopup(null)} title="Issue MXN invoice" footer={<><button className="btn" onClick={() => setPopup(null)}>Cancel</button><button className="btn btn-primary" disabled={pending || !f.rate} onClick={() => run("Issued", () => issueInvoiceAction(inv.id, f.rate))}>Issue</button></>}>
         <label className="label">Exchange rate (MXN per USD) at issue</label>

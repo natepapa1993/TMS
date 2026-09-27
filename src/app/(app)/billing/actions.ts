@@ -229,3 +229,32 @@ export async function setFuelPriceAction(date: string, price: string) {
   if (r.ok) revalidatePath("/billing/fuel");
   return r;
 }
+
+// ---------- billing runs and delivery ----------
+
+export async function planBatchAction(orderIds: string[]) {
+  const I = await import("@/domain/invoicing");
+  return act((ctx) => I.planBatch(ctx, orderIds));
+}
+export async function runBatchAction(orderIds: string[], v: { issue: boolean; send: boolean; exchangeRate?: string }) {
+  const I = await import("@/domain/invoicing");
+  const r = await act((ctx) => {
+    const rate = v.exchangeRate?.trim() ? Number(v.exchangeRate) : null;
+    if (rate != null && (!Number.isFinite(rate) || rate <= 0)) throw Object.assign(new Error("Exchange rate must be a number"), { name: "ValidationError", field: "exchangeRate" });
+    return I.runBatch(ctx, orderIds, { issue: v.issue, send: v.send, exchangeRate: rate });
+  });
+  if (r.ok) touch();
+  return r;
+}
+export async function deliverInvoiceAction(id: string, v: { method: string; to: string; reference: string }) {
+  const I = await import("@/domain/invoicing");
+  const r = await act((ctx) => I.deliverInvoice(ctx, id, { method: v.method as never, to: v.to || null, reference: v.reference || null }));
+  if (r.ok) touch();
+  return r;
+}
+export async function factorScheduleAction(ids: string[]) {
+  const I = await import("@/domain/invoicing");
+  const r = await act((ctx) => I.sendFactorSchedule(ctx, ids));
+  if (r.ok) touch();
+  return r;
+}
