@@ -7,7 +7,7 @@ import { newId } from "@/lib/ids";
 import { assertCtx, requirePermission, type Ctx } from "@/lib/context";
 import { writeAudit, diff } from "@/lib/audit";
 import { newToken, publicUrl } from "@/lib/tokens";
-import { enqueue, deliverQueued } from "@/lib/outbox";
+import { enqueue } from "@/lib/outbox";
 import { NotFoundError, ValidationError } from "./orders";
 import { assertOrderTransition, TransitionError } from "./states";
 import { buildInvoicePdf, buildStatementPdf } from "./billing-pdf";

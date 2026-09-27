@@ -258,3 +258,69 @@ export async function factorScheduleAction(ids: string[]) {
   if (r.ok) touch();
   return r;
 }
+
+// ---------- IFTA ----------
+
+const iftaTouch = () => revalidatePath("/billing/ifta");
+export async function computeMilesAction(quarter: string) {
+  const I = await import("@/domain/ifta");
+  const r = await act((ctx) => I.computeMiles(ctx, quarter));
+  if (r.ok) iftaTouch();
+  return r;
+}
+export async function addFuelPurchaseAction(v: { truckId: string; date: string; jurisdiction: string; country: string; qty: string; unit: "gal" | "l"; amount: string; vendor: string; city: string; receipt: string; fuelType: string }) {
+  const I = await import("@/domain/ifta");
+  const r = await act((ctx) => {
+    const q = Number(v.qty.replace(/[,\s]/g, ""));
+    const amt = v.amount.trim() ? Math.round(Number(v.amount.replace(/[$,\s]/g, "")) * 100) : null;
+    if (amt != null && !Number.isFinite(amt)) throw Object.assign(new Error("Amount must be a number"), { name: "ValidationError", field: "amount" });
+    return I.addFuelPurchase(ctx, { truckId: v.truckId || null, purchasedAt: v.date, jurisdiction: v.jurisdiction, country: v.country || null, gallons: v.unit === "gal" ? q : null, liters: v.unit === "l" ? q : null, amountCents: amt, vendor: v.vendor, city: v.city, receiptNumber: v.receipt, fuelType: v.fuelType });
+  });
+  if (r.ok) iftaTouch();
+  return r;
+}
+export async function deleteFuelPurchaseAction(id: string) {
+  const I = await import("@/domain/ifta");
+  const r = await act((ctx) => I.deleteFuelPurchase(ctx, id));
+  if (r.ok) iftaTouch();
+  return r;
+}
+export async function importFuelAction(form: FormData) {
+  const f = form.get("file");
+  if (!(f instanceof File)) return { ok: false as const, error: "Choose the fuel card export" };
+  const I = await import("@/domain/ifta");
+  const bytes = Buffer.from(await f.arrayBuffer());
+  const r = await act((ctx) => I.importFuelPurchases(ctx, { fileName: f.name, bytes }));
+  if (r.ok) iftaTouch();
+  return r;
+}
+export async function addTripMilesAction(v: { truckId: string; date: string; jurisdiction: string; miles: string; note: string }) {
+  const I = await import("@/domain/ifta");
+  const r = await act((ctx) => I.addTripMiles(ctx, { truckId: v.truckId, date: v.date, jurisdiction: v.jurisdiction, miles: Number(v.miles.replace(/[,\s]/g, "")), note: v.note }));
+  if (r.ok) iftaTouch();
+  return r;
+}
+export async function deleteTripMilesAction(id: string) {
+  const I = await import("@/domain/ifta");
+  const r = await act((ctx) => I.deleteTripMiles(ctx, id));
+  if (r.ok) iftaTouch();
+  return r;
+}
+export async function setIftaRatesAction(quarter: string, rows: { jurisdiction: string; rate: string; surcharge: string }[]) {
+  const I = await import("@/domain/ifta");
+  const r = await act((ctx) =>
+    I.setRates(
+      ctx,
+      quarter,
+      rows.map((x) => ({ jurisdiction: x.jurisdiction, rate: x.rate.trim() ? Number(x.rate.replace(/[$\s]/g, "")) : null, surcharge: x.surcharge.trim() ? Number(x.surcharge.replace(/[$\s]/g, "")) : null })),
+    ),
+  );
+  if (r.ok) iftaTouch();
+  return r;
+}
+export async function copyIftaRatesAction(quarter: string) {
+  const I = await import("@/domain/ifta");
+  const r = await act((ctx) => I.copyRatesFrom(ctx, quarter, I.previousQuarter(quarter)));
+  if (r.ok) iftaTouch();
+  return r;
+}

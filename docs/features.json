@@ -627,10 +627,13 @@
     },
     {
       "id": "F-21.5",
-      "name": "IFTA quarterly report from ELD miles and fuel purchases",
+      "name": "IFTA quarterly return: miles by state/province from GPS (ELD or driver app) or each load's route split at borders, trip sheets; fuel entered or imported from any fuel card export (DEF excluded); quarterly rates with surcharges; fleet MPG, net taxable gallons, tax/credit per jurisdiction; per-truck MPG checks; CSV",
       "milestone": "M21",
-      "status": "planned",
-      "tests": []
+      "status": "done",
+      "tests": [
+        "src/domain/ifta.test.ts",
+        "e2e/ifta.spec.ts"
+      ]
     },
     {
       "id": "F-22.1",

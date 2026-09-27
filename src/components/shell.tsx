@@ -4,7 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
 import { Mark } from "./mark";
-import { ArrowLeftRight, BarChart3, Building2, Cable, CalendarRange, FileText, HandCoins, Handshake, Landmark, LayoutGrid, Map as MapIcon, MapPin, MessageSquare, Package, Plug, Receipt, Route, Settings, ShieldCheck, SlidersHorizontal, Fuel, TriangleAlert, Truck, Users, Wallet, type LucideIcon } from "lucide-react";
+import { ArrowLeftRight, BarChart3, Building2, Cable, CalendarRange, FileText, HandCoins, Handshake, Landmark, LayoutGrid, Map as MapIcon, MapPin, MessageSquare, Package, Plug, Receipt, Route, Settings, ShieldCheck, SlidersHorizontal, Fuel, Scale, TriangleAlert, Truck, Users, Wallet, type LucideIcon } from "lucide-react";
 import { logoutAction } from "@/app/(auth)/actions";
 
 type NavItem = { href: string; label: string; icon: LucideIcon; roles?: string[] };
@@ -41,6 +41,7 @@ const NAV: { section: string; items: NavItem[] }[] = [
       { href: "/billing/settlements", label: "Driver pay", icon: Wallet, roles: ["owner", "billing"] },
       { href: "/billing/pay-plans", label: "Pay plans", icon: SlidersHorizontal, roles: ["owner", "billing"] },
       { href: "/billing/fuel", label: "Fuel surcharge", icon: Fuel, roles: ["owner", "billing"] },
+      { href: "/billing/ifta", label: "IFTA", icon: Scale, roles: ["owner", "billing"] },
     ],
   },
   {

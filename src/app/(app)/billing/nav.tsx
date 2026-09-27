@@ -11,6 +11,7 @@ const TABS = [
   ["/billing/settlements", "Driver pay"],
   ["/billing/pay-plans", "Pay plans"],
   ["/billing/fuel", "Fuel surcharge"],
+  ["/billing/ifta", "IFTA"],
   ["/billing/exports", "QuickBooks"],
 ];
 
