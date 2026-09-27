@@ -67,9 +67,14 @@ export function Shell({ user, children }: { user: { name: string; role: string; 
         <div className="px-4 py-4 border-t border-white/10">
           <div className="text-[13px] font-bold truncate">{user.name}</div>
           <div className="text-[11.5px] text-slate-400">{ROLE_LABEL[user.role] ?? user.role}</div>
-          <form action={logoutAction}>
-            <button className="mt-2 text-[12px] text-slate-300 hover:text-white font-semibold">Sign out</button>
-          </form>
+          <div className="mt-2 flex gap-3 text-[12px] font-semibold">
+            <Link href="/help" className="text-slate-300 hover:text-white" onClick={() => setOpen(false)}>
+              Help
+            </Link>
+            <form action={logoutAction}>
+              <button className="text-slate-300 hover:text-white font-semibold">Sign out</button>
+            </form>
+          </div>
         </div>
       </aside>
       <main className="min-w-0">{children}</main>
