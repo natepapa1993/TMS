@@ -1,4 +1,6 @@
 import { resolveToken } from "@/lib/tokens";
+import { fmtIn, zoneAbbrev } from "@/lib/time";
+import { tenantZone } from "@/domain/company";
 import { trackingView } from "@/domain/tracking";
 import { Pill } from "@/components/ui";
 import { LEG_LABEL } from "@/domain/states";
@@ -7,7 +9,7 @@ import type { LegState } from "@/db/schema";
 export const dynamic = "force-dynamic";
 export const metadata = { title: "Tracking" };
 
-const fmt = (d: Date | string | null | undefined) => (d ? new Date(d).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit", timeZone: "America/Chicago" }) + " CT" : null);
+
 const STATE_LABEL: Record<string, string> = { draft: "Booked", booked: "Booked", dispatched: "Dispatched", in_transit: "In transit", exception: "In transit", delivered: "Delivered", ready_to_bill: "Delivered", invoiced: "Delivered", paid: "Delivered", cancelled: "Cancelled" };
 
 export default async function TrackPage({ params }: PageProps<"/track/[token]">) {
@@ -21,6 +23,8 @@ export default async function TrackPage({ params }: PageProps<"/track/[token]">)
       </div>
     );
   const v = await trackingView(t.ctx.tenantId, t.subjectId);
+  const zone = await tenantZone(t.ctx.tenantId);
+  const fmt = (d: Date | string | null | undefined) => fmtIn(d, zone);
   const doneStops = new Set(v.stops.filter((s) => s.departedAt).map((s) => s.id));
   const hereStop = v.stops.find((s) => s.arrivedAt && !s.departedAt);
   const lastTouched = [...v.stops].reverse().find((s) => s.arrivedAt || s.departedAt);
@@ -117,7 +121,7 @@ export default async function TrackPage({ params }: PageProps<"/track/[token]">)
           </ul>
         </div>
       )}
-      <div className="mt-4 text-[12px] text-faint text-center">Times shown in Central Time. Questions? Contact {v.carrier} dispatch.</div>
+      <div className="mt-4 text-[12px] text-faint text-center">Times shown in {zoneAbbrev(zone)}. Questions? Contact {v.carrier} dispatch.</div>
     </div>
   );
 }

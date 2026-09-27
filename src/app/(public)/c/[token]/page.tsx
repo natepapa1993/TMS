@@ -1,4 +1,5 @@
 import { resolveToken } from "@/lib/tokens";
+import { tenantZone } from "@/domain/company";
 import { carrierPortalView } from "@/domain/carrier-portal";
 import { CarrierPortal } from "./portal";
 
@@ -22,5 +23,5 @@ export default async function CarrierPortalPage({ params }: PageProps<"/c/[token
         <div className="h2">This link isn&apos;t valid</div>
       </div>
     );
-  return <CarrierPortal token={token} data={JSON.parse(JSON.stringify(view))} />;
+  return <CarrierPortal token={token} data={JSON.parse(JSON.stringify(view))} timeZone={await tenantZone(t.ctx.tenantId)} />;
 }

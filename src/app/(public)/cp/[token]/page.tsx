@@ -1,4 +1,5 @@
 import { resolveToken } from "@/lib/tokens";
+import { tenantZone } from "@/domain/company";
 import { customerPortalView } from "@/domain/customer-portal";
 import { CustomerPortal } from "./portal";
 
@@ -16,5 +17,5 @@ export default async function CustomerPortalPage({ params }: PageProps<"/cp/[tok
         <p className="text-muted mt-1">Ask your contact at the carrier for a new one.</p>
       </div>
     );
-  return <CustomerPortal token={token} data={JSON.parse(JSON.stringify(view))} />;
+  return <CustomerPortal token={token} data={JSON.parse(JSON.stringify(view))} timeZone={await tenantZone(t!.ctx.tenantId)} />;
 }

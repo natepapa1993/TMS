@@ -1,4 +1,6 @@
 import { and, eq, inArray, lt, desc, sql } from "drizzle-orm";
+import { fmtIn } from "@/lib/time";
+import { tenantZone } from "./company";
 import { db } from "@/db/client";
 import * as s from "@/db/schema";
 import type { TenderChannel } from "@/db/schema";
@@ -65,7 +67,8 @@ export async function sendTender(ctx: Ctx, legId: string, input: SendTenderInput
   const expiresAt = new Date(Date.now() + expiresIn * 60_000);
   const link = publicUrl(`/t/${token}`);
   const rate = (input.rateCents ?? leg.carrierRateCents) != null ? `${input.currency ?? "USD"} ${(((input.rateCents ?? leg.carrierRateCents) as number) / 100).toLocaleString("en-US", { minimumFractionDigits: 2 })}` : "rate to be confirmed";
-  const fmt = (d: Date | null | undefined) => (d ? new Date(d).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit", timeZone: "America/Chicago" }) + " CT" : null);
+  const zone = await tenantZone(ctx.tenantId);
+  const fmt = (d: Date | null | undefined) => fmtIn(d, zone);
   const place = (st?: typeof from) => (st ? `${st.name}${st.address?.city ? `, ${st.address.city}` : ""}${st.address?.state ? ` ${st.address.state}` : ""}` : "");
   const subject = `Load offer ${order.orderNumber}: ${place(from)} → ${place(toStop)} · ${rate}`;
   const body = [

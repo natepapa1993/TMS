@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useTransition } from "react";
+import { ZoneProvider, useWhen } from "@/components/zone";
 import { useRouter } from "next/navigation";
 import { Pill } from "@/components/ui";
 import { portalRequestLoadAction } from "../../actions";
@@ -13,7 +14,6 @@ type Invoice = { id: string; number: string | null; state: string; issuedAt: str
 type Data = { company: string; customer: { id: string; name: string; kind: string; termsDays: number | null }; active: Load[]; requested: Load[]; delivered: Load[]; cancelled: Load[]; invoices: Invoice[]; balance: { openCents: number; pastDueCents: number; currency: string } };
 
 const money = (c: number, cur = "USD") => `${cur === "USD" ? "$" : cur + " "}${(c / 100).toLocaleString("en-US", { minimumFractionDigits: 2 })}`;
-const when = (d: string | null | undefined) => (d ? new Date(d).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit", timeZone: "America/Chicago" }) + " CT" : null);
 const day = (d: string | null | undefined) => (d ? new Date(d).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }) : "—");
 const placeOf = (s: Stop) => `${s.name}${s.city ? ` · ${s.city}` : ""}${s.state ? `, ${s.state}` : ""}`;
 const DOC_LABEL: Record<string, string> = { POD: "Proof of delivery", BOL: "Bill of lading", RATE_CON: "Rate confirmation", carta_porte: "Carta porte", invoice: "Commercial invoice", packing_list: "Packing list" };
@@ -21,7 +21,15 @@ const TONE: Record<string, "slate" | "teal" | "amber" | "red" | "green" | "blue"
 const INV_TONE: Record<string, "slate" | "teal" | "amber" | "red" | "green" | "blue"> = { issued: "amber", sent: "amber", partially_paid: "amber", paid: "green", closed: "green", void: "slate", disputed: "red" };
 const EQUIPMENT: [string, string][] = [["53_dry", "53' dry van"], ["53_reefer", "53' reefer"], ["48_dry", "48' dry van"], ["flatbed", "Flatbed"], ["sprinter", "Sprinter"], ["straight", "Straight truck"]];
 
-export function CustomerPortal({ token, data }: { token: string; data: Data }) {
+export function CustomerPortal({ token, data, timeZone }: { token: string; data: Data; timeZone: string }) {
+  return (
+    <ZoneProvider value={timeZone}>
+      <CustomerPortalBody token={token} data={data} />
+    </ZoneProvider>
+  );
+}
+
+function CustomerPortalBody({ token, data }: { token: string; data: Data }) {
   const [tab, setTab] = useState<"loads" | "delivered" | "invoices" | "request">(data.active.length || data.requested.length ? "loads" : data.delivered.length ? "delivered" : "request");
   const counts = { loads: data.active.length + data.requested.length, delivered: data.delivered.length, invoices: data.invoices.filter((i) => i.openCents > 0).length, request: 0 };
   return (
@@ -143,6 +151,7 @@ export function CustomerPortal({ token, data }: { token: string; data: Data }) {
 }
 
 function LoadCard({ l, token }: { l: Load; token: string }) {
+  const when = useWhen({});
   const [open, setOpen] = useState(false);
   const first = l.stops[0];
   const last = l.stops[l.stops.length - 1];

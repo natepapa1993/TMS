@@ -1,4 +1,6 @@
 import { tenderByToken } from "@/domain/tenders";
+import { fmtIn } from "@/lib/time";
+import { tenantZone } from "@/domain/company";
 import { TenderForm } from "./form";
 import { Pill } from "@/components/ui";
 
@@ -6,12 +8,14 @@ export const dynamic = "force-dynamic";
 export const metadata = { title: "Load offer" };
 
 const LEG_TYPE_LABEL: Record<string, string> = { mx: "Mexico leg", crossing: "Border crossing", us: "US leg", domestic: "Domestic", equipment_move: "Equipment move" };
-const fmt = (d: Date | null | undefined) => (d ? new Date(d).toLocaleString("en-US", { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit", timeZone: "America/Chicago" }) + " CT" : null);
+
 const place = (st: { name: string; address?: { line1?: string; city?: string; state?: string; postalCode?: string } | null } | null) => (st ? [st.name, [st.address?.line1, st.address?.city, [st.address?.state, st.address?.postalCode].filter(Boolean).join(" ")].filter(Boolean).join(", ")] : ["—", ""]);
 
 export default async function TenderPage({ params }: PageProps<"/t/[token]">) {
   const { token } = await params;
   const t = await tenderByToken(token);
+  const zone = t ? await tenantZone(t.tender.tenantId) : "America/Detroit";
+  const fmt = (d: Date | null | undefined) => fmtIn(d, zone, { weekday: "short" });
   if (!t || !t.leg || !t.order) {
     return (
       <div className="card p-6 text-center mt-10">

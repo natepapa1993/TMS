@@ -69,3 +69,24 @@ export function localToInstant(date: string, hhmm: string, timeZone: string) {
   const m = Number(hhmm.slice(2, 4)) || 0;
   return new Date(midnight.getTime() + (h * 60 + m) * 60_000);
 }
+
+/** A time in the company's zone with its abbreviation ("Sep 27, 8:24 AM EDT"): what a customer, carrier or driver reads on a public page. */
+export function fmtIn(d: Date | string | null | undefined, zone: string, opts: Intl.DateTimeFormatOptions = {}): string | null {
+  if (!d) return null;
+  const date = new Date(d);
+  if (Number.isNaN(date.getTime())) return null;
+  try {
+    return date.toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit", timeZoneName: "short", ...opts, timeZone: zone });
+  } catch {
+    return date.toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit", timeZoneName: "short", ...opts, timeZone: "America/Chicago" });
+  }
+}
+
+/** The zone's short name today ("EDT", "CST") for a footer line. */
+export function zoneAbbrev(zone: string, at = new Date()) {
+  try {
+    return new Intl.DateTimeFormat("en-US", { timeZone: zone, timeZoneName: "short" }).formatToParts(at).find((p) => p.type === "timeZoneName")?.value ?? zone;
+  } catch {
+    return zone;
+  }
+}

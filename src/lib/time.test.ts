@@ -27,3 +27,15 @@ describe("company time zone", () => {
     expect(localToInstant("2026-09-28", "1500", "America/Chicago").toISOString()).toBe("2026-09-28T20:00:00.000Z");
   });
 });
+
+describe("fmtIn / zoneAbbrev", () => {
+  it("formats in the company's zone with its abbreviation and survives a bad zone", async () => {
+    const { fmtIn, zoneAbbrev } = await import("./time");
+    const d = new Date("2026-09-27T12:24:00Z");
+    expect(fmtIn(d, "America/Detroit")).toBe("Sep 27, 8:24 AM EDT");
+    expect(fmtIn(d, "America/Monterrey")).toBe("Sep 27, 6:24 AM CST");
+    expect(fmtIn(d, "Not/AZone")).toMatch(/Sep 27, 7:24 AM CDT/);
+    expect(fmtIn(null, "America/Detroit")).toBeNull();
+    expect(zoneAbbrev("America/Detroit", d)).toBe("EDT");
+  });
+});

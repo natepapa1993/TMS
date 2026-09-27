@@ -54,3 +54,9 @@ export async function updateCompany(ctx: Ctx, values: { name?: string; timeZone?
   await writeAudit(db, ctx, "tenant", ctx.tenantId, "update", diff(before as unknown as Record<string, unknown>, after as unknown as Record<string, unknown>));
   return after;
 }
+
+/** The company's time zone by tenant id, for public pages and outbound messages that have no signed-in user. */
+export async function tenantZone(tenantId: string): Promise<string> {
+  const [t] = await db.select({ timeZone: s.tenants.timeZone }).from(s.tenants).where(eq(s.tenants.id, tenantId)).limit(1);
+  return t?.timeZone || "America/Detroit";
+}

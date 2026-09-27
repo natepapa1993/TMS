@@ -1,6 +1,7 @@
 "use client";
 
 import { useRef, useState, useTransition } from "react";
+import { ZoneProvider, useWhen } from "@/components/zone";
 import { call } from "@/lib/client-call";
 import { useRouter } from "next/navigation";
 import { Pill, Modal } from "@/components/ui";
@@ -26,11 +27,18 @@ type Data = {
 };
 
 const money = (c: number | null | undefined, cur = "USD") => (c == null ? "—" : `${cur} ${(c / 100).toLocaleString("en-US", { minimumFractionDigits: 2 })}`);
-const when = (d: string | null | undefined) => (d ? new Date(d).toLocaleString("en-US", { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit", timeZone: "America/Chicago" }) + " CT" : null);
 const place = (p: Place) => (p ? `${p.name}${p.city ? `, ${p.city}` : ""}${p.state ? ` ${p.state}` : ""}` : "—");
 const BILL_LABEL: Record<string, string> = { expected: "Send your invoice · Envía tu factura", received: "Invoice received — under review · Factura recibida", approved: "Approved for payment · Aprobada", scheduled: "Payment scheduled · Pago programado", paid: "Paid · Pagada", disputed: "Question on the invoice · Pregunta sobre la factura" };
 
-export function CarrierPortal({ token, data }: { token: string; data: Data }) {
+export function CarrierPortal({ token, data, timeZone }: { token: string; data: Data; timeZone: string }) {
+  return (
+    <ZoneProvider value={timeZone}>
+      <CarrierPortalBody token={token} data={data} />
+    </ZoneProvider>
+  );
+}
+
+function CarrierPortalBody({ token, data }: { token: string; data: Data }) {
   const router = useRouter();
   const [tab, setTab] = useState<"offers" | "loads" | "pay" | "docs">(data.offers.length ? "offers" : data.active.length ? "loads" : "loads");
   const [msg, setMsg] = useState<{ text: string; err?: boolean } | null>(null);
@@ -118,6 +126,7 @@ export function CarrierPortal({ token, data }: { token: string; data: Data }) {
 }
 
 function OfferCard({ token, o, onDone }: { token: string; o: Offer; onDone: (t: string, err?: boolean) => void }) {
+  const when = useWhen({ weekday: "short" });
   const [mode, setMode] = useState<"idle" | "accept" | "decline">("idle");
   const [f, setF] = useState({ name: "", driverName: "", driverPhone: "", unitNumber: "", trailerNumber: "", note: "" });
   const [err, setErr] = useState<string | null>(null);
@@ -194,6 +203,7 @@ function OfferCard({ token, o, onDone }: { token: string; o: Offer; onDone: (t: 
 }
 
 function LegCard({ token, l, onDone }: { token: string; l: Leg; onDone: (t: string, err?: boolean) => void }) {
+  const when = useWhen({ weekday: "short" });
   const [driver, setDriver] = useState(false);
   const [f, setF] = useState({ driverName: l.driverName ?? "", driverPhone: l.driverPhone ?? "", unitNumber: l.unitNumber ?? "", trailerNumber: l.trailerNumber ?? "", by: "" });
   const [err, setErr] = useState<string | null>(null);
