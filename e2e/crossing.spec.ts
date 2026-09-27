@@ -200,3 +200,43 @@ test("a returned crossing withdraws the packet and re-verifies; hold from the dr
   await expect(page.getByRole("status")).toContainText("Re-verifying");
   await expect(page.locator("button:has-text('Build packet')")).toBeVisible();
 });
+
+// Features: F-3.4 AI document reader through the browser — without a key the button explains; with a key the read is attempted on upload and its result shown; a person still confirms
+test("AI reader: the workbench offers Read with AI, tells you when it is not connected, and shows the read result on the document", async ({ page }) => {
+  test.setTimeout(150_000);
+  await signupFresh(page);
+  await fleet(page);
+  await page.goto("/dispatch");
+  await page.keyboard.press("n");
+  const d = page.getByRole("dialog");
+  await d.locator("select").first().selectOption({ label: "RXO (broker)" });
+  await d.getByPlaceholder("Planta Monterrey").fill("Planta Monterrey");
+  await d.getByPlaceholder("GM Arlington").fill("GM Arlington");
+  await d.getByPlaceholder("blank = TBD").fill("2850");
+  await d.locator("button:has-text('Create & book')").click();
+  await expect(page.getByRole("status")).toContainText("Order created");
+  await page.goto("/crossing");
+  await page.click(".row:has-text('26-00001')");
+  await page.waitForURL("**/crossing/**");
+  await upload(page, "Bill of lading", fx("bol"), { trailer: "10743" });
+  await page.locator("li", { hasText: "Bill of lading" }).first().click();
+  await expect(page.locator("label", { hasText: "Trailer #" }).filter({ hasText: "typed" })).toHaveCount(1);
+  await page.click("button:has-text('Read with AI')");
+  await expect(page.getByRole("status")).toContainText("AI extractor not connected");
+
+  // connect (a fake key: the read fails at the API and says so, instead of pretending)
+  await page.goto("/settings/integrations");
+  const card = page.locator(".card", { hasText: "AI document reader" });
+  await card.locator("label:has-text('Anthropic API key') + input").fill("sk-ant-not-real");
+  await card.locator("label:has-text('Enabled') input").check();
+  await card.locator("button:has-text('Save')").click();
+  await expect(page.getByRole("status")).toContainText("Saved");
+  await page.goto("/crossing");
+  await page.click(".row:has-text('26-00001')");
+  await page.waitForURL("**/crossing/**");
+  await upload(page, "Carta porte", fx("carta_porte"), {});
+  await page.locator("li", { hasText: "Carta porte" }).first().click();
+  await expect(page.locator("main")).toContainText(/failed: extractor/);
+  await expect(page.locator("button:has-text('Re-read with AI')")).toBeVisible();
+  await expect(page.locator("li", { hasText: "Carta porte" }).first()).not.toContainText("verified"); // nothing counts until a person confirms
+});

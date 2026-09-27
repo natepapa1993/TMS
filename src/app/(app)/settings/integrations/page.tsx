@@ -16,6 +16,7 @@ export default async function IntegrationsPage() {
   const motive = get("motive");
   const resend = get("resend");
   const wa = get("whatsapp");
+  const ex = get("extractor");
   const { publicUrl } = await import("@/lib/tokens");
   return (
     <div>
@@ -79,6 +80,17 @@ export default async function IntegrationsPage() {
               <div className="help mt-3">Save once to get this company&apos;s webhook URL and verify token.</div>
             )
           }
+        />
+        <IntegrationCard
+          provider="extractor"
+          title="AI document reader (Anthropic)"
+          blurb="Reads trailer, seal, folio fiscal, pedimento, weights and the rest off each crossing document as it is uploaded, with a confidence per field. A person always confirms before the values count toward the checks. Files are sent to the model for reading only; nothing is stored there."
+          enabled={!!ex?.enabled}
+          fields={[
+            { key: "apiKey", label: "Anthropic API key", secret: true, set: !!ex?.config.apiKey },
+            { key: "model", label: "Model", secret: false, set: !!ex?.config.model, value: ex?.config.model ?? "", placeholder: "claude-sonnet-4-5 (default)" },
+          ]}
+          status={ex ? { lastRunAt: ex.lastRunAt?.toISOString() ?? null, lastError: ex.lastError, lastResult: ex.lastResult } : null}
         />
         <div className="card p-4 text-[13px] text-muted">Coming with their milestones: Sylectus Virtual Fleet, DAT / Truckstop posting, NAD and Viatpro crossing documents, EDI VAN / AS2 connector.</div>
       </div>

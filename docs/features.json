@@ -224,10 +224,14 @@
     },
     {
       "id": "F-3.4",
-      "name": "AI document extractor (fields read from the PDF with confidence, human confirms)",
+      "name": "AI document reader (Anthropic): crossing document fields read on upload with a confidence per field, human confirms before anything counts, per-company key",
       "milestone": "M2.5",
-      "status": "planned",
-      "tests": []
+      "status": "done",
+      "tests": [
+        "src/integrations/extractor.test.ts",
+        "src/domain/crossing.test.ts",
+        "e2e/crossing.spec.ts"
+      ]
     },
     {
       "id": "F-6",

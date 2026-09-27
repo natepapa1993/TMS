@@ -11,7 +11,7 @@ import type { CrossingState, Requirement } from "@/db/schema";
  * cross-checks, eligibility, packet, steps (right) · timeline (bottom).
  */
 
-type Doc = { id: string; code: string | null; fileName: string; mimeType: string; status: string; version: number; source: string; extracted: Record<string, { value: unknown; confidence: number }> | null; createdAt: string };
+type Doc = { id: string; code: string | null; fileName: string; mimeType: string; status: string; version: number; source: string; extracted: Record<string, { value: unknown; confidence: number; source?: string }> | null; extractionAt: string | null; extractionNote: string | null; createdAt: string };
 type Check = { code: string; state: string; message: string | null; values: Record<string, unknown> | null; overrideReason: string | null; overrideBy: string | null };
 type Ev = { id: string; at: string; kind: string; fromState: string | null; toState: string | null; source: string; verified: boolean; userId: string | null; note: string | null };
 type Data = {
@@ -187,7 +187,7 @@ export function CrossingWorkbench({ data }: { data: Data }) {
               </div>
               <div className="grid grid-cols-[1fr_260px] flex-1 min-h-0">
                 <iframe title="document" src={`/api/files/${selDoc.id}`} className="w-full h-[520px] border-r border-line bg-ground" />
-                <FieldsPanel key={selDoc.id} doc={selDoc} fields={data.docFields[selDoc.code ?? ""] ?? []} canEdit={canEdit && beforePacket} onSave={(fields, confirm) => run(confirm ? "Confirmed — checks re-run" : "Saved — checks re-run", () => A.setFieldsAction(c.id, selDoc.id, fields, confirm))} />
+                <FieldsPanel key={`${selDoc.id}:${selDoc.extractionAt ?? ""}`} doc={selDoc} fields={data.docFields[selDoc.code ?? ""] ?? []} canEdit={canEdit && beforePacket} onSave={(fields, confirm) => run(confirm ? "Confirmed — checks re-run" : "Saved — checks re-run", () => A.setFieldsAction(c.id, selDoc.id, fields, confirm))} onExtract={() => run("AI read the document — check the values and confirm", async () => { const r = await A.extractAction(c.id, selDoc.id); if (r.ok && !r.data.ran) return { ok: false, error: r.data.reason }; return r; })} />
               </div>
             </>
           ) : (
@@ -414,7 +414,7 @@ export function CrossingWorkbench({ data }: { data: Data }) {
 
 const rank = (s: string) => ({ fail: 0, overridden: 1, skipped: 2, pending: 2, pass: 3 })[s] ?? 4;
 
-function FieldsPanel({ doc, fields, canEdit, onSave }: { doc: Doc; fields: { key: string; label: string; kind?: string }[]; canEdit: boolean; onSave: (fields: Record<string, string>, confirm: boolean) => void }) {
+function FieldsPanel({ doc, fields, canEdit, onSave, onExtract }: { doc: Doc; fields: { key: string; label: string; kind?: string }[]; canEdit: boolean; onSave: (fields: Record<string, string>, confirm: boolean) => void; onExtract: () => void }) {
   const [vals, setVals] = useState<Record<string, string>>(Object.fromEntries(fields.map((f) => [f.key, doc.extracted?.[f.key]?.value != null ? String(doc.extracted[f.key].value) : ""])));
   const dirty = fields.some((f) => vals[f.key] !== (doc.extracted?.[f.key]?.value != null ? String(doc.extracted[f.key].value) : ""));
   return (
@@ -431,7 +431,8 @@ function FieldsPanel({ doc, fields, canEdit, onSave }: { doc: Doc; fields: { key
             <div key={f.key}>
               <label className="label flex justify-between">
                 {f.label}
-                {conf != null && conf < 0.8 && <span className="text-amber normal-case">check</span>}
+                {doc.extracted?.[f.key]?.source === "ai" && conf != null && <span className={`normal-case font-semibold ${conf < 0.8 ? "text-amber" : "text-teal"}`}>AI {Math.round(conf * 100)}%{conf < 0.8 ? " · check" : ""}</span>}
+                {doc.extracted?.[f.key]?.source !== "ai" && conf != null && conf >= 1 && <span className="normal-case text-faint">typed</span>}
               </label>
               <input className={`input h-8 text-[13px] ${f.kind === "number" ? "mono" : ""}`} type={f.kind === "datetime" ? "datetime-local" : "text"} value={f.kind === "datetime" && vals[f.key] ? vals[f.key].slice(0, 16) : vals[f.key]} onChange={(e) => setVals({ ...vals, [f.key]: e.target.value })} disabled={!canEdit} />
             </div>
@@ -439,16 +440,20 @@ function FieldsPanel({ doc, fields, canEdit, onSave }: { doc: Doc; fields: { key
         })}
       </div>
       {canEdit && fields.length > 0 && (
-        <div className="flex gap-2 mt-3">
+        <div className="flex gap-2 mt-3 flex-wrap">
           <button className="btn btn-sm" disabled={!dirty} onClick={() => onSave(vals, false)}>
             Save
           </button>
           <button className="btn btn-primary btn-sm" onClick={() => onSave(vals, true)}>
             Confirm
           </button>
+          <button className="btn btn-ghost btn-sm ml-auto" onClick={onExtract} title="Read the fields from the file with the AI extractor (Settings → Integrations)">
+            {doc.extractionAt ? "Re-read with AI" : "Read with AI"}
+          </button>
         </div>
       )}
-      <div className="help mt-2">Confirm = a human read the document and these values are right.</div>
+      {doc.extractionNote && <div className={`text-[11.5px] mt-1 ${doc.extractionNote.startsWith("failed") ? "text-red" : "text-faint"}`}>{doc.extractionNote}</div>}
+      <div className="help mt-2">Confirm = a human read the document and these values are right. AI values never count until confirmed.</div>
     </div>
   );
 }

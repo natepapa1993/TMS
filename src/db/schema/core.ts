@@ -395,7 +395,9 @@ export const documents = pgTable(
     source: text("source").notNull().default("upload"), // upload | nad | viatpro | generated | driver_app | portal | email
     status: text("status").notNull().default("present"), // present | verified | superseded | rejected
     version: integer("version").notNull().default(1),
-    extracted: jsonb("extracted").$type<Record<string, { value: unknown; confidence: number }>>(),
+    extracted: jsonb("extracted").$type<Record<string, { value: unknown; confidence: number; source?: "ai" | "human" }>>(),
+    extractionAt: timestamp("extraction_at", { withTimezone: true }), // last AI read
+    extractionNote: text("extraction_note"), // model + tokens, or the error
     notes: text("notes"),
     ...audit(),
   },

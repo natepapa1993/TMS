@@ -12,6 +12,7 @@ import { checkDriver, checkTruck, summarize, type Finding } from "./eligibility"
 import { NotFoundError, ValidationError } from "./orders";
 import { TransitionError } from "./states";
 import { buildPacketPdf, buildSolicitudRetiro } from "./crossing-pdf";
+import { extractWithModel } from "@/integrations/extractor";
 
 /**
  * Crossing (spec §3). One crossing per crossing leg. Requirements come from crossing_doc_rules
@@ -213,7 +214,7 @@ export async function computeRequirements(ctx: Ctx, c: Crossing): Promise<Requir
 
 // ---------- documents ----------
 
-export type UploadInput = { code: string; fileName: string; mimeType: string; bytes: Buffer; source?: string; fields?: Record<string, unknown>; notes?: string | null };
+export type UploadInput = { code: string; fileName: string; mimeType: string; bytes: Buffer; source?: string; fields?: Record<string, unknown>; notes?: string | null; extract?: boolean };
 
 export async function uploadDocument(ctx: Ctx, crossingId: string, input: UploadInput) {
   assertCtx(ctx);
@@ -229,8 +230,8 @@ export async function uploadDocument(ctx: Ctx, crossingId: string, input: Upload
     const prior = await tx.select().from(s.documents).where(and(eq(s.documents.tenantId, ctx.tenantId), eq(s.documents.subjectKind, "crossing"), eq(s.documents.subjectId, crossingId), eq(s.documents.code, input.code), inArray(s.documents.status, ["present", "verified"])));
     for (const p of prior) await tx.update(s.documents).set({ status: "superseded", updatedAt: new Date(), updatedBy: ctx.userId }).where(eq(s.documents.id, p.id));
     const version = (Math.max(0, ...prior.map((p) => p.version)) || 0) + 1;
-    const extracted: Record<string, { value: unknown; confidence: number }> = {};
-    for (const [k, v] of Object.entries(input.fields ?? {})) if (v !== undefined && v !== null && v !== "") extracted[k] = { value: v, confidence: 1 };
+    const extracted: Record<string, { value: unknown; confidence: number; source?: "ai" | "human" }> = {};
+    for (const [k, v] of Object.entries(input.fields ?? {})) if (v !== undefined && v !== null && v !== "") extracted[k] = { value: v, confidence: 1, source: "human" };
     const [row] = await tx
       .insert(s.documents)
       .values({ id: newId(), tenantId: ctx.tenantId, code: input.code, subjectKind: "crossing", subjectId: crossingId, fileName: input.fileName, mimeType: input.mimeType, sizeBytes: input.bytes.length, storageKey: `blob:${blob.id}`, sha256: sha, source: input.source ?? "upload", status: "present", version, extracted, notes: input.notes ?? null, createdBy: ctx.userId, updatedBy: ctx.userId })
@@ -240,7 +241,53 @@ export async function uploadDocument(ctx: Ctx, crossingId: string, input: Upload
     return row;
   });
   await recompute(ctx, crossingId);
+  // AI read when the company has an extractor key: fills blanks with confidence, never overrides a person
+  if (input.extract !== false && DOC_FIELDS[input.code]?.length) {
+    try {
+      await extractDocumentFields(ctx, doc.id);
+    } catch (e) {
+      console.error(`[extractor] ${doc.id}: ${String(e)}`);
+    }
+  }
   return doc;
+}
+
+/** Read the document's fields with the AI extractor (spec F-3.4). Human values stay; AI fills the rest with confidence < 1. */
+export async function extractDocumentFields(ctx: Ctx, documentId: string, fetchImpl?: typeof fetch) {
+  assertCtx(ctx);
+  requirePermission(ctx, "orders.edit");
+  const [doc] = await db.select().from(s.documents).where(and(eq(s.documents.tenantId, ctx.tenantId), eq(s.documents.id, documentId))).limit(1);
+  if (!doc) throw new NotFoundError("document", documentId);
+  const fields = DOC_FIELDS[doc.code ?? ""] ?? [];
+  if (!fields.length) return { ran: false as const, reason: "no fields on this document type" };
+  const [integ] = await db.select().from(s.integrations).where(and(eq(s.integrations.tenantId, ctx.tenantId), eq(s.integrations.provider, "extractor"))).limit(1);
+  if (!integ?.enabled || !integ.config.apiKey) return { ran: false as const, reason: "AI extractor not connected (Settings → Integrations)" };
+  const blob = await readBlob(ctx, doc.storageKey);
+  const label = DEFAULT_CROSSING_RULES.find((r) => r.code === doc.code)?.label ?? doc.code ?? "document";
+  try {
+    const r = await extractWithModel({ apiKey: integ.config.apiKey, model: integ.config.model || undefined }, { code: doc.code ?? "", label, mimeType: blob.mimeType, bytes: Buffer.from(blob.bytes) }, fields, fetchImpl);
+    const extracted = { ...(doc.extracted ?? {}) };
+    let filled = 0;
+    for (const [k, v] of Object.entries(r.fields)) {
+      const cur = extracted[k];
+      if (cur && (cur.source === "human" || cur.confidence >= 1)) continue; // a person typed it
+      extracted[k] = v;
+      filled++;
+    }
+    const note = `${r.model}${r.inputTokens ? ` · ${r.inputTokens} tokens` : ""} · ${filled} field(s)`;
+    await db.update(s.documents).set({ extracted, extractionAt: new Date(), extractionNote: note, updatedAt: new Date(), updatedBy: ctx.userId }).where(eq(s.documents.id, documentId));
+    await db.update(s.integrations).set({ lastRunAt: new Date(), lastError: null, lastResult: note }).where(eq(s.integrations.id, integ.id));
+    if (doc.subjectKind === "crossing") {
+      await event(db, ctx, doc.subjectId, { kind: "document", note: `${doc.code}: AI read ${filled} field(s) — confirm them`, data: { documentId } });
+      await recompute(ctx, doc.subjectId);
+    }
+    return { ran: true as const, filled, fields: r.fields, note };
+  } catch (e) {
+    const msg = (e as Error).message;
+    await db.update(s.documents).set({ extractionAt: new Date(), extractionNote: `failed: ${msg}` }).where(eq(s.documents.id, documentId));
+    await db.update(s.integrations).set({ lastRunAt: new Date(), lastError: msg }).where(eq(s.integrations.id, integ.id));
+    throw e;
+  }
 }
 
 /** Type or correct the fields on a document; Confirm marks it verified. */
@@ -253,7 +300,7 @@ export async function setDocumentFields(ctx: Ctx, documentId: string, fields: Re
   for (const [k, v] of Object.entries(fields)) {
     if (v === undefined) continue;
     if (v === null || v === "") delete extracted[k];
-    else extracted[k] = { value: v, confidence: 1 };
+    else extracted[k] = { value: v, confidence: 1, source: "human" };
   }
   await db.update(s.documents).set({ extracted, status: confirm ? "verified" : doc.status === "verified" ? "present" : doc.status, updatedAt: new Date(), updatedBy: ctx.userId }).where(eq(s.documents.id, documentId));
   await writeAudit(db, ctx, "document", documentId, "update", { fields: { from: Object.keys(doc.extracted ?? {}), to: Object.keys(extracted) } }, confirm ? "confirmed" : undefined);

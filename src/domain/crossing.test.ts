@@ -1,5 +1,5 @@
 // Features: F-3 crossing — rules → checklist, documents, cross-checks, eligibility, packet, Solicitud de Retiro, 16-state machine, dwell
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, vi, afterEach } from "vitest";
 import { PDFDocument } from "pdf-lib";
 import { truncateAll, makeTenant } from "@/test/helpers";
 import { create, update } from "@/data/records";
@@ -28,6 +28,8 @@ const stops = [
   { type: "yard" as const, name: "Laredo Yard", country: "US" },
   { type: "delivery" as const, name: "GM Arlington", country: "US" },
 ];
+
+afterEach(() => vi.unstubAllGlobals());
 
 beforeEach(async () => {
   await truncateAll();
@@ -260,6 +262,45 @@ describe("crossing lifecycle (spec §3.1)", () => {
     const { o: o2, c: c2 } = await crossingOrder();
     await planLeg(a, o2.legs[1].id, { kind: "truck", truckId: f.t2117, driverId: f.benja });
     expect((await X.recompute(a, c2.id)).requirements.find((r) => r.code === "carta_porte")!.status).toBe("na");
+  });
+
+  it("AI extractor (F-3.4): runs on upload when connected, fills blanks with confidence < 1, never overrides a typed value, values count only after a person confirms", async () => {
+    const { c } = await crossingOrder();
+    // not connected: upload works, nothing read
+    const d0 = await X.uploadDocument(a, c.id, { code: "carta_porte", fileName: "cp.pdf", mimeType: "application/pdf", bytes: await pdf("cp") });
+    expect(d0.extractionAt).toBeNull();
+    expect(await X.extractDocumentFields(a, d0.id)).toMatchObject({ ran: false, reason: expect.stringMatching(/not connected/) });
+    const { integrations } = await import("@/db/schema");
+    const { newId } = await import("@/lib/ids");
+    await db.insert(integrations).values({ id: newId(), tenantId: a.tenantId, provider: "extractor", enabled: true, config: { apiKey: "sk-ant-test" } });
+    const seen: string[] = [];
+    vi.stubGlobal("fetch", async (_url: string, init: RequestInit) => {
+      const body = JSON.parse(init.body as string) as { messages: { content: { type: string; text?: string }[] }[] };
+      seen.push(body.messages[0].content.find((x) => x.type === "text")!.text!);
+      return new Response(JSON.stringify({ model: "claude-sonnet-4-5", usage: { input_tokens: 900 }, content: [{ type: "tool_use", name: "record_fields", input: { trailer: { value: "10743", confidence: 0.95 }, seal: { value: "SL-77", confidence: 0.6 }, uuid: { value: null, confidence: 0.1 }, grossWeight: { value: 18540, confidence: 0.9 } } }] }), { status: 200 });
+    });
+    // typed seal survives the AI read; the rest is filled
+    const d1 = await X.uploadDocument(a, c.id, { code: "carta_porte", fileName: "cp2.pdf", mimeType: "application/pdf", bytes: await pdf("cp2"), fields: { seal: "SL-99" } });
+    const [after] = await db.select().from(documents).where(eq(documents.id, d1.id));
+    expect(after.extracted).toMatchObject({ seal: { value: "SL-99", confidence: 1, source: "human" }, trailer: { value: "10743", confidence: 0.95, source: "ai" }, grossWeight: { value: 18540, confidence: 0.9, source: "ai" } });
+    expect(after.extracted?.uuid).toBeUndefined();
+    expect(after.extractionNote).toMatch(/claude-sonnet-4-5 · 900 tokens · 2 field\(s\)/);
+    expect(seen[0]).toContain("Carta porte");
+    expect(seen[0]).toContain("Carta Porte");
+    // AI values do not verify the document: checks still wait for a person
+    expect(after.status).toBe("present");
+    await X.setDocumentFields(a, d1.id, { trailer: "10743", seal: "SL-99", grossWeight: 18540 }, true);
+    const [confirmed] = await db.select().from(documents).where(eq(documents.id, d1.id));
+    expect(confirmed.status).toBe("verified");
+    expect(confirmed.extracted?.trailer).toMatchObject({ confidence: 1, source: "human" });
+    // a failing model call is recorded on the document and the integration, and does not break the upload
+    vi.stubGlobal("fetch", async () => new Response(JSON.stringify({ error: { message: "overloaded" } }), { status: 529 }));
+    const d2 = await X.uploadDocument(a, c.id, { code: "doda", fileName: "doda.pdf", mimeType: "application/pdf", bytes: await pdf("doda") });
+    const [failed] = await db.select().from(documents).where(eq(documents.id, d2.id));
+    expect(failed.extractionNote).toMatch(/^failed: extractor 529: overloaded/);
+    await expect(X.extractDocumentFields(a, d2.id)).rejects.toThrow(/529/);
+    const [integ] = await db.select().from(integrations).where(eq(integrations.provider, "extractor"));
+    expect(integ.lastError).toMatch(/overloaded/);
   });
 
   it("uploads are validated and tenant-scoped", async () => {

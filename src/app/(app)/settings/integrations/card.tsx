@@ -7,7 +7,7 @@ import { Pill, Toast, useToast } from "@/components/ui";
 
 type Field = { key: string; label: string; secret: boolean; set: boolean; value?: string; placeholder?: string };
 
-export function IntegrationCard({ provider, title, blurb, enabled, fields, status, testable, extra }: { provider: "motive" | "resend" | "whatsapp"; title: string; blurb: string; enabled: boolean; fields: Field[]; status: { lastRunAt: string | null; lastError: string | null; lastResult: string | null } | null; testable?: boolean; extra?: React.ReactNode }) {
+export function IntegrationCard({ provider, title, blurb, enabled, fields, status, testable, extra }: { provider: "motive" | "resend" | "whatsapp" | "extractor"; title: string; blurb: string; enabled: boolean; fields: Field[]; status: { lastRunAt: string | null; lastError: string | null; lastResult: string | null } | null; testable?: boolean; extra?: React.ReactNode }) {
   const router = useRouter();
   const t = useToast();
   const [on, setOn] = useState(enabled);

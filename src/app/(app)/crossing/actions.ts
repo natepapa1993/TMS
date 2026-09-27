@@ -33,6 +33,12 @@ export async function setFieldsAction(crossingId: string, documentId: string, fi
   return r;
 }
 
+export async function extractAction(crossingId: string, documentId: string) {
+  const r = await act((ctx) => X.extractDocumentFields(ctx, documentId));
+  if (r.ok) touch(crossingId);
+  return r;
+}
+
 export async function naAction(crossingId: string, code: string, reason: string) {
   const r = await act((ctx) => X.markNotApplicable(ctx, crossingId, code, reason));
   if (r.ok) touch(crossingId);

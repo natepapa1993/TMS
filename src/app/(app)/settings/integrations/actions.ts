@@ -10,7 +10,7 @@ import { requirePermission } from "@/lib/context";
 import { writeAudit } from "@/lib/audit";
 import { pollMotive } from "@/integrations/motive";
 
-const PROVIDERS = ["motive", "resend", "whatsapp"] as const;
+const PROVIDERS = ["motive", "resend", "whatsapp", "extractor"] as const;
 type Provider = (typeof PROVIDERS)[number];
 
 export async function saveIntegrationAction(provider: Provider, enabled: boolean, config: Record<string, string>) {
