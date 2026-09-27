@@ -1,6 +1,7 @@
 "use client";
 
 import { useRef, useState, useTransition } from "react";
+import { call } from "@/lib/client-call";
 import { useRouter } from "next/navigation";
 import { Modal, Pill, Spinner, Toast, useToast } from "@/components/ui";
 import type { ComplianceItem } from "@/db/schema";
@@ -90,7 +91,7 @@ export function SubjectDocuments({ kind, subjectId, docs, types, status, canEdit
                 start(async () => {
                   setErr(null);
                   const fd = new FormData(ref.current!);
-                  const r = await uploadSubjectDocAction(kind, subjectId, fd);
+                  const r = await call(() => uploadSubjectDocAction(kind, subjectId, fd));
                   if (r.ok) {
                     setOpen(null);
                     setName(null);

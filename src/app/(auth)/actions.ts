@@ -6,6 +6,13 @@ import { signIn, signOut, createTenantWithOwner } from "@/lib/auth";
 import { db } from "@/db/client";
 import { tenants, users } from "@/db/schema";
 import { eq } from "drizzle-orm";
+import { headers } from "next/headers";
+import { throttled, failed, succeeded, safeNext } from "@/lib/throttle";
+
+async function clientKey() {
+  const h = await headers();
+  return (h.get("x-forwarded-for") ?? h.get("x-real-ip") ?? "local").split(",")[0].trim();
+}
 
 export type AuthState = { error?: string; fields?: Record<string, string> };
 
@@ -14,9 +21,16 @@ export async function loginAction(_prev: AuthState, form: FormData): Promise<Aut
   const password = String(form.get("password") ?? "");
   const next = String(form.get("next") ?? "/dispatch");
   if (!email || !password) return { error: "Enter your email and password.", fields: { email } };
+  const keys = [`email:${email.toLowerCase()}`, `ip:${await clientKey()}`];
+  const wait = keys.map((k) => throttled(k)).find((w) => w != null);
+  if (wait != null) return { error: `Too many attempts. Try again in ${wait} minute${wait === 1 ? "" : "s"}.`, fields: { email } };
   const user = await signIn(email, password);
-  if (!user) return { error: "That email and password don't match.", fields: { email } };
-  redirect(next.startsWith("/") ? next : "/dispatch");
+  if (!user) {
+    for (const k of keys) failed(k, Date.now(), k.startsWith("ip:") ? 40 : undefined); // an office NAT shares one address
+    return { error: "That email and password don't match.", fields: { email } };
+  }
+  for (const k of keys) succeeded(k);
+  redirect(safeNext(next));
 }
 
 export async function logoutAction() {

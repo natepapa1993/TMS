@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useTransition } from "react";
+import { call } from "@/lib/client-call";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Confirm, Modal, Pill, Toast, useToast } from "@/components/ui";
@@ -143,7 +144,7 @@ export function UploadDoc({ orderId, code, onClose, onDone }: { orderId: string;
                 const fd = new FormData();
                 fd.set("file", file!);
                 fd.set("code", code);
-                const r = await uploadOrderDocAction(orderId, fd);
+                const r = await call(() => uploadOrderDocAction(orderId, fd));
                 if (r.ok) onDone();
                 else setErr(r.error);
               })

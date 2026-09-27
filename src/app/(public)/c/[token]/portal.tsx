@@ -1,6 +1,7 @@
 "use client";
 
 import { useRef, useState, useTransition } from "react";
+import { call } from "@/lib/client-call";
 import { useRouter } from "next/navigation";
 import { Pill, Modal } from "@/components/ui";
 import { portalRespondAction, portalAdvanceAction, portalDriverAction, portalUploadAction, portalInvoiceAction } from "../../actions";
@@ -314,7 +315,7 @@ function PayCard({ token, l, onDone }: { token: string; l: Leg; onDone: (t: stri
         Rate confirmation PDF
       </a>
       {open && (
-        <Modal open onClose={() => setOpen(false)} title={`Invoice for ${l.orderNumber} · Factura`} footer={<><button className="btn" onClick={() => setOpen(false)}>Cancel</button><button className="btn btn-primary" disabled={pending} onClick={() => start(async () => { setErr(null); const r = await portalInvoiceAction(token, l.id, new FormData(ref.current!)); if (r.ok) { setOpen(false); onDone("Invoice received — we check it against the rate confirmation and the POD. · Factura recibida."); } else setErr(r.error); })}>Send · Enviar</button></>}>
+        <Modal open onClose={() => setOpen(false)} title={`Invoice for ${l.orderNumber} · Factura`} footer={<><button className="btn" onClick={() => setOpen(false)}>Cancel</button><button className="btn btn-primary" disabled={pending} onClick={() => start(async () => { setErr(null); const r = await call(() => portalInvoiceAction(token, l.id, new FormData(ref.current!))); if (r.ok) { setOpen(false); onDone("Invoice received — we check it against the rate confirmation and the POD. · Factura recibida."); } else setErr(r.error); })}>Send · Enviar</button></>}>
           <form ref={ref} className="space-y-2" onSubmit={(e) => e.preventDefault()}>
             <div className="text-[12.5px] text-muted">Agreed rate · Tarifa acordada: <b>{money(b?.expectedCents ?? l.rateCents)}</b>. Bill the agreed amount plus any accessorials we approved.</div>
             <div className="grid grid-cols-2 gap-2">
@@ -388,7 +389,7 @@ function DocsPanel({ token, data, onDone }: { token: string; data: Data; onDone:
             </div>
           </div>
           {err && <div className="error">{err}</div>}
-          <button className="btn btn-primary w-full justify-center" disabled={pending} onClick={() => start(async () => { setErr(null); const r = await portalUploadAction(token, new FormData(ref.current!)); if (r.ok) onDone("Document received · Documento recibido"); else setErr(r.error); })}>
+          <button className="btn btn-primary w-full justify-center" disabled={pending} onClick={() => start(async () => { setErr(null); const r = await call(() => portalUploadAction(token, new FormData(ref.current!))); if (r.ok) onDone("Document received · Documento recibido"); else setErr(r.error); })}>
             Upload · Subir
           </button>
         </form>

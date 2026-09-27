@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useRef, useState, useTransition } from "react";
+import { call } from "@/lib/client-call";
 import { useRouter } from "next/navigation";
 import { Confirm, Modal, Pill, Toast, useToast, Spinner } from "@/components/ui";
 import * as A from "../actions";
@@ -480,7 +481,7 @@ function UploadModal({ crossingId, code, label, fields, onClose, onDone }: { cro
                 setErr(null);
                 const fd = new FormData(ref.current!);
                 fd.set("code", code);
-                const r = await A.uploadDocAction(crossingId, fd);
+                const r = await call(() => A.uploadDocAction(crossingId, fd));
                 if (r.ok) onDone();
                 else setErr(r.error);
               })
