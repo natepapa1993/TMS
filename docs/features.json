@@ -276,6 +276,16 @@
       ]
     },
     {
+      "id": "F-10",
+      "name": "Carrier portal: one persistent link per partner carrier \u2014 offers with accept/decline + driver, loads with one-tap steps and driver details, rate confirmation PDF, invoice against the delivered leg into the three-way check, COI/W-9 uploads into compliance, scorecard (acceptance, on-time, tracked) on both sides",
+      "milestone": "M8",
+      "status": "done",
+      "tests": [
+        "src/domain/carrier-portal.test.ts",
+        "e2e/carrier-portal.spec.ts"
+      ]
+    },
+    {
       "id": "F-7.2",
       "name": "QuickBooks export: IIF for Desktop, CSV lists for Online; invoices, receipts, carrier bills + payments, driver settlements; runs stamp what went out; reopen",
       "milestone": "M5",

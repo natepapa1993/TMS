@@ -5,7 +5,7 @@ export function proxy(request: NextRequest) {
   const has = request.cookies.has("tms_session");
   const { pathname } = request.nextUrl;
   const isAuthPage = pathname === "/login" || pathname === "/signup";
-  const isPublic = /^\/(t|d|p|i|track)\//.test(pathname) || pathname.startsWith("/api/");
+  const isPublic = /^\/(t|d|p|i|c|track)\//.test(pathname) || pathname.startsWith("/api/");
   if (!has && !isAuthPage && !isPublic && pathname !== "/") {
     const url = new URL("/login", request.url);
     url.searchParams.set("next", pathname);

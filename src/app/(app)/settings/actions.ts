@@ -88,3 +88,13 @@ export async function saveCompanyAction(values: { name: string; timeZone: string
   if (r.ok) revalidatePath("/", "layout");
   return r;
 }
+
+export async function revokeCarrierPortalAction(carrierId: string) {
+  const r = await act(async (ctx) => {
+    const { revokeCarrierPortal } = await import("@/domain/carrier-portal");
+    await revokeCarrierPortal(ctx, carrierId);
+    return { ok: true };
+  });
+  if (r.ok) revalidatePath(`/settings/carriers/${carrierId}`);
+  return r;
+}

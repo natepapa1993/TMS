@@ -14,6 +14,8 @@ import { users } from "@/db/schema";
 import { eq } from "drizzle-orm";
 import { publicUrl } from "@/lib/tokens";
 import { ediLog } from "@/domain/edi";
+import { carrierPortalLink, scorecard } from "@/domain/carrier-portal";
+import { CarrierPortalCard } from "./carrier-portal-card";
 
 export default async function RecordPage({ params }: PageProps<"/settings/[kind]/[id]">) {
   const { kind: path, id } = await params;
@@ -30,6 +32,7 @@ export default async function RecordPage({ params }: PageProps<"/settings/[kind]
     ? await Promise.all([subjectDocuments(ctx, kind as SubjectKind, id), statusFor(ctx, kind as SubjectKind, id).catch(() => null), list(ctx, "documentType", { limit: 200 })])
     : [[], null, []];
   const partnerLog = kind === "ediPartner" ? await ediLog(ctx, { partnerId: id, limit: 8 }) : [];
+  const [portal, score] = kind === "carrier" ? await Promise.all([carrierPortalLink(ctx, id), scorecard(ctx, id)]) : [null, null];
   const labelField = FIELDS[kind][0].name;
   const title = String(row[labelField] ?? meta.singular);
   return (
@@ -78,6 +81,7 @@ export default async function RecordPage({ params }: PageProps<"/settings/[kind]
               canEdit={["owner", "compliance", "dispatcher", "mx_office"].includes(ctx.role)}
             />
           )}
+          {kind === "carrier" && portal && score && <CarrierPortalCard carrierId={id} url={portal.url} whatsapp={portal.whatsapp} email={portal.email} score={score} canEdit={["owner", "dispatcher"].includes(ctx.role)} />}
           {kind === "ediPartner" && (
             <div className="card p-4">
               <div className="eyebrow mb-2">Inbound URL</div>
