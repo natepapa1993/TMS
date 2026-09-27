@@ -1,4 +1,4 @@
-// Features: F-6 compliance through the browser — rule, blocked driver on the board and in the picker, upload from the record, snooze, 24h override, export, incidents
+// Features: F-3.9 F-6 compliance through the browser — rule, blocked driver on the board and in the picker, upload from the record, snooze, 24h override, export, incidents
 import { test, expect } from "@playwright/test";
 import path from "node:path";
 import { signupFresh, quickAdd, future } from "./helpers";
@@ -94,4 +94,37 @@ test("safety director day: a blocking rule, the driver goes red everywhere, uplo
   await expect(page.getByRole("status")).toContainText("Saved");
   await expect(page.locator("table")).toContainText("roadside inspection");
   await expect(page.locator("table")).toContainText("Daniel Reyes");
+});
+
+test("fleet: a trailer added from Fleet shows free, then on the load it is named on", async ({ page }) => {
+  await signupFresh(page);
+  await quickAdd(page, "customers", "Add customer", { name: "RXO", kind: "broker" });
+  await page.goto("/fleet");
+  await page.click("button:has-text('Add trailer')");
+  const d = page.getByRole("dialog");
+  await d.locator("#f-unitNumber").fill("10743");
+  await d.locator("button:has-text('Add')").click();
+  await expect(d).toBeHidden();
+  const row = page.getByTestId("trailers").locator("tr", { hasText: "10743" });
+  await expect(row).toContainText("free");
+  await expect(row).toContainText("never on a load");
+  // the caja is named on a crossing → the trailer is on that load
+  await page.goto("/dispatch");
+  await page.keyboard.press("n");
+  const nd = page.getByRole("dialog");
+  await expect(nd).toBeVisible();
+  await nd.locator("select").first().selectOption({ label: "RXO (broker)" });
+  await nd.getByPlaceholder("Planta Monterrey").fill("Planta Monterrey");
+  await nd.getByPlaceholder("GM Arlington").fill("GM Arlington");
+  await nd.locator("button:has-text('Create & book')").click();
+  await expect(page.getByRole("status")).toContainText("Order created");
+  await page.goto("/crossing");
+  await page.locator("a[href^='/crossing/']").first().click();
+  await page.waitForURL("**/crossing/**", { waitUntil: "commit" });
+  await page.locator("#x-trailer").fill("10743");
+  await page.locator("button.btn-primary:has-text('Save')").first().click();
+  await expect(page.getByRole("status").filter({ hasText: "Saved" })).toBeVisible();
+  await page.goto("/fleet");
+  await expect(page.getByTestId("trailers").locator("tr", { hasText: "10743" })).toContainText("Crossing");
+  await expect(page.getByTestId("trailers").locator("tr", { hasText: "10743" })).toContainText("26-00001");
 });

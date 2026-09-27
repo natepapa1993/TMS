@@ -8,6 +8,8 @@ import { FleetBoard } from "./board";
 import { FIELDS } from "@/data/fields";
 import { loadRefs } from "@/data/refs";
 import { QuickAdd } from "../settings/[kind]/quick-add";
+import { trailerBoard } from "@/domain/fleet";
+import { Trailers } from "./trailers";
 
 export const metadata = { title: "Fleet" };
 export const dynamic = "force-dynamic";
@@ -26,6 +28,7 @@ export default async function FleetPage() {
     loadRefs(ctx, "truck"),
     loadRefs(ctx, "driver"),
   ]);
+  const [cajas, trailerRefs] = await Promise.all([trailerBoard(ctx), loadRefs(ctx, "trailer")]);
   const byTruck = new Map<string, typeof active>();
   for (const a of active) if (a.truckId) byTruck.set(a.truckId, [...(byTruck.get(a.truckId) ?? []), a]);
   const units = trucks
@@ -62,6 +65,15 @@ export default async function FleetPage() {
       </PageHeader>
       <div className="px-7 pb-10">
         <FleetBoard units={units} drivers={drivers.map((d) => ({ id: d.id, name: String(d.name), driverType: String(d.driverType), currentTruckId: (d.currentTruckId as string | null) ?? null }))} />
+        <div className="flex items-end justify-between mt-10 mb-3">
+          <div>
+            <div className="eyebrow">Trailers · cajas</div>
+            <div className="h2">Where every trailer is</div>
+            <div className="text-muted text-[13px]">On a load now, or where it was last dropped and for how long. Dispatch names the caja on the crossing; a leg can name it too.</div>
+          </div>
+          <QuickAdd kind="trailer" fields={FIELDS.trailer} refs={trailerRefs.options} label="Add trailer" buttonClass="btn" />
+        </div>
+        <Trailers rows={JSON.parse(JSON.stringify(cajas))} />
       </div>
     </div>
   );

@@ -81,7 +81,7 @@ export function CrossingWorkbench({ data }: { data: Data }) {
       <div className="card p-4 grid grid-cols-[120px_120px_160px_1fr_auto] gap-3 items-end">
         <div>
           <label className="label">Caja / trailer #</label>
-          <input className="input mono" value={details.trailerNumber} onChange={(e) => setDetails({ ...details, trailerNumber: e.target.value })} disabled={!canEdit} />
+          <input className="input mono" id="x-trailer" aria-label="Caja / trailer #" value={details.trailerNumber} onChange={(e) => setDetails({ ...details, trailerNumber: e.target.value })} disabled={!canEdit} />
         </div>
         <div>
           <label className="label">Seal #</label>

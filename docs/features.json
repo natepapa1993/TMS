@@ -361,6 +361,16 @@
       "tests": [
         "src/domain/tracking.test.ts"
       ]
+    },
+    {
+      "id": "F-3.9",
+      "name": "Trailers (cajas) on Fleet: on a load now, last dropped where, idle days",
+      "milestone": "M1",
+      "status": "done",
+      "tests": [
+        "src/domain/fleet.test.ts",
+        "e2e/compliance.spec.ts"
+      ]
     }
   ]
 }
