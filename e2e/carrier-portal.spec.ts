@@ -39,6 +39,7 @@ test("carrier's day: one link, accept the offer, run the load, get paid, keep do
   const dlg = page.getByRole("dialog");
   await dlg.locator("button:has-text('Partner carrier')").click();
   await dlg.locator("select").first().selectOption({ label: "Transportes Garza (MX)" });
+  await expect(dlg.getByTestId("carrier-pick")).toContainText("Last 90 days: 0 loads"); // the scorecard, on selection
   await expect(dlg.getByTestId("lane-rate")).toContainText("Monterrey → Border yard"); // the rate on file prefills
   await expect(dlg.locator("input[placeholder='what you pay them']")).toHaveValue("450.00");
   await dlg.locator("button:has-text('Send tender')").click();

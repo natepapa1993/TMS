@@ -99,6 +99,7 @@ describe("carrier portal", () => {
     expect(chk.podPresent).toBe(true); // the carrier's own POD satisfies the three-way check
     await B.approveCarrierBill(a, bill.id, { approvedCents: 45000 });
     await expect(P.portalSubmitInvoice(a.tenantId, f.garza, mx, { amountCents: 45000, invoiceNumber: "G-1001" })).rejects.toThrow(/already approved/);
+    expect(await P.scorecard(a, f.garza)).toMatchObject({ billed: 1, billedOver: 0, overCents: 0 }); // billed at the rate
     v = await P.carrierPortalView(a.tenantId, f.garza);
     expect(v.completed[0].bill?.state).toBe("approved");
 
@@ -182,8 +183,12 @@ describe("carrier portal", () => {
     for (const st of ["en_route_to_pickup", "at_pickup", "loaded", "en_route", "at_delivery", "completed"] as const) await advanceLeg(a, o.legs[0].id, st, { source: "carrier" });
     await db.insert(positions).values({ id: newId(), tenantId: a.tenantId, source: "carrier", lat: "25.6", lng: "-100.3", recordedAt: new Date(), at: new Date(), legId: o.legs[0].id });
     const sc = await P.scorecard(a, f.garza);
-    expect(sc).toMatchObject({ offered: 2, answered: 2, accepted: 1, declined: 1, expired: 0, acceptancePct: 50, loads: 1, onTimePct: 100, onTimeOf: 1, trackedPct: 100 });
+    expect(sc).toMatchObject({ offered: 2, answered: 2, accepted: 1, declined: 1, expired: 0, acceptancePct: 50, loads: 1, onTimePct: 100, onTimeOf: 1, trackedPct: 100, billed: 0 });
     expect((await P.scorecard(a, f.lone)).acceptancePct).toBeNull();
+    // the dispatcher's pick line: scorecard plus compliance
+    const pick = await P.carrierPick(a, f.garza);
+    expect(pick.score.loads).toBe(1);
+    expect(pick.dispatchable).toBe(true);
   });
 
   it("a leg given by phone with no tender still gets a driver from the portal, and a load in another tenant is invisible", async () => {

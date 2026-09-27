@@ -694,6 +694,7 @@ function AssignModal({ leg, order, data, onClose, onDone }: { leg: Leg; order: O
   const [cands, setCands] = useState<Candidate[] | null>(null);
   const [pick, setPick] = useState<{ truckId: string; driverId: string | null; coDriverId: string | null } | null>(null);
   const [carrierId, setCarrierId] = useState(leg.carrierId ?? "");
+  const [cscore, setCscore] = useState<{ score: { days: number; loads: number; answered: number; acceptancePct: number | null; onTimePct: number | null; trackedPct: number | null; billed: number; billedOver: number; overCents: number }; dispatchable: boolean; problems: string[] } | null>(null);
   const [carrierRate, setCarrierRate] = useState(leg.carrierRateCents != null ? (leg.carrierRateCents / 100).toFixed(2) : "");
   const [lane, setLane] = useState<{ lane: string; rateCents: number; fuelRule: string; fuelValue: number | null; validTo: string | null } | null>(null);
   const [miles, setMiles] = useState(leg.plannedMiles != null ? String(leg.plannedMiles) : "");
@@ -816,7 +817,9 @@ function AssignModal({ leg, order, data, onClose, onDone }: { leg: Leg; order: O
                 const id = e.target.value;
                 setCarrierId(id);
                 setLane(null);
+                setCscore(null);
                 if (!id) return;
+                A.carrierPickAction(id).then((r) => r.ok && setCscore(r.data));
                 // the lane rate on file prefills what we pay; the dispatcher can still type another number
                 A.laneRateAction(leg.id, id).then((r) => {
                   if (r.ok && r.data) {
@@ -833,6 +836,16 @@ function AssignModal({ leg, order, data, onClose, onDone }: { leg: Leg; order: O
                 </option>
               ))}
             </select>
+            {cscore && (
+              <div className={`mt-1.5 text-[12.5px] rounded-lg border px-3 py-2 ${cscore.dispatchable ? "border-line bg-ground" : "border-red/40 bg-red-soft/40"}`} data-testid="carrier-pick">
+                <span className="font-semibold">Last {cscore.score.days} days:</span> {cscore.score.loads} load{cscore.score.loads === 1 ? "" : "s"}
+                {cscore.score.acceptancePct != null ? ` · ${cscore.score.acceptancePct}% of ${cscore.score.answered} offers accepted` : " · no offers answered yet"}
+                {cscore.score.onTimePct != null ? ` · ${cscore.score.onTimePct}% on time` : ""}
+                {cscore.score.trackedPct != null ? ` · ${cscore.score.trackedPct}% tracked` : ""}
+                {cscore.score.billed ? ` · ${cscore.score.billedOver ? `${cscore.score.billedOver} of ${cscore.score.billed} bills over the rate ($${(cscore.score.overCents / 100).toLocaleString("en-US")})` : `${cscore.score.billed} bills at the rate`}` : ""}
+                {!cscore.dispatchable && <div className="text-red font-semibold mt-0.5">Blocked by compliance: {cscore.problems.join(", ") || "see their record"}</div>}
+              </div>
+            )}
           </div>
           <div className="grid grid-cols-3 gap-2">
             <div>

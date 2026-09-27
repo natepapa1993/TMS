@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { Confirm, Toast, useToast } from "@/components/ui";
 import { revokeCarrierPortalAction } from "../../actions";
 
-type Score = { days: number; offered: number; answered: number; accepted: number; declined: number; expired: number; acceptancePct: number | null; loads: number; onTimePct: number | null; onTimeOf: number; trackedPct: number | null };
+type Score = { days: number; offered: number; answered: number; accepted: number; declined: number; expired: number; acceptancePct: number | null; loads: number; onTimePct: number | null; onTimeOf: number; trackedPct: number | null; billed: number; billedOver: number; overCents: number };
 
 export function CarrierPortalCard({ carrierId, url, whatsapp, email, score, canEdit }: { carrierId: string; url: string; whatsapp: string | null; email: string | null; score: Score; canEdit: boolean }) {
   const router = useRouter();
@@ -69,6 +69,7 @@ export function CarrierPortalCard({ carrierId, url, whatsapp, email, score, canE
         </div>
       </div>
       {score.expired > 0 && <div className="text-[12px] text-amber mt-1">{score.expired} offer{score.expired === 1 ? "" : "s"} expired unanswered</div>}
+      {score.billed > 0 && <div className={`text-[12px] mt-1 ${score.billedOver ? "text-amber" : "text-muted"}`}>{score.billedOver ? `${score.billedOver} of ${score.billed} bills came in over the agreed rate ($${(score.overCents / 100).toLocaleString("en-US")} in all)` : `${score.billed} bill${score.billed === 1 ? "" : "s"}, all at the agreed rate`}</div>}
       <Confirm open={confirm} onClose={() => setConfirm(false)} title="Revoke the portal link?" body="The link they have stops working. Open this page again to issue a new one." confirmLabel="Revoke" danger onConfirm={() => { setConfirm(false); start(async () => { const r = await revokeCarrierPortalAction(carrierId); if (r.ok) { t.ok("Revoked — a new link is ready below"); router.refresh(); } else t.err(r.error); }); }} />
       <Toast message={t.toast?.message ?? null} tone={t.toast?.tone} onDone={t.clear} />
       {pending && null}

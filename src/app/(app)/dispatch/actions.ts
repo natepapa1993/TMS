@@ -29,6 +29,14 @@ export async function laneRateAction(legId: string, carrierId: string) {
   return act((ctx) => O.suggestCarrierRate(ctx, legId, carrierId));
 }
 
+/** The carrier's last-90-days scorecard and compliance, shown the moment one is picked. */
+export async function carrierPickAction(carrierId: string) {
+  return act(async (ctx) => {
+    const { carrierPick } = await import("@/domain/carrier-portal");
+    return carrierPick(ctx, carrierId);
+  });
+}
+
 export type PlanOpts = { override?: boolean; reason?: string; plannedMiles?: number | null };
 
 export async function planAction(legId: string, a: O.Assignment, opts: PlanOpts = {}) {

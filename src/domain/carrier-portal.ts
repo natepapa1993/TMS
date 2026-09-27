@@ -171,7 +171,18 @@ export async function scorecard(ctx: Ctx, carrierId: string, now = new Date()) {
     }
   }
   const answered = accepted + declined + expired; // an offer still open is not a miss
-  return { days: 90, offered, answered, accepted, declined, expired, acceptancePct: answered ? Math.round((accepted / answered) * 100) : null, loads: legs.length, onTimePct: onTimeWindow ? Math.round((onTime / onTimeWindow) * 100) : null, onTimeOf: onTimeWindow, trackedPct: legs.length ? Math.round((tracked / legs.length) * 100) : null };
+  // rate variance: what they billed against what was agreed, over the bills they have sent
+  const billed = legs.length ? await db.select({ expectedCents: s.carrierBills.expectedCents, accessorialCents: s.carrierBills.accessorialCents, invoicedCents: s.carrierBills.invoicedCents }).from(s.carrierBills).where(and(eq(s.carrierBills.tenantId, ctx.tenantId), inArray(s.carrierBills.legId, legs.map((l) => l.id)), sql`${s.carrierBills.invoicedCents} is not null`)) : [];
+  const over = billed.filter((b) => (b.invoicedCents ?? 0) > b.expectedCents + b.accessorialCents).length;
+  const varianceCents = billed.reduce((a, b) => a + Math.max(0, (b.invoicedCents ?? 0) - b.expectedCents - b.accessorialCents), 0);
+  return { days: 90, offered, answered, accepted, declined, expired, acceptancePct: answered ? Math.round((accepted / answered) * 100) : null, loads: legs.length, onTimePct: onTimeWindow ? Math.round((onTime / onTimeWindow) * 100) : null, onTimeOf: onTimeWindow, trackedPct: legs.length ? Math.round((tracked / legs.length) * 100) : null, billed: billed.length, billedOver: over, overCents: varianceCents };
+}
+
+/** What the dispatcher sees when picking a carrier: the scorecard and whether compliance lets them run. */
+export async function carrierPick(ctx: Ctx, carrierId: string) {
+  assertCtx(ctx);
+  const [score, st] = await Promise.all([scorecard(ctx, carrierId), statusFor(ctx, "carrier", carrierId).catch(() => null)]);
+  return { score, dispatchable: st ? st.dispatchable : true, problems: st ? [...st.expired.map((x) => `${x} expired`), ...st.missing.map((x) => `${x} missing`)] : [] };
 }
 
 // ---------- actions from the portal ----------
