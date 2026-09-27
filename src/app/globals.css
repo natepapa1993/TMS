@@ -417,3 +417,18 @@ body {
 .card:has(> div > .table) {
   overflow-x: auto;
 }
+
+/* ---- roomy forms (the load builder): taller controls, more air around labels ---- */
+.form-roomy .input,
+.form-roomy .select {
+  height: 42px;
+  padding: 0 12px;
+  font-size: 14.5px;
+}
+.form-roomy .label {
+  font-size: 12.5px;
+  margin-bottom: 6px;
+}
+.form-roomy .help {
+  margin-top: 6px;
+}

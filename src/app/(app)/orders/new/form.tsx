@@ -1,14 +1,18 @@
 "use client";
 
-import { useMemo, useState, useTransition } from "react";
+import Link from "next/link";
+import { useEffect, useMemo, useState, useTransition, type ReactNode } from "react";
 import { createLoadAction } from "../actions";
-import { StopFields, blankStop, stopPayload, STOP_LABEL, type Loc, type StopDraft } from "@/components/stop-fields";
+import { StopFields, blankStop, stopPayload, placeLine, timeLine, STOP_LABEL, STOP_TONE, type Loc, type StopDraft } from "@/components/stop-fields";
 import { legsFromStops, LEG_TYPE_LABEL } from "@/domain/zones";
 
 /**
- * The load builder: who pays and what for, what the freight is, and the stops — as many as the load
- * has, in order, each with its place and time. The legs are cut from the stops (a leg ends where the
- * trailer changes hands; a leg that changes country is the crossing) and shown as you type.
+ * The load builder: who pays and what for, the stops — as many as the load has, in order, each with
+ * its place and time — the freight and the references. The legs are cut from the stops (a leg ends
+ * where the trailer changes hands; a leg that changes country is the crossing) and shown as you type.
+ *
+ * Layout: a step bar to jump between the four sections, one roomy section per card, stops as a
+ * route where each stop opens to edit and folds to one line, and a sticky summary to book from.
  */
 
 const REF_KEYS: [string, string][] = [
@@ -27,19 +31,49 @@ const EQUIPMENT: [string, string][] = [
   ["straight", "Straight truck"],
   ["power_only", "Power only"],
 ];
+const SECTIONS: [string, string][] = [
+  ["sec-customer", "Customer & rate"],
+  ["sec-stops", "Stops"],
+  ["sec-freight", "Freight"],
+  ["sec-refs", "References"],
+];
 type Freight = { commodity: string; pieces: string; packaging: string; weightLb: string; hazmat: boolean };
 const blankFreight = (): Freight => ({ commodity: "", pieces: "", packaging: "", weightLb: "", hazmat: false });
+
+function Section({ id, n, title, hint, action, children }: { id: string; n: number; title: string; hint?: string; action?: ReactNode; children: ReactNode }) {
+  return (
+    <section id={id} className="card p-6 md:p-8 scroll-mt-28">
+      <div className="flex items-start justify-between gap-4 mb-6">
+        <div className="flex items-start gap-3">
+          <span className="w-7 h-7 shrink-0 rounded-full bg-navy text-white grid place-items-center text-[12px] font-extrabold mt-0.5">{n}</span>
+          <div>
+            <h2 className="text-[18px] font-extrabold tracking-tight">{title}</h2>
+            {hint && <p className="text-muted text-[13.5px] mt-1 max-w-[62ch]">{hint}</p>}
+          </div>
+        </div>
+        {action}
+      </div>
+      {children}
+    </section>
+  );
+}
 
 export function OrderForm({ customers, entities, locations }: { customers: { id: string; name: string; kind: string }[]; entities: { id: string; name: string }[]; locations: Loc[] }) {
   const [f, setF] = useState({ customerId: "", brokerId: "", billingEntityId: entities.length === 1 ? entities[0].id : "", equipment: "53_dry", rate: "", rateTbd: false, currency: "USD", cargoNote: "" });
   const [refs, setRefs] = useState<Record<string, string>>({});
   const [freight, setFreight] = useState<Freight[]>([blankFreight()]);
   const [stops, setStops] = useState<StopDraft[]>(() => [blankStop("pickup"), blankStop("delivery")]);
+  const [open, setOpen] = useState<Set<string>>(() => new Set(stops.map((s) => s.key)));
   const [err, setErr] = useState<{ field?: string; message: string } | null>(null);
+  const [active, setActive] = useState(SECTIONS[0][0]);
   const [pending, start] = useTransition();
 
   const setStop = (i: number, patch: Partial<StopDraft>) => setStops((s) => s.map((x, j) => (j === i ? { ...x, ...patch } : x)));
-  const insertAt = (i: number) => setStops((s) => [...s.slice(0, i), blankStop(i === 0 ? "pickup" : "delivery", s[Math.max(0, i - 1)]?.country ?? "US"), ...s.slice(i)]);
+  const insertAt = (i: number) => {
+    const st = blankStop(i === 0 ? "pickup" : "delivery", stops[Math.max(0, i - 1)]?.country ?? "US");
+    setStops((s) => [...s.slice(0, i), st, ...s.slice(i)]);
+    setOpen((o) => new Set(o).add(st.key));
+  };
   const remove = (i: number) => setStops((s) => (s.length <= 2 ? s : s.filter((_, j) => j !== i)));
   const move = (i: number, d: -1 | 1) =>
     setStops((s) => {
@@ -49,208 +83,365 @@ export function OrderForm({ customers, entities, locations }: { customers: { id:
       [out[i], out[j]] = [out[j], out[i]];
       return out;
     });
+  const toggle = (key: string) =>
+    setOpen((o) => {
+      const next = new Set(o);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
 
   const legs = useMemo(() => legsFromStops(stops.map((st) => ({ type: st.type, country: st.country }))), [stops]);
-  const name = (i: number) => stops[i]?.name.trim() || `stop ${i + 1}`;
+  const name = (i: number) => stops[i]?.name.trim() || `Stop ${i + 1}`;
+  const customer = customers.find((c) => c.id === f.customerId);
+  const rateText = f.rateTbd || !f.rate.trim() ? "To be confirmed" : `${f.currency} ${Number(f.rate.replace(/[$,\s]/g, "")).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+
+  const checks = [
+    { ok: !!f.customerId, label: "Bill-to customer" },
+    { ok: f.rateTbd || !!f.rate.trim(), label: "Rate (or to be confirmed)" },
+    { ok: stops.some((s) => s.type === "pickup"), label: "A pickup" },
+    { ok: stops.some((s) => s.type === "delivery"), label: "A delivery" },
+    { ok: stops.every((s) => s.name.trim()), label: "Every stop has a location" },
+  ];
+  const done: Record<string, boolean> = {
+    "sec-customer": checks[0].ok && checks[1].ok,
+    "sec-stops": checks[2].ok && checks[3].ok && checks[4].ok,
+    "sec-freight": freight.some((l) => l.commodity.trim() || l.pieces.trim() || l.weightLb.trim()),
+    "sec-refs": Object.values(refs).some((v) => v?.trim()),
+  };
+
+  // highlight the section in view on the step bar
+  useEffect(() => {
+    const els = SECTIONS.map(([id]) => document.getElementById(id)).filter((e): e is HTMLElement => !!e);
+    const io = new IntersectionObserver((entries) => {
+      const seen = entries.filter((e) => e.isIntersecting).sort((a, b) => a.boundingClientRect.top - b.boundingClientRect.top)[0];
+      if (seen) setActive(seen.target.id);
+    }, { rootMargin: "-120px 0px -55% 0px" });
+    els.forEach((e) => io.observe(e));
+    return () => io.disconnect();
+  }, []);
 
   const submit = (book: boolean) =>
     start(async () => {
       setErr(null);
       const r = await createLoadAction({ ...f, refs, freight, stops: stops.map(stopPayload), book });
-      if (r && !r.ok) setErr({ field: r.field, message: r.error });
+      if (r && !r.ok) {
+        setErr({ field: r.field, message: r.error });
+        if (r.field === "stops") setOpen((o) => new Set([...o, ...stops.filter((s) => !s.name.trim()).map((s) => s.key)]));
+      }
     });
 
   return (
-    <div className="grid lg:grid-cols-[1fr_320px] gap-5 items-start [&>*]:min-w-0">
-      <div className="space-y-4">
-        <div className="card p-5">
-          <div className="h2 mb-3">Customer & rate</div>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-            <div>
-              <label className="label" htmlFor="l-customer">
-                Bill to (customer or broker)
-              </label>
-              <select id="l-customer" className="select" value={f.customerId} onChange={(e) => setF({ ...f, customerId: e.target.value })} aria-invalid={err?.field === "customerId"}>
-                <option value="">—</option>
-                {customers.map((c) => (
-                  <option key={c.id} value={c.id}>
-                    {c.name}
-                    {c.kind === "broker" ? " (broker)" : ""}
-                  </option>
-                ))}
-              </select>
-              {customers.length === 0 && <div className="help">No customers yet — add them under Settings → Customers & brokers.</div>}
-            </div>
-            <div>
-              <label className="label" htmlFor="l-broker">
-                Broker on the load (if different)
-              </label>
-              <select id="l-broker" className="select" value={f.brokerId} onChange={(e) => setF({ ...f, brokerId: e.target.value })}>
-                <option value="">—</option>
-                {customers
-                  .filter((c) => c.kind === "broker")
-                  .map((c) => (
+    <div>
+      {/* header */}
+      <div className="max-w-[1320px] mx-auto px-5 md:px-10 pt-8 pb-6">
+        <div className="eyebrow mb-2">
+          <Link href="/orders" className="hover:text-teal">
+            Orders
+          </Link>{" "}
+          / New load
+        </div>
+        <h1 className="text-[28px] font-extrabold tracking-tight leading-tight">New load</h1>
+        <p className="text-muted text-[14.5px] mt-2 max-w-[70ch]">Who pays, every stop in the order the truck runs them, the freight and the references. The load is split into legs wherever the trailer changes hands.</p>
+      </div>
+
+      {/* step bar */}
+      <nav className="sticky top-12 lg:top-0 z-20 bg-ground/90 backdrop-blur border-y border-line" aria-label="Sections">
+        <div className="max-w-[1320px] mx-auto px-5 md:px-10 flex gap-1 overflow-x-auto">
+          {SECTIONS.map(([id, label], i) => (
+            <a
+              key={id}
+              href={`#${id}`}
+              onClick={() => setActive(id)}
+              className={`flex items-center gap-2.5 px-4 h-14 shrink-0 border-b-2 text-[14px] font-semibold transition-colors ${active === id ? "border-teal text-ink" : "border-transparent text-muted hover:text-ink"}`}
+            >
+              <span className={`w-6 h-6 rounded-full grid place-items-center text-[11px] font-extrabold ${done[id] ? "bg-teal text-white" : active === id ? "bg-navy text-white" : "bg-line text-muted"}`}>{done[id] ? "✓" : i + 1}</span>
+              {label}
+            </a>
+          ))}
+        </div>
+      </nav>
+
+      <div className="max-w-[1320px] mx-auto px-5 md:px-10 py-8 grid lg:grid-cols-[minmax(0,1fr)_360px] gap-8 lg:gap-10 items-start">
+        <div className="space-y-8 min-w-0 form-roomy">
+          {/* 1 — customer & rate */}
+          <Section id="sec-customer" n={1} title="Customer & rate" hint="Who you bill for this load and what they pay.">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-x-5 gap-y-5">
+              <div>
+                <label className="label" htmlFor="l-customer">
+                  Bill to (customer or broker)
+                </label>
+                <select id="l-customer" className="select" value={f.customerId} onChange={(e) => setF({ ...f, customerId: e.target.value })} aria-invalid={err?.field === "customerId"}>
+                  <option value="">Choose…</option>
+                  {customers.map((c) => (
                     <option key={c.id} value={c.id}>
                       {c.name}
-                    </option>
-                  ))}
-              </select>
-            </div>
-            <div>
-              <label className="label" htmlFor="l-rate">
-                Rate
-              </label>
-              <div className="flex gap-2">
-                <input id="l-rate" className="input" inputMode="decimal" value={f.rate} onChange={(e) => setF({ ...f, rate: e.target.value })} placeholder="0.00" aria-invalid={err?.field === "rateCents" || err?.field === "rate"} disabled={f.rateTbd} />
-                <select className="select w-24" value={f.currency} onChange={(e) => setF({ ...f, currency: e.target.value })} aria-label="Currency">
-                  <option>USD</option>
-                  <option>MXN</option>
-                  <option>CAD</option>
-                </select>
-              </div>
-              <label className="flex items-center gap-2 mt-1.5 text-[12.5px] cursor-pointer">
-                <input type="checkbox" className="accent-teal" checked={f.rateTbd} onChange={(e) => setF({ ...f, rateTbd: e.target.checked })} /> Rate to be confirmed
-              </label>
-            </div>
-            <div>
-              <label className="label" htmlFor="l-equipment">
-                Equipment
-              </label>
-              <select id="l-equipment" className="select" value={f.equipment} onChange={(e) => setF({ ...f, equipment: e.target.value })}>
-                {EQUIPMENT.map(([v, l]) => (
-                  <option key={v} value={v}>
-                    {l}
-                  </option>
-                ))}
-              </select>
-            </div>
-            {entities.length > 1 && (
-              <div>
-                <label className="label" htmlFor="l-entity">
-                  Bill from
-                </label>
-                <select id="l-entity" className="select" value={f.billingEntityId} onChange={(e) => setF({ ...f, billingEntityId: e.target.value })}>
-                  <option value="">— default —</option>
-                  {entities.map((e) => (
-                    <option key={e.id} value={e.id}>
-                      {e.name}
+                      {c.kind === "broker" ? " (broker)" : ""}
                     </option>
                   ))}
                 </select>
-              </div>
-            )}
-          </div>
-          <div className="eyebrow mt-4 mb-2">References</div>
-          <div className="grid grid-cols-2 md:grid-cols-5 gap-2">
-            {REF_KEYS.map(([k, l]) => (
-              <div key={k}>
-                <label className="label" htmlFor={`ref-${k}`}>
-                  {l}
-                </label>
-                <input id={`ref-${k}`} className="input" value={refs[k] ?? ""} onChange={(e) => setRefs({ ...refs, [k]: e.target.value })} />
-              </div>
-            ))}
-          </div>
-        </div>
-
-        <div className="card p-5">
-          <div className="flex items-center justify-between mb-2">
-            <div className="h2">Freight</div>
-            <button type="button" className="btn btn-sm" onClick={() => setFreight((x) => [...x, blankFreight()])}>
-              + Add line
-            </button>
-          </div>
-          <div className="space-y-2">
-            {freight.map((l, i) => (
-              <div key={i} className="grid grid-cols-2 md:grid-cols-[2fr_90px_130px_120px_auto_auto] gap-2 items-center">
-                <input className="input col-span-2 md:col-span-1" placeholder="Commodity" value={l.commodity} onChange={(e) => setFreight((x) => x.map((y, j) => (j === i ? { ...y, commodity: e.target.value } : y)))} aria-label={`Freight ${i + 1} commodity`} />
-                <input className="input" placeholder="Pieces" inputMode="numeric" value={l.pieces} onChange={(e) => setFreight((x) => x.map((y, j) => (j === i ? { ...y, pieces: e.target.value } : y)))} aria-label={`Freight ${i + 1} pieces`} />
-                <input className="input" placeholder="Pallets, boxes…" value={l.packaging} onChange={(e) => setFreight((x) => x.map((y, j) => (j === i ? { ...y, packaging: e.target.value } : y)))} aria-label={`Freight ${i + 1} packaging`} />
-                <input className="input" placeholder="Weight (lb)" inputMode="numeric" value={l.weightLb} onChange={(e) => setFreight((x) => x.map((y, j) => (j === i ? { ...y, weightLb: e.target.value } : y)))} aria-label={`Freight ${i + 1} weight`} />
-                <label className="flex items-center gap-1.5 text-[12.5px] cursor-pointer">
-                  <input type="checkbox" className="accent-teal" checked={l.hazmat} onChange={(e) => setFreight((x) => x.map((y, j) => (j === i ? { ...y, hazmat: e.target.checked } : y)))} /> Hazmat
-                </label>
-                <button type="button" className="btn btn-ghost btn-sm text-red" disabled={freight.length === 1} onClick={() => setFreight((x) => x.filter((_, j) => j !== i))} aria-label={`Remove freight ${i + 1}`}>
-                  ✕
-                </button>
-              </div>
-            ))}
-          </div>
-          <input className="input mt-2" placeholder="Note on the freight (optional)" value={f.cargoNote} onChange={(e) => setF({ ...f, cargoNote: e.target.value })} aria-label="Freight note" />
-        </div>
-
-        <div className="card p-5">
-          <div className="flex items-center justify-between mb-1">
-            <div className="h2">Stops</div>
-            <span className="text-[12.5px] text-muted">{stops.length} stops</span>
-          </div>
-          <div className="text-[12.5px] text-muted mb-3">In the order the truck runs them. Add every pickup and drop; add a yard, border yard or transload where the trailer changes hands and the load is split into legs there.</div>
-          <div className="space-y-2" data-testid="stops">
-            {stops.map((st, i) => (
-              <div key={st.key}>
-                <div className="rounded-lg border border-line p-3" data-testid="stop">
-                  <div className="flex items-center gap-2 mb-2">
-                    <span className="w-6 h-6 rounded-full bg-navy text-white grid place-items-center text-[11px] font-extrabold">{i + 1}</span>
-                    <span className="font-bold">{STOP_LABEL[st.type] ?? st.type}</span>
-                    <span className="ml-auto flex gap-1">
-                      <button type="button" className="btn btn-ghost btn-sm" disabled={i === 0} onClick={() => move(i, -1)} aria-label={`Move stop ${i + 1} up`}>
-                        ↑
-                      </button>
-                      <button type="button" className="btn btn-ghost btn-sm" disabled={i === stops.length - 1} onClick={() => move(i, 1)} aria-label={`Move stop ${i + 1} down`}>
-                        ↓
-                      </button>
-                      <button type="button" className="btn btn-ghost btn-sm text-red" disabled={stops.length <= 2} onClick={() => remove(i)} aria-label={`Remove stop ${i + 1}`}>
-                        Remove
-                      </button>
-                    </span>
-                  </div>
-                  <StopFields stop={st} index={i} locations={locations} onChange={(p) => setStop(i, p)} invalid={err?.field === "stops"} />
-                </div>
-                {i < stops.length - 1 && (
-                  <div className="flex justify-center -my-0.5">
-                    <button type="button" className="text-[12px] text-teal font-semibold px-2 py-0.5 hover:underline" onClick={() => insertAt(i + 1)} aria-label={`Insert a stop after stop ${i + 1}`}>
-                      + insert stop here
-                    </button>
+                {customers.length === 0 && (
+                  <div className="help">
+                    No customers yet —{" "}
+                    <Link href="/settings/customers?add=1" className="text-teal font-semibold">
+                      add one
+                    </Link>
+                    .
                   </div>
                 )}
               </div>
-            ))}
-          </div>
-          <button type="button" className="btn w-full justify-center mt-3" onClick={() => insertAt(stops.length)}>
-            + Add stop
-          </button>
-        </div>
-      </div>
-
-      <aside className="card p-5 lg:sticky lg:top-5">
-        <div className="h2">Legs</div>
-        <div className="text-[12.5px] text-muted mt-0.5 mb-2">Cut from the stops: a leg ends where the trailer changes hands. Each leg is assigned on its own — your truck or a partner carrier.</div>
-        <ol className="space-y-1.5 text-[13px] mb-4" data-testid="legs-preview">
-          {legs.map((l, k) => (
-            <li key={k} className="rounded-lg bg-ground px-3 py-2">
-              <b>
-                Leg {k + 1} · {LEG_TYPE_LABEL[l.type] ?? l.type}
-              </b>
-              <div className="text-muted text-[12.5px] truncate">
-                {name(l.from)} → {name(l.to)}
-                {l.to - l.from > 1 ? ` · ${l.to - l.from - 1} stop${l.to - l.from - 1 === 1 ? "" : "s"} on the way` : ""}
+              <div>
+                <label className="label" htmlFor="l-broker">
+                  Broker on the load <span className="font-normal text-faint">(if different)</span>
+                </label>
+                <select id="l-broker" className="select" value={f.brokerId} onChange={(e) => setF({ ...f, brokerId: e.target.value })}>
+                  <option value="">None</option>
+                  {customers
+                    .filter((c) => c.kind === "broker")
+                    .map((c) => (
+                      <option key={c.id} value={c.id}>
+                        {c.name}
+                      </option>
+                    ))}
+                </select>
               </div>
-            </li>
-          ))}
-        </ol>
-        {err && (
-          <div className="error mb-3" role="alert">
-            {err.message}
+              <div>
+                <label className="label" htmlFor="l-rate">
+                  Rate
+                </label>
+                <div className="flex gap-2">
+                  <input id="l-rate" className="input" inputMode="decimal" value={f.rate} onChange={(e) => setF({ ...f, rate: e.target.value })} placeholder="0.00" aria-invalid={err?.field === "rateCents" || err?.field === "rate"} disabled={f.rateTbd} />
+                  <select className="select w-28 shrink-0" value={f.currency} onChange={(e) => setF({ ...f, currency: e.target.value })} aria-label="Currency">
+                    <option>USD</option>
+                    <option>MXN</option>
+                    <option>CAD</option>
+                  </select>
+                </div>
+                <label className="flex items-center gap-2 mt-2.5 text-[13px] cursor-pointer text-muted">
+                  <input type="checkbox" className="accent-teal w-4 h-4" checked={f.rateTbd} onChange={(e) => setF({ ...f, rateTbd: e.target.checked })} /> Rate to be confirmed
+                </label>
+              </div>
+              <div>
+                <label className="label" htmlFor="l-equipment">
+                  Equipment
+                </label>
+                <select id="l-equipment" className="select" value={f.equipment} onChange={(e) => setF({ ...f, equipment: e.target.value })}>
+                  {EQUIPMENT.map(([v, l]) => (
+                    <option key={v} value={v}>
+                      {l}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              {entities.length > 1 && (
+                <div>
+                  <label className="label" htmlFor="l-entity">
+                    Bill from
+                  </label>
+                  <select id="l-entity" className="select" value={f.billingEntityId} onChange={(e) => setF({ ...f, billingEntityId: e.target.value })}>
+                    <option value="">Default</option>
+                    {entities.map((e) => (
+                      <option key={e.id} value={e.id}>
+                        {e.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
+            </div>
+          </Section>
+
+          {/* 2 — stops */}
+          <Section id="sec-stops" n={2} title="Stops" hint="In the order the truck runs them. Add a yard, border yard, transload or terminal wherever the trailer changes hands — the load splits into legs there." action={<span className="text-[13px] text-muted whitespace-nowrap mt-1">{stops.length} stops</span>}>
+            <ol className="relative" data-testid="stops">
+              {stops.map((st, i) => {
+                const isOpen = open.has(st.key);
+                const place = placeLine(st);
+                const when = timeLine(st);
+                const missing = err?.field === "stops" && !st.name.trim();
+                return (
+                  <li key={st.key} className="relative pl-12 md:pl-14">
+                    {/* the route line */}
+                    {i < stops.length - 1 && <span className="absolute left-[15px] md:left-[19px] top-10 -bottom-2 w-0.5 bg-line" aria-hidden />}
+                    <span className={`absolute left-0 top-4 w-8 h-8 md:w-10 md:h-10 rounded-full grid place-items-center text-[12px] md:text-[13px] font-extrabold ring-4 ring-white ${st.name.trim() ? "bg-navy text-white" : "bg-white text-muted border-2 border-line"}`}>{i + 1}</span>
+
+                    <div className={`rounded-xl border bg-white transition-shadow ${isOpen ? "border-line shadow-[var(--shadow-card)]" : "border-line hover:border-faint"} ${missing ? "border-red" : ""}`} data-testid="stop">
+                      <div className="flex items-center gap-3 px-4 md:px-5 py-4">
+                        <button type="button" className="flex-1 min-w-0 text-left" onClick={() => toggle(st.key)} aria-expanded={isOpen} aria-label={`${isOpen ? "Fold" : "Edit"} stop ${i + 1}`}>
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className={`pill pill-${STOP_TONE[st.type] ?? "slate"}`}>{STOP_LABEL[st.type] ?? st.type}</span>
+                            <span className={`font-bold text-[15px] truncate ${st.name.trim() ? "" : "text-faint font-semibold"}`}>{st.name.trim() || "Location not set"}</span>
+                          </div>
+                          {(place || when) && (
+                            <div className="text-muted text-[13px] mt-1 truncate">
+                              {place}
+                              {place && when ? " · " : ""}
+                              {when}
+                            </div>
+                          )}
+                        </button>
+                        <div className="flex items-center gap-0.5 shrink-0">
+                          <button type="button" className="btn btn-ghost btn-sm w-8 px-0 justify-center" disabled={i === 0} onClick={() => move(i, -1)} aria-label={`Move stop ${i + 1} up`} title="Move up">
+                            ↑
+                          </button>
+                          <button type="button" className="btn btn-ghost btn-sm w-8 px-0 justify-center" disabled={i === stops.length - 1} onClick={() => move(i, 1)} aria-label={`Move stop ${i + 1} down`} title="Move down">
+                            ↓
+                          </button>
+                          <button type="button" className="btn btn-ghost btn-sm text-red" disabled={stops.length <= 2} onClick={() => remove(i)} aria-label={`Remove stop ${i + 1}`}>
+                            Remove
+                          </button>
+                          <button type="button" className="btn btn-sm ml-1" onClick={() => toggle(st.key)}>
+                            {isOpen ? "Done" : "Edit"}
+                          </button>
+                        </div>
+                      </div>
+                      {isOpen && (
+                        <div className="border-t border-line px-4 md:px-6 py-6">
+                          <StopFields stop={st} index={i} locations={locations} onChange={(p) => setStop(i, p)} invalid={err?.field === "stops"} />
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="h-10 flex items-center">
+                      {i < stops.length - 1 && (
+                        <button type="button" className="text-[12.5px] text-teal font-semibold px-2 py-1 rounded-md hover:bg-teal-soft" onClick={() => insertAt(i + 1)} aria-label={`Insert a stop after stop ${i + 1}`}>
+                          + Insert stop here
+                        </button>
+                      )}
+                    </div>
+                  </li>
+                );
+              })}
+            </ol>
+            <button type="button" className="w-full h-14 rounded-xl border-2 border-dashed border-line text-teal font-bold text-[14px] hover:border-teal hover:bg-teal-soft transition-colors" onClick={() => insertAt(stops.length)}>
+              + Add stop
+            </button>
+          </Section>
+
+          {/* 3 — freight */}
+          <Section
+            id="sec-freight"
+            n={3}
+            title="Freight"
+            hint="What's on the trailer. Optional to book; needed on the crossing paperwork."
+            action={
+              <button type="button" className="btn btn-sm mt-1" onClick={() => setFreight((x) => [...x, blankFreight()])}>
+                + Add line
+              </button>
+            }
+          >
+            <div className="hidden md:grid grid-cols-[minmax(0,2fr)_100px_150px_130px_90px_40px] gap-4 mb-2">
+              {["Commodity", "Pieces", "Packaging", "Weight (lb)", "Hazmat", ""].map((h) => (
+                <span key={h} className="label m-0">
+                  {h}
+                </span>
+              ))}
+            </div>
+            <div className="space-y-3">
+              {freight.map((l, i) => (
+                <div key={i} className="grid grid-cols-2 md:grid-cols-[minmax(0,2fr)_100px_150px_130px_90px_40px] gap-4 items-center">
+                  <input className="input col-span-2 md:col-span-1" placeholder="Commodity" value={l.commodity} onChange={(e) => setFreight((x) => x.map((y, j) => (j === i ? { ...y, commodity: e.target.value } : y)))} aria-label={`Freight ${i + 1} commodity`} />
+                  <input className="input" placeholder="Pieces" inputMode="numeric" value={l.pieces} onChange={(e) => setFreight((x) => x.map((y, j) => (j === i ? { ...y, pieces: e.target.value } : y)))} aria-label={`Freight ${i + 1} pieces`} />
+                  <input className="input" placeholder="Pallets, boxes…" value={l.packaging} onChange={(e) => setFreight((x) => x.map((y, j) => (j === i ? { ...y, packaging: e.target.value } : y)))} aria-label={`Freight ${i + 1} packaging`} />
+                  <input className="input" placeholder="lb" inputMode="numeric" value={l.weightLb} onChange={(e) => setFreight((x) => x.map((y, j) => (j === i ? { ...y, weightLb: e.target.value } : y)))} aria-label={`Freight ${i + 1} weight`} />
+                  <label className="flex items-center gap-2 text-[13px] cursor-pointer">
+                    <input type="checkbox" className="accent-teal w-4 h-4" checked={l.hazmat} onChange={(e) => setFreight((x) => x.map((y, j) => (j === i ? { ...y, hazmat: e.target.checked } : y)))} /> <span className="md:sr-only">Hazmat</span>
+                  </label>
+                  <button type="button" className="btn btn-ghost btn-sm text-red justify-self-end" disabled={freight.length === 1} onClick={() => setFreight((x) => x.filter((_, j) => j !== i))} aria-label={`Remove freight ${i + 1}`}>
+                    ✕
+                  </button>
+                </div>
+              ))}
+            </div>
+            <div className="mt-6">
+              <label className="label" htmlFor="l-cargo">
+                Note on the freight <span className="font-normal text-faint">(optional)</span>
+              </label>
+              <input id="l-cargo" className="input" value={f.cargoNote} onChange={(e) => setF({ ...f, cargoNote: e.target.value })} aria-label="Freight note" />
+            </div>
+          </Section>
+
+          {/* 4 — references */}
+          <Section id="sec-refs" n={4} title="References" hint="The numbers the customer, the broker and the docks will quote. All optional.">
+            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-x-5 gap-y-5">
+              {REF_KEYS.map(([k, l]) => (
+                <div key={k}>
+                  <label className="label" htmlFor={`ref-${k}`}>
+                    {l}
+                  </label>
+                  <input id={`ref-${k}`} className="input" value={refs[k] ?? ""} onChange={(e) => setRefs({ ...refs, [k]: e.target.value })} />
+                </div>
+              ))}
+            </div>
+          </Section>
+        </div>
+
+        {/* summary */}
+        <aside className="lg:sticky lg:top-[88px] space-y-4">
+          <div className="card p-6">
+            <div className="text-[16px] font-extrabold tracking-tight">Summary</div>
+            <dl className="mt-4 space-y-3 text-[13.5px]">
+              {(
+                [
+                  ["Bill to", customer?.name ?? "—"],
+                  ["Rate", rateText],
+                  ["Equipment", EQUIPMENT.find(([v]) => v === f.equipment)?.[1] ?? f.equipment],
+                ] as const
+              ).map(([k, v]) => (
+                <div key={k} className="flex justify-between gap-4">
+                  <dt className="text-muted">{k}</dt>
+                  <dd className="font-semibold text-right truncate">{v}</dd>
+                </div>
+              ))}
+            </dl>
+
+            <div className="h-px bg-line my-5" />
+            <div className="flex items-baseline justify-between">
+              <div className="text-[13px] font-bold">Legs</div>
+              <div className="text-[12px] text-muted">
+                {legs.length} leg{legs.length === 1 ? "" : "s"} · {stops.length} stops
+              </div>
+            </div>
+            <ol className="mt-3 space-y-2" data-testid="legs-preview">
+              {legs.map((l, k) => (
+                <li key={k} className="rounded-lg bg-ground px-3.5 py-3">
+                  <div className="text-[13px] font-bold">
+                    Leg {k + 1} · {LEG_TYPE_LABEL[l.type] ?? l.type}
+                  </div>
+                  <div className="text-muted text-[12.5px] mt-0.5 truncate">
+                    {name(l.from)} → {name(l.to)}
+                    {l.to - l.from > 1 ? ` · ${l.to - l.from - 1} stop${l.to - l.from - 1 === 1 ? "" : "s"} on the way` : ""}
+                  </div>
+                </li>
+              ))}
+            </ol>
+
+            <div className="h-px bg-line my-5" />
+            <div className="text-[13px] font-bold mb-2.5">Before booking</div>
+            <ul className="space-y-2 text-[13px]">
+              {checks.map((c) => (
+                <li key={c.label} className={`flex items-center gap-2.5 ${c.ok ? "text-ink" : "text-muted"}`}>
+                  <span className={`w-5 h-5 rounded-full grid place-items-center text-[11px] font-extrabold ${c.ok ? "bg-teal text-white" : "border-2 border-line"}`}>{c.ok ? "✓" : ""}</span>
+                  {c.label}
+                </li>
+              ))}
+            </ul>
+
+            {err && (
+              <div className="error mt-5 rounded-lg bg-red-soft px-3 py-2.5 text-[13px]" role="alert">
+                {err.message}
+              </div>
+            )}
+            <button className="btn btn-primary btn-lg w-full justify-center mt-6 h-12 text-[15px]" disabled={pending} onClick={() => submit(true)}>
+              {pending ? "Creating…" : "Create & book"}
+            </button>
+            <button className="btn w-full justify-center mt-2.5 h-10" disabled={pending} onClick={() => submit(false)}>
+              Save as draft
+            </button>
+            <p className="mt-4 text-[12px] text-muted leading-relaxed">A booked load goes to Pending on Dispatch, ready to assign leg by leg.</p>
           </div>
-        )}
-        <button className="btn btn-primary btn-lg w-full justify-center" disabled={pending} onClick={() => submit(true)}>
-          {pending ? "Creating…" : "Create & book"}
-        </button>
-        <button className="btn w-full justify-center mt-2" disabled={pending} onClick={() => submit(false)}>
-          Save as draft
-        </button>
-        <div className="mt-3 text-[12px] text-muted">Booking needs the bill-to and a rate (or rate to be confirmed). Every stop needs a location name. A booked load goes to Pending on Dispatch.</div>
-      </aside>
+        </aside>
+      </div>
     </div>
   );
 }

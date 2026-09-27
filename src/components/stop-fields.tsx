@@ -6,6 +6,8 @@
  * what the driver needs to know. Used by the load builder and by "Add stop" on an existing load.
  */
 
+import type { ReactNode } from "react";
+
 export type Loc = { id: string; name: string; country: string; kind: string; address: { line1?: string; city?: string; state?: string; postalCode?: string; country?: string } | null };
 
 export type StopDraft = {
@@ -37,6 +39,9 @@ export const STOP_TYPES: [string, string, string][] = [
   ["terminal", "Terminal (hand-off)", "a rail or port terminal; a leg ends here"],
 ];
 export const STOP_LABEL: Record<string, string> = Object.fromEntries(STOP_TYPES.map(([v, l]) => [v, l]));
+export const STOP_HINT: Record<string, string> = Object.fromEntries(STOP_TYPES.map(([v, , h]) => [v, h]));
+/** Pill tone per stop type: freight on / off / hand-off / customs. */
+export const STOP_TONE: Record<string, string> = { pickup: "teal", delivery: "navy", yard: "amber", border_yard: "amber", transload: "amber", terminal: "amber", customs: "blue" };
 
 export const COUNTRIES: [string, string][] = [
   ["US", "United States"],
@@ -52,91 +57,174 @@ export function fromLocation(st: StopDraft, l: Loc): StopDraft {
   return { ...st, locationId: l.id, name: l.name, line1: l.address?.line1 ?? "", city: l.address?.city ?? "", state: l.address?.state ?? "", postalCode: l.address?.postalCode ?? "", country: l.country || "US", saveLocation: false };
 }
 
+/** "Canton, MI · US" */
+export const placeLine = (st: Pick<StopDraft, "city" | "state" | "country">) => [[st.city, st.state].filter(Boolean).join(", "), st.country].filter(Boolean).join(" · ");
+
+/** "Oct 2, 8:00 AM – 2:00 PM" / "Appt Oct 2, 9:30 AM" / "" */
+export function timeLine(st: Pick<StopDraft, "appointment" | "windowStart" | "windowEnd">) {
+  if (!st.windowStart) return "";
+  const a = new Date(st.windowStart);
+  const day = a.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+  const t = (d: Date) => d.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
+  if (st.appointment) return `Appt ${day}, ${t(a)}`;
+  if (!st.windowEnd) return `${day}, from ${t(a)}`;
+  const b = new Date(st.windowEnd);
+  const sameDay = b.toDateString() === a.toDateString();
+  return `${day}, ${t(a)} – ${sameDay ? "" : `${b.toLocaleDateString("en-US", { month: "short", day: "numeric" })}, `}${t(b)}`;
+}
+
+function Group({ title, children }: { title: string; children: ReactNode }) {
+  return (
+    <section>
+      <div className="flex items-center gap-3 mb-3">
+        <span className="text-[11px] font-bold uppercase tracking-[0.08em] text-faint">{title}</span>
+        <span className="h-px flex-1 bg-line" />
+      </div>
+      {children}
+    </section>
+  );
+}
+
 export function StopFields({ stop, onChange, locations, index, invalid }: { stop: StopDraft; onChange: (patch: Partial<StopDraft>) => void; locations: Loc[]; index: number; invalid?: boolean }) {
   const id = (f: string) => `stop-${index}-${f}`;
   const linked = stop.locationId ? locations.find((l) => l.id === stop.locationId) : null;
+  const n1 = index + 1;
   return (
-    <div className="space-y-2">
-      <div className="grid grid-cols-1 md:grid-cols-[200px_1fr] gap-2">
-        <div>
-          <label className="label" htmlFor={id("type")}>
-            Stop type
-          </label>
-          <select id={id("type")} className="select" value={stop.type} onChange={(e) => onChange({ type: e.target.value })} aria-label={`Stop ${index + 1} type`}>
-            {STOP_TYPES.map(([v, l]) => (
-              <option key={v} value={v}>
-                {l}
-              </option>
-            ))}
-          </select>
+    <div className="form-roomy space-y-7">
+      <Group title="Where">
+        <div className="grid grid-cols-1 md:grid-cols-6 gap-x-4 gap-y-4">
+          <div className="md:col-span-2">
+            <label className="label" htmlFor={id("type")}>
+              Stop type
+            </label>
+            <select id={id("type")} className="select" value={stop.type} onChange={(e) => onChange({ type: e.target.value })} aria-label={`Stop ${n1} type`}>
+              {STOP_TYPES.map(([v, l]) => (
+                <option key={v} value={v}>
+                  {l}
+                </option>
+              ))}
+            </select>
+            <div className="help">{STOP_HINT[stop.type]}</div>
+          </div>
+          <div className="md:col-span-4">
+            <label className="label" htmlFor={id("loc")}>
+              Location {linked && <span className="text-teal font-semibold">· saved location</span>}
+            </label>
+            <input
+              id={id("loc")}
+              className="input"
+              list={`locations-${index}`}
+              value={stop.name}
+              placeholder={locations.length ? "Company or place name — or pick a saved location" : "Company or place name"}
+              aria-invalid={invalid && !stop.name.trim()}
+              aria-label={`Stop ${n1} location`}
+              onChange={(e) => {
+                const v = e.target.value;
+                const l = locations.find((x) => x.name === v);
+                onChange(l ? fromLocation(stop, l) : { name: v, locationId: stop.locationId && linked?.name !== v ? null : stop.locationId });
+              }}
+            />
+            <datalist id={`locations-${index}`}>
+              {locations.map((l) => (
+                <option key={l.id} value={l.name}>
+                  {[l.address?.city, l.address?.state, l.country].filter(Boolean).join(", ")}
+                </option>
+              ))}
+            </datalist>
+          </div>
+          <div className="md:col-span-6">
+            <label className="label" htmlFor={id("street")}>
+              Street address
+            </label>
+            <input id={id("street")} className="input" value={stop.line1} onChange={(e) => onChange({ line1: e.target.value })} aria-label={`Stop ${n1} street`} />
+          </div>
+          <div className="md:col-span-2">
+            <label className="label" htmlFor={id("city")}>
+              City
+            </label>
+            <input id={id("city")} className="input" value={stop.city} onChange={(e) => onChange({ city: e.target.value })} aria-label={`Stop ${n1} city`} />
+          </div>
+          <div className="md:col-span-1">
+            <label className="label" htmlFor={id("state")}>
+              State / prov.
+            </label>
+            <input id={id("state")} className="input" value={stop.state} onChange={(e) => onChange({ state: e.target.value })} aria-label={`Stop ${n1} state`} />
+          </div>
+          <div className="md:col-span-1">
+            <label className="label" htmlFor={id("postal")}>
+              ZIP / postal
+            </label>
+            <input id={id("postal")} className="input" value={stop.postalCode} onChange={(e) => onChange({ postalCode: e.target.value })} aria-label={`Stop ${n1} postal code`} />
+          </div>
+          <div className="md:col-span-2">
+            <label className="label" htmlFor={id("country")}>
+              Country
+            </label>
+            <select id={id("country")} className="select" value={stop.country} onChange={(e) => onChange({ country: e.target.value })} aria-label={`Stop ${n1} country`}>
+              {COUNTRIES.map(([v, l]) => (
+                <option key={v} value={v}>
+                  {l}
+                </option>
+              ))}
+            </select>
+          </div>
         </div>
-        <div>
-          <label className="label" htmlFor={id("loc")}>
-            Location {linked && <span className="text-teal font-normal">· saved location</span>}
+        {!stop.locationId && stop.name.trim() && (
+          <label className="flex items-center gap-2 mt-4 text-[13px] cursor-pointer text-muted">
+            <input type="checkbox" className="accent-teal w-4 h-4" checked={stop.saveLocation} onChange={(e) => onChange({ saveLocation: e.target.checked })} /> Save &ldquo;{stop.name.trim()}&rdquo; as a location for next time
           </label>
-          <input
-            id={id("loc")}
-            className="input"
-            list={`locations-${index}`}
-            value={stop.name}
-            placeholder="Type a name, or pick a saved location"
-            aria-invalid={invalid && !stop.name.trim()}
-            aria-label={`Stop ${index + 1} location`}
-            onChange={(e) => {
-              const v = e.target.value;
-              const l = locations.find((x) => x.name === v);
-              onChange(l ? fromLocation(stop, l) : { name: v, locationId: stop.locationId && linked?.name !== v ? null : stop.locationId });
-            }}
-          />
-          <datalist id={`locations-${index}`}>
-            {locations.map((l) => (
-              <option key={l.id} value={l.name}>
-                {[l.address?.city, l.address?.state, l.country].filter(Boolean).join(", ")}
-              </option>
-            ))}
-          </datalist>
-        </div>
-      </div>
-      <div className="grid grid-cols-2 md:grid-cols-[2fr_1.2fr_110px_110px_150px] gap-2">
-        <input className="input col-span-2 md:col-span-1" placeholder="Street address" value={stop.line1} onChange={(e) => onChange({ line1: e.target.value })} aria-label={`Stop ${index + 1} street`} />
-        <input className="input" placeholder="City" value={stop.city} onChange={(e) => onChange({ city: e.target.value })} aria-label={`Stop ${index + 1} city`} />
-        <input className="input" placeholder="State / prov." value={stop.state} onChange={(e) => onChange({ state: e.target.value })} aria-label={`Stop ${index + 1} state`} />
-        <input className="input" placeholder="ZIP / postal" value={stop.postalCode} onChange={(e) => onChange({ postalCode: e.target.value })} aria-label={`Stop ${index + 1} postal code`} />
-        <select className="select" value={stop.country} onChange={(e) => onChange({ country: e.target.value })} aria-label={`Stop ${index + 1} country`}>
-          {COUNTRIES.map(([v, l]) => (
-            <option key={v} value={v}>
+        )}
+      </Group>
+
+      <Group title="When">
+        <div className="inline-flex rounded-lg border border-line bg-ground p-1 mb-4" role="group" aria-label={`Stop ${n1} time kind`}>
+          {([
+            [false, "Window · first come"],
+            [true, "Appointment"],
+          ] as const).map(([appt, l]) => (
+            <button key={l} type="button" aria-pressed={stop.appointment === appt} onClick={() => onChange({ appointment: appt })} className={`px-4 h-9 rounded-md text-[13px] font-semibold transition-colors ${stop.appointment === appt ? "bg-white text-ink shadow-sm" : "text-muted hover:text-ink"}`}>
               {l}
-            </option>
+            </button>
           ))}
-        </select>
-      </div>
-      <div className="grid grid-cols-2 md:grid-cols-[160px_1fr_1fr] gap-2 items-end">
-        <div>
-          <label className="label">Time</label>
-          <select className="select" value={stop.appointment ? "appt" : "window"} onChange={(e) => onChange({ appointment: e.target.value === "appt" })} aria-label={`Stop ${index + 1} time kind`}>
-            <option value="window">Window (FCFS)</option>
-            <option value="appt">Appointment</option>
-          </select>
         </div>
-        <div>
-          <label className="label">{stop.appointment ? "Appointment" : "From"}</label>
-          <input type="datetime-local" className="input" value={stop.windowStart} onChange={(e) => onChange({ windowStart: e.target.value })} aria-label={`Stop ${index + 1} from`} />
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-x-4 gap-y-4">
+          <div>
+            <label className="label" htmlFor={id("from")}>
+              {stop.appointment ? "Appointment" : "Opens"}
+            </label>
+            <input id={id("from")} type="datetime-local" className="input" value={stop.windowStart} onChange={(e) => onChange({ windowStart: e.target.value })} aria-label={`Stop ${n1} from`} />
+          </div>
+          <div>
+            <label className="label" htmlFor={id("to")}>
+              {stop.appointment ? "Until (optional)" : "Closes"}
+            </label>
+            <input id={id("to")} type="datetime-local" className="input" value={stop.windowEnd} onChange={(e) => onChange({ windowEnd: e.target.value })} aria-label={`Stop ${n1} to`} />
+          </div>
         </div>
-        <div>
-          <label className="label">{stop.appointment ? "Until (optional)" : "To"}</label>
-          <input type="datetime-local" className="input" value={stop.windowEnd} onChange={(e) => onChange({ windowEnd: e.target.value })} aria-label={`Stop ${index + 1} to`} />
+      </Group>
+
+      <Group title="At the dock">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-x-4 gap-y-4">
+          <div>
+            <label className="label" htmlFor={id("ref")}>
+              {stop.type === "pickup" ? "Pickup # / PO" : stop.type === "delivery" ? "Delivery # / PO" : "Reference"}
+            </label>
+            <input id={id("ref")} className="input" value={stop.ref} onChange={(e) => onChange({ ref: e.target.value })} aria-label={`Stop ${n1} reference`} />
+          </div>
+          <div>
+            <label className="label" htmlFor={id("contact")}>
+              Contact
+            </label>
+            <input id={id("contact")} className="input" placeholder="Name · phone" value={stop.contact} onChange={(e) => onChange({ contact: e.target.value })} aria-label={`Stop ${n1} contact`} />
+          </div>
+          <div className="md:col-span-2">
+            <label className="label" htmlFor={id("notes")}>
+              Instructions for the driver
+            </label>
+            <input id={id("notes")} className="input" value={stop.notes} onChange={(e) => onChange({ notes: e.target.value })} aria-label={`Stop ${n1} instructions`} />
+          </div>
         </div>
-      </div>
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
-        <input className="input" placeholder={stop.type === "pickup" ? "Pickup # / PO at this stop" : stop.type === "delivery" ? "Delivery # / PO at this stop" : "Reference at this stop"} value={stop.ref} onChange={(e) => onChange({ ref: e.target.value })} aria-label={`Stop ${index + 1} reference`} />
-        <input className="input" placeholder="Contact · phone" value={stop.contact} onChange={(e) => onChange({ contact: e.target.value })} aria-label={`Stop ${index + 1} contact`} />
-        <input className="input" placeholder="Instructions for the driver" value={stop.notes} onChange={(e) => onChange({ notes: e.target.value })} aria-label={`Stop ${index + 1} instructions`} />
-      </div>
-      {!stop.locationId && stop.name.trim() && (
-        <label className="flex items-center gap-2 text-[12.5px] cursor-pointer text-muted">
-          <input type="checkbox" className="accent-teal" checked={stop.saveLocation} onChange={(e) => onChange({ saveLocation: e.target.checked })} /> Save &ldquo;{stop.name.trim()}&rdquo; as a location for next time
-        </label>
-      )}
+      </Group>
     </div>
   );
 }
