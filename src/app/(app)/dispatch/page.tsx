@@ -1,8 +1,8 @@
 import { requireCtx } from "@/lib/auth";
-import { board } from "@/domain/orders";
+import { board, type BoardRow } from "@/domain/orders";
 import { list } from "@/data/records";
 import { LEG_TEMPLATES } from "@/domain/templates";
-import { DispatchBoard, type BoardData } from "./board";
+import { DispatchBoard, type BoardData, type Row } from "./board";
 import { openTendersForOrders } from "@/domain/tenders";
 import { publicUrl } from "@/lib/tokens";
 import { ediInbox } from "@/domain/edi";
@@ -26,7 +26,7 @@ export default async function DispatchPage() {
   const carrierName = new Map(carriers.map((c) => [c.id, String(c.name)]));
   const data: BoardData = {
     rows: rows.map((r) => ({
-      ...JSON.parse(JSON.stringify(r)),
+      ...slim(r),
       customerName: r.order.customerId ? (custName.get(r.order.customerId) ?? null) : r.order.brokerId ? (custName.get(r.order.brokerId) ?? null) : null,
       tenders: tenderRows
         .filter((t) => t.orderId === r.order.id)
@@ -43,4 +43,18 @@ export default async function DispatchPage() {
     requests,
   };
   return <DispatchBoard data={data} />;
+}
+
+const iso = (d: Date | null | undefined) => (d ? d.toISOString() : null);
+/** Only what the board draws. The full rows are ~4 KB each; a busy week is a thousand of them, and the board is a client component. */
+function slim(r: BoardRow): Omit<Row, "customerName" | "tenders"> {
+  const o = r.order;
+  return {
+    order: { id: o.id, orderNumber: o.orderNumber, state: o.state, kind: o.kind, rateCents: o.rateCents, rateTbd: o.rateTbd, currency: o.currency, equipment: o.equipment, refs: o.refs ?? {}, holdReason: o.holdReason, legTemplate: o.legTemplate, customerId: o.customerId, brokerId: o.brokerId },
+    stops: r.stops.map((st) => ({ id: st.id, seq: st.seq, type: st.type, name: st.name, country: st.country, windowStart: iso(st.windowStart), windowEnd: iso(st.windowEnd), arrivedAt: iso(st.arrivedAt), departedAt: iso(st.departedAt), address: st.address ? { city: st.address.city, state: st.address.state } : null })),
+    legs: r.legs.map((l) => ({ id: l.id, seq: l.seq, type: l.type, state: l.state, assigneeKind: l.assigneeKind, truckId: l.truckId, driverId: l.driverId, coDriverId: l.coDriverId, carrierId: l.carrierId, carrierRateCents: l.carrierRateCents, plannedMiles: l.plannedMiles, fromStopId: l.fromStopId, toStopId: l.toStopId, truckUnit: l.truckUnit, driverName: l.driverName, carrierName: l.carrierName, declineReason: l.declineReason, dispatchedAt: iso(l.dispatchedAt), completedAt: iso(l.completedAt) })),
+    openFlags: r.openFlags.map((f) => ({ id: f.id, code: f.code, level: f.level, title: f.title, detail: f.detail, legId: f.legId })),
+    stage: r.stage,
+    shipments: r.shipments,
+  };
 }

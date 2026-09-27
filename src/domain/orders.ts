@@ -1,4 +1,4 @@
-import { and, eq, sql, asc, inArray, desc } from "drizzle-orm";
+import { and, eq, sql, asc, inArray, desc, or, gte, isNull } from "drizzle-orm";
 import { db, type Tx } from "@/db/client";
 import * as s from "@/db/schema";
 import type { LegState, OrderState, LegType, StopType, EventSource } from "@/db/schema";
@@ -896,12 +896,19 @@ export type BoardRow = {
 };
 
 /** Everything the dispatch board needs in one query set (spec §2.3: Pending / Planned / Dispatched). */
-export async function board(ctx: Ctx, opts: { includeClosed?: boolean } = {}): Promise<BoardRow[]> {
+export async function board(ctx: Ctx, opts: { includeClosed?: boolean; deliveredDays?: number } = {}): Promise<BoardRow[]> {
   assertCtx(ctx);
   requirePermission(ctx, "orders.view");
   const states: OrderState[] = opts.includeClosed ? [...s.ORDER_STATES] : ["draft", "booked", "dispatched", "in_transit", "exception", "delivered"];
-  // shipments ride on trips: the trip is the row; the shipments show inside it
-  const ords = await db.select().from(s.orders).where(and(eq(s.orders.tenantId, ctx.tenantId), inArray(s.orders.state, states), sql`${s.orders.kind} <> 'shipment'`)).orderBy(desc(s.orders.createdAt)).limit(1000);
+  // shipments ride on trips: the trip is the row; the shipments show inside it.
+  // Delivered rows are this week's: older ones live on Orders and in the billing queue, not on today's board.
+  const recent = new Date(Date.now() - (opts.deliveredDays ?? 7) * 86400_000);
+  const ords = await db
+    .select()
+    .from(s.orders)
+    .where(and(eq(s.orders.tenantId, ctx.tenantId), inArray(s.orders.state, states), sql`${s.orders.kind} <> 'shipment'`, opts.includeClosed ? sql`true` : or(sql`${s.orders.state} <> 'delivered'`, gte(s.orders.deliveredAt, recent), and(eq(s.orders.state, "delivered"), isNull(s.orders.deliveredAt)))))
+    .orderBy(desc(s.orders.createdAt))
+    .limit(1000);
   if (!ords.length) return [];
   const ids = ords.map((o) => o.id);
   const tripIds = ords.filter((o) => o.kind === "trip").map((o) => o.id);

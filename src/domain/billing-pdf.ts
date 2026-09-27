@@ -1,4 +1,5 @@
 import { PDFDocument, StandardFonts, rgb } from "pdf-lib";
+import { pdfText } from "@/lib/pdf-text";
 import type { InvoiceSnapshot } from "@/db/schema";
 
 const money = (c: number, cur: string) => `${cur === "MXN" ? "MX$" : "$"}${(c / 100).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -13,7 +14,7 @@ export async function buildInvoicePdf(inv: { number: string; issuedAt: Date; due
   const line = rgb(0.89, 0.91, 0.94);
   const s = inv.snapshot;
   let page = doc.addPage([612, 792]);
-  const draw = (t: string, x: number, y: number, size = 10, f = font, color = ink) => page.drawText(t, { x, y, size, font: f, color });
+  const draw = (t: string, x: number, y: number, size = 10, f = font, color = ink) => page.drawText(pdfText(t), { x, y, size, font: f, color });
 
   // header
   page.drawRectangle({ x: 0, y: 742, width: 612, height: 50, color: rgb(0.06, 0.09, 0.16) });
@@ -118,19 +119,19 @@ export async function buildStatementPdf(input: { entityName: string; customerNam
   const page = doc.addPage([612, 792]);
   const ink = rgb(0.06, 0.09, 0.16);
   const muted = rgb(0.4, 0.45, 0.55);
-  page.drawText(input.entityName, { x: 54, y: 740, size: 16, font: bold, color: ink });
+  page.drawText(pdfText(input.entityName), { x: 54, y: 740, size: 16, font: bold, color: ink });
   page.drawText(`Statement for ${input.customerName} · as of ${input.asOf.toISOString().slice(0, 10)}`, { x: 54, y: 720, size: 10, font, color: muted });
   let y = 680;
-  for (const [x, h] of [[54, "INVOICE"], [150, "ISSUED"], [230, "DUE"], [320, "TOTAL"], [410, "OPEN"], [500, "DAYS LATE"]] as const) page.drawText(h, { x, y, size: 8, font: bold, color: muted });
+  for (const [x, h] of [[54, "INVOICE"], [150, "ISSUED"], [230, "DUE"], [320, "TOTAL"], [410, "OPEN"], [500, "DAYS LATE"]] as const) page.drawText(pdfText(h), { x, y, size: 8, font: bold, color: muted });
   y -= 16;
   let open = 0;
   for (const r of input.rows) {
-    page.drawText(r.number, { x: 54, y, size: 9, font: bold, color: ink });
+    page.drawText(pdfText(r.number), { x: 54, y, size: 9, font: bold, color: ink });
     page.drawText(r.issuedAt.slice(0, 10), { x: 150, y, size: 9, font, color: ink });
     page.drawText(r.dueAt.slice(0, 10), { x: 230, y, size: 9, font, color: ink });
     page.drawText(money(r.totalCents, input.currency), { x: 320, y, size: 9, font, color: ink });
     page.drawText(money(r.openCents, input.currency), { x: 410, y, size: 9, font: bold, color: ink });
-    page.drawText(r.daysPastDue > 0 ? String(r.daysPastDue) : "—", { x: 500, y, size: 9, font, color: r.daysPastDue > 0 ? rgb(0.7, 0.1, 0.1) : muted });
+    page.drawText(pdfText(r.daysPastDue > 0 ? String(r.daysPastDue) : "—"), { x: 500, y, size: 9, font, color: r.daysPastDue > 0 ? rgb(0.7, 0.1, 0.1) : muted });
     open += r.openCents;
     y -= 16;
   }

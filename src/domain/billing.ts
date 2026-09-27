@@ -513,11 +513,24 @@ export async function receiveCarrierBill(ctx: Ctx, id: string, r: { invoicedCent
 }
 
 /** Three-way check: tender rate (+accessorials) = carrier invoice, and a POD is on the order. */
+export function threeWayOf(b: Pick<typeof s.carrierBills.$inferSelect, "expectedCents" | "accessorialCents" | "invoicedCents">, podPresent: boolean) {
+  const expected = b.expectedCents + b.accessorialCents;
+  return { expected, invoiced: b.invoicedCents, podPresent, rateMatch: b.invoicedCents != null && b.invoicedCents === expected, difference: b.invoicedCents != null ? b.invoicedCents - expected : null };
+}
+
 export async function threeWay(ctx: Ctx, id: string) {
   const b = await loadBill(ctx, id);
-  const expected = b.expectedCents + b.accessorialCents;
   const [pod] = await db.select({ id: s.documents.id }).from(s.documents).where(and(eq(s.documents.subjectKind, "order"), eq(s.documents.subjectId, b.orderId), eq(s.documents.code, "POD"), inArray(s.documents.status, ["present", "verified"]))).limit(1);
-  return { expected, invoiced: b.invoicedCents, podPresent: !!pod, rateMatch: b.invoicedCents != null && b.invoicedCents === expected, difference: b.invoicedCents != null ? b.invoicedCents - expected : null };
+  return threeWayOf(b, !!pod);
+}
+
+/** The three-way check for a whole list in two queries instead of two per bill. */
+export async function threeWayMany(ctx: Ctx, bills: (typeof s.carrierBills.$inferSelect)[]) {
+  assertCtx(ctx);
+  const orderIds = [...new Set(bills.map((b) => b.orderId))];
+  const pods = orderIds.length ? await db.select({ orderId: s.documents.subjectId }).from(s.documents).where(and(eq(s.documents.tenantId, ctx.tenantId), eq(s.documents.subjectKind, "order"), inArray(s.documents.subjectId, orderIds), eq(s.documents.code, "POD"), inArray(s.documents.status, ["present", "verified"]))) : [];
+  const has = new Set(pods.map((p) => p.orderId));
+  return bills.map((b) => threeWayOf(b, has.has(b.orderId)));
 }
 
 export async function approveCarrierBill(ctx: Ctx, id: string, a: { approvedCents?: number; note?: string | null; shortPayNote?: string | null; payDate?: Date | null; allowNoPod?: boolean }) {

@@ -1,4 +1,5 @@
 import { and, eq, inArray, asc } from "drizzle-orm";
+import { pdfText } from "@/lib/pdf-text";
 import { PDFDocument, StandardFonts, rgb } from "pdf-lib";
 import { db, type Tx } from "@/db/client";
 import * as s from "@/db/schema";
@@ -345,7 +346,7 @@ export async function manifestPdf(ctx: Ctx, tripId: string): Promise<Uint8Array>
   let page = doc.addPage([612, 792]);
   const ink = rgb(0.06, 0.09, 0.16);
   const muted = rgb(0.4, 0.45, 0.55);
-  const T = (t: string, x: number, y: number, size = 10, f = font, color = ink) => page.drawText(t.replace(/[^\x20-\x7E]/g, "?"), { x, y, size, font: f, color });
+  const T = (t: string, x: number, y: number, size = 10, f = font, color = ink) => page.drawText(pdfText(t), { x, y, size, font: f, color });
   page.drawRectangle({ x: 0, y: 742, width: 612, height: 50, color: ink });
   T(tenant?.name ?? "", 54, 760, 18, bold, rgb(1, 1, 1));
   T("TRIP MANIFEST", 400, 760, 14, bold, rgb(0.6, 0.96, 0.89));

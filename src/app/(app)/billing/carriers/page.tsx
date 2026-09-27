@@ -1,5 +1,5 @@
 import { requireCtx } from "@/lib/auth";
-import { carrierBillsList, threeWay, carrier1099 } from "@/domain/billing";
+import { carrierBillsList, threeWayMany, carrier1099 } from "@/domain/billing";
 import { PageHeader } from "@/components/page-header";
 import { BillingNav } from "../nav";
 import { CarrierBills } from "./board";
@@ -10,7 +10,7 @@ export const dynamic = "force-dynamic";
 export default async function CarrierBillsPage() {
   const ctx = await requireCtx();
   const rows = await carrierBillsList(ctx);
-  const checks = await Promise.all(rows.map((r) => threeWay(ctx, r.bill.id)));
+  const checks = await threeWayMany(ctx, rows.map((r) => r.bill));
   const y = await carrier1099(ctx, new Date().getUTCFullYear());
   return (
     <div>
