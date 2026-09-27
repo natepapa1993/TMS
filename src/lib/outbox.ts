@@ -44,6 +44,11 @@ async function resendFor(tenantId: string): Promise<{ provider: Provider; from: 
   };
 }
 
+/** Whether an email from this tenant would actually leave (a sender is configured). */
+export async function canSendEmail(tenantId: string) {
+  return !!(await resendFor(tenantId));
+}
+
 export async function whatsappFor(tenantId: string): Promise<WaConfig | null> {
   const [row] = await db.select().from(integrations).where(and(eq(integrations.tenantId, tenantId), eq(integrations.provider, "whatsapp"))).limit(1);
   if (!row?.enabled || !row.config.phoneNumberId || !row.config.accessToken) return null;

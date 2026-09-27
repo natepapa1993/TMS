@@ -7,7 +7,7 @@ import { outbox, tenders as tendersTable, flags, legEvents, positions } from "@/
 import { and, eq } from "drizzle-orm";
 import { createOrder, planLeg, dispatchLeg, acceptLeg, advanceLeg, getOrder, ValidationError } from "./orders";
 import { sendTender, tenderByToken, respondToTender, expireTenders, closeOpenTenderForLeg } from "./tenders";
-import { recordPosition, driverToday, driverStep, trackingView, flagStaleTracking, flagWindows, flagDetention, latestTruckPositions } from "./tracking";
+import { recordPosition, driverToday, driverStep, trackingView, flagStaleTracking, flagWindows, flagDetention, notifyRedFlags, latestTruckPositions } from "./tracking";
 import { issueToken, resolveToken, revokeToken } from "@/lib/tokens";
 import { TransitionError } from "./states";
 
@@ -317,5 +317,33 @@ describe("detention running (F-5.9)", () => {
     expect(await flagDetention(new Date("2026-09-27T13:41:00Z"))).toMatchObject({ cleared: 1 });
     fl = await db.select().from(flags).where(and(eq(flags.orderId, o.order.id), eq(flags.code, "detention")));
     expect(fl[0].clearedAt).toBeTruthy();
+  });
+});
+
+describe("red flags reach dispatch (F-5.9)", () => {
+  it("one email per company per tick to the owner and dispatchers, each flag told once; nothing without a sender", async () => {
+    const { integrations } = await import("@/db/schema");
+    const { newId } = await import("@/lib/ids");
+    const o = await createOrder(a, { customerId: f.rxo, rateCents: 100000, stops: [{ type: "pickup", name: "Laredo Yard", country: "US", windowEnd: new Date("2026-09-27T10:00:00Z") }, { type: "delivery", name: "Toyota", country: "US" }], template: "domestic", book: true });
+    const t2104 = await create(a, "truck", { unitNumber: "2104", usPlate: "TX2104", usPlateExpires: future });
+    const reyes = await create(a, "driver", { name: "Daniel Reyes", driverType: "CDL", licenseExpires: future, medicalExpires: future, currentTruckId: t2104.id });
+    await planLeg(a, o.legs[0].id, { kind: "truck", truckId: t2104.id, driverId: reyes.id });
+    await dispatchLeg(a, o.legs[0].id);
+    await acceptLeg(a, o.legs[0].id);
+    const now = new Date("2026-09-27T10:05:00Z");
+    expect(await flagWindows(now)).toMatchObject({ missed: 1 });
+    // no sender: told nobody, but stamped so it is not retried forever
+    expect(await notifyRedFlags()).toMatchObject({ emails: 0, flags: 1 }); // opened just now, by the wall clock
+    expect(await notifyRedFlags()).toMatchObject({ flags: 0 });
+    // with a sender, the next red flag goes out
+    await db.insert(integrations).values({ id: newId(), tenantId: a.tenantId, provider: "resend", enabled: true, config: { apiKey: "re_test", from: "Dispatch <d@example.com>" } });
+    await db.update(flags).set({ data: {} }).where(eq(flags.orderId, o.order.id));
+    const r = await notifyRedFlags();
+    expect(r).toMatchObject({ emails: 1, flags: 1 }); // the owner
+    const mail = (await db.select().from(outbox).where(eq(outbox.subjectKind, "alert")))[0];
+    expect(mail.subject).toBe("1 thing needs you on Dispatch");
+    expect(mail.body).toContain("Missed the pickup window at Laredo Yard");
+    expect(mail.body).toContain(o.order.orderNumber);
+    expect(await notifyRedFlags()).toMatchObject({ emails: 0 });
   });
 });

@@ -1,5 +1,5 @@
 import { expireTenders } from "@/domain/tenders";
-import { flagStaleTracking, flagWindows, flagDetention } from "@/domain/tracking";
+import { flagStaleTracking, flagWindows, flagDetention, notifyRedFlags } from "@/domain/tracking";
 import { deliverQueued } from "@/lib/outbox";
 
 /**
@@ -20,6 +20,7 @@ export async function tick(now = new Date()) {
     if (n % 5 === 1) out.tracking = await flagStaleTracking(now).catch((e) => ({ error: String(e) }));
     out.windows = await flagWindows(now).catch((e) => ({ error: String(e) })); // appointment windows against the clock, every minute
     out.detention = await flagDetention(now).catch((e) => ({ error: String(e) }));
+    out.alerts = await notifyRedFlags(now).catch((e) => ({ error: String(e) }));
     if (n % 60 === 3 || n === 1) {
       const C = await import("@/domain/compliance");
       out.compliance = await C.evaluateAllTenants(now).catch((e) => ({ error: String(e) }));

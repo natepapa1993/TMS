@@ -317,3 +317,41 @@ export async function flagDetention(now = new Date()) {
   }
   return { flagged, updated, cleared };
 }
+
+// ---------- red flags to the people on duty ----------
+
+/**
+ * Job: red flags opened since the last run go to the owner and dispatchers as one email per company per
+ * tick ("3 things need you on Dispatch"), when the company has an email sender. Each flag is told once;
+ * the board is the source of truth either way.
+ */
+export async function notifyRedFlags(now = new Date()) {
+  const { canSendEmail, enqueue } = await import("@/lib/outbox");
+  const since = new Date(now.getTime() - 30 * 60_000);
+  const fresh = await db.select().from(s.flags).where(and(eq(s.flags.level, "red"), sql`${s.flags.clearedAt} is null`, gt(s.flags.openedAt, since), sql`coalesce(${s.flags.data} ->> 'notifiedAt', '') = ''`));
+  if (!fresh.length) return { emails: 0, flags: 0 };
+  const byTenant = new Map<string, typeof fresh>();
+  for (const f of fresh) byTenant.set(f.tenantId, [...(byTenant.get(f.tenantId) ?? []), f]);
+  let emails = 0;
+  for (const [tenantId, list] of byTenant) {
+    const stamp = async () => {
+      for (const f of list) await db.update(s.flags).set({ data: { ...(f.data ?? {}), notifiedAt: now.toISOString() } }).where(eq(s.flags.id, f.id));
+    };
+    if (!(await canSendEmail(tenantId))) {
+      await stamp();
+      continue;
+    }
+    const people = await db.select({ email: s.users.email }).from(s.users).where(and(eq(s.users.tenantId, tenantId), inArray(s.users.role, ["owner", "dispatcher"]), sql`${s.users.archivedAt} is null`));
+    const orders = await db.select({ id: s.orders.id, orderNumber: s.orders.orderNumber }).from(s.orders).where(inArray(s.orders.id, [...new Set(list.map((f) => f.orderId))]));
+    const num = (id: string) => orders.find((o) => o.id === id)?.orderNumber ?? id;
+    const { publicUrl } = await import("@/lib/tokens");
+    const lines = list.map((f) => `• ${num(f.orderId)}: ${f.title}${f.detail ? ` — ${f.detail}` : ""}`);
+    const ctx = systemCtx(tenantId);
+    for (const p of people) {
+      await enqueue(ctx, { channel: "email", to: p.email, subject: `${list.length} thing${list.length === 1 ? "" : "s"} need${list.length === 1 ? "s" : ""} you on Dispatch`, body: `${lines.join("\n")}\n\n${publicUrl("/dispatch")}`, subjectKind: "alert", subjectId: list[0].id });
+      emails++;
+    }
+    await stamp();
+  }
+  return { emails, flags: fresh.length };
+}
