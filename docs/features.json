@@ -196,10 +196,14 @@
     },
     {
       "id": "F-4.2",
-      "name": "WhatsApp Business tender channel + driver messages",
+      "name": "WhatsApp Business (Meta Cloud API): tenders, packets and links out through the outbox with templates, delivery/read receipts, inbound replies on the leg timeline and a Messages inbox, per-company webhook",
       "milestone": "M1.5",
-      "status": "planned",
-      "tests": []
+      "status": "done",
+      "tests": [
+        "src/integrations/whatsapp.test.ts",
+        "src/domain/messaging.test.ts",
+        "e2e/whatsapp.spec.ts"
+      ]
     },
     {
       "id": "F-3",

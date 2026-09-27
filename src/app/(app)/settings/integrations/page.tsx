@@ -15,6 +15,8 @@ export default async function IntegrationsPage() {
   const get = (p: string) => rows.find((r) => r.provider === p);
   const motive = get("motive");
   const resend = get("resend");
+  const wa = get("whatsapp");
+  const { publicUrl } = await import("@/lib/tokens");
   return (
     <div>
       <PageHeader
@@ -48,9 +50,37 @@ export default async function IntegrationsPage() {
           ]}
           status={null}
         />
-        <div className="card p-4 text-[13px] text-muted">
-          Coming with their milestones: Sylectus Virtual Fleet (M5), DAT / Truckstop posting (M5), NAD and Viatpro crossing documents (M2), QuickBooks Online (M4), WhatsApp Business (M1.5).
-        </div>
+        <IntegrationCard
+          provider="whatsapp"
+          title="WhatsApp Business (Meta Cloud API)"
+          blurb="Tenders, crossing packets and tracking links go out on WhatsApp; delivery and read receipts come back; what drivers and carriers write lands on the leg timeline. Without it, WhatsApp messages are logged and shown in the app but not delivered."
+          enabled={!!wa?.enabled}
+          fields={[
+            { key: "phoneNumberId", label: "Phone number id", secret: false, set: !!wa?.config.phoneNumberId, value: wa?.config.phoneNumberId ?? "", placeholder: "from Meta → WhatsApp → API setup" },
+            { key: "accessToken", label: "Access token (permanent, system user)", secret: true, set: !!wa?.config.accessToken },
+            { key: "appSecret", label: "App secret (signs webhooks)", secret: true, set: !!wa?.config.appSecret },
+            { key: "templateLanguage", label: "Template language", secret: false, set: !!wa?.config.templateLanguage, value: wa?.config.templateLanguage ?? "", placeholder: "en_US or es_MX" },
+            { key: "tenderTemplate", label: "Tender template (4 params: carrier, lane, rate, link)", secret: false, set: !!wa?.config.tenderTemplate, value: wa?.config.tenderTemplate ?? "", placeholder: "load_offer" },
+            { key: "packetTemplate", label: "Packet template (3 params: driver, order, link)", secret: false, set: !!wa?.config.packetTemplate, value: wa?.config.packetTemplate ?? "", placeholder: "crossing_packet" },
+            { key: "trackingTemplate", label: "Tracking template (3 params: name, order, link)", secret: false, set: !!wa?.config.trackingTemplate, value: wa?.config.trackingTemplate ?? "", placeholder: "tracking_link" },
+            { key: "generalTemplate", label: "General template (1 param: text)", secret: false, set: !!wa?.config.generalTemplate, value: wa?.config.generalTemplate ?? "", placeholder: "office_message" },
+          ]}
+          status={wa ? { lastRunAt: wa.lastRunAt?.toISOString() ?? null, lastError: wa.lastError, lastResult: wa.lastResult } : null}
+          extra={
+            wa?.config.webhookToken ? (
+              <div className="mt-3 text-[12.5px]">
+                <div className="eyebrow mb-1">Webhook (paste into Meta → WhatsApp → Configuration)</div>
+                <div className="mono break-all select-all bg-ground rounded p-2 border border-line">{publicUrl(`/api/whatsapp/${wa.config.webhookToken}`)}</div>
+                <div className="mt-1">
+                  Verify token: <span className="mono select-all font-bold">{wa.config.verifyToken}</span> · subscribe to <b>messages</b>. Templates must be approved in Meta with the parameter counts above; outside a 24-hour conversation only templates are delivered.
+                </div>
+              </div>
+            ) : (
+              <div className="help mt-3">Save once to get this company&apos;s webhook URL and verify token.</div>
+            )
+          }
+        />
+        <div className="card p-4 text-[13px] text-muted">Coming with their milestones: Sylectus Virtual Fleet, DAT / Truckstop posting, NAD and Viatpro crossing documents, EDI VAN / AS2 connector.</div>
       </div>
     </div>
   );

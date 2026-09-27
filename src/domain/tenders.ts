@@ -46,6 +46,7 @@ export async function sendTender(ctx: Ctx, legId: string, input: SendTenderInput
   const channel: TenderChannel = input.channel ?? ((carrier.tenderChannel as TenderChannel) || "email");
   const to = input.to ?? (channel === "whatsapp" ? carrier.whatsapp : carrier.dispatchEmail) ?? null;
   if (channel === "email" && !to) throw new ValidationError(`${carrier.name} has no dispatch email; add one or tender by another channel`, "to");
+  if (channel === "whatsapp" && !to) throw new ValidationError(`${carrier.name} has no WhatsApp number; add one on the carrier record or tender by another channel`, "to");
 
   // 2. one open tender per leg
   await db
@@ -110,6 +111,8 @@ export async function sendTender(ctx: Ctx, legId: string, input: SendTenderInput
       .returning();
     await writeAudit(tx, ctx, "tender", row.id, "create", { carrierId: { from: null, to: carrier.id }, rateCents: { from: null, to: row.rateCents } }, `leg ${leg.seq} of ${order.orderNumber} tendered to ${carrier.name} by ${channel}`);
     if (to && channel === "email") await enqueue(ctx, { channel: "email", to, subject, body, subjectKind: "tender", subjectId: row.id }, tx);
+    // WhatsApp: the template (when the company has one approved) takes carrier, lane, rate, link; otherwise the same text
+    if (to && channel === "whatsapp") await enqueue(ctx, { channel: "whatsapp", to, subject, body, subjectKind: "tender", subjectId: row.id, meta: { kind: "tender", template: { name: "", params: [carrier.name, `${place(from)} → ${place(toStop)}`, rate, link] } } }, tx);
     return row;
   });
   await deliverQueued().catch(() => null);
@@ -180,7 +183,14 @@ export async function closeOpenTenderForLeg(ctx: Ctx, legId: string, state: "acc
 export async function openTendersForOrders(ctx: Ctx, orderIds: string[]) {
   assertCtx(ctx);
   if (!orderIds.length) return [];
-  return db.select().from(s.tenders).where(and(eq(s.tenders.tenantId, ctx.tenantId), inArray(s.tenders.orderId, orderIds))).orderBy(desc(s.tenders.createdAt));
+  const rows = await db.select().from(s.tenders).where(and(eq(s.tenders.tenantId, ctx.tenantId), inArray(s.tenders.orderId, orderIds))).orderBy(desc(s.tenders.createdAt));
+  if (!rows.length) return [];
+  // delivery state of the message that carried it (email / WhatsApp), so the board can say "sent", "read" or "failed"
+  const msgs = await db.select({ subjectId: s.outbox.subjectId, state: s.outbox.state, error: s.outbox.error }).from(s.outbox).where(and(eq(s.outbox.tenantId, ctx.tenantId), eq(s.outbox.subjectKind, "tender"), inArray(s.outbox.subjectId, rows.map((r) => r.id))));
+  return rows.map((r) => {
+    const m = msgs.find((x) => x.subjectId === r.id);
+    return { ...r, delivery: m ? { state: m.state, error: m.error } : null };
+  });
 }
 
 /** Job: every tender past its deadline expires and its leg returns to Pending with a flag. */

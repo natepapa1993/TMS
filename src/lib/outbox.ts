@@ -1,6 +1,7 @@
 import { and, eq, lt, sql } from "drizzle-orm";
 import { db, type Tx } from "@/db/client";
-import { outbox, integrations } from "@/db/schema";
+import { outbox, integrations, type OutboxMeta } from "@/db/schema";
+import { sendWhatsApp, type WaConfig } from "@/integrations/whatsapp";
 import { newId } from "./ids";
 import type { Ctx } from "./context";
 
@@ -10,12 +11,12 @@ import type { Ctx } from "./context";
  * without one it is "logged" so the flow still works end to end in dev and tests.
  */
 
-export type OutboundMessage = { channel: "email" | "whatsapp" | "sms"; to: string; subject?: string; body: string; html?: string; subjectKind?: string; subjectId?: string };
+export type OutboundMessage = { channel: "email" | "whatsapp" | "sms"; to: string; subject?: string; body: string; html?: string; subjectKind?: string; subjectId?: string; meta?: OutboxMeta };
 
 export async function enqueue(ctx: Ctx, m: OutboundMessage, tx: Tx | typeof db = db) {
   const [row] = await tx
     .insert(outbox)
-    .values({ id: newId(), tenantId: ctx.tenantId, channel: m.channel, to: m.to, subject: m.subject, body: m.body, html: m.html, subjectKind: m.subjectKind, subjectId: m.subjectId, createdBy: ctx.userId })
+    .values({ id: newId(), tenantId: ctx.tenantId, channel: m.channel, to: m.to, subject: m.subject, body: m.body, html: m.html, subjectKind: m.subjectKind, subjectId: m.subjectId, meta: m.meta ?? null, createdBy: ctx.userId })
     .returning();
   return row;
 }
@@ -43,6 +44,19 @@ async function resendFor(tenantId: string): Promise<{ provider: Provider; from: 
   };
 }
 
+export async function whatsappFor(tenantId: string): Promise<WaConfig | null> {
+  const [row] = await db.select().from(integrations).where(and(eq(integrations.tenantId, tenantId), eq(integrations.provider, "whatsapp"))).limit(1);
+  if (!row?.enabled || !row.config.phoneNumberId || !row.config.accessToken) return null;
+  return row.config as unknown as WaConfig;
+}
+
+/** The template a message kind uses for this tenant, with the params the message carries. */
+export function templateFor(cfg: WaConfig, meta: OutboxMeta | null | undefined) {
+  if (meta?.template?.name) return meta.template;
+  const name = meta?.kind === "tender" ? cfg.tenderTemplate : meta?.kind === "packet" ? cfg.packetTemplate : meta?.kind === "tracking" ? cfg.trackingTemplate : cfg.generalTemplate;
+  return name ? { name, params: meta?.template?.params ?? [] } : null;
+}
+
 /** Deliver up to `limit` queued messages. Called by the job ticker and right after enqueue. */
 export async function deliverQueued(limit = 25) {
   const rows = await db.select().from(outbox).where(and(eq(outbox.state, "queued"), lt(outbox.attempts, 5))).orderBy(outbox.createdAt).limit(limit);
@@ -51,6 +65,15 @@ export async function deliverQueued(limit = 25) {
   let failed = 0;
   for (const m of rows) {
     try {
+      if (m.channel === "whatsapp") {
+        const cfg = await whatsappFor(m.tenantId);
+        if (cfg) {
+          const { id } = await sendWhatsApp(cfg, m.to, m.body, templateFor(cfg, m.meta));
+          await db.update(outbox).set({ state: "sent", providerId: id, sentAt: new Date(), attempts: sql`${outbox.attempts} + 1` }).where(eq(outbox.id, m.id));
+          sent++;
+          continue;
+        }
+      }
       const r = m.channel === "email" ? await resendFor(m.tenantId) : null;
       if (!r) {
         console.log(`[outbox:logged] to=${m.to} subject=${m.subject}\n${m.body}`);

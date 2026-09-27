@@ -71,6 +71,13 @@
       "when": 1790480756898,
       "tag": "0009_useful_proteus",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1790481748333,
+      "tag": "0010_useful_avengers",
+      "breakpoints": true
     }
   ]
 }

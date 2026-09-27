@@ -2,18 +2,19 @@
 
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { saveIntegrationAction, testMotiveAction } from "./actions";
+import { saveIntegrationAction, testMotiveAction, testWhatsAppAction } from "./actions";
 import { Pill, Toast, useToast } from "@/components/ui";
 
 type Field = { key: string; label: string; secret: boolean; set: boolean; value?: string; placeholder?: string };
 
-export function IntegrationCard({ provider, title, blurb, enabled, fields, status, testable }: { provider: "motive" | "resend"; title: string; blurb: string; enabled: boolean; fields: Field[]; status: { lastRunAt: string | null; lastError: string | null; lastResult: string | null } | null; testable?: boolean }) {
+export function IntegrationCard({ provider, title, blurb, enabled, fields, status, testable, extra }: { provider: "motive" | "resend" | "whatsapp"; title: string; blurb: string; enabled: boolean; fields: Field[]; status: { lastRunAt: string | null; lastError: string | null; lastResult: string | null } | null; testable?: boolean; extra?: React.ReactNode }) {
   const router = useRouter();
   const t = useToast();
   const [on, setOn] = useState(enabled);
   const [vals, setVals] = useState<Record<string, string>>(Object.fromEntries(fields.map((f) => [f.key, f.secret ? "" : (f.value ?? "")])));
   const [pending, start] = useTransition();
   const [result, setResult] = useState<string | null>(null);
+  const [testTo, setTestTo] = useState("");
   return (
     <div className="card p-5">
       <div className="flex items-start justify-between gap-3">
@@ -44,8 +45,17 @@ export function IntegrationCard({ provider, title, blurb, enabled, fields, statu
           {status.lastError ? <span className="text-red"> · {status.lastError}</span> : null}
         </div>
       )}
+      {extra}
       {result && <div className="mt-2 text-[12.5px] font-semibold text-teal">{result}</div>}
       <div className="flex justify-end gap-2 mt-4">
+        {provider === "whatsapp" && (
+          <>
+            <input className="input w-48" placeholder="+1 313 555 0100" value={testTo} onChange={(e) => setTestTo(e.target.value)} aria-label="Test number" />
+            <button className="btn" disabled={pending || !testTo.trim()} onClick={() => start(async () => { const r = await testWhatsAppAction(testTo); if (r.ok) setResult(`Sent · message id ${r.data.id}`); else t.err(r.error); router.refresh(); })}>
+              Send test
+            </button>
+          </>
+        )}
         {testable && (
           <button
             className="btn"

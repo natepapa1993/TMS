@@ -38,7 +38,7 @@ type Leg = {
 type Stop = { id: string; seq: number; type: string; name: string; country: string; windowStart: string | null; windowEnd: string | null; arrivedAt: string | null; departedAt: string | null; address: { city?: string; state?: string } | null };
 type Order = { id: string; orderNumber: string; state: string; rateCents: number | null; rateTbd: boolean; currency: string; equipment: string; refs: Record<string, string>; holdReason: string | null; legTemplate: string | null; customerId: string | null; brokerId: string | null };
 type Flag = { id: string; code: string; level: string; title: string; detail: string | null; legId: string | null };
-type Tender = { id: string; legId: string; carrierId: string; carrierName: string; state: string; channel: string; sentTo: string | null; expiresAt: string; respondedAt: string | null; respondedBy: string | null; responseNote: string | null; driverName: string | null; driverPhone: string | null; unitNumber: string | null; rateCents: number | null; link: string };
+type Tender = { id: string; legId: string; carrierId: string; carrierName: string; state: string; channel: string; sentTo: string | null; expiresAt: string; respondedAt: string | null; respondedBy: string | null; responseNote: string | null; driverName: string | null; driverPhone: string | null; unitNumber: string | null; rateCents: number | null; link: string; delivery: { state: string; error: string | null } | null };
 export type Row = { order: Order; stops: Stop[]; legs: Leg[]; openFlags: Flag[]; stage: "pending" | "planned" | "dispatched" | "delivered" | "closed"; customerName: string | null; tenders: Tender[] };
 
 export type BoardData = {
@@ -50,6 +50,7 @@ export type BoardData = {
   templates: { key: string; label: string; description: string }[];
   role: string;
   ediInbox: number;
+  messages: number;
 };
 
 const STAGES = [
@@ -146,6 +147,9 @@ export function DispatchBoard({ data }: { data: BoardData }) {
           </div>
           <div className="flex items-center gap-2">
             <input id="board-search" className="input w-60" placeholder="Search order, customer, unit…  /" value={q} onChange={(e) => setQ(e.target.value)} />
+            <Link href="/messages" className={`btn ${data.messages ? "border-amber text-amber font-bold" : ""}`} title="What drivers and carriers wrote to the company WhatsApp">
+              Messages{data.messages ? ` · ${data.messages}` : ""}
+            </Link>
             <Link href="/edi" className={`btn ${data.ediInbox ? "border-amber text-amber font-bold" : ""}`} title="EDI tenders, 214 status and 210 invoices">
               EDI{data.ediInbox ? ` · ${data.ediInbox} waiting` : ""}
             </Link>
@@ -410,6 +414,11 @@ function SidePanel({ r, data, busy, canDispatch, onClose, onPopup, run }: { r: R
                       return tn.state === "sent" ? (
                         <div className="mt-1 text-[12px]">
                           <span className="pill pill-amber">Tender out</span> {tn.channel} to {tn.sentTo ?? tn.carrierName} · {mins > 0 ? `${mins < 90 ? `${mins} min` : `${Math.round(mins / 60)} h`} left` : "expiring"}
+                          {tn.delivery && (
+                            <span className={`ml-1 pill ${tn.delivery.state === "failed" ? "pill-red" : tn.delivery.state === "queued" ? "pill-amber" : tn.delivery.state === "logged" ? "pill-slate" : "pill-green"}`} title={tn.delivery.error ?? (tn.delivery.state === "logged" ? "no sending provider connected — share the link yourself" : undefined)}>
+                              {tn.delivery.state === "logged" ? "not delivered" : tn.delivery.state}
+                            </span>
+                          )}
                           <a className="btn btn-ghost btn-sm ml-1" href={tn.link} target="_blank" rel="noreferrer" title="The carrier's accept/decline page — paste it into WhatsApp if they didn't get the email">
                             Link
                           </a>
@@ -673,7 +682,7 @@ function AssignModal({ leg, order, data, onClose, onDone }: { leg: Leg; order: O
   const [err, setErr] = useState<string | null>(null);
   const [pending, start] = useTransition();
   const [sendNow, setSendNow] = useState(true);
-  const [tender, setTender] = useState({ channel: "email" as "email" | "phone", expires: "60", message: "" });
+  const [tender, setTender] = useState({ channel: "email" as "email" | "phone" | "whatsapp", expires: "60", message: "" });
 
   useEffect(() => {
     A.candidatesAction(leg.id).then((r) => setCands(r.ok ? r.data : []));
@@ -688,9 +697,9 @@ function AssignModal({ leg, order, data, onClose, onDone }: { leg: Leg; order: O
       const opts = { ...(needsOverride && override.trim() ? { override: true, reason: override.trim() } : {}), ...(tab === "truck" ? { plannedMiles: milesN } : {}) };
       if (tab === "carrier") {
         if (!carrierId) return setErr("Pick a carrier");
-        if (sendNow && tender.channel === "email") {
-          const r = await A.tenderAction(leg.id, { carrierId, rateCents, expiresInMinutes: Number(tender.expires), message: tender.message.trim() || null, ...opts });
-          if (r.ok) onDone(`Tender emailed to ${r.data.to} — expires in ${tender.expires} min`);
+        if (sendNow && (tender.channel === "email" || tender.channel === "whatsapp")) {
+          const r = await A.tenderAction(leg.id, { carrierId, rateCents, channel: tender.channel, expiresInMinutes: Number(tender.expires), message: tender.message.trim() || null, ...opts });
+          if (r.ok) onDone(`Tender ${tender.channel === "whatsapp" ? "sent on WhatsApp" : "emailed"} to ${r.data.to} — expires in ${tender.expires} min`);
           else if (r.code === "eligibility") setNeedsOverride({ message: r.error, hard: !!r.hardBlocked });
           else setErr(r.error);
           return;
@@ -725,7 +734,7 @@ function AssignModal({ leg, order, data, onClose, onDone }: { leg: Leg; order: O
             Cancel
           </button>
           <button className="btn btn-primary" onClick={go} disabled={pending || (needsOverride?.hard ?? false)}>
-            {pending ? "Working…" : needsOverride && !needsOverride.hard ? "Override & assign" : sendNow ? (tab === "carrier" && tender.channel === "email" ? "Send tender" : "Assign & send") : "Assign"}
+            {pending ? "Working…" : needsOverride && !needsOverride.hard ? "Override & assign" : sendNow ? (tab === "carrier" && tender.channel !== "phone" ? "Send tender" : "Assign & send") : "Assign"}
           </button>
         </>
       }
@@ -796,8 +805,9 @@ function AssignModal({ leg, order, data, onClose, onDone }: { leg: Leg; order: O
             </div>
             <div>
               <label className="label">Tender by</label>
-              <select className="select" value={tender.channel} onChange={(e) => setTender({ ...tender, channel: e.target.value as "email" | "phone" })}>
+              <select className="select" value={tender.channel} onChange={(e) => setTender({ ...tender, channel: e.target.value as "email" | "phone" | "whatsapp" })}>
                 <option value="email">Email with accept link</option>
+                <option value="whatsapp">WhatsApp with accept link</option>
                 <option value="phone">Phone — I&apos;ll confirm myself</option>
               </select>
             </div>
@@ -985,13 +995,24 @@ function SplitModal({ leg, stops, onClose, onDone }: { leg: Leg; stops: Stop[]; 
 
 function TrackModal({ r, onClose }: { r: Row; onClose: () => void }) {
   const [link, setLink] = useState<string | null>(null);
-  const [driverLinks, setDriverLinks] = useState<{ name: string; url: string; phone: string | null; whatsapp: string | null }[]>([]);
+  const [driverLinks, setDriverLinks] = useState<{ id: string; name: string; url: string; phone: string | null; whatsapp: string | null }[]>([]);
   const [copied, setCopied] = useState<string | null>(null);
+  const [custTo, setCustTo] = useState("");
+  const [sending, setSending] = useState(false);
+  const [sent, setSent] = useState<string | null>(null);
   const nl = nextLeg(r);
+  const send = async (input: { kind: "driver" | "tracking"; orderId: string; driverId?: string; to?: string }) => {
+    setSending(true);
+    setSent(null);
+    const x = await A.sendLinkWhatsAppAction(input);
+    setSending(false);
+    if (!x.ok) return setSent(`✗ ${x.error}`);
+    setSent(x.data.state === "logged" ? `Logged for ${x.data.to} — connect WhatsApp Business under Settings → Integrations to deliver it` : x.data.state === "failed" ? `✗ ${x.data.error}` : `Sent to ${x.data.to}`);
+  };
   useEffect(() => {
     A.trackingLinkAction(r.order.id).then((x) => x.ok && setLink(x.data.url));
     const ids = [...new Set(r.legs.flatMap((l) => [l.driverId, l.coDriverId]).filter((x): x is string => !!x))];
-    Promise.all(ids.map((id) => A.driverLinkAction(id))).then((rs) => setDriverLinks(rs.filter((x) => x.ok).map((x) => (x as { ok: true; data: { name: string; url: string; phone: string | null; whatsapp: string | null } }).data)));
+    Promise.all(ids.map((id) => A.driverLinkAction(id).then((x) => (x.ok ? { id, ...x.data } : null)))).then((rs) => setDriverLinks(rs.filter((x): x is NonNullable<typeof x> => !!x)));
   }, [r.order.id, r.legs]);
   const copy = async (s: string, what: string) => {
     try {
@@ -1010,15 +1031,23 @@ function TrackModal({ r, onClose }: { r: Row; onClose: () => void }) {
           <div className="label">Customer tracking link</div>
           <div className="text-[12.5px] text-muted mb-1.5">Stops, progress, last position. No rates, no phones. Same link for the life of the order.</div>
           {link ? (
-            <div className="flex gap-2">
-              <input className="input mono text-[12.5px]" readOnly value={link} onFocus={(e) => e.currentTarget.select()} />
-              <button className="btn" onClick={() => copy(link, "tracking")}>
-                {copied === "tracking" ? "Copied" : "Copy"}
-              </button>
-              <a className="btn" href={link} target="_blank" rel="noreferrer">
-                Open
-              </a>
-            </div>
+            <>
+              <div className="flex gap-2">
+                <input className="input mono text-[12.5px]" readOnly value={link} onFocus={(e) => e.currentTarget.select()} />
+                <button className="btn" onClick={() => copy(link, "tracking")}>
+                  {copied === "tracking" ? "Copied" : "Copy"}
+                </button>
+                <a className="btn" href={link} target="_blank" rel="noreferrer">
+                  Open
+                </a>
+              </div>
+              <div className="flex gap-2 mt-1.5">
+                <input className="input w-52" placeholder="customer WhatsApp +1 …" value={custTo} onChange={(e) => setCustTo(e.target.value)} aria-label="Customer WhatsApp" />
+                <button className="btn btn-sm" disabled={sending || !custTo.trim()} onClick={() => send({ kind: "tracking", orderId: r.order.id, to: custTo })}>
+                  Send on WhatsApp
+                </button>
+              </div>
+            </>
           ) : (
             <Spinner />
           )}
@@ -1036,9 +1065,14 @@ function TrackModal({ r, onClose }: { r: Row; onClose: () => void }) {
                   {copied === d.url ? "Copied" : "Copy link"}
                 </button>
                 {wa(d.whatsapp ?? d.phone, `${d.name}, your loads: ${d.url}`) && (
-                  <a className="btn btn-sm" href={wa(d.whatsapp ?? d.phone, `${d.name}, your loads: ${d.url}`)!} target="_blank" rel="noreferrer">
-                    WhatsApp
-                  </a>
+                  <>
+                    <button className="btn btn-sm" disabled={sending} title="Through the company WhatsApp Business number" onClick={() => send({ kind: "driver", orderId: r.order.id, driverId: d.id })}>
+                      Send on WhatsApp
+                    </button>
+                    <a className="btn btn-sm btn-ghost" href={wa(d.whatsapp ?? d.phone, `${d.name}, your loads: ${d.url}`)!} target="_blank" rel="noreferrer" title="From your own phone / WhatsApp Web">
+                      wa.me
+                    </a>
+                  </>
                 )}
                 <a className="btn btn-sm btn-ghost" href={d.url} target="_blank" rel="noreferrer">
                   Preview
@@ -1047,6 +1081,7 @@ function TrackModal({ r, onClose }: { r: Row; onClose: () => void }) {
             ))
           )}
         </div>
+        {sent && <div className={`text-[12.5px] font-semibold ${sent.startsWith("✗") ? "text-red" : "text-teal"}`}>{sent}</div>}
         {nl?.assigneeKind === "carrier" && <div className="text-[12.5px] text-muted">This leg is with a partner carrier: their driver details come back on the tender. ELD tracking for partner carriers arrives with the carrier portal.</div>}
       </div>
     </Modal>

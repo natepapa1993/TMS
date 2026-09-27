@@ -88,9 +88,32 @@ export const accessTokens = pgTable(
   (t) => [uniqueIndex("access_tokens_token").on(t.token), index("access_tokens_tenant_subject").on(t.tenantId, t.kind, t.subjectId)],
 );
 
-export const OUTBOX_STATES = ["queued", "sent", "failed", "logged"] as const;
+export const OUTBOX_STATES = ["queued", "sent", "delivered", "read", "failed", "logged"] as const;
 
 /** Every message we send (email now, WhatsApp/SMS later). Nothing goes out without a row here. */
+export type OutboxMeta = { kind?: "tender" | "packet" | "tracking" | "general"; template?: { name: string; language?: string; params: string[] } | null };
+
+/** What people write back to us (WhatsApp today): attached to the driver / carrier by phone, and to the leg they were on. */
+export const inboundMessages = pgTable(
+  "inbound_messages",
+  {
+    id: id(),
+    tenantId: tenantId(),
+    channel: text("channel").notNull(), // whatsapp | sms | email
+    from: text("from").notNull(),
+    fromName: text("from_name"),
+    body: text("body").notNull(),
+    providerId: text("provider_id"),
+    receivedAt: timestamp("received_at", { withTimezone: true }).notNull().defaultNow(),
+    driverId: text("driver_id"),
+    carrierId: text("carrier_id"),
+    legId: text("leg_id"),
+    orderId: text("order_id"),
+    handledAt: timestamp("handled_at", { withTimezone: true }),
+  },
+  (t) => [index("inbound_messages_tenant").on(t.tenantId, t.receivedAt), uniqueIndex("inbound_messages_provider").on(t.tenantId, t.providerId)],
+);
+
 export const outbox = pgTable(
   "outbox",
   {
@@ -103,8 +126,11 @@ export const outbox = pgTable(
     html: text("html"),
     subjectKind: text("subject_kind"), // tender | order | ...
     subjectId: text("subject_id"),
+    meta: jsonb("meta").$type<OutboxMeta>(), // WhatsApp template + params, message kind
     state: text("state").$type<(typeof OUTBOX_STATES)[number]>().notNull().default("queued"),
     providerId: text("provider_id"),
+    deliveredAt: timestamp("delivered_at", { withTimezone: true }),
+    readAt: timestamp("read_at", { withTimezone: true }),
     error: text("error"),
     attempts: integer("attempts").notNull().default(0),
     sentAt: timestamp("sent_at", { withTimezone: true }),

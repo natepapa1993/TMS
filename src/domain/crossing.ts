@@ -760,7 +760,7 @@ export async function sendPacket(ctx: Ctx, crossingId: string) {
   const [order] = await db.select().from(s.orders).where(eq(s.orders.id, c.orderId)).limit(1);
   const link = publicUrl(`/p/${c.packetToken}`);
   const body = `${driver.name}: packet for ${order.orderNumber}${c.trailerNumber ? ` (caja ${c.trailerNumber})` : ""} is ready. Open it in your app or here: ${link}`;
-  await enqueue(ctx, { channel: "whatsapp", to: driver.whatsapp || driver.phone || "driver", body, subjectKind: "crossing", subjectId: crossingId });
+  await enqueue(ctx, { channel: "whatsapp", to: driver.whatsapp || driver.phone || "driver", body, subjectKind: "crossing", subjectId: crossingId, meta: { kind: "packet", template: { name: "", params: [driver.name, `${order.orderNumber}${c.trailerNumber ? ` (caja ${c.trailerNumber})` : ""}`, link] } } });
   await deliverQueued().catch(() => null);
   const after = await setState(db, ctx, c, "packet_sent", { note: `packet sent to ${driver.name}` }, { packetSentAt: new Date() });
   return after;
