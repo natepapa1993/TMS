@@ -166,9 +166,15 @@ export function DispatchBoard({ data, initialOrder }: { data: BoardData; initial
             <Link href="/edi" className={`btn ${data.ediInbox ? "border-amber text-amber font-bold" : ""}`} title="EDI tenders, 214 status and 210 invoices">
               EDI{data.ediInbox ? ` · ${data.ediInbox} waiting` : ""}
             </Link>
+            <span className="inline-flex rounded-lg border border-line bg-white p-0.5">
+              <span className="px-3 h-8 grid place-items-center rounded-md text-[13px] font-semibold bg-navy text-white">Board</span>
+              <Link href="/dispatch/planner" className="px-3 h-8 grid place-items-center rounded-md text-[13px] font-semibold text-muted hover:text-ink">
+                Planner
+              </Link>
+            </span>
             {canDispatch && (
               <button className="btn btn-primary" onClick={() => router.push("/orders/new")} title="Shortcut: n">
-                + New order
+                + New load
               </button>
             )}
           </div>

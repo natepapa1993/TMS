@@ -547,24 +547,33 @@
     },
     {
       "id": "F-20.4",
-      "name": "Dispatch planner: trips beside drivers with availability (available at / in, next planned), HOS remaining, bulk assign & dispatch",
+      "name": "Dispatch planner: loads to cover beside drivers with when and where each comes free, what is next, HOS (once an ELD feeds it); picking a load ranks drivers (eligibility, then deadhead); assign or assign & send; bulk send planned legs",
       "milestone": "M20",
-      "status": "planned",
-      "tests": []
+      "status": "done",
+      "tests": [
+        "src/domain/planner.test.ts",
+        "e2e/planner.spec.ts"
+      ]
     },
     {
       "id": "F-20.5",
-      "name": "Driver and asset events (vacation, home time, repair) that block assignment; driver–truck–dispatcher assignment preferences",
+      "name": "Driver and truck events (vacation, home time, restart, sick, shop, work order): a hard event blocks assignment in its window (override with a reason), a soft one warns; shown in the planner and the ranked picker",
       "milestone": "M20",
-      "status": "planned",
-      "tests": []
+      "status": "done",
+      "tests": [
+        "src/domain/planner.test.ts",
+        "e2e/planner.spec.ts"
+      ]
     },
     {
       "id": "F-20.6",
-      "name": "Asset map: live trucks and trailers, status filters",
+      "name": "Live map: every truck at its newest position (moving / stopped / no recent / out of service, heading), its driver, load and next stop; partner carriers on our loads while tracked; search and filters; refreshes every minute",
       "milestone": "M20",
-      "status": "planned",
-      "tests": []
+      "status": "done",
+      "tests": [
+        "src/domain/asset-map.test.ts",
+        "e2e/map.spec.ts"
+      ]
     },
     {
       "id": "F-20.7",

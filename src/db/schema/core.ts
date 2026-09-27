@@ -360,6 +360,11 @@ export const drivers = pgTable(
     homeTerminalId: text("home_terminal_id"),
     eldDriverId: text("eld_driver_id"),
     currentTruckId: text("current_truck_id"),
+    dispatcherUserId: text("dispatcher_user_id"), // the dispatcher who runs this driver
+    hosDriveMin: integer("hos_drive_min"), // hours of service left, from the ELD
+    hosShiftMin: integer("hos_shift_min"),
+    hosCycleMin: integer("hos_cycle_min"),
+    hosAt: timestamp("hos_at", { withTimezone: true }),
     status: text("status").notNull().default("active"),
     custom: jsonb("custom").$type<Record<string, unknown>>().notNull().default(sql`'{}'::jsonb`),
     ...audit(),
@@ -447,4 +452,25 @@ export const savedViews = pgTable(
     ...audit(),
   },
   (t) => [index("saved_views_tenant_page").on(t.tenantId, t.page)],
+);
+
+export const ASSET_EVENT_KINDS = ["vacation", "home_time", "restart", "sick", "repair", "work_order", "other"] as const;
+export type AssetEventKind = (typeof ASSET_EVENT_KINDS)[number];
+
+/** Time a driver, truck or trailer is not available: vacation, home time, a restart, a repair. A hard event blocks assignment; a soft one warns. */
+export const assetEvents = pgTable(
+  "asset_events",
+  {
+    id: id(),
+    tenantId: tenantId(),
+    subjectKind: text("subject_kind").notNull(), // driver | truck | trailer
+    subjectId: text("subject_id").notNull(),
+    kind: text("kind").$type<AssetEventKind>().notNull(),
+    startsAt: timestamp("starts_at", { withTimezone: true }).notNull(),
+    endsAt: timestamp("ends_at", { withTimezone: true }).notNull(),
+    hard: boolean("hard").notNull().default(true),
+    note: text("note"),
+    ...audit(),
+  },
+  (t) => [index("asset_events_subject").on(t.tenantId, t.subjectKind, t.subjectId)],
 );

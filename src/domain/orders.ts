@@ -783,7 +783,7 @@ export type Assignment =
 export type PlanOptions = { override?: boolean; reason?: string; plannedStart?: Date | null; plannedEnd?: Date | null; plannedMiles?: number | null };
 
 /** Run the eligibility engine for a proposed assignment. Pure read; used by planLeg and the picker. */
-export async function eligibilityFor(ctx: Ctx, legType: LegType | LegZone, a: Assignment, now = new Date()) {
+export async function eligibilityFor(ctx: Ctx, legType: LegType | LegZone, a: Assignment, now = new Date(), window?: { start: Date; end: Date }) {
   assertCtx(ctx);
   const findings: Finding[] = [];
   if (a.kind === "truck") {
@@ -816,6 +816,17 @@ export async function eligibilityFor(ctx: Ctx, legType: LegType | LegZone, a: As
     findings.push(...checkCarrierZone(c, legType));
     findings.push(...(await complianceFindings(ctx, "carrier", c.id, c.name, legType)));
   }
+  // time off and repairs in the leg's window
+  if (window && a.kind === "truck") {
+    const { eventsBetween, eventFindings } = await import("./planner");
+    const people = [a.driverId, a.coDriverId].filter((x): x is string => !!x);
+    const evs = await eventsBetween(db, ctx.tenantId, window.start, window.end, [{ kind: "truck", ids: [a.truckId] }, { kind: "driver", ids: people }]);
+    if (evs.length) {
+      const names = people.length ? await db.select({ id: s.drivers.id, name: s.drivers.name }).from(s.drivers).where(inArray(s.drivers.id, people)) : [];
+      const [t] = await db.select({ unit: s.trucks.unitNumber }).from(s.trucks).where(eq(s.trucks.id, a.truckId)).limit(1);
+      findings.push(...eventFindings(evs, [{ kind: "truck", id: a.truckId, label: `unit ${t?.unit ?? ""}` }, ...names.map((n) => ({ kind: "driver", id: n.id, label: n.name }))]));
+    }
+  }
   return summarize(findings);
 }
 
@@ -829,7 +840,8 @@ export async function planLeg(ctx: Ctx, legId: string, a: Assignment, opts: Plan
     const from: LegState = leg.state === "declined" || leg.state === "dispatched" || leg.state === "accepted" ? "planned" : "planned";
     if (!["unassigned", "declined", "planned", "dispatched", "accepted"].includes(leg.state)) throw new TransitionError("leg", leg.state, from, "leg already moving");
 
-    const elig = await eligibilityFor(ctx, await zoneForLeg(tx, leg), a);
+    const { legWindow } = await import("./planner");
+    const elig = await eligibilityFor(ctx, await zoneForLeg(tx, leg), a, new Date(), await legWindow(tx, leg));
     if (elig.hardBlocked) throw new EligibilityError(elig.findings, true);
     if (!elig.ok) {
       if (!opts.override) throw new EligibilityError(elig.findings, false);
@@ -1231,6 +1243,9 @@ export async function candidatesForLeg(ctx: Ctx, legId: string, now = new Date()
   const busyBy = new Map<string, { orderNumber: string; state: LegState }[]>();
   for (const b of busyRows) if (b.truckId) busyBy.set(b.truckId, [...(busyBy.get(b.truckId) ?? []), { orderNumber: b.orderNumber, state: b.state }]);
   const [truckComp, driverComp] = await Promise.all([statusMap(ctx, "truck"), statusMap(ctx, "driver")]);
+  const { legWindow, eventsBetween, eventFindings } = await import("./planner");
+  const win = await legWindow(db, leg, now);
+  const events = await eventsBetween(db, ctx.tenantId, win.start, win.end);
   const compFindings = (kind: "truck" | "driver", id: string, label: string): Finding[] => {
     const raw = kind === "truck" ? truckComp.get(id) : driverComp.get(id);
     if (!raw) return [];
@@ -1246,6 +1261,7 @@ export async function candidatesForLeg(ctx: Ctx, legId: string, now = new Date()
     const drv = drivers.find((d) => d.currentTruckId === t.id) ?? null;
     const findings = [...checkTruck(t, zone, now), ...compFindings("truck", t.id, `unit ${t.unitNumber}`), ...(drv ? [...checkDriver(drv, zone, now), ...compFindings("driver", drv.id, drv.name)] : [])];
     if (!drv) findings.push({ level: "yellow", code: "no_driver", message: `${t.unitNumber} has no driver assigned`, overridable: true });
+    findings.push(...eventFindings(events, [{ kind: "truck", id: t.id, label: `unit ${t.unitNumber}` }, ...(drv ? [{ kind: "driver", id: drv.id, label: drv.name }] : [])]));
     const sum = summarize(findings);
     const busy = busyBy.get(t.id) ?? [];
     let score = 0;

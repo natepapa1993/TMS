@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { requireCtx } from "@/lib/auth";
 import { list } from "@/data/records";
 import { db } from "@/db/client";
@@ -56,6 +57,12 @@ export default async function FleetPage() {
         title="Units"
         actions={
           <>
+            <span className="inline-flex rounded-lg border border-line bg-white p-0.5">
+              <span className="px-3.5 h-8 grid place-items-center rounded-md text-[13px] font-semibold bg-navy text-white">Units</span>
+              <Link href="/fleet/map" className="px-3.5 h-8 grid place-items-center rounded-md text-[13px] font-semibold text-muted hover:text-ink">
+                Map
+              </Link>
+            </span>
             <QuickAdd kind="driver" fields={FIELDS.driver} refs={driverRefs.options} label="Add driver" buttonClass="btn" />
             <QuickAdd kind="truck" fields={FIELDS.truck} refs={truckRefs.options} label="Add truck" />
           </>

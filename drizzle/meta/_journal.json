@@ -155,6 +155,13 @@
       "when": 1790524172826,
       "tag": "0021_load_page",
       "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "7",
+      "when": 1790525459105,
+      "tag": "0022_planner",
+      "breakpoints": true
     }
   ]
 }

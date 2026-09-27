@@ -597,3 +597,32 @@ body {
   border-color: var(--color-teal);
   color: var(--color-teal);
 }
+
+/* ---- planner driver table: rows grow with their content ---- */
+.planner-table {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  font-size: 13px;
+}
+.planner-table th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: #f8fafc;
+  text-align: left;
+  font-size: 11.5px;
+  font-weight: 700;
+  color: var(--color-muted);
+  padding: 9px 10px;
+  border-bottom: 1px solid var(--color-line);
+  white-space: nowrap;
+}
+.planner-table td {
+  padding: 10px;
+  border-bottom: 1px solid var(--color-line);
+  vertical-align: top;
+}
+.planner-table tbody tr:hover td {
+  background: #f6f9fb;
+}
