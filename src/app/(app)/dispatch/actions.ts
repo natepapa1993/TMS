@@ -202,8 +202,21 @@ export async function setLegMilesAction(legId: string, miles: string) {
   return r;
 }
 
-/** Send a driver their app link, or a customer contact the tracking link, on WhatsApp through the outbox (template "tracking": name, order, link). */
-export async function sendLinkWhatsAppAction(input: { kind: "driver" | "tracking"; orderId: string; driverId?: string; to?: string }) {
+/** The partner carrier's driver's link for one leg (their phone is our tracking on a carrier leg). */
+export async function carrierDriverLinkAction(legId: string) {
+  return act(async (ctx) => {
+    const { carrierDriverLink } = await import("@/domain/carrier-portal");
+    const { db } = await import("@/db/client");
+    const { legs } = await import("@/db/schema");
+    const { and, eq } = await import("drizzle-orm");
+    const [l] = await db.select({ id: legs.id }).from(legs).where(and(eq(legs.tenantId, ctx.tenantId), eq(legs.id, legId))).limit(1);
+    if (!l) throw Object.assign(new Error("leg not found"), { name: "NotFoundError" });
+    return carrierDriverLink(ctx.tenantId, legId);
+  });
+}
+
+/** Send a driver their app link, a partner carrier's driver their leg link, or a customer contact the tracking link, on WhatsApp through the outbox (template "tracking": name, order, link). */
+export async function sendLinkWhatsAppAction(input: { kind: "driver" | "tracking" | "carrier_driver"; orderId: string; driverId?: string; legId?: string; to?: string }) {
   return act(async (ctx) => {
     const { enqueue, deliverQueued } = await import("@/lib/outbox");
     const { db } = await import("@/db/client");
@@ -221,14 +234,22 @@ export async function sendLinkWhatsAppAction(input: { kind: "driver" | "tracking
       name = String(d.name);
       url = publicUrl(`/d/${(await issueToken(ctx, "driver_app", input.driverId, { label: name })).token}`);
       if (!to) throw Object.assign(new Error(`${name} has no phone or WhatsApp on the driver record`), { name: "ValidationError" });
+    } else if (input.kind === "carrier_driver") {
+      if (!input.legId) throw Object.assign(new Error("pick a leg"), { name: "ValidationError" });
+      const { carrierDriverLink } = await import("@/domain/carrier-portal");
+      const cl = await carrierDriverLink(ctx.tenantId, input.legId);
+      to = input.to?.trim() || cl.driverPhone || null;
+      name = cl.driverName ?? "Driver";
+      url = cl.url;
+      if (!to) throw Object.assign(new Error("the carrier has not given a phone for their driver; enter one"), { name: "ValidationError", field: "to" });
     } else {
       to = input.to?.trim() || null;
       if (!to) throw Object.assign(new Error("enter the customer contact's WhatsApp number"), { name: "ValidationError", field: "to" });
       name = "Tracking";
       url = publicUrl(`/track/${(await issueToken(ctx, "tracking_link", input.orderId, { label: "customer" })).token}`);
     }
-    const body = input.kind === "driver" ? `${name}, your loads: ${url}` : `Tracking for ${o.order.orderNumber}: ${url}`;
-    const row = await enqueue(ctx, { channel: "whatsapp", to, body, subjectKind: input.kind === "driver" ? "driver_link" : "tracking_link", subjectId: input.kind === "driver" ? input.driverId! : input.orderId, meta: { kind: "tracking", template: { name: "", params: [name, o.order.orderNumber, url] } } });
+    const body = input.kind === "driver" ? `${name}, your loads: ${url}` : input.kind === "carrier_driver" ? `${name}, load ${o.order.orderNumber} — one button per step, keep it open while driving: ${url}` : `Tracking for ${o.order.orderNumber}: ${url}`;
+    const row = await enqueue(ctx, { channel: "whatsapp", to, body, subjectKind: input.kind === "driver" ? "driver_link" : input.kind === "carrier_driver" ? "carrier_driver_link" : "tracking_link", subjectId: input.kind === "driver" ? input.driverId! : input.kind === "carrier_driver" ? input.legId! : input.orderId, meta: { kind: "tracking", template: { name: "", params: [name, o.order.orderNumber, url] } } });
     await deliverQueued().catch(() => null);
     const [after] = await db.select({ state: outbox.state, error: outbox.error }).from(outbox).where(eq(outbox.id, row.id)).limit(1);
     return { state: after?.state ?? "queued", error: after?.error ?? null, to };

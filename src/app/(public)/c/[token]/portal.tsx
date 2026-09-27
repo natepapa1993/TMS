@@ -13,7 +13,7 @@ import type { LegState } from "@/db/schema";
 type Place = { name: string; city: string | null; state: string | null; country: string; windowStart: string | null; windowEnd: string | null; contact: string | null; notes: string | null } | null;
 type Offer = { id: string; legId: string; orderNumber: string; type: string; rateCents: number | null; currency: string; expiresAt: string; message: string | null; from: Place; to: Place; equipment: string | null; cargoNote: string | null };
 type Bill = { id: string; state: string; expectedCents: number; invoicedCents: number | null; approvedCents: number | null; paidCents: number | null; paidAt: string | null; payDate: string | null; shortPayNote: string | null; carrierInvoiceNumber: string | null } | null;
-type Leg = { id: string; seq: number; type: string; state: string; stateLabel: string; next: { to: LegState; en: string; es: string } | null; orderNumber: string; equipment: string | null; cargoNote: string | null; refs: Record<string, string>; rateCents: number | null; from: Place; to: Place; driverName: string | null; driverPhone: string | null; unitNumber: string | null; trailerNumber: string | null; completedAt: string | null; podOnFile: boolean; bill: Bill };
+type Leg = { id: string; seq: number; type: string; state: string; stateLabel: string; next: { to: LegState; en: string; es: string } | null; orderNumber: string; equipment: string | null; cargoNote: string | null; refs: Record<string, string>; rateCents: number | null; from: Place; to: Place; driverName: string | null; driverPhone: string | null; unitNumber: string | null; trailerNumber: string | null; completedAt: string | null; podOnFile: boolean; driverLink: string | null; bill: Bill };
 type Data = {
   company: string;
   carrier: { id: string; name: string; country: string; doNotUse: boolean };
@@ -255,6 +255,30 @@ function LegCard({ token, l, onDone }: { token: string; l: Leg; onDone: (t: stri
           {l.driverName ? "Change" : "Set driver"}
         </button>
       </div>
+      {l.driverLink && (
+        <div className="mt-2 text-[12.5px] flex items-center gap-2 flex-wrap" data-testid="driver-link">
+          <span className="text-muted">Your driver&apos;s link · El enlace de tu operador:</span>
+          <button
+            className="btn btn-sm"
+            onClick={async () => {
+              try {
+                await navigator.clipboard.writeText(l.driverLink!);
+                onDone("Link copied · Enlace copiado");
+              } catch {
+                onDone(l.driverLink!);
+              }
+            }}
+          >
+            Copy · Copiar
+          </button>
+          {l.driverPhone && (
+            <a className="btn btn-sm" href={`https://wa.me/${l.driverPhone.replace(/\D/g, "")}?text=${encodeURIComponent(`${l.driverName ?? ""}, load ${l.orderNumber} — one button per step, keep it open while driving · un botón por paso, déjalo abierto: ${l.driverLink}`)}`} target="_blank" rel="noreferrer">
+              WhatsApp
+            </a>
+          )}
+          <span className="text-faint">one button per step, GPS while open · the POD photo at the delivery</span>
+        </div>
+      )}
       {l.state === "at_delivery" && <PodButton token={token} leg={l} onDone={onDone} />}
       {l.next && (
         <button

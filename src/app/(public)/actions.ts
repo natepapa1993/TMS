@@ -194,6 +194,52 @@ export async function portalInvoiceAction(token: string, legId: string, form: Fo
   }
 }
 
+// ---------- the partner carrier's driver (one leg) ----------
+
+export async function carrierDriverStepAction(token: string, input: { lat?: number | null; lng?: number | null; accuracyM?: number | null }): Promise<ActionResult<{ state: string }>> {
+  const t = await resolveToken(token, "carrier_driver");
+  if (!t) return { ok: false, error: "This link is no longer valid. Ask your dispatcher for a new one.", code: "not_found" };
+  try {
+    const { carrierDriverStep } = await import("@/domain/carrier-portal");
+    const leg = await carrierDriverStep(t.ctx.tenantId, t.subjectId, input);
+    return { ok: true, data: { state: leg.state } };
+  } catch (e) {
+    return toError(e);
+  }
+}
+
+export async function carrierDriverPingAction(token: string, p: { lat: number; lng: number; accuracyM?: number | null; speedMph?: number | null; heading?: number | null }): Promise<ActionResult<{ ok: true }>> {
+  const t = await resolveToken(token, "carrier_driver");
+  if (!t) return { ok: false, error: "invalid link", code: "not_found" };
+  try {
+    const { carrierDriverPing } = await import("@/domain/carrier-portal");
+    await carrierDriverPing(t.ctx.tenantId, t.subjectId, p);
+    return { ok: true, data: { ok: true } };
+  } catch (e) {
+    return toError(e);
+  }
+}
+
+export async function carrierDriverPodAction(token: string, form: FormData): Promise<ActionResult<{ count: number }>> {
+  const t = await resolveToken(token, "carrier_driver");
+  if (!t) return { ok: false, error: "invalid link", code: "not_found" };
+  try {
+    const file = form.get("file");
+    if (!(file instanceof File) || file.size === 0) throw Object.assign(new Error("take the photo first · toma la foto primero"), { name: "ValidationError", field: "file" });
+    const { db } = await import("@/db/client");
+    const { legs } = await import("@/db/schema");
+    const { eq } = await import("drizzle-orm");
+    const [l] = await db.select({ carrierId: legs.carrierId }).from(legs).where(eq(legs.id, t.subjectId)).limit(1);
+    if (!l?.carrierId) return { ok: false, error: "invalid link", code: "not_found" };
+    const { portalUploadPod } = await import("@/domain/carrier-portal");
+    const mime = file.type || (file.name.toLowerCase().endsWith(".pdf") ? "application/pdf" : "image/jpeg");
+    const rows = await portalUploadPod(t.ctx.tenantId, l.carrierId, t.subjectId, { fileName: file.name || "pod.jpg", mimeType: mime, bytes: Buffer.from(await file.arrayBuffer()) });
+    return { ok: true, data: { count: rows.length } };
+  } catch (e) {
+    return toError(e);
+  }
+}
+
 // ---------- customer portal ----------
 
 async function customerFromToken(token: string) {

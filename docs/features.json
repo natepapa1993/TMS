@@ -405,6 +405,16 @@
       ]
     },
     {
+      "id": "F-5.12",
+      "name": "Partner carrier's driver link: one per carrier leg from the Track popup or the carrier portal — the load, one button per step with the phone's position (verified events, last position on the tracking page, scorecard 'tracked'), POD photo at the delivery, dead when the leg is done",
+      "milestone": "M8",
+      "status": "done",
+      "tests": [
+        "src/domain/carrier-portal.test.ts",
+        "e2e/carrier-portal.spec.ts"
+      ]
+    },
+    {
       "id": "F-7.6",
       "name": "The owner's Monday email: last week's six numbers, top customers and trucks",
       "milestone": "M7",

@@ -5,7 +5,8 @@ import { db } from "@/db/client";
 import * as s from "@/db/schema";
 import { assertCtx, systemCtx, type Ctx } from "@/lib/context";
 import { issueToken, publicUrl, revokeTokensFor } from "@/lib/tokens";
-import { advanceLeg, pendingMidStop, NotFoundError, ValidationError } from "./orders";
+import { advanceLeg, pendingMidStop, midStops, NotFoundError, ValidationError } from "./orders";
+import { recordPosition } from "./tracking";
 import { newId } from "@/lib/ids";
 import { newToken } from "@/lib/tokens";
 import { respondToTender, type TenderResponse } from "./tenders";
@@ -79,6 +80,9 @@ export async function carrierPortalView(tenantId: string, carrierId: string, now
     const have = new Set(pods.map((p) => p.subjectId));
     for (const [legId, targets] of targetsByLeg) if (targets.length && targets.every((id) => have.has(id))) podOn.add(legId);
   }
+  // one link per live leg for the carrier's own driver: the carrier's dispatcher forwards it
+  const driverLinks = new Map<string, string>();
+  for (const l of legs) if (!["completed", "cancelled", "unassigned", "planned"].includes(l.state)) driverLinks.set(l.id, (await carrierDriverLink(tenantId, l.id).catch(() => null))?.url ?? "");
   const legView = (l: typeof s.legs.$inferSelect) => {
     const o = orderById.get(l.orderId);
     const bill = bills.find((b) => b.legId === l.id);
@@ -106,6 +110,7 @@ export async function carrierPortalView(tenantId: string, carrierId: string, now
       trailerNumber: at?.trailerNumber ?? null,
       completedAt: l.completedAt,
       podOnFile: podOn.has(l.id),
+      driverLink: driverLinks.get(l.id) ?? null,
       bill: bill ? { id: bill.id, state: bill.state, expectedCents: bill.expectedCents + bill.accessorialCents, invoicedCents: bill.invoicedCents, approvedCents: bill.approvedCents, paidCents: bill.paidCents, paidAt: bill.paidAt, payDate: bill.payDate, shortPayNote: bill.shortPayNote, carrierInvoiceNumber: bill.carrierInvoiceNumber } : null,
     };
   };
@@ -195,6 +200,77 @@ export async function portalAdvance(tenantId: string, carrierId: string, legId: 
   const next = NEXT[l.state];
   if (!next || next.to !== to) throw new ValidationError(`this load is ${LEG_LABEL[l.state]}; the next step is ${next ? LEG_LABEL[next.to] : "none"}`);
   return advanceLeg(ctx, legId, to, { source: "carrier", verified: false, note: note ?? undefined });
+}
+
+// ---------- the partner carrier's driver, on one leg ----------
+
+/**
+ * A partner carrier's driver has no record with us and no ELD we can read; what they have is a phone.
+ * One link per leg (spec §5 "phone pings"): the load, one button per step with GPS, positions every
+ * two minutes while open. Works for the carrier's dispatcher to send from the portal and for ours to
+ * send from the Track popup. Dies with the leg: nothing after it is completed or cancelled.
+ */
+export async function carrierDriverLink(tenantId: string, legId: string) {
+  const ctx = systemCtx(tenantId);
+  const [l] = await db.select().from(s.legs).where(and(eq(s.legs.tenantId, tenantId), eq(s.legs.id, legId))).limit(1);
+  if (!l || l.assigneeKind !== "carrier" || !l.carrierId) throw new ValidationError("this leg is not with a partner carrier");
+  const [at] = await db.select({ driverName: s.tenders.driverName, driverPhone: s.tenders.driverPhone }).from(s.tenders).where(and(eq(s.tenders.legId, legId), eq(s.tenders.state, "accepted"))).orderBy(desc(s.tenders.respondedAt)).limit(1);
+  const tok = await issueToken(ctx, "carrier_driver", legId, { label: at?.driverName ?? "carrier driver" });
+  return { url: publicUrl(`/g/${tok.token}`), driverName: at?.driverName ?? null, driverPhone: at?.driverPhone ?? null };
+}
+
+export async function carrierDriverView(tenantId: string, legId: string) {
+  const [l] = await db.select().from(s.legs).where(and(eq(s.legs.tenantId, tenantId), eq(s.legs.id, legId))).limit(1);
+  if (!l || !l.carrierId) throw new NotFoundError("load", legId);
+  const [order, stops, carrier, tenant, at] = await Promise.all([
+    db.select().from(s.orders).where(eq(s.orders.id, l.orderId)).limit(1).then((r) => r[0]),
+    db.select().from(s.stops).where(eq(s.stops.orderId, l.orderId)).orderBy(s.stops.seq),
+    loadCarrier(tenantId, l.carrierId),
+    db.select({ name: s.tenants.name }).from(s.tenants).where(eq(s.tenants.id, tenantId)).limit(1).then((r) => r[0]),
+    db.select({ driverName: s.tenders.driverName }).from(s.tenders).where(and(eq(s.tenders.legId, legId), eq(s.tenders.state, "accepted"))).orderBy(desc(s.tenders.respondedAt)).limit(1).then((r) => r[0]),
+  ]);
+  const mid = pendingMidStop(l, stops);
+  const next = ["completed", "cancelled", "unassigned", "planned", "declined"].includes(l.state) ? null : mid ? { to: l.state, en: `${mid.which === "arrived" ? "Arrived at" : "Leaving"} ${mid.stop.name}`, es: `${mid.which === "arrived" ? "Llegué a" : "Saliendo de"} ${mid.stop.name}` } : (NEXT[l.state] ?? null);
+  const stop = (id: string | null) => {
+    const x = stops.find((st) => st.id === id);
+    return x ? { id: x.id, name: x.name, type: x.type, country: x.country, address: x.address, windowStart: x.windowStart, windowEnd: x.windowEnd, contact: x.contact, notes: x.notes, arrivedAt: x.arrivedAt, departedAt: x.departedAt } : null;
+  };
+  return {
+    company: tenant?.name ?? "",
+    carrier: carrier.name,
+    driverName: at?.driverName ?? null,
+    leg: { id: l.id, state: l.state, stateLabel: LEG_LABEL[l.state], type: LEG_TYPE_LABEL[l.type] ?? l.type, done: l.state === "completed" || l.state === "cancelled" },
+    order: { orderNumber: order?.orderNumber ?? "?", equipment: order?.equipment ?? null, cargoNote: order?.cargoNote ?? null },
+    from: stop(l.fromStopId),
+    to: stop(l.toStopId),
+    mids: midStops(l, stops).map((m) => stop(m.id)!),
+    next,
+    podOnFile: !!(await db.select({ id: s.documents.id }).from(s.documents).where(and(eq(s.documents.tenantId, tenantId), eq(s.documents.subjectKind, "order"), eq(s.documents.subjectId, l.orderId), eq(s.documents.code, "POD"), inArray(s.documents.status, ["present", "verified"]))).limit(1)).length,
+  };
+}
+
+/** The carrier's driver pressed the button: a position when the phone gave one, and the step, verified when it did. */
+export async function carrierDriverStep(tenantId: string, legId: string, input: { lat?: number | null; lng?: number | null; accuracyM?: number | null }) {
+  const ctx = systemCtx(tenantId);
+  const [l] = await db.select().from(s.legs).where(and(eq(s.legs.tenantId, tenantId), eq(s.legs.id, legId))).limit(1);
+  if (!l || !l.carrierId) throw new NotFoundError("load", legId);
+  const hasPos = input.lat != null && input.lng != null;
+  if (hasPos) await recordPosition(ctx, { source: "phone", lat: input.lat!, lng: input.lng!, accuracyM: input.accuracyM ?? null, legId: l.id }).catch(() => null);
+  const ev = { source: "carrier" as const, verified: hasPos, lat: hasPos ? String(Number(input.lat).toFixed(6)) : undefined, lng: hasPos ? String(Number(input.lng).toFixed(6)) : undefined, note: "from the driver's phone" };
+  if (l.state === "en_route") {
+    const stops = await db.select().from(s.stops).where(eq(s.stops.orderId, l.orderId));
+    if (pendingMidStop(l, stops)) return advanceLeg(ctx, legId, "next", ev);
+  }
+  const next = NEXT[l.state];
+  if (!next) throw new ValidationError("nothing further on this load");
+  return advanceLeg(ctx, legId, next.to, ev);
+}
+
+export async function carrierDriverPing(tenantId: string, legId: string, p: { lat: number; lng: number; accuracyM?: number | null; speedMph?: number | null; heading?: number | null }) {
+  const [l] = await db.select({ id: s.legs.id, state: s.legs.state }).from(s.legs).where(and(eq(s.legs.tenantId, tenantId), eq(s.legs.id, legId))).limit(1);
+  if (!l) throw new NotFoundError("load", legId);
+  if (["completed", "cancelled", "unassigned"].includes(l.state)) return null; // the load is over; the phone stops mattering
+  return recordPosition(systemCtx(tenantId), { source: "phone", lat: p.lat, lng: p.lng, accuracyM: p.accuracyM ?? null, speedMph: p.speedMph ?? null, heading: p.heading ?? null, legId: l.id });
 }
 
 /** Who is driving: kept on the accepted tender (created here when the leg was given by phone with no tender row). */

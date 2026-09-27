@@ -1,10 +1,11 @@
-// Features: F-10 carrier portal — one link per carrier: offers, active loads with steps and driver, rate con PDF, compliance uploads, invoice against the leg, scorecard; tenant and carrier bound
+// Features: F-10 carrier portal — one link per carrier: offers, active loads with steps and driver, rate con PDF, compliance uploads, invoice against the leg, scorecard; tenant and carrier bound F-5.12
 import { describe, it, expect, beforeEach } from "vitest";
 import { PDFDocument } from "pdf-lib";
 import { truncateAll, makeTenant } from "@/test/helpers";
 import { create } from "@/data/records";
 import { db } from "@/db/client";
 import { positions } from "@/db/schema";
+import { eq } from "drizzle-orm";
 import { newId } from "@/lib/ids";
 import { resolveToken } from "@/lib/tokens";
 import { createOrder, planLeg, dispatchLeg, acceptLeg, advanceLeg, ValidationError, NotFoundError } from "./orders";
@@ -104,6 +105,58 @@ describe("carrier portal", () => {
     // the revoked link stops working
     await P.revokeCarrierPortal(a, f.garza);
     expect(await resolveToken(token, "carrier_portal")).toBeNull();
+  });
+
+  it("the partner carrier's driver: one link per leg, one button per step with the phone's position, the POD at the delivery; dead once the leg is done; never on our own truck", async () => {
+    const { trackingView } = await import("./tracking");
+    const o = await mxOrder();
+    const mx = o.legs[0].id;
+    await sendTender(a, mx, { carrierId: f.garza, rateCents: 45000, expiresInMinutes: 120 });
+    const v0 = await P.carrierPortalView(a.tenantId, f.garza);
+    await P.portalRespond(a.tenantId, f.garza, v0.offers[0].id, { accept: true, name: "Luis", driverName: "Pedro Ruiz", driverPhone: "+52 81 555 0101" });
+    const link = await P.carrierDriverLink(a.tenantId, mx);
+    expect(link.url).toMatch(/\/g\//);
+    expect(link).toMatchObject({ driverName: "Pedro Ruiz", driverPhone: "+52 81 555 0101" });
+    expect((await P.carrierDriverLink(a.tenantId, mx)).url).toBe(link.url); // one per leg
+    const v = await P.carrierPortalView(a.tenantId, f.garza);
+    expect(v.active[0].driverLink).toBe(link.url); // the carrier's dispatcher can forward it
+    const token = link.url.split("/g/")[1];
+    const res = await resolveToken(token, "carrier_driver");
+    expect(res?.subjectId).toBe(mx);
+    let view = await P.carrierDriverView(a.tenantId, mx);
+    expect(view).toMatchObject({ company: "24:7", carrier: "Transportes Garza", driverName: "Pedro Ruiz", leg: { state: "accepted", type: "Mexico", done: false }, podOnFile: false });
+    expect(view.from?.name).toBe("Planta Monterrey");
+    expect(view.next).toMatchObject({ to: "en_route_to_pickup" });
+    // steps from the phone: verified when it gave a position, which the customer's tracking page shows
+    await P.carrierDriverStep(a.tenantId, mx, { lat: 25.68, lng: -100.31, accuracyM: 20 });
+    await P.carrierDriverStep(a.tenantId, mx, {});
+    view = await P.carrierDriverView(a.tenantId, mx);
+    expect(view.leg.state).toBe("at_pickup");
+    const tv = await trackingView(a.tenantId, o.order.id);
+    expect(tv.events.filter((e) => e.verified).length).toBe(1);
+    expect(tv.lastPosition).toMatchObject({ source: "phone" });
+    await P.carrierDriverPing(a.tenantId, mx, { lat: 25.7, lng: -100.3 });
+    expect((await db.select().from(positions).where(eq(positions.legId, mx))).length).toBe(2);
+    for (let i = 0; i < 3; i++) await P.carrierDriverStep(a.tenantId, mx, {}); // loaded, en route, at delivery
+    view = await P.carrierDriverView(a.tenantId, mx);
+    expect(view.leg.state).toBe("at_delivery");
+    await P.portalUploadPod(a.tenantId, f.garza, mx, { fileName: "pod.jpg", mimeType: "image/jpeg", bytes: Buffer.from("x") });
+    expect((await P.carrierDriverView(a.tenantId, mx)).podOnFile).toBe(true);
+    await P.carrierDriverStep(a.tenantId, mx, {});
+    view = await P.carrierDriverView(a.tenantId, mx);
+    expect(view.leg.done).toBe(true);
+    expect(view.next).toBeNull();
+    await expect(P.carrierDriverStep(a.tenantId, mx, {})).rejects.toThrow(/nothing further/);
+    expect(await P.carrierDriverPing(a.tenantId, mx, { lat: 25.7, lng: -100.3 })).toBeNull(); // the phone stops mattering
+    expect((await db.select().from(positions).where(eq(positions.legId, mx))).length).toBe(2);
+    // the scorecard counts the leg as tracked
+    expect((await P.scorecard(a, f.garza)).trackedPct).toBe(100);
+    // our own truck's leg has no such link: that driver has the app
+    const o2 = await mxOrder();
+    const t2117 = await create(a, "truck", { unitNumber: "2117", usPlate: "RC59022", mxPlate: "35ES3A", mxPlateClass: "blue", usPlateExpires: future, mxPlateExpires: future });
+    const benja = await create(a, "driver", { name: "Benjamín Xochihua", driverType: "B1", mxLicenseExpires: future, fastExpires: future, i94Until: future, medicalExpires: future, licenseExpires: future, currentTruckId: t2117.id });
+    await planLeg(a, o2.legs[0].id, { kind: "truck", truckId: t2117.id, driverId: benja.id });
+    await expect(P.carrierDriverLink(a.tenantId, o2.legs[0].id)).rejects.toThrow(/not with a partner carrier/);
   });
 
   it("documents: the carrier uploads its COI against the company's document types and goes dispatchable; scorecard counts offers, on-time and tracking", async () => {

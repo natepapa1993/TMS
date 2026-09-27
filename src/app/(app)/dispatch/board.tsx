@@ -1038,12 +1038,13 @@ function SplitModal({ leg, stops, onClose, onDone }: { leg: Leg; stops: Stop[]; 
 function TrackModal({ r, onClose }: { r: Row; onClose: () => void }) {
   const [link, setLink] = useState<string | null>(null);
   const [driverLinks, setDriverLinks] = useState<{ id: string; name: string; url: string; phone: string | null; whatsapp: string | null }[]>([]);
+  const [carrierLinks, setCarrierLinks] = useState<{ legId: string; legLabel: string; url: string; driverName: string | null; driverPhone: string | null }[]>([]);
+  const [carrierTo, setCarrierTo] = useState<Record<string, string>>({});
   const [copied, setCopied] = useState<string | null>(null);
   const [custTo, setCustTo] = useState("");
   const [sending, setSending] = useState(false);
   const [sent, setSent] = useState<string | null>(null);
-  const nl = nextLeg(r);
-  const send = async (input: { kind: "driver" | "tracking"; orderId: string; driverId?: string; to?: string }) => {
+  const send = async (input: { kind: "driver" | "tracking" | "carrier_driver"; orderId: string; driverId?: string; legId?: string; to?: string }) => {
     setSending(true);
     setSent(null);
     const x = await A.sendLinkWhatsAppAction(input);
@@ -1055,6 +1056,8 @@ function TrackModal({ r, onClose }: { r: Row; onClose: () => void }) {
     A.trackingLinkAction(r.order.id).then((x) => x.ok && setLink(x.data.url));
     const ids = [...new Set(r.legs.flatMap((l) => [l.driverId, l.coDriverId]).filter((x): x is string => !!x))];
     Promise.all(ids.map((id) => A.driverLinkAction(id).then((x) => (x.ok ? { id, ...x.data } : null)))).then((rs) => setDriverLinks(rs.filter((x): x is NonNullable<typeof x> => !!x)));
+    const carrierLegs = r.legs.filter((l) => l.assigneeKind === "carrier" && l.carrierId && !["completed", "cancelled", "unassigned"].includes(l.state));
+    Promise.all(carrierLegs.map((l) => A.carrierDriverLinkAction(l.id).then((x) => (x.ok ? { legId: l.id, legLabel: `${LEG_TYPE_LABEL[l.type]} leg`, ...x.data } : null)))).then((rs) => setCarrierLinks(rs.filter((x): x is NonNullable<typeof x> => !!x)));
   }, [r.order.id, r.legs]);
   const copy = async (s: string, what: string) => {
     try {
@@ -1123,8 +1126,35 @@ function TrackModal({ r, onClose }: { r: Row; onClose: () => void }) {
             ))
           )}
         </div>
+        {carrierLinks.length > 0 && (
+          <div data-testid="carrier-driver-links">
+            <div className="label">Partner carrier&apos;s driver</div>
+            <div className="text-[12.5px] text-muted mb-1.5">No ELD to read, so their phone is the tracking: one link per leg with one button per step and GPS while it is open. The carrier can send it from their portal too.</div>
+            {carrierLinks.map((c) => (
+              <div key={c.legId} className="flex items-center gap-2 mb-1.5 flex-wrap">
+                <span className="w-36 font-semibold truncate text-[13px]">
+                  {c.driverName ?? <span className="text-amber">driver not named</span>} <span className="text-faint font-normal">· {c.legLabel}</span>
+                </span>
+                <button className="btn btn-sm" onClick={() => copy(c.url, c.url)}>
+                  {copied === c.url ? "Copied" : "Copy link"}
+                </button>
+                <input className="input w-40" placeholder={c.driverPhone ?? "driver's WhatsApp"} value={carrierTo[c.legId] ?? ""} onChange={(e) => setCarrierTo({ ...carrierTo, [c.legId]: e.target.value })} aria-label="Carrier driver WhatsApp" />
+                <button className="btn btn-sm" disabled={sending || !(carrierTo[c.legId]?.trim() || c.driverPhone)} title="Through the company WhatsApp Business number" onClick={() => send({ kind: "carrier_driver", orderId: r.order.id, legId: c.legId, to: carrierTo[c.legId] })}>
+                  Send on WhatsApp
+                </button>
+                {wa(carrierTo[c.legId] || c.driverPhone, `${c.driverName ?? "Hi"}, load ${r.order.orderNumber} — one button per step, keep it open while driving: ${c.url}`) && (
+                  <a className="btn btn-sm btn-ghost" href={wa(carrierTo[c.legId] || c.driverPhone, `${c.driverName ?? "Hi"}, load ${r.order.orderNumber} — one button per step, keep it open while driving: ${c.url}`)!} target="_blank" rel="noreferrer">
+                    wa.me
+                  </a>
+                )}
+                <a className="btn btn-sm btn-ghost" href={c.url} target="_blank" rel="noreferrer">
+                  Preview
+                </a>
+              </div>
+            ))}
+          </div>
+        )}
         {sent && <div className={`text-[12.5px] font-semibold ${sent.startsWith("✗") ? "text-red" : "text-teal"}`}>{sent}</div>}
-        {nl?.assigneeKind === "carrier" && <div className="text-[12.5px] text-muted">This leg is with a partner carrier: their driver details come back on the tender. ELD tracking for partner carriers arrives with the carrier portal.</div>}
       </div>
     </Modal>
   );

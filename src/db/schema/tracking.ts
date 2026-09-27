@@ -65,10 +65,10 @@ export const positions = pgTable(
   (t) => [index("positions_tenant_truck_at").on(t.tenantId, t.truckId, t.at), index("positions_tenant_leg_at").on(t.tenantId, t.legId, t.at), index("positions_tenant_order").on(t.tenantId, t.orderId)],
 );
 
-export const TOKEN_KINDS = ["driver_app", "tracking_link", "carrier_portal", "customer_portal", "password_reset"] as const;
+export const TOKEN_KINDS = ["driver_app", "tracking_link", "carrier_portal", "customer_portal", "password_reset", "carrier_driver"] as const;
 export type TokenKind = (typeof TOKEN_KINDS)[number];
 
-/** Login-free links: a driver's app, a customer's tracking page, a carrier's portal. Revocable. */
+/** Login-free links: a driver's app, a customer's tracking page, a carrier's portal, a partner carrier's driver on one leg. Revocable. */
 export const accessTokens = pgTable(
   "access_tokens",
   {

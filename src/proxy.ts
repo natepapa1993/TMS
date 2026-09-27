@@ -5,7 +5,7 @@ export function proxy(request: NextRequest) {
   const has = request.cookies.has("tms_session");
   const { pathname } = request.nextUrl;
   const isAuthPage = pathname === "/login" || pathname === "/signup" || pathname === "/forgot" || pathname.startsWith("/reset/");
-  const isPublic = /^\/(t|d|p|i|c|cp|track)\//.test(pathname) || pathname.startsWith("/api/");
+  const isPublic = /^\/(t|d|p|i|c|cp|g|track)\//.test(pathname) || pathname.startsWith("/api/");
   // a server action from a page whose session expired: let it reach act(), which answers "You are signed out" in the form instead of a crashed page
   const isAction = request.method === "POST" && request.headers.has("next-action");
   if (!has && !isAuthPage && !isPublic && !isAction && pathname !== "/") {

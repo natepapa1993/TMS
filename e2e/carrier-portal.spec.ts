@@ -1,4 +1,4 @@
-// Features: F-10 carrier portal through the browser — link from the carrier record, offer accepted with a driver, load walked to delivered, rate con, invoice against the leg, COI upload lands in compliance, scorecard F-2.10
+// Features: F-10 F-5.12 carrier portal through the browser — link from the carrier record, offer accepted with a driver, load walked to delivered, rate con, invoice against the leg, COI upload lands in compliance, scorecard F-2.10
 import { test, expect } from "@playwright/test";
 import path from "node:path";
 import { signupFresh, quickAdd, future } from "./helpers";
@@ -75,20 +75,57 @@ test("carrier's day: one link, accept the offer, run the load, get paid, keep do
   await page.click(".stage-tab:has-text('Dispatched')");
   await page.locator(".row[role=button]").first().click();
   await expect(panel).toContainText("Luis accepted · driver Pedro Ruiz");
-  // walk the load from the portal
-  for (const label of ["Rolling to pickup", "Arrived at pickup", "Loaded — leaving", "En route to delivery", "Arrived at delivery"]) {
+  // the carrier's dispatcher takes the first steps from the portal
+  for (const label of ["Rolling to pickup", "Arrived at pickup"]) {
     const btn = load.locator("button.btn-primary.btn-lg");
     await expect(btn).toContainText(label);
     await btn.click();
     await phone.waitForTimeout(300);
   }
-  // at the delivery the POD goes up from the card, before the last button
-  await expect(load).toContainText("Send POD");
-  await load.locator("input[type=file]").setInputFiles(path.join(__dirname, "fixtures", "bol.pdf"));
-  await expect(phone.locator("body")).toContainText("POD received for 26-00001");
-  await expect(load).toContainText("✓ POD on file");
-  await load.locator("button.btn-primary.btn-lg").click();
+  await expect(load.getByTestId("driver-link")).toContainText("Your driver's link");
+  // ...and their driver the rest, from the link our dispatcher can also send from the Track popup
+  await panel.locator("button:has-text('Track')").click();
+  const links = page.getByRole("dialog").getByTestId("carrier-driver-links");
+  await expect(links).toContainText("Pedro Ruiz");
+  const gUrl = await links.locator("a:has-text('Preview')").getAttribute("href");
+  expect(gUrl).toMatch(/\/g\//);
+  await page.keyboard.press("Escape");
+  const ctx3 = await browser.newContext({ geolocation: { latitude: 25.68, longitude: -100.31 }, permissions: ["geolocation"] });
+  const driver = await ctx3.newPage();
+  await driver.setViewportSize({ width: 390, height: 844 });
+  await driver.goto(gUrl!);
+  await expect(driver.locator("body")).toContainText("Pedro Ruiz");
+  await expect(driver.locator("body")).toContainText("Transportes Garza");
+  await expect(driver.locator("span.pill", { hasText: "GPS on" })).toBeVisible({ timeout: 10000 });
+  const big = driver.locator("button.btn-primary").first();
+  for (const label of ["Loaded — leaving", "En route to delivery", "Arrived at delivery"]) {
+    await expect(big).toContainText(label);
+    await big.click();
+    await driver.waitForTimeout(400);
+  }
+  // at the delivery the POD goes up from the phone, before the last button
+  await expect(driver.locator("body")).toContainText("Take the POD photo before you leave");
+  await driver.getByTestId("photo-POD").locator("input[type=file]").setInputFiles(path.join(__dirname, "fixtures", "bol.pdf"));
+  await expect(driver.getByTestId("photo-POD")).toContainText("✓ POD on file", { timeout: 10000 });
+  await big.click();
+  await expect(driver.locator("body")).toContainText("Done — thank you");
+  await ctx3.close();
+  await phone.reload();
+  await phone.click(".stage-tab:has-text('Loads')");
   await expect(phone.locator("body")).toContainText("Nothing assigned right now");
+  // the office: verified steps and a last position on the customer's tracking page, from a partner carrier's leg
+  await page.reload();
+  await page.click(".stage-tab:has-text('Pending')");
+  await page.locator(".row[role=button]").first().click();
+  await expect(panel.locator(".rounded-lg.border").first()).toContainText("Delivered");
+  await panel.locator("button:has-text('Track')").click();
+  const trackUrl = await page.getByRole("dialog").locator("input[readonly]").first().inputValue();
+  await page.keyboard.press("Escape");
+  const cust = await browser.newPage();
+  await cust.goto(trackUrl);
+  await expect(cust.locator("body")).toContainText("Last known position");
+  await expect(cust.locator("body")).not.toContainText("450");
+  await cust.close();
 
   // pay: the delivered load is waiting for their invoice
   await phone.click(".stage-tab:has-text('Pay')");
