@@ -171,7 +171,7 @@ export async function emit210(ctx: Ctx, invoiceId: string) {
 export type InboundResult = { messageId: string; sets: { type: string; control: string; ok: boolean; note: string; orderId?: string | null; messageId?: string | null }[]; ackId: string | null };
 
 /** An interchange arrived (HTTP endpoint with the partner token, or pasted by a person). */
-export async function receiveInterchange(partnerId: string, text: string, opts: { via: "http" | "paste"; userId?: string | null } = { via: "http" }): Promise<InboundResult> {
+export async function receiveInterchange(partnerId: string, text: string, opts: { via: "http" | "paste" | "sftp"; userId?: string | null } = { via: "http" }): Promise<InboundResult> {
   const [p] = await db.select().from(s.ediPartners).where(eq(s.ediPartners.id, partnerId)).limit(1);
   if (!p || !p.enabled || p.archivedAt) throw new NotFoundError("EDI partner", partnerId);
   const ctx: Ctx = { tenantId: p.tenantId, userId: opts.userId ?? null, role: "system" };

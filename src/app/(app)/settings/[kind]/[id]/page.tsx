@@ -18,6 +18,9 @@ import { carrierPortalLink, scorecard } from "@/domain/carrier-portal";
 import { CarrierPortalCard } from "./carrier-portal-card";
 import { customerPortalLink } from "@/domain/customer-portal";
 import { CustomerPortalCard } from "./customer-portal-card";
+import { MailboxCard } from "./mailbox-card";
+import { publicMailbox } from "@/domain/edi-mailbox";
+import type { EdiMailbox } from "@/db/schema";
 
 export default async function RecordPage({ params }: PageProps<"/settings/[kind]/[id]">) {
   const { kind: path, id } = await params;
@@ -86,6 +89,7 @@ export default async function RecordPage({ params }: PageProps<"/settings/[kind]
           )}
           {kind === "customer" && customerPortal && <CustomerPortalCard customerId={id} url={customerPortal.url} email={customerPortal.email} canEdit={["owner", "dispatcher", "billing"].includes(ctx.role)} />}
           {kind === "carrier" && portal && score && <CarrierPortalCard carrierId={id} url={portal.url} whatsapp={portal.whatsapp} email={portal.email} score={score} canEdit={["owner", "dispatcher"].includes(ctx.role)} />}
+          {kind === "ediPartner" && <MailboxCard partnerId={id} mailbox={publicMailbox(row.mailbox as EdiMailbox | null)} delivery={String(row.delivery)} canEdit={ctx.role === "owner"} />}
           {kind === "ediPartner" && (
             <div className="card p-4">
               <div className="eyebrow mb-2">Inbound URL</div>

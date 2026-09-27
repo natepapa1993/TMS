@@ -7,6 +7,10 @@ import { create, update, archive, restore, type RecordKind, ValidationErrorLike 
 import { previewImport, commitImport, type ImportPreview } from "@/data/import";
 import { setTruckOos, setTruckActive } from "@/domain/orders";
 import { hashPassword } from "@/lib/auth";
+import { requirePermission } from "@/lib/context";
+import { db } from "@/db/client";
+import { ediPartners } from "@/db/schema";
+import { and, eq } from "drizzle-orm";
 
 export type SaveResult = ActionResult<{ id: string }> & { errors?: Record<string, string> };
 
@@ -106,5 +110,39 @@ export async function revokeCustomerPortalAction(customerId: string) {
     return { ok: true };
   });
   if (r.ok) revalidatePath(`/settings/customers/${customerId}`);
+  return r;
+}
+
+// ---------- EDI VAN mailbox ----------
+
+export async function saveMailboxAction(partnerId: string, values: { enabled: boolean; host: string; port: number; username: string; password: string; privateKey: string; inbox: string; outbox: string; extension: string }) {
+  const r = await act(async (ctx) => {
+    const { saveMailbox } = await import("@/domain/edi-mailbox");
+    return saveMailbox(ctx, partnerId, values);
+  });
+  if (r.ok) revalidatePath(`/settings/edi-partners/${partnerId}`);
+  return r;
+}
+
+export async function testMailboxAction(partnerId: string) {
+  return act(async (ctx) => {
+    const { testMailbox } = await import("@/domain/edi-mailbox");
+    return testMailbox(ctx, partnerId);
+  });
+}
+
+export async function pollMailboxAction(partnerId: string) {
+  const r = await act(async (ctx) => {
+    requirePermission(ctx, "settings.edit");
+    const { pollMailbox } = await import("@/domain/edi-mailbox");
+    const [p] = await db.select({ tenantId: ediPartners.tenantId }).from(ediPartners).where(and(eq(ediPartners.id, partnerId), eq(ediPartners.tenantId, ctx.tenantId))).limit(1);
+    if (!p) throw Object.assign(new Error("EDI partner not found"), { name: "NotFoundError" });
+    return pollMailbox(partnerId);
+  });
+  if (r.ok) {
+    revalidatePath(`/settings/edi-partners/${partnerId}`);
+    revalidatePath("/edi");
+    revalidatePath("/dispatch");
+  }
   return r;
 }

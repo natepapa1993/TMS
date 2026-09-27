@@ -32,6 +32,8 @@
     "postgres": "^3.4.9",
     "react": "19.2.8",
     "react-dom": "19.2.8",
+    "ssh2": "^1.17.0",
+    "ssh2-sftp-client": "^12.1.1",
     "tsx": "^4.23.15",
     "zod": "^4.6.5"
   },
@@ -43,6 +45,8 @@
     "@types/papaparse": "^5.5.2",
     "@types/react": "^19",
     "@types/react-dom": "^19",
+    "@types/ssh2": "^1.15.6",
+    "@types/ssh2-sftp-client": "^9.0.6",
     "@vitest/coverage-v8": "^5.0.2",
     "drizzle-kit": "^0.31.11",
     "eslint": "^9",

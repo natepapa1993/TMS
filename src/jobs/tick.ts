@@ -45,6 +45,13 @@ export async function tick(now = new Date()) {
       const { pollMotiveAll } = await import("@/integrations/motive");
       out.motive = await pollMotiveAll(now).catch((e) => ({ error: String(e) }));
     }
+    if (n % 5 === 0) {
+      // VAN mailboxes: pull the partner's files, push ours — every five minutes is what VANs themselves do
+      const { pollMailboxes } = await import("@/domain/edi-mailbox");
+      const r = await pollMailboxes(undefined, now).catch((e) => [{ error: String(e) }]);
+      const touched = r.filter((x) => "error" in x || x.pulled || x.pushed || x.failed);
+      out.mailboxes = touched.length ? { partners: r.length, touched } : { partners: r.length };
+    }
   } finally {
     running = false;
   }

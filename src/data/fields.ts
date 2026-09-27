@@ -483,7 +483,9 @@ export const FIELDS: Record<RecordKind, Field[]> = {
       options: [
         { value: "pickup", label: "Pickup — their VAN / AS2 connector collects from us" },
         { value: "email", label: "Email the X12 file" },
+        { value: "sftp", label: "VAN mailbox — we drop it in their SFTP outbox" },
       ],
+      help: "For the VAN mailbox, set the host and folders on the record after saving.",
     },
     { name: "deliveryEmail", label: "Delivery email", type: "email", group: "Delivery", help: "for the Email option" },
     { name: "enabled", label: "Enabled", type: "boolean", column: true, group: "Delivery" },

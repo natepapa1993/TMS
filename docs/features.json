@@ -321,6 +321,17 @@
         "src/domain/customer-portal.test.ts",
         "e2e/customer-portal.spec.ts"
       ]
+    },
+    {
+      "id": "F-14",
+      "name": "EDI VAN mailbox over SFTP: inbox pulled through the 204 path, outbox pushed with 214/210/997/990, files moved to done/failed",
+      "milestone": "M11",
+      "status": "done",
+      "tests": [
+        "src/domain/edi-mailbox.test.ts",
+        "src/integrations/edi/mailbox.test.ts",
+        "e2e/edi-mailbox.spec.ts"
+      ]
     }
   ]
 }

@@ -4,7 +4,24 @@ import { id, tenantId, audit } from "./core";
 
 /** EDI trading partners (one per customer) and every message in or out (spec §4.2 "EDI 214", §7 "EDI 210", inbound 204). */
 
-export const EDI_DELIVERY = ["email", "pickup"] as const; // pickup = the partner's VAN/AS2 connector collects it from us (download from the log meanwhile)
+export const EDI_DELIVERY = ["email", "pickup", "sftp"] as const; // pickup = the partner's VAN/AS2 connector collects it from us (download from the log meanwhile); sftp = we drop it in the VAN mailbox
+
+/** A VAN mailbox reached over SFTP: we pull their files from `inbox`, drop ours in `outbox`. Secrets live only here. */
+export type EdiMailbox = {
+  enabled: boolean;
+  host: string;
+  port: number;
+  username: string;
+  password?: string | null;
+  privateKey?: string | null;
+  inbox: string; // remote dir we read (their 204s land here)
+  outbox: string; // remote dir we write (our 214 / 210 / 997 / 990)
+  extension?: string | null; // file suffix we write, default .edi
+  lastPollAt?: string | null;
+  lastError?: string | null;
+  lastPulled?: number;
+  lastPushed?: number;
+};
 
 export const ediPartners = pgTable(
   "edi_partners",
@@ -25,6 +42,7 @@ export const ediPartners = pgTable(
     autoCreateOrders: boolean("auto_create_orders").notNull().default(true), // 204 → draft order; else it waits in the EDI inbox
     delivery: text("delivery").$type<(typeof EDI_DELIVERY)[number]>().notNull().default("pickup"),
     deliveryEmail: text("delivery_email"),
+    mailbox: jsonb("mailbox").$type<EdiMailbox | null>(),
     statusMap: jsonb("status_map").$type<Record<string, string>>(), // leg state → AT7 code; blank = defaults
     chargeCodes: jsonb("charge_codes").$type<Record<string, string>>(), // charge kind → L1 code; blank = defaults
     nextControl: integer("next_control").notNull().default(1),

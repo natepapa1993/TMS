@@ -92,6 +92,13 @@
       "when": 1790486537376,
       "tag": "0012_petite_klaw",
       "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1790493277484,
+      "tag": "0013_nosy_blue_shield",
+      "breakpoints": true
     }
   ]
 }
