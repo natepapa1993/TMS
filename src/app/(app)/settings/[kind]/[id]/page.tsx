@@ -12,6 +12,8 @@ import { list } from "@/data/records";
 import { db } from "@/db/client";
 import { users } from "@/db/schema";
 import { eq } from "drizzle-orm";
+import { publicUrl } from "@/lib/tokens";
+import { ediLog } from "@/domain/edi";
 
 export default async function RecordPage({ params }: PageProps<"/settings/[kind]/[id]">) {
   const { kind: path, id } = await params;
@@ -27,6 +29,7 @@ export default async function RecordPage({ params }: PageProps<"/settings/[kind]
   const [docs, compliance, types] = isSubject
     ? await Promise.all([subjectDocuments(ctx, kind as SubjectKind, id), statusFor(ctx, kind as SubjectKind, id).catch(() => null), list(ctx, "documentType", { limit: 200 })])
     : [[], null, []];
+  const partnerLog = kind === "ediPartner" ? await ediLog(ctx, { partnerId: id, limit: 8 }) : [];
   const labelField = FIELDS[kind][0].name;
   const title = String(row[labelField] ?? meta.singular);
   return (
@@ -74,6 +77,31 @@ export default async function RecordPage({ params }: PageProps<"/settings/[kind]
               status={compliance ? JSON.parse(JSON.stringify({ dispatchable: compliance.dispatchable, items: compliance.items, override: compliance.override })) : null}
               canEdit={["owner", "compliance", "dispatcher", "mx_office"].includes(ctx.role)}
             />
+          )}
+          {kind === "ediPartner" && (
+            <div className="card p-4">
+              <div className="eyebrow mb-2">Inbound URL</div>
+              <div className="text-[12px] mono break-all select-all bg-ground rounded p-2 border border-line">{publicUrl(`/api/edi/inbound/${String(row.inboundToken)}`)}</div>
+              <div className="help mt-1">The partner (or their VAN / AS2 gateway) POSTs X12 here; the 997 comes back in the response. Their ISA sender must be {String(row.theirId)}.</div>
+              <div className="eyebrow mt-4 mb-2">Recent messages</div>
+              {partnerLog.length === 0 ? (
+                <div className="text-muted text-[13px]">Nothing yet.</div>
+              ) : (
+                <ul className="space-y-1 text-[12.5px]">
+                  {partnerLog.map((l) => (
+                    <li key={l.m.id} className="flex justify-between gap-2">
+                      <span className="truncate">
+                        <b className="mono">{l.m.type}</b> {l.m.direction === "in" ? "⇦" : "⇨"} {l.m.summary}
+                      </span>
+                      <span className={`pill ${l.m.state === "error" ? "pill-red" : "pill-slate"}`}>{l.m.state}</span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+              <Link href="/edi" className="btn btn-sm mt-3">
+                Open EDI inbox & log
+              </Link>
+            </div>
           )}
           {kind === "truck" && (
             <div className="card p-4">

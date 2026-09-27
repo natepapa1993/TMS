@@ -416,6 +416,68 @@ export const FIELDS: Record<RecordKind, Field[]> = {
     },
     { name: "graceUntil", label: "Grace until", type: "date", group: "Rules", help: "New rules can be introduced without blocking today's loads." },
   ],
+  ediPartner: [
+    { name: "theirId", label: "Their ISA id", type: "text", required: true, quick: true, column: true, group: "Partner", help: "ISA08 / GS03 from the customer's EDI spec", placeholder: "RXO" },
+    { name: "customerId", label: "Customer", type: "ref", ref: "customer", required: true, quick: true, column: true, group: "Partner" },
+    {
+      name: "theirQualifier",
+      label: "Their qualifier",
+      type: "select",
+      required: true,
+      quick: true,
+      group: "Partner",
+      options: [
+        { value: "ZZ", label: "ZZ — mutually defined" },
+        { value: "01", label: "01 — DUNS" },
+        { value: "02", label: "02 — SCAC" },
+        { value: "12", label: "12 — phone" },
+        { value: "08", label: "08 — UCC EDI id" },
+      ],
+    },
+    { name: "scac", label: "Our SCAC", type: "text", required: true, quick: true, column: true, group: "Us", placeholder: "BSTW" },
+    { name: "ourId", label: "Our ISA id", type: "text", required: true, quick: true, group: "Us", help: "ISA06 / GS02 — usually the SCAC", placeholder: "BSTW" },
+    {
+      name: "ourQualifier",
+      label: "Our qualifier",
+      type: "select",
+      group: "Us",
+      options: [
+        { value: "02", label: "02 — SCAC" },
+        { value: "ZZ", label: "ZZ — mutually defined" },
+        { value: "01", label: "01 — DUNS" },
+        { value: "12", label: "12 — phone" },
+      ],
+    },
+    {
+      name: "usage",
+      label: "Mode",
+      type: "select",
+      required: true,
+      quick: true,
+      column: true,
+      group: "Us",
+      options: [
+        { value: "T", label: "Test" },
+        { value: "P", label: "Production" },
+      ],
+    },
+    { name: "send214", label: "Send 214 status updates", type: "boolean", column: true, group: "Messages", help: "one message per milestone: arrived, loaded, en route, delivered" },
+    { name: "send210", label: "Send 210 invoices", type: "boolean", column: true, group: "Messages", help: "when an invoice is issued" },
+    { name: "accept204", label: "Accept 204 load tenders", type: "boolean", column: true, group: "Messages", help: "inbound tenders create draft orders and get a 997 + 990" },
+    { name: "autoCreateOrders", label: "Create orders from tenders", type: "boolean", group: "Messages", help: "off = tenders wait in the EDI inbox for a dispatcher" },
+    {
+      name: "delivery",
+      label: "Outbound delivery",
+      type: "select",
+      group: "Delivery",
+      options: [
+        { value: "pickup", label: "Pickup — their VAN / AS2 connector collects from us" },
+        { value: "email", label: "Email the X12 file" },
+      ],
+    },
+    { name: "deliveryEmail", label: "Delivery email", type: "email", group: "Delivery", help: "for the Email option" },
+    { name: "enabled", label: "Enabled", type: "boolean", column: true, group: "Delivery" },
+  ],
 };
 
 export const KIND_META: Record<RecordKind, { plural: string; singular: string; path: string; blurb: string; section: "Company" | "Fleet" | "Partners" | "Rules" }> = {
@@ -431,6 +493,7 @@ export const KIND_META: Record<RecordKind, { plural: string; singular: string; p
   carrierRate: { plural: "Carrier rates", singular: "Carrier rate", path: "carrier-rates", blurb: "Lane rates you pay carriers", section: "Partners" },
   customsBroker: { plural: "Customs brokers", singular: "Customs broker", path: "customs-brokers", blurb: "Agentes aduanales and US brokers", section: "Partners" },
   documentType: { plural: "Document types", singular: "Document type", path: "document-types", blurb: "What must be on file and when it blocks", section: "Rules" },
+  ediPartner: { plural: "EDI partners", singular: "EDI partner", path: "edi-partners", blurb: "204 tenders in, 214 status and 210 invoices out", section: "Partners" },
 };
 
 export const kindByPath = (path: string): RecordKind | null => (Object.keys(KIND_META) as RecordKind[]).find((k) => KIND_META[k].path === path) ?? null;
@@ -442,6 +505,7 @@ export function coerce(kind: RecordKind, raw: Record<string, string | undefined 
   for (const f of FIELDS[kind]) {
     const present = Object.prototype.hasOwnProperty.call(raw, f.name);
     if (!present && opts.partial) continue;
+    if (!present && f.type === "boolean") continue; // a checkbox the form did not show keeps the database default (quick-add)
     const v = (raw[f.name] ?? "").toString().trim();
     if (!v) {
       if (f.required && !opts.partial) errors[f.name] = `${f.label} is required`;

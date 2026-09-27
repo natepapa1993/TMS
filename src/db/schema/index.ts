@@ -4,3 +4,4 @@ export * from "./tracking";
 export * from "./crossing";
 export * from "./compliance";
 export * from "./billing";
+export * from "./edi";

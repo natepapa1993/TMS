@@ -49,6 +49,7 @@ export type BoardData = {
   trucks: { id: string; unitNumber: string; status: string }[];
   templates: { key: string; label: string; description: string }[];
   role: string;
+  ediInbox: number;
 };
 
 const STAGES = [
@@ -145,6 +146,9 @@ export function DispatchBoard({ data }: { data: BoardData }) {
           </div>
           <div className="flex items-center gap-2">
             <input id="board-search" className="input w-60" placeholder="Search order, customer, unit…  /" value={q} onChange={(e) => setQ(e.target.value)} />
+            <Link href="/edi" className={`btn ${data.ediInbox ? "border-amber text-amber font-bold" : ""}`} title="EDI tenders, 214 status and 210 invoices">
+              EDI{data.ediInbox ? ` · ${data.ediInbox} waiting` : ""}
+            </Link>
             {canDispatch && (
               <button className="btn btn-primary" onClick={() => setNewOpen(true)} title="Shortcut: n">
                 + New order

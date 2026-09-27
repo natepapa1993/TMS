@@ -260,7 +260,7 @@ export async function issueInvoice(ctx: Ctx, invoiceId: string, opts: { issuedAt
   };
   const subtotal = lines.reduce((a, l) => a + l.amountCents, 0);
   const dueAt = new Date(issuedAt.getTime() + inv.termsDays * 86400_000);
-  return db.transaction(async (tx) => {
+  const issued = await db.transaction(async (tx) => {
     // number from the entity's sequence, serialized on the entity row, never reused
     const [ent] = await tx.execute(sql`select next_invoice_number as n, invoice_prefix as p from billing_entities where id = ${entity.id} for update`) as unknown as { n: number; p: string }[];
     const number = `${ent.p}-${String(ent.n).padStart(6, "0")}`;
@@ -278,6 +278,14 @@ export async function issueInvoice(ctx: Ctx, invoiceId: string, opts: { issuedAt
     await writeAudit(tx, ctx, "invoice", inv.id, "transition", { state: { from: "draft", to: "issued" }, number: { from: null, to: number } });
     return after;
   });
+  // EDI 210 for partners that take invoices electronically (after the commit; a failure here never un-issues)
+  try {
+    const { emit210 } = await import("./edi");
+    await emit210(ctx, invoiceId);
+  } catch (e) {
+    console.error(`[edi] 210 for ${invoiceId} failed: ${String(e)}`);
+  }
+  return issued;
 }
 
 export async function sendInvoice(ctx: Ctx, invoiceId: string, to?: string | null) {

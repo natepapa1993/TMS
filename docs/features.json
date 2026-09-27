@@ -247,9 +247,20 @@
       "notes": "EDI 210 and QuickBooks export are F-7.2."
     },
     {
+      "id": "F-8",
+      "name": "EDI with customers: 204 tenders in \u2192 draft orders / inbox with 990, 214 milestones out, 210 invoices out, 997 both ways, partner setup as master data, inbound URL per partner",
+      "milestone": "M5",
+      "status": "done",
+      "tests": [
+        "src/integrations/edi/x12.test.ts",
+        "src/domain/edi.test.ts",
+        "e2e/edi.spec.ts"
+      ]
+    },
+    {
       "id": "F-7.2",
-      "name": "EDI 210 invoices and QuickBooks Online export",
-      "milestone": "M4.5",
+      "name": "QuickBooks export (IIF for Desktop, CSV for Online)",
+      "milestone": "M5",
       "status": "planned",
       "tests": []
     },

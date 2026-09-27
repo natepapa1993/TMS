@@ -24,7 +24,8 @@ export type RecordKind =
   | "truck"
   | "trailer"
   | "driver"
-  | "documentType";
+  | "documentType"
+  | "ediPartner";
 
 type AnyTable = PgTable & { id: unknown; tenantId: unknown; archivedAt: unknown; updatedAt: unknown; updatedBy: unknown; createdBy: unknown };
 
@@ -70,6 +71,7 @@ export const REGISTRY: Record<RecordKind, Registry> = {
   trailer: { table: s.trailers as AnyTable, label: "Trailer", uniqueKey: ["unitNumber"], labelField: "unitNumber", blockers: (ctx, id) => openLegsFor(ctx, "trailer_id", id) },
   driver: { table: s.drivers as AnyTable, label: "Driver", uniqueKey: ["licenseNumber"], labelField: "name", blockers: (ctx, id) => openLegsFor(ctx, "driver_id", id) },
   documentType: { table: s.documentTypes as AnyTable, label: "Document type", uniqueKey: ["name", "appliesTo"], labelField: "name" },
+  ediPartner: { table: s.ediPartners as AnyTable, label: "EDI partner", uniqueKey: ["customerId"], labelField: "theirId" },
 };
 
 export class NotFoundError extends Error {

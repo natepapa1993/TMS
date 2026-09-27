@@ -35,6 +35,12 @@ export async function tick(now = new Date()) {
       out.dwell = await flagDwell(now).catch((e) => ({ error: String(e) }));
       out.packets = await flagUnacknowledgedPackets(now).catch((e) => ({ error: String(e) }));
     }
+    {
+      // EDI 214 milestones go out within a minute of the event; 990s for auto-accepted tenders too
+      const E = await import("@/domain/edi");
+      out.edi214 = await E.emit214(now).catch((e) => ({ error: String(e) }));
+      out.edi990 = await E.send990ForAutoAccepted(now).catch((e) => ({ error: String(e) }));
+    }
     if (n % 2 === 0) {
       const { pollMotiveAll } = await import("@/integrations/motive");
       out.motive = await pollMotiveAll(now).catch((e) => ({ error: String(e) }));

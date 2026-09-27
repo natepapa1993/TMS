@@ -5,6 +5,7 @@ import { LEG_TEMPLATES } from "@/domain/templates";
 import { DispatchBoard, type BoardData } from "./board";
 import { openTendersForOrders } from "@/domain/tenders";
 import { publicUrl } from "@/lib/tokens";
+import { ediInbox } from "@/domain/edi";
 
 export const metadata = { title: "Dispatch" };
 export const dynamic = "force-dynamic";
@@ -19,7 +20,7 @@ export default async function DispatchPage() {
     list(ctx, "truck", { limit: 2000 }),
   ]);
   const custName = new Map(customers.map((c) => [c.id, String(c.name)]));
-  const tenderRows = await openTendersForOrders(ctx, rows.map((r) => r.order.id));
+  const [tenderRows, inbox] = await Promise.all([openTendersForOrders(ctx, rows.map((r) => r.order.id)), ediInbox(ctx)]);
   const carrierName = new Map(carriers.map((c) => [c.id, String(c.name)]));
   const data: BoardData = {
     rows: rows.map((r) => ({
@@ -35,6 +36,7 @@ export default async function DispatchPage() {
     trucks: trucks.map((t) => ({ id: t.id, unitNumber: String(t.unitNumber), status: String(t.status) })).sort((p, q) => p.unitNumber.localeCompare(q.unitNumber, undefined, { numeric: true })),
     templates: LEG_TEMPLATES.map((t) => ({ key: t.key, label: t.label, description: t.description })),
     role: ctx.role,
+    ediInbox: inbox.length,
   };
   return <DispatchBoard data={data} />;
 }
