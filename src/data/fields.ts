@@ -118,6 +118,7 @@ export const FIELDS: Record<RecordKind, Field[]> = {
     { name: "usState", label: "US state", type: "text", group: "Port" },
     { name: "mxCity", label: "MX city", type: "text", quick: true, column: true, group: "Port" },
     { name: "mxState", label: "MX state", type: "text", group: "Port" },
+    { name: "bridges", label: "Bridges", type: "list", listOf: "text", group: "Port", help: "comma-separated · the crossing workbench offers them for the crossing's bridge", placeholder: "World Trade Bridge, Colombia Solidarity Bridge" },
     { name: "notes", label: "Notes", type: "textarea", group: "Details" },
     { name: "knowledgeMd", label: "Crossing knowledge", type: "textarea", group: "Details", help: "What every dispatcher should know about this port: bridges, hours, quirks." },
   ],

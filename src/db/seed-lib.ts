@@ -24,7 +24,7 @@ export async function seedDemo(): Promise<"created" | "exists"> {
   const ctx: Ctx = { tenantId, userId, role: "owner" };
 
   const entity = await create(ctx, "billingEntity", { legalName: "Demo Carrier LLC", country: "US", invoicePrefix: "DC", isDefault: true, terms: "Net 30", taxId: "00-0000000" });
-  const port = await create(ctx, "port", { name: "Laredo / Nuevo Laredo", usCity: "Laredo", usState: "TX", mxCity: "Nuevo Laredo", mxState: "TAMPS", bridges: [{ name: "World Trade Bridge", fast: true }, { name: "Colombia Solidarity Bridge", fast: true }] });
+  const port = await create(ctx, "port", { name: "Laredo / Nuevo Laredo", usCity: "Laredo", usState: "TX", mxCity: "Nuevo Laredo", mxState: "TAMPS", bridges: ["World Trade Bridge", "Colombia Solidarity Bridge"] });
   await create(ctx, "location", { name: "Laredo Yard", kind: "yard", country: "US", address: { line1: "1 Yard Rd", city: "Laredo", state: "TX", postalCode: "78045", country: "US" }, portId: port.id });
   await create(ctx, "location", { name: "Santa Fe Yard", kind: "border_yard", country: "MX", address: { line1: "Blvd. Santa Fe", city: "Nuevo Laredo", state: "TAMPS", country: "MX" }, portId: port.id });
   await create(ctx, "location", { name: "Planta Monterrey", kind: "shipper", country: "MX", address: { line1: "Av. Industrial 100", city: "Apodaca", state: "NL", country: "MX" } });

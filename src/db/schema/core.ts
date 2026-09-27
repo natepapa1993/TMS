@@ -146,7 +146,7 @@ export const ports = pgTable(
     usState: text("us_state"),
     mxCity: text("mx_city"),
     mxState: text("mx_state"),
-    bridges: jsonb("bridges").$type<{ name: string; cbpPortId?: string; fast?: boolean }[]>().notNull().default(sql`'[]'::jsonb`),
+    bridges: jsonb("bridges").$type<string[]>().notNull().default(sql`'[]'::jsonb`), // bridge names; the crossing workbench offers them
     notes: text("notes"),
     knowledgeMd: text("knowledge_md"),
     ...audit(),

@@ -27,7 +27,7 @@ type Data = {
   coDriver: { name: string } | null;
   customer: { name: string; knowledgeMd?: string | null } | null;
   broker: { name: string; patente: string | null } | null;
-  port: { name: string; knowledgeMd?: string | null } | null;
+  port: { name: string; knowledgeMd?: string | null; bridges?: string[] } | null;
   people: Record<string, string>;
   docFields: Record<string, { key: string; label: string; kind?: string }[]>;
   checkLabel: Record<string, string>;
@@ -89,7 +89,12 @@ export function CrossingWorkbench({ data }: { data: Data }) {
         </div>
         <div>
           <label className="label">Bridge</label>
-          <input className="input" value={details.bridge} onChange={(e) => setDetails({ ...details, bridge: e.target.value })} placeholder="World Trade" disabled={!canEdit} />
+          <input className="input" list="port-bridges" value={details.bridge} onChange={(e) => setDetails({ ...details, bridge: e.target.value })} placeholder={data.port?.bridges?.[0] ?? "World Trade"} disabled={!canEdit} />
+          <datalist id="port-bridges">
+            {(data.port?.bridges ?? []).map((b) => (
+              <option key={b} value={b} />
+            ))}
+          </datalist>
         </div>
         <div className="text-[12.5px] text-muted">
           {c.departedYardAt ? `Left the yard ${fmt(c.departedYardAt)}${c.arrivedYardAt ? ` (there since ${fmt(c.arrivedYardAt)})` : ""}` : c.arrivedYardAt ? `At the yard since ${fmt(c.arrivedYardAt)}` : "Not at the border yard yet"}
