@@ -112,7 +112,8 @@ export type QueueRow = { order: Order; customerName: string | null; entityName: 
 export async function billingQueue(ctx: Ctx): Promise<QueueRow[]> {
   assertCtx(ctx);
   requirePermission(ctx, "billing.view");
-  const ords = await db.select().from(s.orders).where(and(eq(s.orders.tenantId, ctx.tenantId), inArray(s.orders.state, ["delivered", "ready_to_bill"]))).orderBy(s.orders.deliveredAt);
+  // a tailgate trip never bills: its shipments do
+  const ords = await db.select().from(s.orders).where(and(eq(s.orders.tenantId, ctx.tenantId), inArray(s.orders.state, ["delivered", "ready_to_bill"]), sql`${s.orders.kind} <> 'trip'`)).orderBy(s.orders.deliveredAt);
   if (!ords.length) return [];
   const ids = ords.map((o) => o.id);
   const [chargeRows, docs, customers, entities, drafts] = await Promise.all([
@@ -699,23 +700,33 @@ export async function orderPnl(ctx: Ctx, orderId: string) {
   requirePermission(ctx, "billing.view");
   const order = await loadOrder(ctx, orderId);
   await ensureCharges(ctx, orderId);
-  const [cs, bills, legs, tenant] = await Promise.all([
+  // a tailgate shipment carries its share of the trip's costs (weight / revenue / cube per the company setting)
+  const costOrderId = order.kind === "shipment" && order.tripId ? order.tripId : orderId;
+  let share = 1;
+  if (order.kind === "shipment" && order.tripId) {
+    const { costShares } = await import("./tailgate");
+    share = (await costShares(ctx, order.tripId)).get(order.id) ?? 0;
+  }
+  const [cs, bills, legs, tenant, costOrder] = await Promise.all([
     db.select().from(s.charges).where(and(eq(s.charges.orderId, orderId), eq(s.charges.billable, true))),
-    db.select().from(s.carrierBills).where(eq(s.carrierBills.orderId, orderId)),
-    db.select().from(s.legs).where(eq(s.legs.orderId, orderId)),
+    db.select().from(s.carrierBills).where(eq(s.carrierBills.orderId, costOrderId)),
+    db.select().from(s.legs).where(eq(s.legs.orderId, costOrderId)),
     db.select({ settings: s.tenants.settings }).from(s.tenants).where(eq(s.tenants.id, ctx.tenantId)).limit(1).then((r) => r[0]),
+    costOrderId === orderId ? Promise.resolve(order) : loadOrder(ctx, costOrderId),
   ]);
   const revenue = cs.reduce((a, c) => a + c.amountCents, 0);
-  const carrierCost = bills.reduce((a, b) => a + (b.paidCents ?? b.approvedCents ?? b.invoicedCents ?? b.expectedCents + b.accessorialCents), 0);
+  const carrierCost = Math.round(bills.reduce((a, b) => a + (b.paidCents ?? b.approvedCents ?? b.invoicedCents ?? b.expectedCents + b.accessorialCents), 0) * share);
   const sts = await db.select().from(s.settlements).where(eq(s.settlements.tenantId, ctx.tenantId));
   let driverPay = 0;
   for (const st of sts) for (const l of st.lines) if (l.legId && legs.some((g) => g.id === l.legId) && l.amountCents > 0) driverPay += l.amountCents;
-  const miles = legs.filter((l) => l.assigneeKind === "truck").reduce((a, l) => a + (l.plannedMiles ?? 0), 0);
+  driverPay = Math.round(driverPay * share);
+  const milesAll = legs.filter((l) => l.assigneeKind === "truck").reduce((a, l) => a + (l.plannedMiles ?? 0), 0);
+  const miles = Math.round(milesAll * share);
   const fuelCpm = Number((tenant?.settings as Record<string, unknown>)?.fuelCostCentsPerMile ?? 65);
-  const fuel = Math.round(miles * fuelCpm);
-  const extra = order.tollsFeesCents ?? 0;
+  const fuel = Math.round(milesAll * fuelCpm * share);
+  const extra = costOrderId === orderId ? (order.tollsFeesCents ?? 0) : Math.round((costOrder.tollsFeesCents ?? 0) * share) + (order.tollsFeesCents ?? 0); // trip tolls shared, the shipment's own on top
   const cost = carrierCost + driverPay + fuel + extra;
-  return { revenue, carrierCost, driverPay, fuel, miles, fuelCpm, extra, cost, margin: revenue - cost, marginPct: revenue ? Math.round(((revenue - cost) / revenue) * 1000) / 10 : 0 };
+  return { revenue, carrierCost, driverPay, fuel, miles, fuelCpm, extra, cost, share, margin: revenue - cost, marginPct: revenue ? Math.round(((revenue - cost) / revenue) * 1000) / 10 : 0 };
 }
 
 export { diff };

@@ -209,6 +209,19 @@ export async function computeRequirements(ctx: Ctx, c: Crossing): Promise<Requir
     else if (!doc && !required) status = "na"; // not required for this truck / rule = not needed
     out.push({ code: r.code, label: r.label, providedBy: r.providedBy, allowNa: r.allowNa || !required, status, documentId: doc?.id ?? null, naReason: status === "na" ? (humanNa ? old!.naReason : "optional") : null, packetOrder: r.packetOrder, lastDocument: r.lastDocument });
   }
+  // a tailgate trip crosses with every shipment's own paperwork (invoice / packing list): one line per shipment, held ones excluded
+  if (order?.kind === "trip") {
+    const ships = await db.select().from(s.orders).where(and(eq(s.orders.tripId, order.id), inArray(s.orders.state, ["booked", "dispatched", "in_transit"]))).orderBy(s.orders.loadSeq);
+    const customers = ships.length ? await db.select({ id: s.customers.id, name: s.customers.name }).from(s.customers).where(inArray(s.customers.id, ships.map((x) => x.customerId ?? ""))) : [];
+    ships.forEach((sh, i) => {
+      const code = `shipment:${sh.id}`;
+      const doc = docs.filter((d) => d.code === code).sort((p, q) => q.version - p.version)[0];
+      const old = prev.get(code);
+      const humanNa = !doc && old?.status === "na" && old.naReason !== "optional";
+      const refs = Object.values(sh.refs).filter(Boolean).slice(0, 2).join(" ");
+      out.push({ code, label: `Shipment docs · ${customers.find((c) => c.id === sh.customerId)?.name ?? "?"} · ${sh.orderNumber}${refs ? ` (${refs})` : ""}`, providedBy: "shipper", allowNa: true, status: doc ? (doc.status === "verified" ? "verified" : "present") : humanNa ? "na" : "missing", documentId: doc?.id ?? null, naReason: humanNa ? old!.naReason : null, packetOrder: 75 + i * 0.01, lastDocument: false });
+    });
+  }
   return out;
 }
 

@@ -272,6 +272,9 @@ export const trucks = pgTable(
     make: text("make"),
     model: text("model"),
     equipmentType: text("equipment_type").notNull().default("tractor"), // tractor | sprinter | straight | cargo_van
+    cargoLengthFt: integer("cargo_length_ft"), // straight trucks / vans that carry freight themselves
+    maxWeightLbs: integer("max_weight_lbs"),
+    cubeFt: integer("cube_ft"),
     ownership: text("ownership").notNull().default("company"), // company | owner_op | leased
     usPlate: text("us_plate"),
     usPlateState: text("us_plate_state"),
@@ -306,6 +309,8 @@ export const trailers = pgTable(
     vin: text("vin"),
     kind: text("kind").notNull().default("53_dry"),
     lengthFt: integer("length_ft"),
+    maxWeightLbs: integer("max_weight_lbs"), // payload; blank = by kind
+    cubeFt: integer("cube_ft"),
     usPlate: text("us_plate"),
     mxPlate: text("mx_plate"),
     inspectionExpires: timestamp("inspection_expires", { withTimezone: true }),

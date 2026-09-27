@@ -286,6 +286,16 @@
       ]
     },
     {
+      "id": "F-12",
+      "name": "Tailgate / LTL: trips built from stops (legs cut automatically, southbound crossings), shipments with their own customer, rate, refs, docs, POD and invoice, capacity + LIFO load plan with live fit, shipment states from the trip's stop clocks, holds / partial release, per-shipment crossing docs on the packet, trip manifest, trip costs shared per shipment in P&L and reports \u2014 the plan's acceptance test",
+      "milestone": "M9",
+      "status": "done",
+      "tests": [
+        "src/domain/tailgate.test.ts",
+        "e2e/tailgate.spec.ts"
+      ]
+    },
+    {
       "id": "F-7.2",
       "name": "QuickBooks export: IIF for Desktop, CSV lists for Online; invoices, receipts, carrier bills + payments, driver settlements; runs stamp what went out; reopen",
       "milestone": "M5",

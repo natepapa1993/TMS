@@ -266,6 +266,9 @@ export const FIELDS: Record<RecordKind, Field[]> = {
         { value: "cargo_van", label: "Cargo van" },
       ],
     },
+    { name: "cargoLengthFt", label: "Cargo length (ft)", type: "number", group: "Unit", help: "straight trucks and vans that carry freight themselves" },
+    { name: "maxWeightLbs", label: "Payload (lb)", type: "number", group: "Unit" },
+    { name: "cubeFt", label: "Cube (cu ft)", type: "number", group: "Unit" },
     { name: "year", label: "Year", type: "number", group: "Unit" },
     { name: "make", label: "Make", type: "text", group: "Unit" },
     { name: "model", label: "Model", type: "text", group: "Unit" },
@@ -313,6 +316,8 @@ export const FIELDS: Record<RecordKind, Field[]> = {
     { name: "unitNumber", label: "Trailer #", type: "text", required: true, quick: true, column: true, group: "Trailer", unique: true },
     { name: "kind", label: "Kind", type: "select", options: EQUIPMENT, quick: true, column: true, group: "Trailer" },
     { name: "lengthFt", label: "Length (ft)", type: "number", group: "Trailer" },
+    { name: "maxWeightLbs", label: "Payload (lb)", type: "number", group: "Trailer", help: "blank = 45,000 for a 53' dry van" },
+    { name: "cubeFt", label: "Cube (cu ft)", type: "number", group: "Trailer", help: "blank = by length" },
     { name: "vin", label: "VIN", type: "text", group: "Trailer" },
     {
       name: "ownership",

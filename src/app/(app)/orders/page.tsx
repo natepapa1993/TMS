@@ -27,9 +27,14 @@ export default async function OrdersPage({ searchParams }: PageProps<"/orders">)
         eyebrow="Orders"
         title="All orders"
         actions={
-          <Link href="/orders/new" className="btn btn-primary">
-            + Full order form
-          </Link>
+          <>
+            <Link href="/trips" className="btn">
+              Tailgate trips
+            </Link>
+            <Link href="/orders/new" className="btn btn-primary">
+              + Full order form
+            </Link>
+          </>
         }
       >
         Every order, any state. For today&apos;s work use Dispatch.
@@ -73,11 +78,17 @@ export default async function OrdersPage({ searchParams }: PageProps<"/orders">)
                 {rows.map((o) => (
                   <tr key={o.id}>
                     <td className="font-extrabold mono">
-                      <Link href={`/orders/${o.id}`} className="hover:text-teal">
+                      <Link href={o.kind === "trip" ? `/trips/${o.id}` : `/orders/${o.id}`} className="hover:text-teal">
                         {o.orderNumber}
                       </Link>
+                      {o.kind === "trip" && <Pill tone="navy">trip</Pill>}
+                      {o.kind === "shipment" && (
+                        <Link href={`/trips/${o.tripId}`} className="ml-1">
+                          <Pill tone="teal">on a trip</Pill>
+                        </Link>
+                      )}
                     </td>
-                    <td>{cname.get(o.customerId ?? "") ?? cname.get(o.brokerId ?? "") ?? <span className="text-faint">—</span>}</td>
+                    <td>{o.kind === "trip" ? <span className="text-muted">tailgate</span> : (cname.get(o.customerId ?? "") ?? cname.get(o.brokerId ?? "") ?? <span className="text-faint">—</span>)}</td>
                     <td className="text-muted text-[12.5px]">{Object.values(o.refs).join(" · ") || "—"}</td>
                     <td className="mono">{o.rateTbd || o.rateCents == null ? <span className="text-faint">TBD</span> : formatCents(o.rateCents, o.currency)}</td>
                     <td>

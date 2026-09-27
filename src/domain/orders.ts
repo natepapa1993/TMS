@@ -66,6 +66,9 @@ export type CreateOrderInput = {
   freight?: s.FreightLine[];
   cargoNote?: string | null;
   template?: string | null;
+  /** Tailgate trips: legs cut from the stops by the caller instead of a fixed template. */
+  legPlan?: { type: LegType; from: number; to: number }[] | null;
+  kind?: s.OrderKind;
   source?: string;
   sourceRef?: string | null;
   stops: StopInput[];
@@ -142,11 +145,17 @@ export async function createOrder(ctx: Ctx, input: CreateOrderInput) {
   for (const st of input.stops) if (!st.name?.trim()) throw new ValidationError("every stop needs a name", "stops");
   if (input.rateCents != null && input.rateCents < 0) throw new ValidationError("rate cannot be negative", "rateCents");
 
-  const templateKey = input.template ?? suggestTemplate(input.stops.map((x) => x.country ?? "US"));
-  const template = templateByKey(templateKey);
-  if (!template) throw new ValidationError(`unknown leg template ${templateKey}`, "template");
-  if (template.stops.length !== input.stops.length)
-    throw new ValidationError(`template "${template.label}" expects ${template.stops.length} stops, got ${input.stops.length}`, "template");
+  let template: { key: string; legs: { type: LegType; from: number; to: number }[] };
+  if (input.legPlan) {
+    for (const lg of input.legPlan) if (lg.from < 0 || lg.to >= input.stops.length || lg.from >= lg.to) throw new ValidationError("leg plan does not fit the stops", "stops");
+    template = { key: input.kind === "trip" ? "trip" : "custom", legs: input.legPlan };
+  } else {
+    const templateKey = input.template ?? suggestTemplate(input.stops.map((x) => x.country ?? "US"));
+    const found = templateByKey(templateKey);
+    if (!found) throw new ValidationError(`unknown leg template ${templateKey}`, "template");
+    if (found.stops.length !== input.stops.length) throw new ValidationError(`template "${found.label}" expects ${found.stops.length} stops, got ${input.stops.length}`, "template");
+    template = found;
+  }
 
   return db.transaction(async (tx) => {
     const orderId = newId();
@@ -168,6 +177,7 @@ export async function createOrder(ctx: Ctx, input: CreateOrderInput) {
       freight: input.freight ?? [],
       cargoNote: input.cargoNote ?? null,
       legTemplate: template.key,
+      kind: input.kind ?? "order",
       source: input.source ?? "manual",
       sourceRef: input.sourceRef ?? null,
       state: "draft",
@@ -210,7 +220,7 @@ export async function createOrder(ctx: Ctx, input: CreateOrderInput) {
       createdBy: ctx.userId,
       updatedBy: ctx.userId,
     }));
-    const legs = await tx.insert(s.legs).values(legRows).returning();
+    const legs = legRows.length ? await tx.insert(s.legs).values(legRows).returning() : []; // a tailgate shipment has none: its trip moves it
 
     let finalOrder = order;
     if (input.book) finalOrder = await bookIn(tx, ctx, order, stops);
@@ -226,8 +236,8 @@ export async function createOrder(ctx: Ctx, input: CreateOrderInput) {
 
 function bookGuards(order: Order, stops: Stop[]) {
   const problems: { field: string; message: string }[] = [];
-  if (!order.customerId && !order.brokerId) problems.push({ field: "customerId", message: "pick a customer or broker" });
-  if (order.rateCents == null && !order.rateTbd) problems.push({ field: "rateCents", message: "enter a rate or mark it TBD" });
+  if (order.kind !== "trip" && !order.customerId && !order.brokerId) problems.push({ field: "customerId", message: "pick a customer or broker" });
+  if (order.kind !== "trip" && order.rateCents == null && !order.rateTbd) problems.push({ field: "rateCents", message: "enter a rate or mark it TBD" });
   if (stops.length < 2) problems.push({ field: "stops", message: "at least two stops" });
   return problems;
 }
@@ -603,9 +613,13 @@ async function recomputeOrder(tx: Tx, ctx: Ctx, orderId: string, deliveredAt?: D
   if (order.state === "exception") return order; // hold is explicit; release recomputes
   const legs = await loadLegs(tx, ctx, orderId);
   const to = derivedOrderState(legs, order);
-  if (!to || to === order.state) return order;
-  if (!canOrderTransition(order.state, to)) return order;
-  return setOrderState(tx, ctx, order, to, to === "delivered" ? { deliveredAt: deliveredAt ?? new Date() } : {}, "derived from legs");
+  let after = order;
+  if (to && to !== order.state && canOrderTransition(order.state, to)) after = await setOrderState(tx, ctx, order, to, to === "delivered" ? { deliveredAt: deliveredAt ?? new Date() } : {}, "derived from legs");
+  if (after.kind === "trip") {
+    const { syncShipmentStates } = await import("./tailgate");
+    await syncShipmentStates(tx, ctx, after.id);
+  }
+  return after;
 }
 
 // ---------- split ----------
@@ -819,6 +833,7 @@ export type BoardRow = {
   legs: (Leg & { truckUnit: string | null; driverName: string | null; carrierName: string | null })[];
   openFlags: (typeof s.flags.$inferSelect)[];
   stage: "pending" | "planned" | "dispatched" | "delivered" | "closed";
+  shipments: number; // tailgate trips: how many ride on it
 };
 
 /** Everything the dispatch board needs in one query set (spec §2.3: Pending / Planned / Dispatched). */
@@ -826,9 +841,12 @@ export async function board(ctx: Ctx, opts: { includeClosed?: boolean } = {}): P
   assertCtx(ctx);
   requirePermission(ctx, "orders.view");
   const states: OrderState[] = opts.includeClosed ? [...s.ORDER_STATES] : ["draft", "booked", "dispatched", "in_transit", "exception", "delivered"];
-  const ords = await db.select().from(s.orders).where(and(eq(s.orders.tenantId, ctx.tenantId), inArray(s.orders.state, states))).orderBy(desc(s.orders.createdAt)).limit(1000);
+  // shipments ride on trips: the trip is the row; the shipments show inside it
+  const ords = await db.select().from(s.orders).where(and(eq(s.orders.tenantId, ctx.tenantId), inArray(s.orders.state, states), sql`${s.orders.kind} <> 'shipment'`)).orderBy(desc(s.orders.createdAt)).limit(1000);
   if (!ords.length) return [];
   const ids = ords.map((o) => o.id);
+  const tripIds = ords.filter((o) => o.kind === "trip").map((o) => o.id);
+  const shipCounts = tripIds.length ? await db.select({ tripId: s.orders.tripId, n: sql<number>`count(*)` }).from(s.orders).where(and(inArray(s.orders.tripId, tripIds), sql`${s.orders.state} <> 'cancelled'`)).groupBy(s.orders.tripId) : [];
   const [stopRows, legRows, flagRows, trucks, drivers, carriers] = await Promise.all([
     db.select().from(s.stops).where(and(eq(s.stops.tenantId, ctx.tenantId), inArray(s.stops.orderId, ids))).orderBy(asc(s.stops.seq)),
     db.select().from(s.legs).where(and(eq(s.legs.tenantId, ctx.tenantId), inArray(s.legs.orderId, ids))).orderBy(asc(s.legs.seq)),
@@ -842,7 +860,7 @@ export async function board(ctx: Ctx, opts: { includeClosed?: boolean } = {}): P
   const cName = new Map(carriers.map((c) => [c.id, c.name]));
   return ords.map((order) => {
     const legs = legRows.filter((l) => l.orderId === order.id).map((l) => ({ ...l, truckUnit: l.truckId ? (tName.get(l.truckId) ?? null) : null, driverName: l.driverId ? (dName.get(l.driverId) ?? null) : null, carrierName: l.carrierId ? (cName.get(l.carrierId) ?? null) : null }));
-    return { order, stops: stopRows.filter((x) => x.orderId === order.id), legs, openFlags: flagRows.filter((f) => f.orderId === order.id), stage: stageOfOrder(order, legs) };
+    return { order, stops: stopRows.filter((x) => x.orderId === order.id), legs, openFlags: flagRows.filter((f) => f.orderId === order.id), stage: stageOfOrder(order, legs), shipments: Number(shipCounts.find((c) => c.tripId === order.id)?.n ?? 0) };
   });
 }
 

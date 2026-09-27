@@ -37,6 +37,9 @@ export const LEG_STATES = [
 ] as const;
 export type LegState = (typeof LEG_STATES)[number];
 
+export const ORDER_KINDS = ["order", "trip", "shipment"] as const;
+export type OrderKind = (typeof ORDER_KINDS)[number];
+
 export const STOP_TYPES = ["pickup", "delivery", "yard", "border_yard", "transload", "customs", "terminal"] as const;
 export type StopType = (typeof STOP_TYPES)[number];
 
@@ -52,6 +55,17 @@ export const orders = pgTable(
     portId: text("port_id"),
     state: text("state").$type<OrderState>().notNull().default("draft"),
     previousState: text("previous_state").$type<OrderState>(),
+    kind: text("kind").$type<OrderKind>().notNull().default("order"), // order | trip (tailgate: carries shipments) | shipment (rides on a trip)
+    tripId: text("trip_id"), // shipment → its trip
+    pickupStopId: text("pickup_stop_id"), // shipment → the trip's stops it gets on / off at
+    deliveryStopId: text("delivery_stop_id"),
+    loadSeq: integer("load_seq"), // shipment: position in the trailer (1 = nose, loaded first)
+    pieces: integer("pieces"),
+    weightLbs: integer("weight_lbs"),
+    linearFt: integer("linear_ft"),
+    cubeFt: integer("cube_ft"),
+    stackable: boolean("stackable").notNull().default(true),
+    hazmat: boolean("hazmat").notNull().default(false),
     equipment: text("equipment").notNull().default("53_dry"),
     refs: jsonb("refs").$type<Record<string, string>>().notNull().default(sql`'{}'::jsonb`), // rate_con, po, asn, shipment, sylectus_load ...
     rateCents: integer("rate_cents"),
@@ -71,7 +85,7 @@ export const orders = pgTable(
     custom: jsonb("custom").$type<Record<string, unknown>>().notNull().default(sql`'{}'::jsonb`),
     ...audit(),
   },
-  (t) => [uniqueIndex("orders_tenant_number").on(t.tenantId, t.orderNumber), index("orders_tenant_state").on(t.tenantId, t.state)],
+  (t) => [uniqueIndex("orders_tenant_number").on(t.tenantId, t.orderNumber), index("orders_tenant_state").on(t.tenantId, t.state), index("orders_trip").on(t.tripId)],
 );
 
 export type FreightLine = {

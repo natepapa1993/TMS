@@ -52,20 +52,29 @@ async function deliveredOrders(ctx: Ctx, period: Period, tz: string, entityId: s
   const { from, to } = window(period, tz);
   const conds = [eq(s.orders.tenantId, ctx.tenantId), inArray(s.orders.state, ["delivered", "ready_to_bill", "invoiced", "paid"]), gte(s.orders.deliveredAt, from), lt(s.orders.deliveredAt, to)];
   if (entityId) conds.push(eq(s.orders.billingEntityId, entityId));
-  const orders = await db.select().from(s.orders).where(and(...conds));
-  if (!orders.length) return { orders, legs: [], charges: [], bills: [], settlementPay: new Map<string, number>(), stops: [] };
+  // trips carry no revenue of their own: their shipments do, and take the trip's costs by share
+  const orders = (await db.select().from(s.orders).where(and(...conds))).filter((o) => o.kind !== "trip");
+  const empty = { orders, legs: [], charges: [], bills: [], settlementPay: new Map<string, number>(), stops: [], shares: new Map<string, { tripId: string; share: number }>() };
+  if (!orders.length) return empty;
+  const tripIds = [...new Set(orders.filter((o) => o.kind === "shipment" && o.tripId).map((o) => o.tripId!))];
+  const shares = new Map<string, { tripId: string; share: number }>();
+  if (tripIds.length) {
+    const { costShares } = await import("./tailgate");
+    for (const tid of tripIds) for (const [sid, sh] of await costShares(ctx, tid)) shares.set(sid, { tripId: tid, share: sh });
+  }
   const ids = orders.map((o) => o.id);
+  const costIds = [...ids, ...tripIds];
   const [legs, charges, bills, settlements, stops] = await Promise.all([
-    db.select().from(s.legs).where(inArray(s.legs.orderId, ids)),
+    db.select().from(s.legs).where(inArray(s.legs.orderId, costIds)),
     db.select().from(s.charges).where(and(inArray(s.charges.orderId, ids), eq(s.charges.billable, true))),
-    db.select().from(s.carrierBills).where(inArray(s.carrierBills.orderId, ids)),
+    db.select().from(s.carrierBills).where(inArray(s.carrierBills.orderId, costIds)),
     db.select().from(s.settlements).where(eq(s.settlements.tenantId, ctx.tenantId)),
     db.select().from(s.stops).where(inArray(s.stops.orderId, ids)),
   ]);
   const legIds = new Set(legs.map((l) => l.id));
   const settlementPay = new Map<string, number>(); // legId → driver pay
   for (const st of settlements) for (const l of st.lines) if (l.legId && legIds.has(l.legId) && l.amountCents > 0) settlementPay.set(l.legId, (settlementPay.get(l.legId) ?? 0) + l.amountCents);
-  return { orders, legs, charges, bills, settlementPay, stops };
+  return { orders, legs, charges, bills, settlementPay, stops, shares };
 }
 
 type Costed = { orderId: string; revenue: number; carrierCost: number; driverPay: number; fuel: number; extra: number; miles: number; cost: number; margin: number };
@@ -73,11 +82,15 @@ type Costed = { orderId: string; revenue: number; carrierCost: number; driverPay
 function costOrders(d: Awaited<ReturnType<typeof deliveredOrders>>, fuelCpm: number): Costed[] {
   return d.orders.map((o) => {
     const revenue = d.charges.filter((c) => c.orderId === o.id).reduce((a, c) => a + c.amountCents, 0) || (o.rateCents ?? 0);
-    const legs = d.legs.filter((l) => l.orderId === o.id);
-    const carrierCost = d.bills.filter((b) => b.orderId === o.id).reduce((a, b) => a + (b.paidCents ?? b.approvedCents ?? b.invoicedCents ?? b.expectedCents + b.accessorialCents), 0) || legs.filter((l) => l.assigneeKind === "carrier").reduce((a, l) => a + (l.carrierRateCents ?? 0), 0);
-    const driverPay = legs.reduce((a, l) => a + (d.settlementPay.get(l.id) ?? 0), 0);
-    const miles = legs.filter((l) => l.assigneeKind === "truck").reduce((a, l) => a + (l.plannedMiles ?? 0), 0);
-    const fuel = Math.round(miles * fuelCpm);
+    const alloc = d.shares.get(o.id);
+    const costId = alloc?.tripId ?? o.id;
+    const share = alloc?.share ?? 1;
+    const legs = d.legs.filter((l) => l.orderId === costId);
+    const carrierCost = Math.round((d.bills.filter((b) => b.orderId === costId).reduce((a, b) => a + (b.paidCents ?? b.approvedCents ?? b.invoicedCents ?? b.expectedCents + b.accessorialCents), 0) || legs.filter((l) => l.assigneeKind === "carrier").reduce((a, l) => a + (l.carrierRateCents ?? 0), 0)) * share);
+    const driverPay = Math.round(legs.reduce((a, l) => a + (d.settlementPay.get(l.id) ?? 0), 0) * share);
+    const milesAll = legs.filter((l) => l.assigneeKind === "truck").reduce((a, l) => a + (l.plannedMiles ?? 0), 0);
+    const miles = Math.round(milesAll * share);
+    const fuel = Math.round(milesAll * fuelCpm * share);
     const extra = o.tollsFeesCents ?? 0;
     const cost = carrierCost + driverPay + fuel + extra;
     return { orderId: o.id, revenue, carrierCost, driverPay, fuel, extra, miles, cost, margin: revenue - cost };
@@ -177,7 +190,7 @@ export async function breakdown(ctx: Ctx, by: Breakdown, period: Period, entityI
   };
   for (const c of costed) {
     const o = d.orders.find((x) => x.id === c.orderId)!;
-    const legs = d.legs.filter((l) => l.orderId === o.id);
+    const legs = d.legs.filter((l) => l.orderId === (d.shares.get(o.id)?.tripId ?? o.id)); // a shipment rides its trip's legs
     if (by === "customer") add(o.customerId ?? o.brokerId ?? "none", name(customers, o.customerId ?? o.brokerId), c);
     else if (by === "week") {
       const w = weekOfZoned(o.deliveredAt!, tz);

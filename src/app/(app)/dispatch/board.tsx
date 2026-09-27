@@ -36,10 +36,10 @@ type Leg = {
   completedAt: string | null;
 };
 type Stop = { id: string; seq: number; type: string; name: string; country: string; windowStart: string | null; windowEnd: string | null; arrivedAt: string | null; departedAt: string | null; address: { city?: string; state?: string } | null };
-type Order = { id: string; orderNumber: string; state: string; rateCents: number | null; rateTbd: boolean; currency: string; equipment: string; refs: Record<string, string>; holdReason: string | null; legTemplate: string | null; customerId: string | null; brokerId: string | null };
+type Order = { id: string; orderNumber: string; state: string; kind: string; rateCents: number | null; rateTbd: boolean; currency: string; equipment: string; refs: Record<string, string>; holdReason: string | null; legTemplate: string | null; customerId: string | null; brokerId: string | null };
 type Flag = { id: string; code: string; level: string; title: string; detail: string | null; legId: string | null };
 type Tender = { id: string; legId: string; carrierId: string; carrierName: string; state: string; channel: string; sentTo: string | null; expiresAt: string; respondedAt: string | null; respondedBy: string | null; responseNote: string | null; driverName: string | null; driverPhone: string | null; unitNumber: string | null; rateCents: number | null; link: string; delivery: { state: string; error: string | null } | null };
-export type Row = { order: Order; stops: Stop[]; legs: Leg[]; openFlags: Flag[]; stage: "pending" | "planned" | "dispatched" | "delivered" | "closed"; customerName: string | null; tenders: Tender[] };
+export type Row = { order: Order; stops: Stop[]; legs: Leg[]; openFlags: Flag[]; stage: "pending" | "planned" | "dispatched" | "delivered" | "closed"; customerName: string | null; tenders: Tender[]; shipments: number };
 
 export type BoardData = {
   rows: Row[];
@@ -274,7 +274,7 @@ function BoardRow({ r, selected, onClick }: { r: Row; selected: boolean; onClick
     <div className="row" style={{ gridTemplateColumns: "150px 1.6fr 1fr 150px 130px" }} data-selected={selected} aria-pressed={selected} onClick={onClick} role="button" tabIndex={0} onKeyDown={(e) => e.key === "Enter" && onClick()}>
       <div className="min-w-0">
         <div className="font-extrabold mono">{r.order.orderNumber}</div>
-        <div className="text-muted text-[12.5px] truncate">{r.customerName ?? "No customer"}</div>
+        <div className="text-muted text-[12.5px] truncate">{r.order.kind === "trip" ? `Tailgate trip · ${r.shipments} shipment${r.shipments === 1 ? "" : "s"}` : (r.customerName ?? "No customer")}</div>
       </div>
       <div className="min-w-0">
         <div className="truncate font-semibold">
@@ -337,7 +337,7 @@ function SidePanel({ r, data, busy, canDispatch, onClose, onPopup, run }: { r: R
               {hold && <Pill tone="amber">On hold</Pill>}
               {closed && <Pill tone="slate">Cancelled</Pill>}
             </div>
-            <div className="text-muted text-[13px]">{r.customerName ?? "No customer"} · {money(r.order.rateCents, r.order.currency)}</div>
+            <div className="text-muted text-[13px]">{r.order.kind === "trip" ? `Tailgate trip · ${r.shipments} shipment${r.shipments === 1 ? "" : "s"}` : `${r.customerName ?? "No customer"} · ${money(r.order.rateCents, r.order.currency)}`}</div>
           </div>
           <button className="btn btn-ghost btn-sm" onClick={onClose} aria-label="Close panel">
             ✕
@@ -525,8 +525,8 @@ function SidePanel({ r, data, busy, canDispatch, onClose, onPopup, run }: { r: R
               <KV key={k} k={k.replace(/_/g, " ")} v={v} />
             ))}
             <div className="mt-3 flex gap-2">
-              <Link href={`/orders/${r.order.id}`} className="btn btn-sm">
-                Open order
+              <Link href={r.order.kind === "trip" ? `/trips/${r.order.id}` : `/orders/${r.order.id}`} className="btn btn-sm">
+                {r.order.kind === "trip" ? "Open trip" : "Open order"}
               </Link>
               {canDispatch && !closed && (
                 <button className="btn btn-sm btn-danger" onClick={() => onPopup({ kind: "cancel" })}>

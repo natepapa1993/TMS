@@ -60,6 +60,16 @@ export default async function OrderPage({ params }: PageProps<"/orders/[id]">) {
           <span className="flex items-center gap-3">
             <span className="mono">{order.orderNumber}</span>
             <Pill tone={order.state === "exception" ? "amber" : order.state === "cancelled" ? "slate" : order.state === "delivered" ? "green" : "teal"}>{STATE_LABEL[order.state]}</Pill>
+            {order.kind === "shipment" && order.tripId && (
+              <Link href={`/trips/${order.tripId}`}>
+                <Pill tone="navy">shipment on a trip →</Pill>
+              </Link>
+            )}
+            {order.kind === "trip" && (
+              <Link href={`/trips/${order.id}`}>
+                <Pill tone="navy">tailgate trip →</Pill>
+              </Link>
+            )}
           </span>
         }
         actions={<OrderActions order={JSON.parse(JSON.stringify(order))} />}
