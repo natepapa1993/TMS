@@ -9,6 +9,7 @@ import { ediInbox } from "@/domain/edi";
 import { openPortalRequests } from "@/domain/customer-portal";
 import { inbox as messageInbox } from "@/domain/messaging";
 import { boardEtas } from "@/domain/tracking";
+import { mailInbox } from "@/domain/mail";
 
 export const metadata = { title: "Dispatch" };
 export const dynamic = "force-dynamic";
@@ -23,7 +24,7 @@ export default async function DispatchPage() {
     list(ctx, "truck", { limit: 2000 }),
   ]);
   const custName = new Map(customers.map((c) => [c.id, String(c.name)]));
-  const [tenderRows, inbox, msgs, requests, etas] = await Promise.all([openTendersForOrders(ctx, rows.map((r) => r.order.id)), ediInbox(ctx), messageInbox(ctx, { limit: 50 }), openPortalRequests(ctx), boardEtas(ctx)]);
+  const [tenderRows, inbox, msgs, requests, etas, mail] = await Promise.all([openTendersForOrders(ctx, rows.map((r) => r.order.id)), ediInbox(ctx), messageInbox(ctx, { limit: 50 }), openPortalRequests(ctx), boardEtas(ctx), mailInbox(ctx, { limit: 50 })]);
   const carrierName = new Map(carriers.map((c) => [c.id, String(c.name)]));
   const data: BoardData = {
     rows: rows.map((r) => ({
@@ -40,7 +41,7 @@ export default async function DispatchPage() {
     templates: LEG_TEMPLATES.map((t) => ({ key: t.key, label: t.label, description: t.description })),
     role: ctx.role,
     ediInbox: inbox.length,
-    messages: msgs.filter((m) => !m.m.handledAt).length,
+    messages: msgs.filter((m) => !m.m.handledAt).length + mail.length,
     requests,
     etas,
   };

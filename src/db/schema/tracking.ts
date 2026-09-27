@@ -156,3 +156,52 @@ export const integrations = pgTable(
   },
   (t) => [uniqueIndex("integrations_tenant_provider").on(t.tenantId, t.provider)],
 );
+
+// ---------- the inbox agent (spec Module 12) ----------
+
+export const MAIL_KINDS = ["rate_con", "tender", "status_request", "broker_doc", "dispute", "remittance", "carrier_quote", "noise"] as const;
+export type MailKind = (typeof MAIL_KINDS)[number];
+export const MAIL_STATES = ["proposed", "executed", "ignored", "failed"] as const;
+export type MailState = (typeof MAIL_STATES)[number];
+export type MailAttachment = { documentId: string; fileName: string; mimeType: string; sizeBytes: number };
+/** What the agent read off the email, every field with a confidence; a person confirms on the card. */
+export type MailExtracted = Record<string, { value: string | number | null; confidence: number }>;
+/** What it will do when approved. Nothing runs without the tap. */
+export type MailProposal =
+  | { action: "create_order"; summary: string; customerId: string | null; customerName: string | null; template: string; stops: { type: string; name: string; city?: string; state?: string; country: string; windowStart?: string | null; windowEnd?: string | null }[]; rateCents: number | null; currency: string; equipment: string | null; refs: Record<string, string>; cargoNote: string | null; attachAs: string | null }
+  | { action: "attach_document"; summary: string; orderId: string; orderNumber: string; code: string; crossingId?: string | null }
+  | { action: "reply"; summary: string; orderId: string; orderNumber: string; to: string; subject: string; body: string }
+  | { action: "detention"; summary: string; orderId: string; orderNumber: string }
+  | { action: "receipt"; summary: string; invoiceId: string; invoiceNumber: string; amountCents: number; reference: string | null }
+  | { action: "none"; summary: string };
+
+/** Every email dispatch@ receives: what it was, what the agent read, what it proposes, and what a person decided. */
+export const mailMessages = pgTable(
+  "mail_messages",
+  {
+    id: id(),
+    tenantId: tenantId(),
+    messageId: text("message_id").notNull(), // RFC 5322 Message-ID, or a hash of the raw bytes
+    source: text("source").notNull().default("http"), // imap | http
+    from: text("from").notNull(),
+    fromName: text("from_name"),
+    to: text("to"),
+    subject: text("subject"),
+    receivedAt: timestamp("received_at", { withTimezone: true }).notNull().defaultNow(),
+    text: text("text").notNull().default(""),
+    attachments: jsonb("attachments").$type<MailAttachment[]>().notNull().default(sql`'[]'::jsonb`),
+    kind: text("kind").$type<MailKind>().notNull().default("noise"),
+    confidence: integer("confidence").notNull().default(0), // 0–100
+    classifier: text("classifier").notNull().default("rules"), // rules | <model name>
+    extracted: jsonb("extracted").$type<MailExtracted>().notNull().default(sql`'{}'::jsonb`),
+    orderId: text("order_id"), // the deterministic match, when there was one
+    matchReason: text("match_reason"),
+    proposal: jsonb("proposal").$type<MailProposal>().notNull().default(sql`'{"action":"none","summary":""}'::jsonb`),
+    state: text("state").$type<MailState>().notNull().default("proposed"),
+    reviewedBy: text("reviewed_by"),
+    reviewedAt: timestamp("reviewed_at", { withTimezone: true }),
+    result: text("result"), // what happened on approval, or the error
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("mail_messages_tenant").on(t.tenantId, t.receivedAt), uniqueIndex("mail_messages_message").on(t.tenantId, t.messageId), index("mail_messages_order").on(t.orderId)],
+);

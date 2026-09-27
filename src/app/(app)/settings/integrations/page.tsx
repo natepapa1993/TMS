@@ -17,6 +17,7 @@ export default async function IntegrationsPage() {
   const resend = get("resend");
   const wa = get("whatsapp");
   const ex = get("extractor");
+  const mb = get("mailbox");
   const { publicUrl } = await import("@/lib/tokens");
   return (
     <div>
@@ -92,7 +93,32 @@ export default async function IntegrationsPage() {
           ]}
           status={ex ? { lastRunAt: ex.lastRunAt?.toISOString() ?? null, lastError: ex.lastError, lastResult: ex.lastResult } : null}
         />
-        <div className="card p-4 text-[13px] text-muted">Coming with their milestones: Sylectus Virtual Fleet, DAT / Truckstop posting, NAD and Viatpro crossing documents, EDI VAN / AS2 connector.</div>
+        <IntegrationCard
+          provider="mailbox"
+          title="Dispatch mailbox (the inbox agent)"
+          blurb="Every email to dispatch@ becomes one card on Messages: what it is (rate con, status question, broker document, detention, payment), what it says, which order it belongs to, and what the agent will do — a draft order, a document on the crossing, a drafted reply, a charge, a receipt. Nothing runs without a tap. Reads through IMAP with an app password (Gmail: 2-step verification → App passwords; Microsoft 365: an app password or IMAP basic auth), or forward the mailbox to the inbound URL below."
+          enabled={!!mb?.enabled}
+          fields={[
+            { key: "host", label: "IMAP host", secret: false, set: !!mb?.config.host, value: mb?.config.host ?? "", placeholder: "imap.gmail.com" },
+            { key: "port", label: "Port", secret: false, set: !!mb?.config.port, value: mb?.config.port ?? "", placeholder: "993" },
+            { key: "user", label: "Mailbox (full address)", secret: false, set: !!mb?.config.user, value: mb?.config.user ?? "", placeholder: "dispatch@yourdomain.com" },
+            { key: "password", label: "App password", secret: true, set: !!mb?.config.password },
+            { key: "folder", label: "Folder", secret: false, set: !!mb?.config.folder, value: mb?.config.folder ?? "", placeholder: "INBOX" },
+          ]}
+          status={mb ? { lastRunAt: mb.lastRunAt?.toISOString() ?? null, lastError: mb.lastError, lastResult: mb.lastResult } : null}
+          extra={
+            mb?.config.inboundToken ? (
+              <div className="mt-3 text-[12.5px]">
+                <div className="eyebrow mb-1">Inbound URL (forward dispatch@ here instead of, or as well as, IMAP)</div>
+                <div className="mono break-all select-all bg-ground rounded p-2 border border-line" data-testid="inbound-url">{publicUrl(`/api/mail/inbound/${mb.config.inboundToken}`)}</div>
+                <div className="mt-1">Cloudflare Email Routing (a Worker that POSTs the raw message), Mailgun routes (&quot;forward to URL&quot;), Postmark or SES inbound all deliver here; the raw message as the body, a multipart field, or JSON <span className="mono">{"{raw}"}</span>. With the AI reader connected above, the model classifies and reads the fields; without it, rules do what rules can.</div>
+              </div>
+            ) : (
+              <div className="help mt-3">Save once to get this company&apos;s inbound URL; the IMAP fields are optional if you forward instead.</div>
+            )
+          }
+        />
+        <div className="card p-4 text-[13px] text-muted">Waiting on outside access: Sylectus Virtual Fleet and DAT / Truckstop posting (API access), NAD and Viatpro crossing documents (credentials), native AS2 (the VAN's certificates). The EDI VAN mailbox over SFTP lives on each EDI partner's record.</div>
       </div>
     </div>
   );

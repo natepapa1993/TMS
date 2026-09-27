@@ -120,6 +120,13 @@
       "when": 1790505714891,
       "tag": "0016_stop_seals",
       "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1790507008590,
+      "tag": "0017_mail_messages",
+      "breakpoints": true
     }
   ]
 }

@@ -473,6 +473,16 @@
         "src/domain/tracking.test.ts",
         "src/domain/company.test.ts"
       ]
+    },
+    {
+      "id": "F-15",
+      "name": "The inbox agent (Module 12): every email to dispatch@ (IMAP with an app password, or the company's inbound URL) is classified by rules and by the AI reader when connected, read into fields, matched deterministically (order number, PO, trailer, sender), and proposed as one card — draft order with the rate con attached, document onto the order or the crossing, a drafted status reply from verified tracking (EN/ES), detention computed, a receipt on the invoice named; Approve / Edit / Ignore; nothing runs without the tap; the email is the source on the timeline",
+      "milestone": "M12",
+      "status": "done",
+      "tests": [
+        "src/domain/mail.test.ts",
+        "e2e/inbox.spec.ts"
+      ]
     }
   ]
 }

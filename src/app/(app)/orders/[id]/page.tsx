@@ -42,7 +42,7 @@ export default async function OrderPage({ params }: PageProps<"/orders/[id]">) {
   const dName = name(drivers, "name");
   const carName = name(carriers, "name");
   const who = new Map(people.map((p) => [p.id, p.name]));
-  const billingView = ["owner", "billing", "dispatcher"].includes(ctx.role) && ["delivered", "ready_to_bill", "invoiced", "paid", "in_transit", "dispatched", "exception"].includes(order.state);
+  const billingView = ["owner", "billing", "dispatcher"].includes(ctx.role) && ["draft", "booked", "delivered", "ready_to_bill", "invoiced", "paid", "in_transit", "dispatched", "exception"].includes(order.state);
   const [chargeRows, pnl, orderDocs] = billingView ? await Promise.all([chargesFor(ctx, id), ["delivered", "ready_to_bill", "invoiced", "paid"].includes(order.state) ? orderPnl(ctx, id).catch(() => null) : Promise.resolve(null), db.select({ id: documents.id, code: documents.code, fileName: documents.fileName }).from(documents).where(and(eq(documents.tenantId, ctx.tenantId), eq(documents.subjectKind, "order"), eq(documents.subjectId, id), inArray(documents.status, ["present", "verified"])))]) : [[], null, []];
   const cust = customers.find((c) => c.id === (order.customerId ?? order.brokerId));
   const stopById = new Map(stops.map((s) => [s.id, s]));

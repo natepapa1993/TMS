@@ -51,6 +51,12 @@ export async function tick(now = new Date()) {
       const { pollMotiveAll } = await import("@/integrations/motive");
       out.motive = await pollMotiveAll(now).catch((e) => ({ error: String(e) }));
     }
+    if (n % 2 === 1) {
+      // the dispatch mailbox over IMAP: what arrived becomes cards within two minutes (the inbound URL is instant)
+      const { pollAllMail } = await import("@/domain/mail");
+      const r = await pollAllMail(now).catch((e) => [{ error: String(e) }]);
+      if (r.length) out.mail = r;
+    }
     if (n % 5 === 0) {
       // VAN mailboxes: pull the partner's files, push ours — every five minutes is what VANs themselves do
       const { pollMailboxes } = await import("@/domain/edi-mailbox");

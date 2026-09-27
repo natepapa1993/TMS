@@ -10,7 +10,7 @@ import { requirePermission } from "@/lib/context";
 import { writeAudit } from "@/lib/audit";
 import { pollMotive } from "@/integrations/motive";
 
-const PROVIDERS = ["motive", "resend", "whatsapp", "extractor"] as const;
+const PROVIDERS = ["motive", "resend", "whatsapp", "extractor", "mailbox"] as const;
 type Provider = (typeof PROVIDERS)[number];
 
 export async function saveIntegrationAction(provider: Provider, enabled: boolean, config: Record<string, string>) {
@@ -23,6 +23,12 @@ export async function saveIntegrationAction(provider: Provider, enabled: boolean
     for (const [k, v] of Object.entries(config)) if (v.trim() !== "") merged[k] = v.trim();
     if (provider === "whatsapp" && !merged.webhookToken) merged.webhookToken = (await import("@/lib/tokens")).newToken(); // the webhook URL for this company, minted once
     if (provider === "whatsapp" && !merged.verifyToken) merged.verifyToken = (await import("@/lib/tokens")).newToken().slice(0, 16);
+    if (provider === "mailbox" && !merged.inboundToken) merged.inboundToken = (await import("@/lib/tokens")).newToken(); // the inbound URL for this company, minted once
+    if (provider === "mailbox" && merged.host) {
+      const mail = await import("@/integrations/mail");
+      const check: (c: Partial<import("@/integrations/mail").ImapConfig>) => void = mail.validateImap;
+      check({ host: merged.host, user: merged.user, password: merged.password, port: merged.port ? Number(merged.port) : undefined });
+    }
     if (existing) await db.update(integrations).set({ enabled, config: merged, updatedAt: new Date(), updatedBy: ctx.userId }).where(eq(integrations.id, existing.id));
     else await db.insert(integrations).values({ id: newId(), tenantId: ctx.tenantId, provider, enabled, config: merged, createdBy: ctx.userId, updatedBy: ctx.userId });
     await writeAudit(db, ctx, "integration", provider, existing ? "update" : "create", { enabled: { from: existing?.enabled ?? null, to: enabled }, keys: { from: Object.keys(existing?.config ?? {}), to: Object.keys(merged) } });
@@ -60,4 +66,20 @@ export async function testWhatsAppAction(to: string) {
       throw e;
     }
   });
+}
+
+/** Pull the IMAP mailbox now: proves the app password works and shows what came in. */
+export async function pollMailboxNowAction() {
+  const r = await act(async (ctx) => {
+    requirePermission(ctx, "settings.edit");
+    const { pollMail } = await import("@/domain/mail");
+    const out = await pollMail(ctx.tenantId);
+    if ("skipped" in out) throw Object.assign(new Error(out.reason ? "There is no IMAP host to pull from — this mailbox receives through the inbound URL" : "Save the mailbox with host, user and app password, and enable it"), { name: "ValidationError" });
+    return out;
+  });
+  if (r.ok) {
+    revalidatePath("/settings/integrations");
+    revalidatePath("/messages");
+  }
+  return r;
 }
