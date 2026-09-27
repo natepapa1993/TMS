@@ -266,3 +266,54 @@ export async function flagWindows(now = new Date(), riskHours = 2) {
   }
   return { missed, atRisk, cleared };
 }
+
+// ---------- detention running ----------
+
+/**
+ * Job: a truck sitting at a pickup or delivery past the customer's free time gets a yellow "detention
+ * running" flag with the minutes over, updated every tick while it sits; leaving clears it. The dispatcher
+ * calls the shipper while it still matters; the charge itself is computed on the order afterwards.
+ */
+export async function flagDetention(now = new Date()) {
+  const legs = await db.select().from(s.legs).where(inArray(s.legs.state, ["at_pickup", "at_delivery", "loaded", "en_route"]));
+  const open = await db.select().from(s.flags).where(and(eq(s.flags.code, "detention"), sql`${s.flags.clearedAt} is null`));
+  let flagged = 0;
+  let updated = 0;
+  let cleared = 0;
+  const orderIds = [...new Set(legs.map((l) => l.orderId))];
+  const stops = orderIds.length ? await db.select().from(s.stops).where(and(inArray(s.stops.orderId, orderIds), sql`${s.stops.arrivedAt} is not null`, sql`${s.stops.departedAt} is null`, inArray(s.stops.type, ["pickup", "delivery"]))) : [];
+  const orders = orderIds.length ? await db.select({ id: s.orders.id, customerId: s.orders.customerId, brokerId: s.orders.brokerId, tenantId: s.orders.tenantId }).from(s.orders).where(inArray(s.orders.id, orderIds)) : [];
+  const custIds = [...new Set(orders.map((o) => o.customerId ?? o.brokerId).filter((x): x is string => !!x))];
+  const custs = custIds.length ? await db.select({ id: s.customers.id, free: s.customers.detentionFreeMinutes }).from(s.customers).where(inArray(s.customers.id, custIds)) : [];
+  const freeFor = (orderId: string) => {
+    const o = orders.find((x) => x.id === orderId);
+    return custs.find((c) => c.id === (o?.customerId ?? o?.brokerId))?.free ?? 120;
+  };
+  const live = new Set<string>();
+  for (const st of stops) {
+    const leg = legs.find((l) => l.orderId === st.orderId && (l.fromStopId === st.id || l.toStopId === st.id));
+    if (!leg) continue;
+    const minutes = Math.floor((now.getTime() - st.arrivedAt!.getTime()) / 60_000);
+    const over = minutes - freeFor(st.orderId);
+    if (over <= 0) continue;
+    live.add(st.id);
+    const title = `Detention running at ${st.name}: ${over} min over free time`;
+    const existing = open.find((f) => f.legId === leg.id && f.data?.stopId === st.id);
+    if (existing) {
+      if (existing.title !== title) {
+        await db.update(s.flags).set({ title }).where(eq(s.flags.id, existing.id));
+        updated++;
+      }
+    } else {
+      await db.insert(s.flags).values({ id: newId(), tenantId: leg.tenantId, orderId: st.orderId, legId: leg.id, code: "detention", level: "yellow", title, detail: `Arrived ${st.arrivedAt!.toISOString()}. Call the ${st.type === "pickup" ? "shipper" : "receiver"}; the charge is computed on the order once the truck leaves.`, owner: "dispatch", data: { stopId: st.id } });
+      flagged++;
+    }
+  }
+  for (const f of open) {
+    if (!live.has(String(f.data?.stopId))) {
+      await db.update(s.flags).set({ clearedAt: now, clearedBy: "system" }).where(eq(s.flags.id, f.id));
+      cleared++;
+    }
+  }
+  return { flagged, updated, cleared };
+}

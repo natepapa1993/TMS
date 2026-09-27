@@ -7,7 +7,7 @@ import { outbox, tenders as tendersTable, flags, legEvents, positions } from "@/
 import { and, eq } from "drizzle-orm";
 import { createOrder, planLeg, dispatchLeg, acceptLeg, advanceLeg, getOrder, ValidationError } from "./orders";
 import { sendTender, tenderByToken, respondToTender, expireTenders, closeOpenTenderForLeg } from "./tenders";
-import { recordPosition, driverToday, driverStep, trackingView, flagStaleTracking, flagWindows, latestTruckPositions } from "./tracking";
+import { recordPosition, driverToday, driverStep, trackingView, flagStaleTracking, flagWindows, flagDetention, latestTruckPositions } from "./tracking";
 import { issueToken, resolveToken, revokeToken } from "@/lib/tokens";
 import { TransitionError } from "./states";
 
@@ -288,5 +288,34 @@ describe("tracking requirement (F-5)", () => {
     await planLeg(a, r.legs[0].id, { kind: "truck", truckId: t2104.id, driverId: reyes.id });
     await dispatchLeg(a, r.legs[0].id);
     expect(await db.select().from(outbox).where(eq(outbox.subjectKind, "tracking_link"))).toHaveLength(1);
+  });
+});
+
+describe("detention running (F-5.9)", () => {
+  it("a truck sitting past the customer's free time gets a yellow flag that grows every tick and clears when it leaves", async () => {
+    const magna = await create(a, "customer", { name: "Magna", kind: "customer", detentionFreeMinutes: 60 });
+    const o = await createOrder(a, { customerId: magna.id, rateCents: 100000, stops: [{ type: "pickup", name: "Laredo Yard", country: "US" }, { type: "delivery", name: "Toyota", country: "US" }], template: "domestic", book: true });
+    const t2104 = await create(a, "truck", { unitNumber: "2104", usPlate: "TX2104", usPlateExpires: future });
+    const reyes = await create(a, "driver", { name: "Daniel Reyes", driverType: "CDL", licenseExpires: future, medicalExpires: future, currentTruckId: t2104.id });
+    const leg = o.legs[0].id;
+    await planLeg(a, leg, { kind: "truck", truckId: t2104.id, driverId: reyes.id });
+    await dispatchLeg(a, leg);
+    await acceptLeg(a, leg);
+    const t0 = new Date("2026-09-27T12:00:00Z");
+    await advanceLeg(a, leg, "en_route_to_pickup", { at: t0 });
+    await advanceLeg(a, leg, "at_pickup", { at: t0 });
+    expect(await flagDetention(new Date("2026-09-27T12:59:00Z"))).toMatchObject({ flagged: 0 });
+    expect(await flagDetention(new Date("2026-09-27T13:10:00Z"))).toMatchObject({ flagged: 1 });
+    let fl = await db.select().from(flags).where(and(eq(flags.orderId, o.order.id), eq(flags.code, "detention")));
+    expect(fl[0].title).toBe("Detention running at Laredo Yard: 10 min over free time");
+    expect(fl[0].level).toBe("yellow");
+    expect(await flagDetention(new Date("2026-09-27T13:30:00Z"))).toMatchObject({ flagged: 0, updated: 1 });
+    fl = await db.select().from(flags).where(and(eq(flags.orderId, o.order.id), eq(flags.code, "detention")));
+    expect(fl).toHaveLength(1);
+    expect(fl[0].title).toContain("30 min over");
+    await advanceLeg(a, leg, "loaded", { at: new Date("2026-09-27T13:40:00Z") });
+    expect(await flagDetention(new Date("2026-09-27T13:41:00Z"))).toMatchObject({ cleared: 1 });
+    fl = await db.select().from(flags).where(and(eq(flags.orderId, o.order.id), eq(flags.code, "detention")));
+    expect(fl[0].clearedAt).toBeTruthy();
   });
 });
