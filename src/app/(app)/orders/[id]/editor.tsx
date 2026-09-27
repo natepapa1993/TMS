@@ -2,7 +2,7 @@
 
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { updateOrderAction, updateStopAction, addStopAction, removeStopAction, moveStopAction, lockAction, tonuAction } from "../actions";
+import { updateOrderAction, updateStopAction, addStopAction, removeStopAction, moveStopAction, lockAction, tonuAction, templateFromOrderAction } from "../actions";
 import { bookAction, cancelAction, holdAction, releaseAction, setLegMilesAction, copyOrderAction } from "../../dispatch/actions";
 import { Confirm, Modal, Toast, useToast } from "@/components/ui";
 import { StopFields, blankStop, stopPayload, STOP_LABEL, COUNTRIES, type Loc, type StopDraft } from "@/components/stop-fields";
@@ -273,6 +273,19 @@ export function OrderActions({ order }: { order: Order }) {
           }
         >
           Book again
+        </button>
+      )}
+      {(order.kind ?? "order") === "order" && (
+        <button
+          className="btn"
+          disabled={pending}
+          title="Save this lane as a template: stops, times of day, rate and freight"
+          onClick={() => {
+            const name = window.prompt("Name the template (e.g. Canton → Toronto, Acme)")?.trim();
+            if (name) run(`Saved as template “${name}”`, () => templateFromOrderAction(order.id, name));
+          }}
+        >
+          Save as template
         </button>
       )}
       {["dispatched", "in_transit"].includes(order.state) && (

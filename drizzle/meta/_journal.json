@@ -162,6 +162,20 @@
       "when": 1790525459105,
       "tag": "0022_planner",
       "breakpoints": true
+    },
+    {
+      "idx": 23,
+      "version": "7",
+      "when": 1790527142468,
+      "tag": "0023_load_templates",
+      "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "7",
+      "when": 1790527851359,
+      "tag": "0024_pay_plans",
+      "breakpoints": true
     }
   ]
 }

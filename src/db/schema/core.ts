@@ -361,6 +361,7 @@ export const drivers = pgTable(
     eldDriverId: text("eld_driver_id"),
     currentTruckId: text("current_truck_id"),
     dispatcherUserId: text("dispatcher_user_id"), // the dispatcher who runs this driver
+    payPlanId: text("pay_plan_id"), // a pay plan; blank = the pay type and rate on the driver
     hosDriveMin: integer("hos_drive_min"), // hours of service left, from the ELD
     hosShiftMin: integer("hos_shift_min"),
     hosCycleMin: integer("hos_cycle_min"),

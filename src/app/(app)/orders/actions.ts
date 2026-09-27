@@ -272,3 +272,90 @@ export async function deleteNoteAction(orderId: string, id: string) {
   if (r.ok) touch(orderId);
   return r;
 }
+
+// ---------- load templates ----------
+
+export async function templateDraftAction(templateId: string, date: string) {
+  const { templateDraft } = await import("@/domain/load-templates");
+  return act((ctx) => templateDraft(ctx, templateId, date));
+}
+
+/** Save what is in the builder as a template (times read back as local times at each stop). */
+export async function saveBuilderTemplateAction(name: string, input: Omit<LoadInput, "book" | "rateConDocId">) {
+  const { templateFromDraft } = await import("@/domain/load-templates");
+  const r = await act(async (ctx) => {
+    const rateCents = input.rate.trim() && !input.rateTbd ? Math.round(Number(input.rate.replace(/[$,\s]/g, "")) * 100) : null;
+    const stops = input.stops.map((st) => ({
+      type: st.type as StopType,
+      locationId: st.locationId || null,
+      name: st.name,
+      address: st.line1 || st.city || st.state || st.postalCode ? { line1: st.line1 || undefined, city: st.city || undefined, state: st.state || undefined, postalCode: st.postalCode || undefined } : null,
+      country: st.country,
+      windowStart: st.windowStart ? new Date(st.windowStart) : null,
+      windowEnd: st.windowEnd ? new Date(st.windowEnd) : null,
+      appointment: !!st.appointment,
+      ref: st.ref || undefined,
+      contact: st.contact || null,
+      notes: st.notes || null,
+    }));
+    const freight = input.freight.filter((l) => l.commodity.trim()).map((l) => ({ commodity: l.commodity.trim(), pieces: l.pieces ? Number(l.pieces) : undefined, packaging: l.packaging || undefined, weightLb: l.weightLb ? Number(l.weightLb) : undefined, hazmat: l.hazmat || undefined }));
+    return templateFromDraft(ctx, name, { customerId: input.customerId || null, brokerId: input.brokerId || null, billingEntityId: input.billingEntityId || null, equipment: input.equipment, rateCents: Number.isFinite(rateCents) ? rateCents : null, currency: input.currency, refs: {}, freight, cargoNote: input.cargoNote || null, stops });
+  });
+  if (r.ok) revalidatePath("/orders/templates");
+  return r;
+}
+
+export async function templateFromOrderAction(orderId: string, name: string) {
+  const { templateFromOrder } = await import("@/domain/load-templates");
+  const r = await act((ctx) => templateFromOrder(ctx, orderId, name));
+  if (r.ok) revalidatePath("/orders/templates");
+  return r;
+}
+
+export async function loadsFromTemplateAction(templateId: string, dates: string[], book: boolean) {
+  const { loadsFromTemplate } = await import("@/domain/load-templates");
+  const r = await act((ctx) => loadsFromTemplate(ctx, templateId, dates, { book }));
+  if (r.ok) {
+    touch();
+    revalidatePath("/orders/templates");
+  }
+  return r;
+}
+
+export async function deleteTemplateAction(id: string) {
+  const { deleteTemplate } = await import("@/domain/load-templates");
+  const r = await act((ctx) => deleteTemplate(ctx, id));
+  if (r.ok) revalidatePath("/orders/templates");
+  return r;
+}
+
+// ---------- import loads from a sheet ----------
+
+async function tableFrom(form: FormData) {
+  const f = form.get("file");
+  if (!(f instanceof File)) throw Object.assign(new Error("Choose the file"), { name: "ValidationError", field: "file" });
+  const { readTable } = await import("@/domain/load-import");
+  return { table: await readTable({ fileName: f.name, bytes: Buffer.from(await f.arrayBuffer()) }), fileName: f.name };
+}
+
+export async function previewLoadsAction(form: FormData) {
+  const { previewLoads } = await import("@/domain/load-import");
+  return act(async (ctx) => {
+    const { table } = await tableFrom(form);
+    const p = await previewLoads(ctx, table);
+    return {
+      layout: p.layout,
+      loads: p.loads.map((l) => ({ key: l.key, customer: l.customer, rateCents: l.rateCents, currency: l.currency, stops: l.stops.map((s) => ({ type: s.type, name: s.name, city: s.address?.city ?? null, state: s.address?.state ?? null, country: s.country, at: s.windowStart ? s.windowStart.toISOString() : null })), errors: l.errors })),
+    };
+  });
+}
+
+export async function importLoadsAction(form: FormData) {
+  const { importLoads } = await import("@/domain/load-import");
+  const r = await act(async (ctx) => {
+    const { table, fileName } = await tableFrom(form);
+    return importLoads(ctx, table, { book: form.get("book") === "1", fileName });
+  });
+  if (r.ok) touch();
+  return r;
+}

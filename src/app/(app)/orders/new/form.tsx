@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useRef, useState, useTransition, type ReactNode } from "react";
-import { createLoadAction, readRateConAction } from "../actions";
+import { createLoadAction, readRateConAction, templateDraftAction, saveBuilderTemplateAction } from "../actions";
 import { StopFields, blankStop, stopPayload, placeLine, timeLine, STOP_LABEL, STOP_TONE, type Loc, type StopDraft } from "@/components/stop-fields";
 import { legsFromStops, LEG_TYPE_LABEL } from "@/domain/zones";
 
@@ -58,7 +58,7 @@ function Section({ id, n, title, hint, action, children }: { id: string; n: numb
   );
 }
 
-export function OrderForm({ customers, entities, locations }: { customers: { id: string; name: string; kind: string }[]; entities: { id: string; name: string }[]; locations: Loc[] }) {
+export function OrderForm({ customers, entities, locations, templates = [] }: { customers: { id: string; name: string; kind: string }[]; entities: { id: string; name: string }[]; locations: Loc[]; templates?: { id: string; name: string; customer: string | null }[] }) {
   const [f, setF] = useState({ customerId: "", brokerId: "", billingEntityId: entities.length === 1 ? entities[0].id : "", equipment: "53_dry", rate: "", rateTbd: false, currency: "USD", cargoNote: "" });
   const [refs, setRefs] = useState<Record<string, string>>({});
   const [freight, setFreight] = useState<Freight[]>([blankFreight()]);
@@ -71,6 +71,34 @@ export function OrderForm({ customers, entities, locations }: { customers: { id:
   const [rateCon, setRateCon] = useState<{ id: string; fileName: string; warnings: string[] } | null>(null);
   const [readErr, setReadErr] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+  const [tpl, setTpl] = useState(() => ({ id: "", date: new Date(Date.now() + 86400_000).toISOString().slice(0, 10) }));
+  const [tplMsg, setTplMsg] = useState<string | null>(null);
+  const toLocalInput = (iso: string | null) => (iso ? new Date(new Date(iso).getTime() - new Date(iso).getTimezoneOffset() * 60000).toISOString().slice(0, 16) : "");
+
+  /** Fill the builder from a saved lane on a date. */
+  const applyTemplate = () =>
+    startRead(async () => {
+      setTplMsg(null);
+      if (!tpl.id) return setTplMsg("Pick a template");
+      const r = await templateDraftAction(tpl.id, tpl.date);
+      if (!r.ok) return setTplMsg(r.error);
+      const d = r.data.data;
+      setF((x) => ({ ...x, customerId: d.customerId ?? "", brokerId: d.brokerId ?? "", billingEntityId: d.billingEntityId ?? x.billingEntityId, equipment: d.equipment, rate: d.rateCents != null ? (d.rateCents / 100).toFixed(2) : "", rateTbd: d.rateCents == null, currency: d.currency, cargoNote: d.cargoNote ?? "" }));
+      setRefs({ ...d.refs });
+      setFreight(d.freight.length ? d.freight.map((l) => ({ commodity: l.commodity, pieces: l.pieces != null ? String(l.pieces) : "", packaging: l.packaging ?? "", weightLb: l.weightLb != null ? String(l.weightLb) : "", hazmat: !!l.hazmat })) : [blankFreight()]);
+      const next = r.data.stops.map((st) => ({ ...blankStop(st.type, st.country), locationId: st.locationId, name: st.name, line1: st.line1 ?? "", city: st.city ?? "", state: st.state ?? "", postalCode: st.postalCode ?? "", country: st.country, appointment: st.appointment, windowStart: toLocalInput(st.windowStart), windowEnd: toLocalInput(st.windowEnd), ref: st.ref ?? "", contact: st.contact ?? "", notes: st.notes ?? "" }));
+      setStops(next);
+      setOpen(new Set());
+      setTplMsg(`Filled from “${r.data.name}” for ${tpl.date}`);
+    });
+
+  const saveAsTemplate = () =>
+    start(async () => {
+      const name = window.prompt("Name this lane (e.g. Canton → Toronto, Acme)")?.trim();
+      if (!name) return;
+      const r = await saveBuilderTemplateAction(name, { ...f, refs, freight, stops: stops.map(stopPayload) });
+      setTplMsg(r.ok ? `Saved as template “${name}”` : r.error);
+    });
 
   /** Fill the builder from what the reader found on the rate con. */
   const readRateCon = (file: File) =>
@@ -171,6 +199,27 @@ export function OrderForm({ customers, entities, locations }: { customers: { id:
         </div>
         <h1 className="text-[28px] font-extrabold tracking-tight leading-tight">New load</h1>
         <p className="text-muted text-[14.5px] mt-2 max-w-[70ch]">Who pays, every stop in the order the truck runs them, the freight and the references. The load is split into legs wherever the trailer changes hands.</p>
+        {templates.length > 0 && (
+          <div className="mt-5 flex items-center gap-3 flex-wrap rounded-xl border border-line bg-white px-5 py-4" data-testid="template-strip">
+            <div className="flex-1 min-w-[200px]">
+              <div className="font-bold text-[14.5px]">Start from a template</div>
+              <div className="text-muted text-[13px] mt-0.5">{tplMsg ?? "A lane you run often: pick it and the pickup date; everything fills in."}</div>
+            </div>
+            <select className="select w-64" value={tpl.id} onChange={(e) => setTpl({ ...tpl, id: e.target.value })} aria-label="Template">
+              <option value="">Choose a template…</option>
+              {templates.map((t) => (
+                <option key={t.id} value={t.id}>
+                  {t.name}
+                  {t.customer ? ` · ${t.customer}` : ""}
+                </option>
+              ))}
+            </select>
+            <input type="date" className="input w-40" value={tpl.date} onChange={(e) => setTpl({ ...tpl, date: e.target.value })} aria-label="Pickup date" />
+            <button type="button" className="btn" disabled={reading || !tpl.id} onClick={applyTemplate}>
+              Use template
+            </button>
+          </div>
+        )}
         <div className="mt-5 flex items-center gap-4 flex-wrap rounded-xl border border-dashed border-line bg-white px-5 py-4" data-testid="ratecon-drop" onDragOver={(e) => e.preventDefault()} onDrop={(e) => { e.preventDefault(); const file = e.dataTransfer.files?.[0]; if (file) readRateCon(file); }}>
           <div className="flex-1 min-w-[240px]">
             <div className="font-bold text-[14.5px]">{rateCon ? `Filled from ${rateCon.fileName}` : "Have the rate con? Start from it."}</div>
@@ -486,6 +535,10 @@ export function OrderForm({ customers, entities, locations }: { customers: { id:
             <button className="btn w-full justify-center mt-2.5 h-10" disabled={pending} onClick={() => submit(false)}>
               Save as draft
             </button>
+            <button type="button" className="w-full mt-2.5 text-[12.5px] text-teal font-semibold hover:underline" disabled={pending} onClick={saveAsTemplate}>
+              Save as a template for next time
+            </button>
+            {tplMsg && templates.length === 0 && <div className="text-[12px] text-muted mt-1 text-center">{tplMsg}</div>}
             <p className="mt-4 text-[12px] text-muted leading-relaxed">A booked load goes to Pending on Dispatch, ready to assign leg by leg.</p>
           </div>
         </aside>

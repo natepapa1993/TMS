@@ -7,7 +7,7 @@ export function zonedParts(d: Date, timeZone: string) {
       .formatToParts(d)
       .map((x) => [x.type, x.value]),
   );
-  return { y: Number(p.year), m: Number(p.month), d: Number(p.day), h: Number(p.hour) % 24, weekday: ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].indexOf(p.weekday) };
+  return { y: Number(p.year), m: Number(p.month), d: Number(p.day), h: Number(p.hour) % 24, min: Number(p.minute), weekday: ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].indexOf(p.weekday) };
 }
 
 /** YYYY-MM-DD of an instant in a zone. */

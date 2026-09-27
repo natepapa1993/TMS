@@ -25,6 +25,7 @@
     "date-fns": "^4.4.0",
     "dotenv": "^18.0.4",
     "drizzle-orm": "^0.45.3",
+    "exceljs": "^4.4.0",
     "imapflow": "^2.0.8",
     "iron-session": "^9.0.1",
     "leaflet": "^1.9.4",

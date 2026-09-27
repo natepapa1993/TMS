@@ -37,6 +37,12 @@ export default async function OrdersPage({ searchParams }: PageProps<"/orders">)
           </div>
         </div>
         <div className="flex items-center gap-2">
+          <Link href="/orders/import" className="btn">
+            Import
+          </Link>
+          <Link href="/orders/templates" className="btn">
+            Templates
+          </Link>
           <Link href="/trips" className="btn">
             Tailgate trips
           </Link>

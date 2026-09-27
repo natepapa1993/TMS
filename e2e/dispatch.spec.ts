@@ -257,6 +257,8 @@ test("forgot password: no sender → ask the owner; with a sender the emailed li
   const anon = await (await browser.newContext()).newPage();
   await anon.goto("/login");
   await anon.click("a:has-text('Forgot your password?')");
+  await anon.waitForURL("**/forgot");
+  await anon.waitForLoadState("networkidle"); // the form posts through its action once the page has loaded
   await anon.fill("#email", me.email);
   await anon.click("button:has-text('Send the link')");
   await expect(anon.getByRole("status")).toContainText("Ask your company owner");

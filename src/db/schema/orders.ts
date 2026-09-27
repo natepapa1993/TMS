@@ -247,3 +247,23 @@ export const orderNotes = pgTable(
   },
   (t) => [index("order_notes_tenant_order").on(t.tenantId, t.orderId)],
 );
+
+/** A stop in a template: the time of day, and how many days after the first stop's day. */
+export type TemplateStop = { type: StopType; locationId: string | null; name: string; line1?: string; city?: string; state?: string; postalCode?: string; country: string; dayOffset: number; from: string; to: string; appointment: boolean; ref?: string; contact?: string; notes?: string };
+export type LoadTemplateData = { customerId: string | null; brokerId: string | null; billingEntityId: string | null; equipment: string; rateCents: number | null; currency: string; refs: Record<string, string>; freight: FreightLine[]; cargoNote: string | null; stops: TemplateStop[] };
+
+/** A lane you run again and again: everything but the dates. */
+export const loadTemplates = pgTable(
+  "load_templates",
+  {
+    id: id(),
+    tenantId: tenantId(),
+    name: text("name").notNull(),
+    customerId: text("customer_id"),
+    data: jsonb("data").$type<LoadTemplateData>().notNull(),
+    lastUsedAt: timestamp("last_used_at", { withTimezone: true }),
+    timesUsed: integer("times_used").notNull().default(0),
+    ...audit(),
+  },
+  (t) => [index("load_templates_tenant").on(t.tenantId)],
+);

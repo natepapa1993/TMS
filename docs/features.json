@@ -720,10 +720,14 @@
     },
     {
       "id": "F-20.8",
-      "name": "Load templates (recurring lanes) with bulk create; Excel load import",
+      "name": "Load templates (lanes run often: times of day at each stop's zone, day offsets) — save from the builder or a load, start a load from one, create a run of loads for chosen weekdays; import loads from Excel or CSV (one row per load, or one row per stop grouped by load) with a preview of every problem",
       "milestone": "M20",
-      "status": "planned",
-      "tests": []
+      "status": "done",
+      "tests": [
+        "src/domain/load-templates.test.ts",
+        "src/domain/load-import.test.ts",
+        "e2e/templates.spec.ts"
+      ]
     }
   ]
 }

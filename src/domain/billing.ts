@@ -652,6 +652,16 @@ export async function buildSettlement(ctx: Ctx, driverId: string, periodStart: D
     .innerJoin(s.orders, eq(s.orders.id, s.legs.orderId))
     .where(and(eq(s.legs.tenantId, ctx.tenantId), eq(s.legs.state, "completed"), sql`(${s.legs.driverId} = ${driverId} or ${s.legs.coDriverId} = ${driverId})`, gte(s.legs.completedAt, periodStart), lt(s.legs.completedAt, periodEnd)));
   const lines: SettlementLine[] = [];
+  const plan = driver.payPlanId ? (await db.select().from(s.payPlans).where(and(eq(s.payPlans.tenantId, ctx.tenantId), eq(s.payPlans.id, driver.payPlanId))).limit(1))[0] : null;
+  if (plan && !plan.archivedAt) {
+    const { payInputs } = await import("./pay-inputs");
+    const { legPayLines, statementExtras } = await import("./pay-plans");
+    const inputs = await payInputs(ctx, driverId, legs.map((l) => l.leg));
+    for (const inp of inputs) lines.push(...legPayLines(plan, inp));
+    const days = new Set(legs.map((l) => l.leg.completedAt!.toISOString().slice(0, 10))).size;
+    const earned = lines.reduce((a, l) => a + l.amountCents, 0);
+    lines.push(...statementExtras(plan, days, earned));
+  } else {
   const rate = driver.payRateCents ?? 0;
   for (const { leg, orderNumber, rateCents } of legs) {
     const team = !!leg.coDriverId;
@@ -670,14 +680,18 @@ export async function buildSettlement(ctx: Ctx, driverId: string, periodStart: D
       if (driver.crossingPayCents) lines.push({ id: newId(), kind: "accessorial", legId: leg.id, orderNumber, description: `${orderNumber} border crossing pay`, qty: 1, unit: "flat", rateCents: driver.crossingPayCents, amountCents: driver.crossingPayCents, source: "driver record" });
     }
   }
+  }
   const items = await db.select().from(s.payItems).where(and(eq(s.payItems.tenantId, ctx.tenantId), eq(s.payItems.driverId, driverId), eq(s.payItems.active, true), lte(s.payItems.startsAt, periodEnd)));
   for (const it of items) {
     if (it.endsAt && it.endsAt.getTime() < periodStart.getTime()) continue;
     if (!it.recurring && it.startsAt.getTime() < periodStart.getTime()) continue;
     let amt = it.amountCents;
     if (it.remainingCents != null) amt = Math.min(amt, it.remainingCents);
+    // escrow: collect until the balance reaches the target
+    if (it.kind === "escrow" && it.targetCents != null) amt = Math.min(amt, Math.max(0, it.targetCents - (it.balanceCents ?? 0)));
     if (amt <= 0) continue;
-    lines.push({ id: newId(), kind: it.kind === "deduction" ? "deduction" : "reimbursement", description: it.description, qty: 1, unit: "flat", rateCents: amt, amountCents: it.kind === "deduction" ? -amt : amt, source: it.recurring ? "recurring" : "one-off" });
+    const out = it.kind !== "reimbursement";
+    lines.push({ id: newId(), kind: out ? "deduction" : "reimbursement", description: it.description, qty: 1, unit: "flat", rateCents: amt, amountCents: out ? -amt : amt, source: it.kind === "escrow" ? "escrow" : it.kind === "advance" ? "advance" : it.recurring ? "recurring" : "one-off", payItemId: it.id });
   }
   const gross = lines.filter((l) => l.amountCents > 0).reduce((a, l) => a + l.amountCents, 0);
   const ded = -lines.filter((l) => l.amountCents < 0).reduce((a, l) => a + l.amountCents, 0);
@@ -702,10 +716,13 @@ export async function settlementTransition(ctx: Ctx, id: string, to: "reviewed" 
   const [after] = await db.update(s.settlements).set({ state: to, reviewedAt: to === "reviewed" ? new Date() : st.reviewedAt, approvedAt: to === "approved" ? new Date() : st.approvedAt, paidAt: to === "paid" ? new Date() : null, method: p.method ?? st.method, reference: p.reference ?? st.reference, updatedAt: new Date(), updatedBy: ctx.userId }).where(eq(s.settlements.id, id)).returning();
   if (to === "paid") {
     // advances paid back: reduce remaining on the pay items that produced deduction lines
-    const items = await db.select().from(s.payItems).where(and(eq(s.payItems.tenantId, ctx.tenantId), eq(s.payItems.driverId, st.driverId), sql`${s.payItems.remainingCents} is not null`));
+    const items = await db.select().from(s.payItems).where(and(eq(s.payItems.tenantId, ctx.tenantId), eq(s.payItems.driverId, st.driverId)));
     for (const it of items) {
-      const line = st.lines.find((l) => l.kind === "deduction" && l.description === it.description);
-      if (line) await db.update(s.payItems).set({ remainingCents: Math.max(0, (it.remainingCents ?? 0) + line.amountCents), active: (it.remainingCents ?? 0) + line.amountCents > 0 }).where(eq(s.payItems.id, it.id));
+      const line = st.lines.find((l) => l.kind === "deduction" && (l.payItemId ? l.payItemId === it.id : l.description === it.description));
+      if (!line) continue;
+      if (it.remainingCents != null) await db.update(s.payItems).set({ remainingCents: Math.max(0, (it.remainingCents ?? 0) + line.amountCents), active: (it.remainingCents ?? 0) + line.amountCents > 0 }).where(eq(s.payItems.id, it.id));
+      // escrow: what was held this week is now in the driver's escrow balance
+      if (it.kind === "escrow") await db.update(s.payItems).set({ balanceCents: (it.balanceCents ?? 0) - line.amountCents }).where(eq(s.payItems.id, it.id));
     }
   }
   await writeAudit(db, ctx, "settlement", id, "transition", { state: { from: st.state, to } }, p.reference);
@@ -752,11 +769,11 @@ export async function listSettlements(ctx: Ctx) {
   return db.select({ st: s.settlements, driverName: s.drivers.name }).from(s.settlements).innerJoin(s.drivers, eq(s.drivers.id, s.settlements.driverId)).where(eq(s.settlements.tenantId, ctx.tenantId)).orderBy(desc(s.settlements.periodStart)).limit(500);
 }
 
-export async function addPayItem(ctx: Ctx, driverId: string, it: { kind: "deduction" | "reimbursement"; description: string; amountCents: number; recurring?: boolean; remainingCents?: number | null; endsAt?: Date | null }) {
+export async function addPayItem(ctx: Ctx, driverId: string, it: { kind: "deduction" | "reimbursement" | "advance" | "escrow"; description: string; amountCents: number; recurring?: boolean; remainingCents?: number | null; targetCents?: number | null; endsAt?: Date | null }) {
   assertCtx(ctx);
   requirePermission(ctx, "billing.issue");
   if (!it.description?.trim() || !Number.isFinite(it.amountCents) || it.amountCents <= 0) throw new ValidationError("description and a positive amount");
-  const [row] = await db.insert(s.payItems).values({ id: newId(), tenantId: ctx.tenantId, driverId, kind: it.kind, description: it.description.trim(), amountCents: it.amountCents, recurring: !!it.recurring, remainingCents: it.remainingCents ?? null, endsAt: it.endsAt ?? null, createdBy: ctx.userId, updatedBy: ctx.userId }).returning();
+  const [row] = await db.insert(s.payItems).values({ id: newId(), tenantId: ctx.tenantId, driverId, kind: it.kind, description: it.description.trim(), amountCents: it.amountCents, recurring: it.kind === "escrow" ? true : !!it.recurring, remainingCents: it.kind === "advance" ? (it.remainingCents ?? it.amountCents) : (it.remainingCents ?? null), targetCents: it.kind === "escrow" ? (it.targetCents ?? null) : null, balanceCents: it.kind === "escrow" ? 0 : null, endsAt: it.endsAt ?? null, createdBy: ctx.userId, updatedBy: ctx.userId }).returning();
   return row;
 }
 
@@ -803,3 +820,17 @@ export async function orderPnl(ctx: Ctx, orderId: string) {
 }
 
 export { diff };
+
+/** Pay back escrow to the driver: a one-off reimbursement on the next statement, taken off the balance now. */
+export async function releaseEscrow(ctx: Ctx, payItemId: string, amountCents: number, note?: string | null) {
+  assertCtx(ctx);
+  requirePermission(ctx, "billing.issue");
+  const [it] = await db.select().from(s.payItems).where(and(eq(s.payItems.tenantId, ctx.tenantId), eq(s.payItems.id, payItemId))).limit(1);
+  if (!it || it.kind !== "escrow") throw new NotFoundError("escrow", payItemId);
+  if (!Number.isFinite(amountCents) || amountCents <= 0) throw new ValidationError("enter the amount to release", "amount");
+  if (amountCents > (it.balanceCents ?? 0)) throw new ValidationError(`only ${(it.balanceCents ?? 0) / 100} is held in this escrow`, "amount");
+  await db.update(s.payItems).set({ balanceCents: (it.balanceCents ?? 0) - amountCents, updatedAt: new Date(), updatedBy: ctx.userId }).where(eq(s.payItems.id, it.id));
+  const [row] = await db.insert(s.payItems).values({ id: newId(), tenantId: ctx.tenantId, driverId: it.driverId, kind: "reimbursement", description: `Escrow release — ${it.description}${note ? ` (${note})` : ""}`, amountCents, recurring: false, createdBy: ctx.userId, updatedBy: ctx.userId }).returning();
+  await writeAudit(db, ctx, "driver", it.driverId, "update", { escrow: { from: it.balanceCents, to: (it.balanceCents ?? 0) - amountCents } }, "escrow released");
+  return row;
+}

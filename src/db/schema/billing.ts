@@ -153,7 +153,7 @@ export const carrierBills = pgTable(
 );
 
 export const SETTLEMENT_STATES = ["open", "reviewed", "approved", "paid"] as const;
-export type SettlementLine = { id: string; kind: "leg" | "accessorial" | "deduction" | "reimbursement" | "adjustment"; legId?: string | null; orderNumber?: string | null; description: string; qty: number; unit: string; rateCents: number; amountCents: number; source: string; disputed?: string | null; response?: string | null };
+export type SettlementLine = { id: string; kind: "leg" | "accessorial" | "deduction" | "reimbursement" | "adjustment"; legId?: string | null; orderNumber?: string | null; description: string; qty: number; unit: string; rateCents: number; amountCents: number; source: string; disputed?: string | null; response?: string | null; payItemId?: string | null };
 
 export const settlements = pgTable(
   "settlements",
@@ -187,9 +187,11 @@ export const payItems = pgTable(
     id: id(),
     tenantId: tenantId(),
     driverId: text("driver_id").notNull(),
-    kind: text("kind").notNull(), // deduction | reimbursement
+    kind: text("kind").notNull(), // deduction | reimbursement | advance | escrow
     description: text("description").notNull(),
     amountCents: integer("amount_cents").notNull(),
+    targetCents: integer("target_cents"), // escrow: stop collecting at this balance
+    balanceCents: integer("balance_cents"), // escrow: held for the driver so far
     recurring: boolean("recurring").notNull().default(false),
     remainingCents: integer("remaining_cents"), // for advances paid back over time
     startsAt: timestamp("starts_at", { withTimezone: true }).notNull().defaultNow(),
@@ -218,4 +220,26 @@ export const accountingExports = pgTable(
     createdBy: text("created_by"),
   },
   (t) => [index("accounting_exports_tenant").on(t.tenantId, t.createdAt)],
+);
+
+export const PAY_RULE_KINDS = ["per_loaded_mile", "per_empty_mile", "per_total_mile", "pct_linehaul", "pct_total", "flat_per_load", "flat_per_leg", "per_stop", "per_extra_stop", "hourly", "crossing"] as const;
+export type PayRuleKind = (typeof PAY_RULE_KINDS)[number];
+/** One way a driver earns: the amount is cents (per mile, per stop, per hour, flat) or basis points for a percent (6200 = 62%). */
+export type PayRule = { id: string; kind: PayRuleKind; amount: number; label?: string; when?: { legTypes?: string[]; customerIds?: string[]; equipment?: string[]; minMiles?: number | null; maxMiles?: number | null } };
+
+/** A pay plan: the rules a group of drivers is paid by, plus what applies to the whole statement. */
+export const payPlans = pgTable(
+  "pay_plans",
+  {
+    id: id(),
+    tenantId: tenantId(),
+    name: text("name").notNull(),
+    rules: jsonb("rules").$type<PayRule[]>().notNull().default(sql`'[]'::jsonb`),
+    teamSplit: text("team_split").notNull().default("half"), // half | full — what each team driver gets of a leg
+    minimumCents: integer("minimum_cents"), // per statement: topped up to this
+    perDiemCents: integer("per_diem_cents"), // per day worked (a completed leg that day)
+    notes: text("notes"),
+    ...audit(),
+  },
+  (t) => [index("pay_plans_tenant").on(t.tenantId)],
 );
