@@ -47,6 +47,9 @@ export default async function KindListPage({ params, searchParams }: PageProps<"
           <Link href={`/settings/${path}${showArchived ? "" : "?archived=1"}`} className="btn btn-ghost btn-sm text-muted">
             {showArchived ? "Show active" : "Show archived"}
           </Link>
+          <a href={`/api/records/${path}${showArchived ? "?archived=1" : ""}`} className="btn btn-ghost btn-sm text-muted ml-auto" title="Every column, in the layout the import reads back">
+            Export CSV
+          </a>
         </div>
         <div className="card overflow-hidden">
           {filtered.length === 0 ? (

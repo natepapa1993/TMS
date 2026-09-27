@@ -30,6 +30,15 @@ test("signup → day-one checklist → add entity, truck, driver, customer, loca
 
   await page.goto("/settings");
   await expect(page.getByText("Day one")).toBeHidden(); // checklist done
+
+  // your data, out again: the CSV has the import's columns and the rows just added
+  const csv = await page.request.get("/api/records/trucks");
+  expect(csv.headers()["content-type"]).toContain("text/csv");
+  const text = await csv.text();
+  expect(text.split("\n")[0]).toContain("Unit #");
+  expect(text).toContain("2117");
+  expect(text).toContain("Brown (border zone)");
+  expect((await page.request.get("/api/records/nope")).status()).toBe(404);
 });
 
 test("record screen: edit everything, history shows the change, archive blocked while in use, restore", async ({ page }) => {
