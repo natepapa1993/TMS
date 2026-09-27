@@ -37,7 +37,8 @@ type Leg = {
 type Stop = { id: string; seq: number; type: string; name: string; country: string; windowStart: string | null; windowEnd: string | null; arrivedAt: string | null; departedAt: string | null; address: { city?: string; state?: string } | null };
 type Order = { id: string; orderNumber: string; state: string; rateCents: number | null; rateTbd: boolean; currency: string; equipment: string; refs: Record<string, string>; holdReason: string | null; legTemplate: string | null; customerId: string | null; brokerId: string | null };
 type Flag = { id: string; code: string; level: string; title: string; detail: string | null; legId: string | null };
-export type Row = { order: Order; stops: Stop[]; legs: Leg[]; openFlags: Flag[]; stage: "pending" | "planned" | "dispatched" | "delivered" | "closed"; customerName: string | null };
+type Tender = { id: string; legId: string; carrierId: string; carrierName: string; state: string; channel: string; sentTo: string | null; expiresAt: string; respondedAt: string | null; respondedBy: string | null; responseNote: string | null; driverName: string | null; driverPhone: string | null; unitNumber: string | null; rateCents: number | null; link: string };
+export type Row = { order: Order; stops: Stop[]; legs: Leg[]; openFlags: Flag[]; stage: "pending" | "planned" | "dispatched" | "delivered" | "closed"; customerName: string | null; tenders: Tender[] };
 
 export type BoardData = {
   rows: Row[];
@@ -84,7 +85,7 @@ export function DispatchBoard({ data }: { data: BoardData }) {
   const [q, setQ] = useState("");
   const [selectedId, setSelectedIdRaw] = useState<string | null>(null);
   const [newOpen, setNewOpen] = useState(false);
-  const [popup, setPopup] = useState<null | { kind: "assign" | "split" | "hold" | "cancel" | "oos" | "decline" | "drivers"; legId?: string }>(null);
+  const [popup, setPopup] = useState<null | { kind: "assign" | "split" | "hold" | "cancel" | "oos" | "decline" | "drivers" | "track"; legId?: string }>(null);
   // Selecting another order always drops any popup that belonged to the previous one.
   const setSelectedId = useCallback((id: string | null) => {
     setPopup(null);
@@ -227,6 +228,7 @@ export function DispatchBoard({ data }: { data: BoardData }) {
           }}
         />
       )}
+      {selected && popup?.kind === "track" && <TrackModal r={selected} onClose={() => setPopup(null)} />}
       {selected && popup?.kind === "drivers" && popupLeg && (
         <DriversModal leg={popupLeg} data={data} onClose={() => setPopup(null)} onDone={(msg) => { setPopup(null); t.ok(msg); router.refresh(); }} />
       )}
@@ -301,7 +303,7 @@ function BoardRow({ r, selected, onClick }: { r: Row; selected: boolean; onClick
   );
 }
 
-function SidePanel({ r, data, busy, canDispatch, onClose, onPopup, run }: { r: Row; data: BoardData; busy: boolean; canDispatch: boolean; onClose: () => void; onPopup: (p: { kind: "assign" | "split" | "hold" | "cancel" | "oos" | "decline" | "drivers"; legId?: string }) => void; run: (label: string, fn: () => Promise<{ ok: boolean; error?: string }>) => void }) {
+function SidePanel({ r, data, busy, canDispatch, onClose, onPopup, run }: { r: Row; data: BoardData; busy: boolean; canDispatch: boolean; onClose: () => void; onPopup: (p: { kind: "assign" | "split" | "hold" | "cancel" | "oos" | "decline" | "drivers" | "track"; legId?: string }) => void; run: (label: string, fn: () => Promise<{ ok: boolean; error?: string }>) => void }) {
   const nl = nextLeg(r);
   const hold = r.order.state === "exception";
   const closed = r.order.state === "cancelled";
@@ -346,7 +348,7 @@ function SidePanel({ r, data, busy, canDispatch, onClose, onPopup, run }: { r: R
         )}
         {!closed && canDispatch && (
           <div className="grid grid-cols-5 gap-1 mt-2">
-            <QuickBtn label="Track" hint="Live tracking arrives in M1" disabled />
+            <QuickBtn label="Track" hint="Tracking link, driver app link, last position" onClick={() => onPopup({ kind: "track" })} />
             <QuickBtn label="Split" onClick={() => nl && onPopup({ kind: "split", legId: nl.id })} disabled={!nl || ["at_delivery", "completed"].includes(nl.state)} />
             <QuickBtn label="Change" hint="Re-assign this leg" onClick={() => nl && onPopup({ kind: "assign", legId: nl.id })} disabled={!nl || !["planned", "dispatched", "accepted"].includes(nl.state)} />
             <QuickBtn label="Unit OOS" onClick={() => nl && onPopup({ kind: "oos", legId: nl.id })} disabled={!nl?.truckId} />
@@ -396,6 +398,28 @@ function SidePanel({ r, data, busy, canDispatch, onClose, onPopup, run }: { r: R
                       "Nobody assigned"
                     )}
                     {l.declineReason && <div className="text-red">Declined: {l.declineReason}</div>}
+                    {(() => {
+                      const tn = r.tenders.find((t) => t.legId === l.id && (t.state === "sent" || (l.state === "accepted" && t.state === "accepted")));
+                      if (!tn) return null;
+                      const mins = Math.round((new Date(tn.expiresAt).getTime() - Date.now()) / 60000);
+                      return tn.state === "sent" ? (
+                        <div className="mt-1 text-[12px]">
+                          <span className="pill pill-amber">Tender out</span> {tn.channel} to {tn.sentTo ?? tn.carrierName} · {mins > 0 ? `${mins < 90 ? `${mins} min` : `${Math.round(mins / 60)} h`} left` : "expiring"}
+                          <a className="btn btn-ghost btn-sm ml-1" href={tn.link} target="_blank" rel="noreferrer" title="The carrier's accept/decline page — paste it into WhatsApp if they didn't get the email">
+                            Link
+                          </a>
+                          {canDispatch && (
+                            <button className="btn btn-ghost btn-sm ml-1 text-red" onClick={() => run("Tender withdrawn", () => A.withdrawTenderAction(l.id))}>
+                              Withdraw
+                            </button>
+                          )}
+                        </div>
+                      ) : (
+                        <div className="mt-1 text-[12px] text-green">
+                          ✓ {tn.respondedBy} accepted{tn.driverName ? ` · driver ${tn.driverName}${tn.driverPhone ? ` ${tn.driverPhone}` : ""}${tn.unitNumber ? ` · unit ${tn.unitNumber}` : ""}` : ""}
+                        </div>
+                      );
+                    })()}
                   </div>
                   {canDispatch && !closed && l.state !== "completed" && l.state !== "cancelled" && (
                     <div className="flex flex-wrap gap-1 mt-2">
@@ -638,19 +662,31 @@ function AssignModal({ leg, order, data, onClose, onDone }: { leg: Leg; order: O
   const [err, setErr] = useState<string | null>(null);
   const [pending, start] = useTransition();
   const [sendNow, setSendNow] = useState(true);
+  const [tender, setTender] = useState({ channel: "email" as "email" | "phone", expires: "60", message: "" });
 
   useEffect(() => {
     A.candidatesAction(leg.id).then((r) => setCands(r.ok ? r.data : []));
   }, [leg.id]);
 
+  const rateCents = carrierRate.trim() ? Math.round(Number(carrierRate.replace(/[$,]/g, "")) * 100) : null;
   const go = () =>
     start(async () => {
       setErr(null);
-      const a = tab === "truck" ? (pick ? { kind: "truck" as const, ...pick } : null) : carrierId ? { kind: "carrier" as const, carrierId, carrierRateCents: carrierRate.trim() ? Math.round(Number(carrierRate.replace(/[$,]/g, "")) * 100) : null } : null;
-      if (!a) return setErr(tab === "truck" ? "Pick a unit" : "Pick a carrier");
       const opts = needsOverride && override.trim() ? { override: true, reason: override.trim() } : {};
+      if (tab === "carrier") {
+        if (!carrierId) return setErr("Pick a carrier");
+        if (sendNow && tender.channel === "email") {
+          const r = await A.tenderAction(leg.id, { carrierId, rateCents, expiresInMinutes: Number(tender.expires), message: tender.message.trim() || null, ...opts });
+          if (r.ok) onDone(`Tender emailed to ${r.data.to} — expires in ${tender.expires} min`);
+          else if (r.code === "eligibility") setNeedsOverride({ message: r.error, hard: !!r.hardBlocked });
+          else setErr(r.error);
+          return;
+        }
+      }
+      const a = tab === "truck" ? (pick ? { kind: "truck" as const, ...pick } : null) : { kind: "carrier" as const, carrierId, carrierRateCents: rateCents };
+      if (!a) return setErr("Pick a unit");
       const r = sendNow && (leg.state === "unassigned" || leg.state === "declined" || leg.state === "planned") ? await A.planAndDispatchAction(leg.id, a, opts) : await A.planAction(leg.id, a, opts);
-      if (r.ok) onDone(sendNow ? "Assigned and sent" : "Assigned — in Planned");
+      if (r.ok) onDone(sendNow ? (tab === "carrier" ? "Marked sent — confirm by phone, then press Accepted" : "Assigned and sent") : "Assigned — in Planned");
       else if (r.code === "eligibility") setNeedsOverride({ message: r.error, hard: !!r.hardBlocked });
       else setErr(r.error);
     });
@@ -676,7 +712,7 @@ function AssignModal({ leg, order, data, onClose, onDone }: { leg: Leg; order: O
             Cancel
           </button>
           <button className="btn btn-primary" onClick={go} disabled={pending || (needsOverride?.hard ?? false)}>
-            {pending ? "Working…" : needsOverride && !needsOverride.hard ? "Override & assign" : sendNow ? "Assign & send" : "Assign"}
+            {pending ? "Working…" : needsOverride && !needsOverride.hard ? "Override & assign" : sendNow ? (tab === "carrier" && tender.channel === "email" ? "Send tender" : "Assign & send") : "Assign"}
           </button>
         </>
       }
@@ -733,10 +769,36 @@ function AssignModal({ leg, order, data, onClose, onDone }: { leg: Leg; order: O
               ))}
             </select>
           </div>
-          <div>
-            <label className="label">Carrier rate (USD)</label>
-            <input className="input" inputMode="decimal" value={carrierRate} onChange={(e) => setCarrierRate(e.target.value)} placeholder="what you pay them" />
+          <div className="grid grid-cols-3 gap-2">
+            <div>
+              <label className="label">Carrier rate (USD)</label>
+              <input className="input" inputMode="decimal" value={carrierRate} onChange={(e) => setCarrierRate(e.target.value)} placeholder="what you pay them" />
+            </div>
+            <div>
+              <label className="label">Tender by</label>
+              <select className="select" value={tender.channel} onChange={(e) => setTender({ ...tender, channel: e.target.value as "email" | "phone" })}>
+                <option value="email">Email with accept link</option>
+                <option value="phone">Phone — I&apos;ll confirm myself</option>
+              </select>
+            </div>
+            <div>
+              <label className="label">Answer within</label>
+              <select className="select" value={tender.expires} onChange={(e) => setTender({ ...tender, expires: e.target.value })} disabled={tender.channel !== "email"}>
+                <option value="30">30 min</option>
+                <option value="60">1 hour</option>
+                <option value="120">2 hours</option>
+                <option value="240">4 hours</option>
+                <option value="1440">24 hours</option>
+              </select>
+            </div>
           </div>
+          {tender.channel === "email" && (
+            <div>
+              <label className="label">Note to the carrier (optional)</label>
+              <input className="input" value={tender.message} onChange={(e) => setTender({ ...tender, message: e.target.value })} placeholder="Team drivers please. Pickup appointment is firm." />
+              <div className="help">They get the pickup, delivery, equipment, rate and a link to accept or decline. No answer by the deadline = back to Pending with a flag.</div>
+            </div>
+          )}
         </div>
       )}
       {pick && tab === "truck" && (
@@ -897,6 +959,76 @@ function SplitModal({ leg, stops, onClose, onDone }: { leg: Leg; stops: Stop[]; 
         </div>
       </div>
       {err && <div className="error mt-2">{err}</div>}
+    </Modal>
+  );
+}
+
+function TrackModal({ r, onClose }: { r: Row; onClose: () => void }) {
+  const [link, setLink] = useState<string | null>(null);
+  const [driverLinks, setDriverLinks] = useState<{ name: string; url: string; phone: string | null; whatsapp: string | null }[]>([]);
+  const [copied, setCopied] = useState<string | null>(null);
+  const nl = nextLeg(r);
+  useEffect(() => {
+    A.trackingLinkAction(r.order.id).then((x) => x.ok && setLink(x.data.url));
+    const ids = [...new Set(r.legs.flatMap((l) => [l.driverId, l.coDriverId]).filter((x): x is string => !!x))];
+    Promise.all(ids.map((id) => A.driverLinkAction(id))).then((rs) => setDriverLinks(rs.filter((x) => x.ok).map((x) => (x as { ok: true; data: { name: string; url: string; phone: string | null; whatsapp: string | null } }).data)));
+  }, [r.order.id, r.legs]);
+  const copy = async (s: string, what: string) => {
+    try {
+      await navigator.clipboard.writeText(s);
+      setCopied(what);
+      setTimeout(() => setCopied(null), 1500);
+    } catch {
+      /* clipboard blocked; the text is visible to select */
+    }
+  };
+  const wa = (phone: string | null, text: string) => (phone ? `https://wa.me/${phone.replace(/\D/g, "")}?text=${encodeURIComponent(text)}` : null);
+  return (
+    <Modal open onClose={onClose} title={`Track · ${r.order.orderNumber}`}>
+      <div className="space-y-4">
+        <div>
+          <div className="label">Customer tracking link</div>
+          <div className="text-[12.5px] text-muted mb-1.5">Stops, progress, last position. No rates, no phones. Same link for the life of the order.</div>
+          {link ? (
+            <div className="flex gap-2">
+              <input className="input mono text-[12.5px]" readOnly value={link} onFocus={(e) => e.currentTarget.select()} />
+              <button className="btn" onClick={() => copy(link, "tracking")}>
+                {copied === "tracking" ? "Copied" : "Copy"}
+              </button>
+              <a className="btn" href={link} target="_blank" rel="noreferrer">
+                Open
+              </a>
+            </div>
+          ) : (
+            <Spinner />
+          )}
+        </div>
+        <div>
+          <div className="label">Driver app</div>
+          <div className="text-[12.5px] text-muted mb-1.5">Send the driver their link once; it stays theirs. One button per step, GPS with every press.</div>
+          {driverLinks.length === 0 ? (
+            <div className="text-[13px] text-muted">No driver on this order yet.</div>
+          ) : (
+            driverLinks.map((d) => (
+              <div key={d.url} className="flex items-center gap-2 mb-1.5">
+                <span className="w-36 font-semibold truncate text-[13px]">{d.name}</span>
+                <button className="btn btn-sm" onClick={() => copy(d.url, d.url)}>
+                  {copied === d.url ? "Copied" : "Copy link"}
+                </button>
+                {wa(d.whatsapp ?? d.phone, `${d.name}, your loads: ${d.url}`) && (
+                  <a className="btn btn-sm" href={wa(d.whatsapp ?? d.phone, `${d.name}, your loads: ${d.url}`)!} target="_blank" rel="noreferrer">
+                    WhatsApp
+                  </a>
+                )}
+                <a className="btn btn-sm btn-ghost" href={d.url} target="_blank" rel="noreferrer">
+                  Preview
+                </a>
+              </div>
+            ))
+          )}
+        </div>
+        {nl?.assigneeKind === "carrier" && <div className="text-[12.5px] text-muted">This leg is with a partner carrier: their driver details come back on the tender. ELD tracking for partner carriers arrives with the carrier portal.</div>}
+      </div>
     </Modal>
   );
 }

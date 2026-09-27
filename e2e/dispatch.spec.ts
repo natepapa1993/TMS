@@ -55,8 +55,9 @@ test("dispatcher day: new order in four fields, B-1 blocked on the US leg, carri
   await dlg.locator("button:has-text('Partner carrier')").click();
   await dlg.locator("select").first().selectOption({ label: "Transportes Garza (MX)" });
   await dlg.locator("input[placeholder='what you pay them']").fill("450");
+  await dlg.locator("select").nth(1).selectOption("phone"); // tendered by phone: dispatcher confirms
   await dlg.locator("button:has-text('Assign & send')").click();
-  await expect(page.getByRole("status")).toContainText("Assigned and sent");
+  await expect(page.getByRole("status")).toContainText("Marked sent");
   await expect(page.locator(".stage-tab:has-text('Dispatched') .count")).toHaveText("1");
 
   // walk the MX leg to completed with the per-leg buttons
@@ -180,8 +181,9 @@ test("unit OOS from Fleet pulls the planned leg back to Pending; split makes a s
   await panel.locator(".rounded-lg.border >> nth=0 >> button:has-text('Assign')").click();
   await page.getByRole("dialog").locator("button:has-text('Partner carrier')").click();
   await page.getByRole("dialog").locator("select").first().selectOption({ label: "Transportes Garza (MX)" });
+  await page.getByRole("dialog").locator("select").nth(1).selectOption("phone");
   await page.getByRole("dialog").locator("button:has-text('Assign & send')").click();
-  await expect(page.getByRole("status")).toContainText("Assigned and sent");
+  await expect(page.getByRole("status")).toContainText("Marked sent");
   await page.click(".stage-tab:has-text('Dispatched')");
   await page.click(".row[role=button]");
   await panel.locator("button:has-text('Hold')").click();

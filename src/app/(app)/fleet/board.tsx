@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Confirm, Modal, Pill, Toast, useToast } from "@/components/ui";
 import { truckOosAction, truckActiveAction, saveRecord } from "../settings/actions";
+import { driverLinkAction } from "../dispatch/actions";
 import { LEG_LABEL } from "@/domain/states";
 import type { LegState } from "@/db/schema";
 
@@ -21,6 +22,20 @@ export function FleetBoard({ units, drivers }: { units: Unit[]; drivers: Driver[
   const [assign, setAssign] = useState<Unit | null>(null);
   const [filter, setFilter] = useState<"all" | "free" | "busy" | "oos">("all");
   const [pending, start] = useTransition();
+  const [copied, setCopied] = useState<string | null>(null);
+  const appLink = (driverId: string) =>
+    start(async () => {
+      const r = await driverLinkAction(driverId);
+      if (!r.ok) return t.err(r.error);
+      try {
+        await navigator.clipboard.writeText(r.data.url);
+        setCopied(driverId);
+        setTimeout(() => setCopied(null), 1500);
+        t.ok(`${r.data.name}'s app link copied — send it by WhatsApp or text`);
+      } catch {
+        t.ok(r.data.url);
+      }
+    });
   const shown = units.filter((u) => (filter === "all" ? true : filter === "oos" ? u.status === "oos" : filter === "busy" ? u.loads.length > 0 && u.status !== "oos" : u.loads.length === 0 && u.status !== "oos"));
   return (
     <>
@@ -75,6 +90,9 @@ export function FleetBoard({ units, drivers }: { units: Unit[]; drivers: Driver[
                             {d.name}
                           </Link>{" "}
                           <span className="text-faint">{d.driverType}</span>
+                          <button className="btn btn-ghost btn-sm ml-1 text-teal" onClick={() => appLink(d.id)} title="Copy this driver's app link">
+                            {copied === d.id ? "Copied" : "App link"}
+                          </button>
                         </div>
                       ))
                     ) : (

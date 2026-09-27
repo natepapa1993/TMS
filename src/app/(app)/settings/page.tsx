@@ -47,6 +47,15 @@ export default async function SettingsPage({ searchParams }: PageProps<"/setting
             </ol>
           </div>
         )}
+        <section>
+          <div className="eyebrow mb-2">Connections</div>
+          <Link href="/settings/integrations" className="card p-4 hover:border-teal transition-colors flex items-start justify-between gap-3 max-w-md">
+            <div>
+              <div className="font-extrabold">Integrations</div>
+              <div className="text-muted text-[12.5px] mt-0.5">Motive ELD tracking, email sending</div>
+            </div>
+          </Link>
+        </section>
         {SECTIONS.map((sec) => (
           <section key={sec}>
             <div className="eyebrow mb-2">{sec}</div>

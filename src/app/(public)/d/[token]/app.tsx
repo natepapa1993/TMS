@@ -1,0 +1,192 @@
+"use client";
+
+import { useEffect, useRef, useState, useTransition } from "react";
+import { useRouter } from "next/navigation";
+import { driverStepAction, driverPingAction } from "../../actions";
+import { LEG_LABEL } from "@/domain/states";
+import type { LegState } from "@/db/schema";
+
+/**
+ * The driver app (spec §5.2): one screen, one big button, Spanish under English.
+ * Works as a phone web page; asks for location and sends it with every step and every 2 minutes.
+ */
+
+type Stop = { id: string; name: string; type: string; country: string; address: { line1?: string; city?: string; state?: string } | null; windowStart: string | null; windowEnd: string | null; contact: string | null; notes: string | null };
+type Item = { leg: { id: string; seq: number; type: string; state: LegState }; order: { orderNumber: string; equipment: string; cargoNote: string | null; refs: Record<string, string> }; from: Stop | null; to: Stop | null; truck: { unitNumber: string } | null; next: { to: LegState; label: string; es: string } | null };
+type Data = { driver: { name: string; driverType: string }; current: Item | null; items: Item[] };
+
+type Fix = { lat: number; lng: number; accuracyM: number | null; speedMph: number | null; heading: number | null };
+
+function getFix(timeout = 8000): Promise<Fix | null> {
+  return new Promise((resolve) => {
+    if (typeof navigator === "undefined" || !navigator.geolocation) return resolve(null);
+    navigator.geolocation.getCurrentPosition(
+      (p) => resolve({ lat: p.coords.latitude, lng: p.coords.longitude, accuracyM: p.coords.accuracy ? Math.round(p.coords.accuracy) : null, speedMph: p.coords.speed != null ? Math.round(p.coords.speed * 2.23694) : null, heading: p.coords.heading != null ? Math.round(p.coords.heading) : null }),
+      () => resolve(null),
+      { enableHighAccuracy: true, timeout, maximumAge: 30_000 },
+    );
+  });
+}
+
+const addr = (s: Stop | null) => (s ? [s.address?.line1, s.address?.city, s.address?.state].filter(Boolean).join(", ") : "");
+const when = (d: string | null) => (d ? new Date(d).toLocaleString("en-US", { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) : null);
+const mapsHref = (s: Stop | null) => (s ? `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent([s.name, addr(s)].filter(Boolean).join(", "))}` : "#");
+
+export function DriverApp({ token, data }: { token: string; data: Data }) {
+  const router = useRouter();
+  const [pending, start] = useTransition();
+  const [err, setErr] = useState<string | null>(null);
+  const [gps, setGps] = useState<"unknown" | "on" | "off">("unknown");
+  const [declining, setDeclining] = useState(false);
+  const [reason, setReason] = useState("");
+  const [sel, setSel] = useState<string | null>(null);
+  const cur = data.items.find((i) => i.leg.id === sel) ?? data.current;
+  const lastPing = useRef(0);
+
+  // location: one fix on open, then every 2 minutes while the page is visible
+  useEffect(() => {
+    let alive = true;
+    const ping = async () => {
+      const fix = await getFix();
+      if (!alive) return;
+      setGps(fix ? "on" : "off");
+      if (fix && Date.now() - lastPing.current > 90_000) {
+        lastPing.current = Date.now();
+        driverPingAction(token, fix).catch(() => null);
+      }
+    };
+    ping();
+    const id = setInterval(() => document.visibilityState === "visible" && ping(), 120_000);
+    return () => {
+      alive = false;
+      clearInterval(id);
+    };
+  }, [token]);
+
+  const step = (decline = false) =>
+    start(async () => {
+      setErr(null);
+      if (!cur) return;
+      const fix = await getFix(6000);
+      setGps(fix ? "on" : "off");
+      const r = await driverStepAction(token, cur.leg.id, { lat: fix?.lat ?? null, lng: fix?.lng ?? null, accuracyM: fix?.accuracyM ?? null, decline, declineReason: decline ? reason : null });
+      if (r.ok) {
+        setDeclining(false);
+        setReason("");
+        router.refresh();
+      } else setErr(r.error);
+    });
+
+  return (
+    <div>
+      <div className="flex items-center justify-between">
+        <div>
+          <div className="eyebrow">Driver · Chofer</div>
+          <div className="h1">{data.driver.name}</div>
+        </div>
+        <span className={`pill ${gps === "on" ? "pill-green" : gps === "off" ? "pill-amber" : "pill-slate"}`}>{gps === "on" ? "GPS on" : gps === "off" ? "GPS off" : "GPS…"}</span>
+      </div>
+
+      {!cur ? (
+        <div className="card p-6 mt-4 text-center">
+          <div className="h2">Nothing assigned right now</div>
+          <div className="text-muted mt-1">Nada asignado por ahora. Dispatch will send your next load here.</div>
+        </div>
+      ) : (
+        <div className="card mt-4 overflow-hidden">
+          <div className="px-5 pt-4 pb-3 border-b border-line flex items-center justify-between">
+            <div>
+              <div className="font-extrabold mono text-[15px]">{cur.order.orderNumber}</div>
+              <div className="text-muted text-[12.5px]">
+                {cur.truck ? `Unit ${cur.truck.unitNumber} · ` : ""}
+                {cur.order.equipment.replace("_", " ")}
+              </div>
+            </div>
+            <span className="pill pill-teal">{LEG_LABEL[cur.leg.state]}</span>
+          </div>
+          <div className="px-5 py-4 space-y-4">
+            <Place label="Pickup · Recoger" s={cur.from} active={["accepted", "en_route_to_pickup", "at_pickup"].includes(cur.leg.state)} />
+            <Place label="Deliver · Entregar" s={cur.to} active={["loaded", "en_route", "at_delivery"].includes(cur.leg.state)} />
+            {cur.order.cargoNote && <div className="text-[13px] text-muted">📦 {cur.order.cargoNote}</div>}
+          </div>
+          <div className="px-5 pb-5">
+            {cur.next ? (
+              <button className="btn btn-primary w-full justify-center flex-col gap-0" style={{ height: 72, fontSize: 18 }} onClick={() => step(false)} disabled={pending || declining}>
+                {pending ? "…" : cur.next.label}
+                {!pending && <span className="text-[12.5px] font-semibold opacity-80">{cur.next.es}</span>}
+              </button>
+            ) : (
+              <div className="text-center text-muted">Done · Listo</div>
+            )}
+            {(cur.leg.state === "dispatched" || cur.leg.state === "accepted") &&
+              (declining ? (
+                <div className="mt-3 space-y-2">
+                  <input className="input" placeholder="Why? / ¿Por qué?" value={reason} onChange={(e) => setReason(e.target.value)} autoFocus />
+                  <div className="flex gap-2">
+                    <button className="btn flex-1 justify-center" onClick={() => setDeclining(false)}>
+                      Back
+                    </button>
+                    <button className="btn btn-danger flex-1 justify-center" onClick={() => step(true)} disabled={pending || !reason.trim()}>
+                      Can&apos;t take it
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <button className="btn btn-ghost w-full justify-center mt-2 text-muted" onClick={() => setDeclining(true)}>
+                  I can&apos;t take this load · No puedo
+                </button>
+              ))}
+            {err && (
+              <div className="error mt-2" role="alert">
+                {err}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {data.items.length > 1 && (
+        <div className="mt-5">
+          <div className="eyebrow mb-2">All your loads · Todas tus cargas</div>
+          <div className="card divide-y divide-line">
+            {data.items.map((i) => (
+              <button key={i.leg.id} className={`w-full text-left px-4 py-3 flex items-center justify-between ${i.leg.id === cur?.leg.id ? "bg-teal-soft" : ""}`} onClick={() => setSel(i.leg.id)}>
+                <div>
+                  <div className="font-bold mono text-[13.5px]">{i.order.orderNumber}</div>
+                  <div className="text-muted text-[12.5px] truncate">
+                    {i.from?.name} → {i.to?.name}
+                  </div>
+                </div>
+                <span className="pill pill-slate">{LEG_LABEL[i.leg.state]}</span>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+      <div className="mt-5 text-center text-[12px] text-faint">Keep this page open while driving so dispatch can see you. · Deja esta página abierta.</div>
+    </div>
+  );
+}
+
+function Place({ label, s, active }: { label: string; s: Stop | null; active: boolean }) {
+  return (
+    <div className={`rounded-lg border p-3 ${active ? "border-teal bg-teal-soft/40" : "border-line"}`}>
+      <div className="text-[11px] font-bold tracking-wider uppercase text-faint">{label}</div>
+      <div className="font-extrabold text-[15px] mt-0.5">{s?.name ?? "—"}</div>
+      {s && addr(s) && <div className="text-[13px] text-muted">{addr(s)}</div>}
+      {s?.windowStart && (
+        <div className="text-[13px] font-semibold text-teal">
+          {when(s.windowStart)}
+          {s.windowEnd ? ` – ${when(s.windowEnd)}` : ""}
+        </div>
+      )}
+      {s?.notes && <div className="text-[13px] mt-1">📝 {s.notes}</div>}
+      {s?.contact && <div className="text-[13px] text-muted">☎ {s.contact}</div>}
+      {s && (
+        <a className="btn btn-sm mt-2" href={mapsHref(s)} target="_blank" rel="noreferrer">
+          Navigate · Ir
+        </a>
+      )}
+    </div>
+  );
+}

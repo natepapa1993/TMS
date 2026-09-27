@@ -1,28 +1,233 @@
 {
-  "_doc": "Feature board (spec §10.1a). Every feature has an ID, a status, and the tests that prove it. `pnpm features` fails CI when a feature marked done has no passing test reference, or a referenced test file is missing / does not mention the ID.",
+  "_doc": "Feature board (spec \u00a710.1a). Every feature has an ID, a status, and the tests that prove it. `pnpm features` fails CI when a feature marked done has no passing test reference, or a referenced test file is missing / does not mention the ID.",
   "features": [
-    { "id": "F-1.1", "name": "Quick-add popup for every master-data record", "milestone": "M0", "status": "done", "tests": ["src/data/fields.test.ts", "e2e/setup.spec.ts"] },
-    { "id": "F-1.2", "name": "Record screen: edit everything, history, concurrent-edit guard", "milestone": "M0", "status": "done", "tests": ["src/data/records.test.ts", "e2e/setup.spec.ts"] },
-    { "id": "F-1.3", "name": "CSV import with preview, auto-map, de-dup on unique key", "milestone": "M0", "status": "done", "tests": ["src/data/import.test.ts", "e2e/setup.spec.ts"] },
-    { "id": "F-1.4", "name": "Archive blocked while a record is on an open order/leg; restore", "milestone": "M0", "status": "done", "tests": ["src/data/records.test.ts", "e2e/setup.spec.ts"] },
-    { "id": "F-1.5", "name": "Roles and permissions enforced server-side", "milestone": "M0", "status": "done", "tests": ["src/data/records.test.ts", "src/domain/orders.test.ts"] },
-    { "id": "F-2.1", "name": "Orders: YY-NNNNN numbering, templates cut legs, book guards", "milestone": "M0", "status": "done", "tests": ["src/domain/orders.test.ts", "e2e/dispatch.spec.ts"] },
-    { "id": "F-2.2", "name": "Order and leg state machines (exhaustive transition tables)", "milestone": "M0", "status": "done", "tests": ["src/domain/states.test.ts", "src/domain/orders.test.ts"] },
-    { "id": "F-2.3", "name": "Dispatch board: Pending / Planned / Dispatched / Delivered by next actionable leg", "milestone": "M0", "status": "done", "tests": ["src/domain/orders.test.ts", "e2e/dispatch.spec.ts"] },
-    { "id": "F-3.1", "name": "Plan a leg on a truck or partner carrier; send; accept/decline; advance", "milestone": "M0", "status": "done", "tests": ["src/domain/orders.test.ts", "e2e/dispatch.spec.ts"] },
-    { "id": "F-3.2", "name": "Eligibility engine: B-1 hard block on US legs, brown plates, expired docs, overrides audited", "milestone": "M0", "status": "done", "tests": ["src/domain/eligibility.test.ts", "src/domain/orders.test.ts", "e2e/dispatch.spec.ts"] },
-    { "id": "F-11.1", "name": "Ranked candidate list with a plain-English reason per unit", "milestone": "M0", "status": "done", "tests": ["src/domain/orders.test.ts", "e2e/dispatch.spec.ts"] },
-    { "id": "F-11.2", "name": "Split a leg at a new stop", "milestone": "M0", "status": "done", "tests": ["src/domain/orders.test.ts", "e2e/dispatch.spec.ts"] },
-    { "id": "F-11.3", "name": "Unit out of service pulls planned/sent legs back to Pending, flags moving ones", "milestone": "M0", "status": "done", "tests": ["src/domain/orders.test.ts", "e2e/dispatch.spec.ts"] },
-    { "id": "F-11.4", "name": "Team drivers on a unit / on a leg with eligibility re-check", "milestone": "M0", "status": "done", "tests": ["src/domain/orders.test.ts", "e2e/dispatch.spec.ts"] },
-    { "id": "F-11.5", "name": "Hold / release an order; cancel with reason", "milestone": "M0", "status": "done", "tests": ["src/domain/orders.test.ts", "e2e/dispatch.spec.ts"] },
-    { "id": "F-15", "name": "Tenant isolation: every query scoped, cross-tenant reads fail closed", "milestone": "M0", "status": "done", "tests": ["src/data/records.test.ts", "src/domain/orders.test.ts", "e2e/dispatch.spec.ts"] },
-    { "id": "F-16", "name": "Audit row on every write", "milestone": "M0", "status": "done", "tests": ["src/data/records.test.ts", "src/domain/orders.test.ts"] },
-    { "id": "F-4", "name": "Tendering to carriers (email/WhatsApp/portal) with expiry", "milestone": "M1", "status": "planned", "tests": [] },
-    { "id": "F-5", "name": "Tracking: Motive/ELD, driver app, phone tracking, tracking links", "milestone": "M1", "status": "planned", "tests": [] },
-    { "id": "F-3", "name": "Crossing: 16-state machine, 14 cross-checks, NAD/Viatpro connectors, Solicitud de Retiro", "milestone": "M2", "status": "planned", "tests": [] },
-    { "id": "F-6", "name": "Compliance: document types, expiries, DQ file, Clearinghouse, blocks", "milestone": "M3", "status": "planned", "tests": [] },
-    { "id": "F-7", "name": "Billing: invoices per entity, POD rules, short-pay, EDI 210, QBO", "milestone": "M4", "status": "planned", "tests": [] },
-    { "id": "F-11.18", "name": "Sylectus Virtual Fleet two-way", "milestone": "M5", "status": "planned", "tests": [] }
+    {
+      "id": "F-1.1",
+      "name": "Quick-add popup for every master-data record",
+      "milestone": "M0",
+      "status": "done",
+      "tests": [
+        "src/data/fields.test.ts",
+        "e2e/setup.spec.ts"
+      ]
+    },
+    {
+      "id": "F-1.2",
+      "name": "Record screen: edit everything, history, concurrent-edit guard",
+      "milestone": "M0",
+      "status": "done",
+      "tests": [
+        "src/data/records.test.ts",
+        "e2e/setup.spec.ts"
+      ]
+    },
+    {
+      "id": "F-1.3",
+      "name": "CSV import with preview, auto-map, de-dup on unique key",
+      "milestone": "M0",
+      "status": "done",
+      "tests": [
+        "src/data/import.test.ts",
+        "e2e/setup.spec.ts"
+      ]
+    },
+    {
+      "id": "F-1.4",
+      "name": "Archive blocked while a record is on an open order/leg; restore",
+      "milestone": "M0",
+      "status": "done",
+      "tests": [
+        "src/data/records.test.ts",
+        "e2e/setup.spec.ts"
+      ]
+    },
+    {
+      "id": "F-1.5",
+      "name": "Roles and permissions enforced server-side",
+      "milestone": "M0",
+      "status": "done",
+      "tests": [
+        "src/data/records.test.ts",
+        "src/domain/orders.test.ts"
+      ]
+    },
+    {
+      "id": "F-2.1",
+      "name": "Orders: YY-NNNNN numbering, templates cut legs, book guards",
+      "milestone": "M0",
+      "status": "done",
+      "tests": [
+        "src/domain/orders.test.ts",
+        "e2e/dispatch.spec.ts"
+      ]
+    },
+    {
+      "id": "F-2.2",
+      "name": "Order and leg state machines (exhaustive transition tables)",
+      "milestone": "M0",
+      "status": "done",
+      "tests": [
+        "src/domain/states.test.ts",
+        "src/domain/orders.test.ts"
+      ]
+    },
+    {
+      "id": "F-2.3",
+      "name": "Dispatch board: Pending / Planned / Dispatched / Delivered by next actionable leg",
+      "milestone": "M0",
+      "status": "done",
+      "tests": [
+        "src/domain/orders.test.ts",
+        "e2e/dispatch.spec.ts"
+      ]
+    },
+    {
+      "id": "F-3.1",
+      "name": "Plan a leg on a truck or partner carrier; send; accept/decline; advance",
+      "milestone": "M0",
+      "status": "done",
+      "tests": [
+        "src/domain/orders.test.ts",
+        "e2e/dispatch.spec.ts"
+      ]
+    },
+    {
+      "id": "F-3.2",
+      "name": "Eligibility engine: B-1 hard block on US legs, brown plates, expired docs, overrides audited",
+      "milestone": "M0",
+      "status": "done",
+      "tests": [
+        "src/domain/eligibility.test.ts",
+        "src/domain/orders.test.ts",
+        "e2e/dispatch.spec.ts"
+      ]
+    },
+    {
+      "id": "F-11.1",
+      "name": "Ranked candidate list with a plain-English reason per unit",
+      "milestone": "M0",
+      "status": "done",
+      "tests": [
+        "src/domain/orders.test.ts",
+        "e2e/dispatch.spec.ts"
+      ]
+    },
+    {
+      "id": "F-11.2",
+      "name": "Split a leg at a new stop",
+      "milestone": "M0",
+      "status": "done",
+      "tests": [
+        "src/domain/orders.test.ts",
+        "e2e/dispatch.spec.ts"
+      ]
+    },
+    {
+      "id": "F-11.3",
+      "name": "Unit out of service pulls planned/sent legs back to Pending, flags moving ones",
+      "milestone": "M0",
+      "status": "done",
+      "tests": [
+        "src/domain/orders.test.ts",
+        "e2e/dispatch.spec.ts"
+      ]
+    },
+    {
+      "id": "F-11.4",
+      "name": "Team drivers on a unit / on a leg with eligibility re-check",
+      "milestone": "M0",
+      "status": "done",
+      "tests": [
+        "src/domain/orders.test.ts",
+        "e2e/dispatch.spec.ts"
+      ]
+    },
+    {
+      "id": "F-11.5",
+      "name": "Hold / release an order; cancel with reason",
+      "milestone": "M0",
+      "status": "done",
+      "tests": [
+        "src/domain/orders.test.ts",
+        "e2e/dispatch.spec.ts"
+      ]
+    },
+    {
+      "id": "F-15",
+      "name": "Tenant isolation: every query scoped, cross-tenant reads fail closed",
+      "milestone": "M0",
+      "status": "done",
+      "tests": [
+        "src/data/records.test.ts",
+        "src/domain/orders.test.ts",
+        "e2e/dispatch.spec.ts"
+      ]
+    },
+    {
+      "id": "F-16",
+      "name": "Audit row on every write",
+      "milestone": "M0",
+      "status": "done",
+      "tests": [
+        "src/data/records.test.ts",
+        "src/domain/orders.test.ts"
+      ]
+    },
+    {
+      "id": "F-4",
+      "name": "Tendering: offer a leg to a carrier by email link with a deadline; accept/decline/expire/withdraw",
+      "milestone": "M1",
+      "status": "done",
+      "tests": [
+        "src/domain/tracking.test.ts",
+        "e2e/tracking.spec.ts"
+      ]
+    },
+    {
+      "id": "F-5",
+      "name": "Tracking: driver app (one button per step, GPS), Motive ELD poll, phone pings, customer tracking link, no-position watchdog",
+      "milestone": "M1",
+      "status": "done",
+      "tests": [
+        "src/domain/tracking.test.ts",
+        "src/integrations/motive.test.ts",
+        "e2e/tracking.spec.ts"
+      ]
+    },
+    {
+      "id": "F-4.2",
+      "name": "WhatsApp Business tender channel + driver messages",
+      "milestone": "M1.5",
+      "status": "planned",
+      "tests": []
+    },
+    {
+      "id": "F-3",
+      "name": "Crossing: 16-state machine, 14 cross-checks, NAD/Viatpro connectors, Solicitud de Retiro",
+      "milestone": "M2",
+      "status": "planned",
+      "tests": []
+    },
+    {
+      "id": "F-6",
+      "name": "Compliance: document types, expiries, DQ file, Clearinghouse, blocks",
+      "milestone": "M3",
+      "status": "planned",
+      "tests": []
+    },
+    {
+      "id": "F-7",
+      "name": "Billing: invoices per entity, POD rules, short-pay, EDI 210, QBO",
+      "milestone": "M4",
+      "status": "planned",
+      "tests": []
+    },
+    {
+      "id": "F-11.18",
+      "name": "Sylectus Virtual Fleet two-way",
+      "milestone": "M5",
+      "status": "planned",
+      "tests": []
+    }
   ]
 }

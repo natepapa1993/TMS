@@ -4,12 +4,18 @@
  * output lands in the deploy log where an operator can see it.
  */
 export async function register() {
-  if (process.env.NEXT_RUNTIME !== "nodejs" || process.env.MIGRATE_ON_START !== "1") return;
-  const { runMigrations } = await import("./db/migrate-lib");
-  await runMigrations();
-  console.log("startup: migrations applied");
-  if (process.env.SEED_ON_START === "1") {
-    const { seedDemo } = await import("./db/seed-lib");
-    console.log(`startup: seed ${await seedDemo()}`);
+  if (process.env.NEXT_RUNTIME !== "nodejs") return;
+  if (process.env.MIGRATE_ON_START === "1") {
+    const { runMigrations } = await import("./db/migrate-lib");
+    await runMigrations();
+    console.log("startup: migrations applied");
+    if (process.env.SEED_ON_START === "1") {
+      const { seedDemo } = await import("./db/seed-lib");
+      console.log(`startup: seed ${await seedDemo()}`);
+    }
+  }
+  if (process.env.JOBS_ON_START === "1") {
+    const { startTicker } = await import("./jobs/tick");
+    startTicker(Number(process.env.JOBS_EVERY_MS ?? 60_000));
   }
 }
