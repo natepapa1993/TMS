@@ -1,5 +1,5 @@
 import type { Metadata, Viewport } from "next";
-import "@fontsource-variable/manrope"; // self-hosted: no request to Google Fonts, works on a phone at the bridge with no signal
+import "@fontsource-variable/inter"; // self-hosted: no request to Google Fonts, works on a phone at the bridge with no signal
 import "./globals.css";
 
 export const metadata: Metadata = {

@@ -15,7 +15,7 @@ function icon(u: MapUnit) {
   return L.divIcon({
     className: "",
     iconSize: [0, 0],
-    html: `<div style="position:relative;transform:translate(-50%,-50%);display:inline-flex;align-items:center;gap:4px;background:#fff;border:2px solid ${color};border-radius:999px;padding:1px 7px 1px 4px;font:700 11px/16px Manrope,system-ui,sans-serif;color:#0f172a;box-shadow:0 1px 4px rgba(15,23,42,.25);white-space:nowrap">${arrow}<span style="width:8px;height:8px;border-radius:999px;background:${color}"></span>${esc(u.kind === "truck" ? u.label : u.label.slice(0, 18))}</div>`,
+    html: `<div style="position:relative;transform:translate(-50%,-50%);display:inline-flex;align-items:center;gap:4px;background:#fff;border:2px solid ${color};border-radius:999px;padding:1px 7px 1px 4px;font:700 11px/16px Inter,system-ui,sans-serif;color:#0f172a;box-shadow:0 1px 4px rgba(15,23,42,.25);white-space:nowrap">${arrow}<span style="width:8px;height:8px;border-radius:999px;background:${color}"></span>${esc(u.kind === "truck" ? u.label : u.label.slice(0, 18))}</div>`,
   });
 }
 
@@ -40,7 +40,7 @@ export function LiveMap({ units, focus }: { units: MapUnit[]; focus: string | nu
       {units.map((u) => (
         <Marker key={u.id} position={[u.lat, u.lng]} icon={icon(u)}>
           <Popup>
-            <div style={{ minWidth: 200, font: "13px Manrope, system-ui, sans-serif" }}>
+            <div style={{ minWidth: 200, font: "13px Inter, system-ui, sans-serif" }}>
               <div style={{ fontWeight: 800 }}>{u.kind === "truck" ? `Unit ${u.label}` : u.label}</div>
               {u.driver && <div>{u.driver}</div>}
               {u.load && (

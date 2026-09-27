@@ -1,4 +1,4 @@
-// Features: F-20.1
+// Features: F-20.1 F-20.7
 import { test, expect } from "@playwright/test";
 import { signupFresh, quickAdd, buildLoad } from "./helpers";
 

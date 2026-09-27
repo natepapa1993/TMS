@@ -4,18 +4,61 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
 import { Mark } from "./mark";
+import { ArrowLeftRight, BarChart3, Building2, Cable, CalendarRange, FileText, HandCoins, Handshake, Landmark, LayoutGrid, Map as MapIcon, MapPin, MessageSquare, Package, Plug, Receipt, Route, Settings, ShieldCheck, TriangleAlert, Truck, Users, Wallet, type LucideIcon } from "lucide-react";
 import { logoutAction } from "@/app/(auth)/actions";
 
-const NAV = [
-  { href: "/dispatch", label: "Dispatch", icon: "◫" },
-  { href: "/orders", label: "Orders", icon: "☰" },
-  { href: "/fleet", label: "Fleet", icon: "⛟" },
-  { href: "/crossing", label: "Crossing", icon: "⇄" },
-  { href: "/compliance", label: "Compliance", icon: "✓" },
-  { href: "/billing", label: "Billing", icon: "$", roles: ["owner", "dispatcher", "billing"] },
-  { href: "/reports", label: "Reports", icon: "▤" },
-  { href: "/settings", label: "Settings", icon: "⚙" },
+type NavItem = { href: string; label: string; icon: LucideIcon; roles?: string[] };
+const NAV: { section: string; items: NavItem[] }[] = [
+  {
+    section: "Operations",
+    items: [
+      { href: "/dispatch", label: "Dispatch board", icon: LayoutGrid },
+      { href: "/dispatch/planner", label: "Planner", icon: CalendarRange },
+      { href: "/orders", label: "Loads", icon: Package },
+      { href: "/trips", label: "Tailgate trips", icon: Route },
+      { href: "/fleet/map", label: "Map", icon: MapIcon },
+      { href: "/crossing", label: "Crossings", icon: ArrowLeftRight },
+      { href: "/messages", label: "Messages", icon: MessageSquare },
+    ],
+  },
+  {
+    section: "Assets & partners",
+    items: [
+      { href: "/fleet", label: "Fleet", icon: Truck },
+      { href: "/settings/drivers", label: "Drivers", icon: Users },
+      { href: "/settings/customers", label: "Customers", icon: Building2 },
+      { href: "/settings/carriers", label: "Carriers", icon: Handshake },
+      { href: "/settings/locations", label: "Locations", icon: MapPin },
+    ],
+  },
+  {
+    section: "Accounting",
+    items: [
+      { href: "/billing", label: "Billing", icon: Receipt, roles: ["owner", "dispatcher", "billing"] },
+      { href: "/billing/invoices", label: "Invoices", icon: FileText, roles: ["owner", "billing"] },
+      { href: "/billing/ar", label: "Receivables", icon: Landmark, roles: ["owner", "billing"] },
+      { href: "/billing/carriers", label: "Carrier pay", icon: HandCoins, roles: ["owner", "billing"] },
+      { href: "/billing/settlements", label: "Driver pay", icon: Wallet, roles: ["owner", "billing"] },
+    ],
+  },
+  {
+    section: "Safety",
+    items: [
+      { href: "/compliance", label: "Compliance", icon: ShieldCheck },
+      { href: "/compliance/incidents", label: "Incidents", icon: TriangleAlert },
+    ],
+  },
+  {
+    section: "Company",
+    items: [
+      { href: "/reports", label: "Reports", icon: BarChart3 },
+      { href: "/edi", label: "EDI", icon: Cable, roles: ["owner", "dispatcher", "billing"] },
+      { href: "/settings/integrations", label: "Integrations", icon: Plug, roles: ["owner"] },
+      { href: "/settings", label: "Settings", icon: Settings },
+    ],
+  },
 ];
+const ALL = NAV.flatMap((g) => g.items);
 
 const ROLE_LABEL: Record<string, string> = { owner: "Owner", dispatcher: "Dispatcher", billing: "Billing", compliance: "Safety & compliance", mx_office: "Mexico office", driver: "Driver", carrier: "Carrier", customer: "Customer" };
 
@@ -29,7 +72,8 @@ export function Shell({ user, children }: { user: { name: string; role: string; 
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [open]);
-  const current = NAV.find((n) => path === n.href || path.startsWith(n.href + "/"));
+  // the most specific link that matches the path is the current one
+  const current = ALL.filter((n) => path === n.href || path.startsWith(n.href + "/")).sort((p, q) => q.href.length - p.href.length)[0];
   return (
     <div className="min-h-screen lg:grid lg:grid-cols-[224px_1fr]">
       {/* phone / tablet top bar */}
@@ -38,7 +82,7 @@ export function Shell({ user, children }: { user: { name: string; role: string; 
           ☰
         </button>
         <Mark size={22} />
-        <div className="font-extrabold tracking-tight">{current?.label ?? "Crossline"}</div>
+        <div className="font-semibold tracking-tight">{current?.label ?? "Crossline"}</div>
         <div className="ml-auto text-[11px] text-slate-400 truncate max-w-[40%]">{user.tenantName}</div>
       </header>
       {open && <div className="lg:hidden fixed inset-0 z-30 bg-navy/60" onClick={() => setOpen(false)} aria-hidden />}
@@ -53,14 +97,26 @@ export function Shell({ user, children }: { user: { name: string; role: string; 
             ×
           </button>
         </div>
-        <nav className="px-2 mt-2 space-y-0.5 flex-1">
-          {NAV.filter((n) => !("roles" in n) || (n.roles as string[]).includes(user.role)).map((n) => {
-            const active = path === n.href || path.startsWith(n.href + "/");
+        <nav className="px-2 pb-3 flex-1 overflow-y-auto">
+          {NAV.map((g) => {
+            const items = g.items.filter((n) => !n.roles || n.roles.includes(user.role));
+            if (!items.length) return null;
             return (
-              <Link key={n.href} href={n.href} className="rail-link" aria-current={active ? "page" : undefined} onClick={() => setOpen(false)}>
-                <span className="w-5 text-center text-[15px] opacity-90">{n.icon}</span>
-                {n.label}
-              </Link>
+              <div key={g.section}>
+                <div className="rail-section">{g.section}</div>
+                <div className="space-y-px">
+                  {items.map((n) => {
+                    const active = current?.href === n.href;
+                    const Icon = n.icon;
+                    return (
+                      <Link key={n.href} href={n.href} className="rail-link" aria-current={active ? "page" : undefined} onClick={() => setOpen(false)}>
+                        <Icon size={16} strokeWidth={1.8} className="shrink-0 opacity-90" aria-hidden />
+                        {n.label}
+                      </Link>
+                    );
+                  })}
+                </div>
+              </div>
             );
           })}
         </nav>

@@ -75,7 +75,7 @@ export default async function FleetPage() {
         <div className="flex items-end justify-between mt-10 mb-3">
           <div>
             <div className="eyebrow">Trailers · cajas</div>
-            <div className="h2">Where every trailer is</div>
+            <div className="h2">Trailers</div>
             <div className="text-muted text-[13px]">On a load now, or where it was last dropped and for how long. Dispatch names the caja on the crossing; a leg can name it too.</div>
           </div>
           <QuickAdd kind="trailer" fields={FIELDS.trailer} refs={trailerRefs.options} label="Add trailer" buttonClass="btn" />

@@ -1,4 +1,4 @@
-// Features: F-1.1 F-1.2 F-1.3 F-1.4
+// Features: F-1.1 F-1.2 F-1.3 F-1.4 F-20.7
 import { test, expect } from "@playwright/test";
 import { signupFresh, quickAdd, future } from "./helpers";
 
@@ -6,7 +6,7 @@ import { signupFresh, quickAdd, future } from "./helpers";
 
 test("signup → day-one checklist → add entity, truck, driver, customer, location with the quick-add popups", async ({ page }) => {
   await signupFresh(page);
-  await expect(page.getByText("Day one")).toBeVisible();
+  await expect(page.getByText("Getting started")).toBeVisible();
   await expect(page.getByRole("link", { name: /Add billing entities/ })).toBeVisible();
 
   await quickAdd(page, "billing-entities", "Add billing entity", { legalName: "E2E Carrier LLC", country: "US", taxId: "12-3456789", invoicePrefix: "E2E" });
@@ -29,7 +29,7 @@ test("signup → day-one checklist → add entity, truck, driver, customer, loca
   await quickAdd(page, "locations", "Add location", { name: "Laredo Yard", kind: "yard", country: "US", address: "1 Yard Rd, Laredo, TX 78045, US" });
 
   await page.goto("/settings");
-  await expect(page.getByText("Day one")).toBeHidden(); // checklist done
+  await expect(page.getByText("Getting started")).toBeHidden(); // checklist done
 
   // your data, out again: the CSV has the import's columns and the rows just added
   const csv = await page.request.get("/api/records/trucks");

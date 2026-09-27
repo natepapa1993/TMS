@@ -24,12 +24,12 @@ export default async function SettingsPage({ searchParams }: PageProps<"/setting
   return (
     <div>
       <PageHeader eyebrow="Setup" title={sp.welcome ? `Welcome, ${ctx.name.split(" ")[0]}` : "Settings"}>
-        Everything here is yours to add, edit and archive. Nothing is hard-coded.
+        Company, master data and connections.
       </PageHeader>
       <div className="px-7 pb-10 space-y-8">
         {todo.length > 0 && (
           <div className="card p-5">
-            <div className="h2">Day one</div>
+            <div className="h2">Getting started</div>
             <p className="text-muted text-[13px] mt-0.5 mb-3">Five things and you can dispatch. Each takes a minute; import a CSV if you have one.</p>
             <ol className="space-y-2">
               {setupSteps.map((s, i) => {

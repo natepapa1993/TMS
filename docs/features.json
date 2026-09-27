@@ -577,10 +577,13 @@
     },
     {
       "id": "F-20.7",
-      "name": "Professional visual pass across the app: density, typography, grids",
+      "name": "Professional visual pass: Inter, square badges, 6–8 px radii, calm weights, grouped sidebar (Operations, Assets & partners, Accounting, Safety, Company) with real icons, business copy",
       "milestone": "M20",
-      "status": "planned",
-      "tests": []
+      "status": "done",
+      "tests": [
+        "e2e/setup.spec.ts",
+        "e2e/load-board.spec.ts"
+      ]
     },
     {
       "id": "F-21.1",
