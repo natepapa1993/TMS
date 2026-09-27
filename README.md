@@ -10,7 +10,6 @@ The plan, functional spec and personas live in the Claude doc ("TMS plan"). Feat
 cp .env.example .env.local        # DATABASE_URL, TEST_DATABASE_URL, SESSION_SECRET (≥32 chars)
 pnpm install
 pnpm db:migrate                   # applies ./drizzle to DATABASE_URL
-pnpm db:seed                      # optional demo company: demo@crossline.local / crossline-demo-2026
 pnpm dev
 ```
 
