@@ -587,24 +587,33 @@
     },
     {
       "id": "F-21.1",
-      "name": "Driver pay rules engine: per mile / % / per stop / hourly / per diem / minimum, conditions, plans; team split",
+      "name": "Driver pay plans: per loaded / empty / total mile, % of line haul or of everything billed, flat per load or leg, per stop, per extra stop, hourly, crossing pay — each limited by leg type, customer, equipment or mile range; team split; per diem; minimum per statement; live preview; drivers assigned to plans",
       "milestone": "M21",
-      "status": "planned",
-      "tests": []
+      "status": "done",
+      "tests": [
+        "src/domain/pay-plans.test.ts",
+        "e2e/pay-plans.spec.ts"
+      ]
     },
     {
       "id": "F-21.2",
-      "name": "Deductions (one-time, recurring, balance), escrow accounts, advances with limits",
+      "name": "Deductions (one-time, recurring, with a total to recover), advances taken back in full, escrow held up to a target with its balance and release",
       "milestone": "M21",
-      "status": "planned",
-      "tests": []
+      "status": "done",
+      "tests": [
+        "src/domain/pay-plans.test.ts",
+        "e2e/pay-plans.spec.ts"
+      ]
     },
     {
       "id": "F-21.3",
       "name": "Contracted lane rates and fuel surcharge tables applied automatically",
       "milestone": "M21",
-      "status": "planned",
-      "tests": []
+      "status": "done",
+      "tests": [
+        "src/domain/rates.test.ts",
+        "e2e/rates.spec.ts"
+      ]
     },
     {
       "id": "F-21.4",

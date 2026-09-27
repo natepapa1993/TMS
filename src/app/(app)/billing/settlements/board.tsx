@@ -19,7 +19,7 @@ export function Settlements({ rows, drivers, defaultWeek, role }: { rows: Row[];
   const [week, setWeek] = useState(defaultWeek);
   const [open, setOpen] = useState<Row | null>(null);
   const [line, setLine] = useState({ kind: "accessorial" as "accessorial" | "deduction" | "reimbursement" | "adjustment", description: "", amount: "" });
-  const [item, setItem] = useState<{ open: boolean; kind: "deduction" | "reimbursement"; description: string; amount: string; recurring: boolean; remaining: string }>({ open: false, kind: "deduction", description: "", amount: "", recurring: false, remaining: "" });
+  const [item, setItem] = useState<{ open: boolean; kind: "deduction" | "reimbursement" | "advance" | "escrow"; description: string; amount: string; recurring: boolean; remaining: string; target: string }>({ open: false, kind: "deduction", description: "", amount: "", recurring: false, remaining: "", target: "" });
   const [pay, setPay] = useState({ method: "ach", reference: "" });
   const can = ["owner", "billing"].includes(role);
   const run = (label: string, fn: () => Promise<{ ok: boolean; error?: string }>) =>
@@ -53,7 +53,7 @@ export function Settlements({ rows, drivers, defaultWeek, role }: { rows: Row[];
             Build statement
           </button>
           <button className="btn" disabled={!driverId} onClick={() => setItem({ ...item, open: true })}>
-            + Deduction / reimbursement
+            + Pay item (deduction, advance, escrow)
           </button>
         </div>
       )}
@@ -178,12 +178,14 @@ export function Settlements({ rows, drivers, defaultWeek, role }: { rows: Row[];
           )}
         </Modal>
       )}
-      <Modal open={item.open} onClose={() => setItem({ ...item, open: false })} title={`Pay item · ${drivers.find((d) => d.id === driverId)?.name ?? ""}`} footer={<><button className="btn" onClick={() => setItem({ ...item, open: false })}>Cancel</button><button className="btn btn-primary" disabled={!item.description || !item.amount} onClick={() => run("Pay item added — it lands on the next statement", async () => { const r = await addPayItemAction(driverId, item); if (r.ok) setItem({ ...item, open: false, description: "", amount: "", remaining: "" }); return r; })}>Add</button></>}>
+      <Modal open={item.open} onClose={() => setItem({ ...item, open: false })} title={`Pay item · ${drivers.find((d) => d.id === driverId)?.name ?? ""}`} footer={<><button className="btn" onClick={() => setItem({ ...item, open: false })}>Cancel</button><button className="btn btn-primary" disabled={!item.description || !item.amount} onClick={() => run("Pay item added — it lands on the next statement", async () => { const r = await addPayItemAction(driverId, item); if (r.ok) setItem({ ...item, open: false, description: "", amount: "", remaining: "", target: "" }); return r; })}>Add</button></>}>
         <div className="grid grid-cols-2 gap-2">
           <div>
             <label className="label">Kind</label>
-            <select className="select" value={item.kind} onChange={(e) => setItem({ ...item, kind: e.target.value as "deduction" | "reimbursement" })}>
-              <option value="deduction">Deduction (advance, escrow, fuel card, insurance)</option>
+            <select className="select" value={item.kind} onChange={(e) => setItem({ ...item, kind: e.target.value as typeof item.kind })} aria-label="Pay item kind">
+              <option value="deduction">Deduction (fuel card, insurance, trailer rent)</option>
+              <option value="advance">Advance (taken back in full next statement)</option>
+              <option value="escrow">Escrow (held each statement up to a target)</option>
               <option value="reimbursement">Reimbursement (tolls, scale, repairs)</option>
             </select>
           </div>
@@ -192,16 +194,27 @@ export function Settlements({ rows, drivers, defaultWeek, role }: { rows: Row[];
             <input className="input" value={item.description} onChange={(e) => setItem({ ...item, description: e.target.value })} />
           </div>
           <div>
-            <label className="label">Amount per statement</label>
-            <input className="input" inputMode="decimal" value={item.amount} onChange={(e) => setItem({ ...item, amount: e.target.value })} />
+            <label className="label">{item.kind === "advance" ? "Amount advanced" : "Amount per statement"}</label>
+            <input className="input" inputMode="decimal" value={item.amount} onChange={(e) => setItem({ ...item, amount: e.target.value })} aria-label="Pay item amount" />
           </div>
-          <div>
-            <label className="label">Total to recover (advances)</label>
-            <input className="input" inputMode="decimal" value={item.remaining} onChange={(e) => setItem({ ...item, remaining: e.target.value })} placeholder="blank = not an advance" />
-          </div>
-          <label className="col-span-2 flex items-center gap-2 text-[13px]">
-            <input type="checkbox" className="accent-teal" checked={item.recurring} onChange={(e) => setItem({ ...item, recurring: e.target.checked })} /> Recurring every statement
-          </label>
+          {item.kind === "escrow" ? (
+            <div>
+              <label className="label">Hold up to</label>
+              <input className="input" inputMode="decimal" value={item.target} onChange={(e) => setItem({ ...item, target: e.target.value })} placeholder="e.g. 2500.00" aria-label="Escrow target" />
+            </div>
+          ) : item.kind === "deduction" ? (
+            <div>
+              <label className="label">Total to recover</label>
+              <input className="input" inputMode="decimal" value={item.remaining} onChange={(e) => setItem({ ...item, remaining: e.target.value })} placeholder="blank = no end" />
+            </div>
+          ) : (
+            <div />
+          )}
+          {(item.kind === "deduction" || item.kind === "reimbursement") && (
+            <label className="col-span-2 flex items-center gap-2 text-[13px]">
+              <input type="checkbox" className="accent-teal" checked={item.recurring} onChange={(e) => setItem({ ...item, recurring: e.target.checked })} /> Recurring every statement
+            </label>
+          )}
         </div>
       </Modal>
       <Toast message={t.toast?.message ?? null} tone={t.toast?.tone} onDone={t.clear} />

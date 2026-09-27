@@ -2,7 +2,8 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useRef, useState, useTransition, type ReactNode } from "react";
-import { createLoadAction, readRateConAction, templateDraftAction, saveBuilderTemplateAction } from "../actions";
+import { createLoadAction, readRateConAction, templateDraftAction, saveBuilderTemplateAction, suggestRateAction } from "../actions";
+import type { RateSuggestion } from "@/domain/rates";
 import { StopFields, blankStop, stopPayload, placeLine, timeLine, STOP_LABEL, STOP_TONE, type Loc, type StopDraft } from "@/components/stop-fields";
 import { legsFromStops, LEG_TYPE_LABEL } from "@/domain/zones";
 
@@ -73,6 +74,8 @@ export function OrderForm({ customers, entities, locations, templates = [] }: { 
   const fileRef = useRef<HTMLInputElement>(null);
   const [tpl, setTpl] = useState(() => ({ id: "", date: new Date(Date.now() + 86400_000).toISOString().slice(0, 10) }));
   const [tplMsg, setTplMsg] = useState<string | null>(null);
+  const [offer, setOffer] = useState<RateSuggestion | null>(null);
+  const [contract, setContract] = useState<RateSuggestion | null>(null);
   const toLocalInput = (iso: string | null) => (iso ? new Date(new Date(iso).getTime() - new Date(iso).getTimezoneOffset() * 60000).toISOString().slice(0, 16) : "");
 
   /** Fill the builder from a saved lane on a date. */
@@ -148,6 +151,28 @@ export function OrderForm({ customers, entities, locations, templates = [] }: { 
     });
 
   const legs = useMemo(() => legsFromStops(stops.map((st) => ({ type: st.type, country: st.country }))), [stops]);
+
+  // the customer's contract rate for this lane, looked up as the customer, equipment and route change
+  const laneKey = JSON.stringify([f.customerId, f.equipment, stops.map((st) => [st.locationId, st.name.trim(), st.city.trim(), st.state.trim(), st.windowStart.slice(0, 10)])]);
+  useEffect(() => {
+    let live = true;
+    const t = setTimeout(async () => {
+      if (!f.customerId) return live && setOffer(null);
+      const r = await suggestRateAction({ customerId: f.customerId, equipment: f.equipment, stops: stops.map((st) => ({ locationId: st.locationId, name: st.name, city: st.city, state: st.state, windowStart: st.windowStart })) });
+      if (live) setOffer(r.ok ? r.data : null);
+    }, 400);
+    return () => {
+      live = false;
+      clearTimeout(t);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [laneKey]);
+  const applyContract = (o: RateSuggestion) => {
+    setContract(o);
+    setF((x) => ({ ...x, rate: o.rateCents != null ? (o.rateCents / 100).toFixed(2) : x.rate, rateTbd: o.rateCents == null ? x.rateTbd : false, currency: o.currency }));
+  };
+  const money = (c: number, cur = f.currency) => `${cur} ${(c / 100).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  const fuelText = contract ? (contract.fuel.rule === "pct" ? `${contract.fuel.pct}% of line haul` : contract.fuel.rule === "per_mile" ? `${contract.fuel.centsPerMile}¢/mi` : "Included") : "Included";
   const name = (i: number) => stops[i]?.name.trim() || `Stop ${i + 1}`;
   const customer = customers.find((c) => c.id === f.customerId);
   const rateText = f.rateTbd || !f.rate.trim() ? "To be confirmed" : `${f.currency} ${Number(f.rate.replace(/[$,\s]/g, "")).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -180,7 +205,15 @@ export function OrderForm({ customers, entities, locations, templates = [] }: { 
   const submit = (book: boolean) =>
     start(async () => {
       setErr(null);
-      const r = await createLoadAction({ ...f, refs, freight, stops: stops.map(stopPayload), book, rateConDocId: rateCon?.id ?? null });
+      const r = await createLoadAction({
+        ...f,
+        refs,
+        freight,
+        stops: stops.map(stopPayload),
+        book,
+        rateConDocId: rateCon?.id ?? null,
+        contract: contract ? { rateId: contract.rateId, rateType: contract.rateType, unitCents: contract.unitCents, miles: contract.miles, fuelRule: contract.fuel.rule === "included" ? "included" : contract.fuel.rule, fuelPct: contract.fuel.pct, fuelCentsPerMile: contract.fuel.centsPerMile } : null,
+      });
       if (r && !r.ok) {
         setErr({ field: r.field, message: r.error });
         if (r.field === "stops") setOpen((o) => new Set([...o, ...stops.filter((s) => !s.name.trim()).map((s) => s.key)]));
@@ -307,7 +340,7 @@ export function OrderForm({ customers, entities, locations, templates = [] }: { 
                   Rate
                 </label>
                 <div className="flex gap-2">
-                  <input id="l-rate" className="input" inputMode="decimal" value={f.rate} onChange={(e) => setF({ ...f, rate: e.target.value })} placeholder="0.00" aria-invalid={err?.field === "rateCents" || err?.field === "rate"} disabled={f.rateTbd} />
+                  <input id="l-rate" className="input" inputMode="decimal" value={f.rate} onChange={(e) => { setF({ ...f, rate: e.target.value }); setContract(null); }} placeholder="0.00" aria-invalid={err?.field === "rateCents" || err?.field === "rate"} disabled={f.rateTbd} />
                   <select className="select w-28 shrink-0" value={f.currency} onChange={(e) => setF({ ...f, currency: e.target.value })} aria-label="Currency">
                     <option>USD</option>
                     <option>MXN</option>
@@ -317,6 +350,28 @@ export function OrderForm({ customers, entities, locations, templates = [] }: { 
                 <label className="flex items-center gap-2 mt-2.5 text-[13px] cursor-pointer text-muted">
                   <input type="checkbox" className="accent-teal w-4 h-4" checked={f.rateTbd} onChange={(e) => setF({ ...f, rateTbd: e.target.checked })} /> Rate to be confirmed
                 </label>
+                {offer && (
+                  <div className="mt-3 rounded-lg border border-teal/30 bg-teal/5 px-3.5 py-3 text-[13px]" data-testid="contract-rate">
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <div className="font-semibold">Contract rate · {offer.lane}</div>
+                        <div className="text-muted mt-0.5">
+                          {offer.rateType === "per_mile" ? `${money(offer.unitCents, offer.currency)}/mi` : money(offer.unitCents, offer.currency)}
+                          {offer.rateType === "per_mile" && (offer.miles ? ` × ${offer.miles.toLocaleString()} mi = ${money(offer.rateCents ?? 0, offer.currency)}${offer.minimumApplied ? " (minimum)" : ""}` : " — pick saved locations to estimate the miles")}
+                        </div>
+                        <div className="text-muted">Fuel: {offer.fuel.rule === "pct" ? `${offer.fuel.pct}%` : offer.fuel.rule === "per_mile" ? `${offer.fuel.centsPerMile}¢/mi` : "included"}{offer.fuel.note && offer.fuel.rule === "included" ? ` — ${offer.fuel.note}` : offer.fuel.note ? ` (${offer.fuel.note})` : ""}</div>
+                        {offer.notes && <div className="text-faint mt-0.5">{offer.notes}</div>}
+                      </div>
+                      {contract?.rateId === offer.rateId && contract.rateCents === offer.rateCents ? (
+                        <span className="pill pill-green shrink-0">Applied</span>
+                      ) : (
+                        <button type="button" className="btn btn-sm shrink-0" onClick={() => applyContract(offer)}>
+                          Apply
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                )}
               </div>
               <div>
                 <label className="label" htmlFor="l-equipment">
@@ -474,7 +529,7 @@ export function OrderForm({ customers, entities, locations, templates = [] }: { 
         </div>
 
         {/* summary */}
-        <aside className="lg:sticky lg:top-[88px] space-y-4">
+        <aside data-testid="load-summary" className="lg:sticky lg:top-[88px] space-y-4">
           <div className="card p-6">
             <div className="text-[16px] font-extrabold tracking-tight">Summary</div>
             <dl className="mt-4 space-y-3 text-[13.5px]">
@@ -482,6 +537,7 @@ export function OrderForm({ customers, entities, locations, templates = [] }: { 
                 [
                   ["Bill to", customer?.name ?? "—"],
                   ["Rate", rateText],
+                  ["Fuel", fuelText],
                   ["Equipment", EQUIPMENT.find(([v]) => v === f.equipment)?.[1] ?? f.equipment],
                 ] as const
               ).map(([k, v]) => (

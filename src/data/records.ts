@@ -21,6 +21,7 @@ export type RecordKind =
   | "customsBroker"
   | "carrier"
   | "carrierRate"
+  | "customerRate"
   | "truck"
   | "trailer"
   | "driver"
@@ -67,6 +68,7 @@ export const REGISTRY: Record<RecordKind, Registry> = {
   customsBroker: { table: s.customsBrokers as AnyTable, label: "Customs broker", uniqueKey: ["name", "country"], labelField: "name" },
   carrier: { table: s.carriers as AnyTable, label: "Carrier", uniqueKey: ["mcNumber", "rfc"], labelField: "name", blockers: (ctx, id) => openLegsFor(ctx, "carrier_id", id) },
   carrierRate: { table: s.carrierRates as AnyTable, label: "Carrier rate", uniqueKey: ["carrierId", "originZone", "destinationZone", "equipment"], labelField: "id" },
+  customerRate: { table: s.customerRates as AnyTable, label: "Customer rate", uniqueKey: ["customerId", "originZone", "destinationZone", "equipment"], labelField: "id" },
   truck: { table: s.trucks as AnyTable, label: "Truck", uniqueKey: ["unitNumber"], labelField: "unitNumber", blockers: (ctx, id) => openLegsFor(ctx, "truck_id", id) },
   trailer: { table: s.trailers as AnyTable, label: "Trailer", uniqueKey: ["unitNumber"], labelField: "unitNumber", blockers: (ctx, id) => openLegsFor(ctx, "trailer_id", id) },
   driver: { table: s.drivers as AnyTable, label: "Driver", uniqueKey: ["licenseNumber"], labelField: "name", blockers: (ctx, id) => openLegsFor(ctx, "driver_id", id) },

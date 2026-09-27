@@ -198,7 +198,7 @@ test("billing day: charges, docs gate, invoice to paid, AR, carrier three-way wi
   await page.goto("/billing/settlements");
   const drvSel = page.locator("select").first();
   await drvSel.selectOption({ label: (await drvSel.locator("option", { hasText: "Daniel Reyes" }).textContent())! });
-  await page.locator("button:has-text('+ Deduction / reimbursement')").click();
+  await page.locator("button:has-text('+ Pay item')").click();
   dlg = page.getByRole("dialog");
   await dlg.locator("label:has-text('Description') + input").fill("Occupational insurance");
   await dlg.locator("input[inputmode=decimal]").first().fill("45");

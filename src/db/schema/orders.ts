@@ -73,6 +73,8 @@ export const orders = pgTable(
     rateTbd: boolean("rate_tbd").notNull().default(false),
     fuelRule: text("fuel_rule").notNull().default("included"),
     fuelPct: integer("fuel_pct"), // whole percent of line haul when fuelRule is pct
+    fuelCentsPerMile: integer("fuel_cents_per_mile"), // when fuelRule is per_mile
+    customerRateId: text("customer_rate_id"), // the contract lane rate the load was priced from
     tollsFeesCents: integer("tolls_fees_cents"), // known extra cost for the P&L
     freight: jsonb("freight").$type<FreightLine[]>().notNull().default(sql`'[]'::jsonb`),
     cargoNote: text("cargo_note"),

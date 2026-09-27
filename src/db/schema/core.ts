@@ -263,6 +263,60 @@ export const carrierRates = pgTable(
   (t) => [index("carrier_rates_tenant_carrier").on(t.tenantId, t.carrierId)],
 );
 
+/** What a customer pays on a lane: flat or per mile, with its fuel rule; applied when a load is built. */
+export const customerRates = pgTable(
+  "customer_rates",
+  {
+    id: id(),
+    tenantId: tenantId(),
+    customerId: text("customer_id").notNull(),
+    originZone: text("origin_zone").notNull(),
+    destinationZone: text("destination_zone").notNull(),
+    equipment: text("equipment"),
+    rateType: text("rate_type").notNull().default("flat"), // flat | per_mile
+    rateCents: integer("rate_cents").notNull(), // flat amount, or cents per mile
+    minimumCents: integer("minimum_cents"), // per-mile lanes: never less than this
+    currency: text("currency").notNull().default("USD"),
+    fuelRule: text("fuel_rule").notNull().default("included"), // included | pct | per_mile | table
+    fuelValue: integer("fuel_value"), // percent or cents per mile
+    validFrom: timestamp("valid_from", { withTimezone: true }).notNull().defaultNow(),
+    validTo: timestamp("valid_to", { withTimezone: true }),
+    notes: text("notes"),
+    ...audit(),
+  },
+  (t) => [index("customer_rates_tenant_customer").on(t.tenantId, t.customerId)],
+);
+
+/** A fuel surcharge schedule: by the week's diesel price, a percent of line haul or cents per mile. */
+export type FuelBand = { from: number; to: number | null; value: number }; // price in cents per gallon; value: percent × 100 or cents per mile
+export const fuelTables = pgTable(
+  "fuel_tables",
+  {
+    id: id(),
+    tenantId: tenantId(),
+    name: text("name").notNull(),
+    method: text("method").notNull().default("pct"), // pct | per_mile
+    bands: jsonb("bands").$type<FuelBand[]>().notNull().default(sql`'[]'::jsonb`),
+    isDefault: boolean("is_default").notNull().default(false),
+    ...audit(),
+  },
+  (t) => [index("fuel_tables_tenant").on(t.tenantId)],
+);
+
+/** The diesel price the fuel tables read, week by week (entered, or from the DOE/EIA feed). */
+export const fuelPrices = pgTable(
+  "fuel_prices",
+  {
+    id: id(),
+    tenantId: tenantId(),
+    weekOf: text("week_of").notNull(), // YYYY-MM-DD, the Monday
+    priceCents: integer("price_cents").notNull(), // per gallon
+    source: text("source").notNull().default("manual"),
+    ...audit(),
+  },
+  (t) => [uniqueIndex("fuel_prices_tenant_week").on(t.tenantId, t.weekOf)],
+);
+
 export const trucks = pgTable(
   "trucks",
   {

@@ -67,6 +67,12 @@ export type CreateOrderInput = {
   rateTbd?: boolean;
   currency?: string;
   fuelRule?: string;
+  fuelPct?: number | null;
+  fuelCentsPerMile?: number | null;
+  customerRateId?: string | null;
+  rateType?: string;
+  rateUnitCents?: number | null;
+  rateQty?: number | null;
   freight?: s.FreightLine[];
   cargoNote?: string | null;
   template?: string | null;
@@ -153,6 +159,11 @@ export async function createOrder(ctx: Ctx, input: CreateOrderInput) {
   if (!input.stops || input.stops.length < 2) throw new ValidationError("an order needs at least a pickup and a delivery", "stops");
   for (const st of input.stops) if (!st.name?.trim()) throw new ValidationError("every stop needs a name", "stops");
   if (input.rateCents != null && input.rateCents < 0) throw new ValidationError("rate cannot be negative", "rateCents");
+  if (input.fuelRule && !["included", "pct", "per_mile"].includes(input.fuelRule)) throw new ValidationError("unknown fuel rule", "fuelRule");
+  if (input.customerRateId) {
+    const [cr] = await db.select({ id: s.customerRates.id }).from(s.customerRates).where(and(eq(s.customerRates.tenantId, ctx.tenantId), eq(s.customerRates.id, input.customerRateId))).limit(1);
+    if (!cr) throw new NotFoundError("customer rate", input.customerRateId);
+  }
 
   let template: { key: string; legs: { type: LegType; from: number; to: number }[] };
   if (input.legPlan) {
@@ -186,6 +197,12 @@ export async function createOrder(ctx: Ctx, input: CreateOrderInput) {
       rateTbd: input.rateTbd ?? false,
       currency: input.currency ?? "USD",
       fuelRule: input.fuelRule ?? "included",
+      fuelPct: input.fuelPct ?? null,
+      fuelCentsPerMile: input.fuelCentsPerMile ?? null,
+      customerRateId: input.customerRateId ?? null,
+      rateType: input.rateType ?? "flat",
+      rateUnitCents: input.rateUnitCents ?? null,
+      rateQty: input.rateQty ?? null,
       freight: input.freight ?? [],
       cargoNote: input.cargoNote ?? null,
       legTemplate: template.key,
@@ -362,7 +379,7 @@ export async function updateOrder(ctx: Ctx, orderId: string, values: Partial<Cre
     if (expectedUpdatedAt && before.updatedAt.getTime() !== expectedUpdatedAt.getTime()) throw new ValidationError("someone else changed this order; reload", "updatedAt");
     if (["paid", "cancelled"].includes(before.state)) throw new ValidationError(`a ${before.state} order is read-only`);
     assertUnlocked(before);
-    const allowed = ["customerId", "brokerId", "billingEntityId", "portId", "equipment", "refs", "rateCents", "rateTbd", "currency", "fuelRule", "fuelPct", "tollsFeesCents", "freight", "cargoNote", "custom", "priority", "rateType", "rateUnitCents", "rateQty", "salesAgentId", "csrId", "dispatcherId"] as const;
+    const allowed = ["customerId", "brokerId", "billingEntityId", "portId", "equipment", "refs", "rateCents", "rateTbd", "currency", "fuelRule", "fuelPct", "fuelCentsPerMile", "tollsFeesCents", "freight", "cargoNote", "custom", "priority", "rateType", "rateUnitCents", "rateQty", "salesAgentId", "csrId", "dispatcherId"] as const;
     const safe: Record<string, unknown> = {};
     for (const k of allowed) if (k in values) safe[k] = values[k];
     if (typeof safe.rateCents === "number" && safe.rateCents < 0) throw new ValidationError("rate cannot be negative", "rateCents");

@@ -145,8 +145,8 @@ export async function addSettlementLineAction(id: string, kind: "accessorial" | 
   if (r.ok) touch();
   return r;
 }
-export async function addPayItemAction(driverId: string, v: { kind: "deduction" | "reimbursement"; description: string; amount: string; recurring: boolean; remaining: string }) {
-  const r = await act((ctx) => B.addPayItem(ctx, driverId, { kind: v.kind, description: v.description, amountCents: Math.round(Number(v.amount) * 100), recurring: v.recurring, remainingCents: v.remaining ? Math.round(Number(v.remaining) * 100) : null }));
+export async function addPayItemAction(driverId: string, v: { kind: "deduction" | "reimbursement" | "advance" | "escrow"; description: string; amount: string; recurring: boolean; remaining: string; target?: string }) {
+  const r = await act((ctx) => B.addPayItem(ctx, driverId, { kind: v.kind, description: v.description, amountCents: Math.round(Number(v.amount) * 100), recurring: v.recurring, remainingCents: v.remaining ? Math.round(Number(v.remaining) * 100) : null, targetCents: v.target ? Math.round(Number(v.target) * 100) : null }));
   if (r.ok) touch();
   return r;
 }
@@ -166,5 +166,66 @@ export async function reopenExportAction(id: string) {
   const { reopenExport } = await import("@/domain/accounting");
   const r = await act((ctx) => reopenExport(ctx, id));
   if (r.ok) revalidatePath("/billing/exports");
+  return r;
+}
+
+// ---------- pay plans ----------
+
+export async function savePlanAction(input: Parameters<typeof import("@/domain/pay-plans").savePlan>[1]) {
+  const P = await import("@/domain/pay-plans");
+  const r = await act((ctx) => P.savePlan(ctx, input));
+  if (r.ok) revalidatePath("/billing/pay-plans");
+  return r;
+}
+export async function deletePlanAction(id: string) {
+  const P = await import("@/domain/pay-plans");
+  const r = await act((ctx) => P.deletePlan(ctx, id));
+  if (r.ok) revalidatePath("/billing/pay-plans");
+  return r;
+}
+export async function assignPlanAction(driverIds: string[], planId: string | null) {
+  const P = await import("@/domain/pay-plans");
+  const r = await act((ctx) => P.assignPlan(ctx, driverIds, planId));
+  if (r.ok) revalidatePath("/billing/pay-plans");
+  return r;
+}
+export async function releaseEscrowAction(payItemId: string, amount: string, note: string) {
+  const r = await act((ctx) => B.releaseEscrow(ctx, payItemId, Math.round(Number(amount) * 100), note));
+  if (r.ok) touch();
+  return r;
+}
+
+// ---------- fuel surcharge ----------
+
+export async function saveFuelTableAction(input: { id?: string | null; name: string; method: string; isDefault: boolean; bands: { from: string; to: string; value: string }[] }) {
+  const R = await import("@/domain/rates");
+  const r = await act((ctx) => {
+    const pct = input.method !== "per_mile";
+    const bands = input.bands.map((b, i) => {
+      const from = Math.round(Number(b.from.replace(/[$,\s]/g, "")) * 100);
+      const to = b.to.trim() ? Math.round(Number(b.to.replace(/[$,\s]/g, "")) * 100) : null;
+      const v = Number(b.value.replace(/[%¢,\s]/g, ""));
+      if (!b.from.trim() || !Number.isFinite(from) || (to != null && !Number.isFinite(to)) || !b.value.trim() || !Number.isFinite(v)) throw Object.assign(new Error(`Band ${i + 1}: fill the price range and the surcharge`), { name: "ValidationError", field: "bands" });
+      return { from, to, value: Math.round(pct ? v * 100 : v) };
+    });
+    return R.saveFuelTable(ctx, { id: input.id, name: input.name, method: input.method, isDefault: input.isDefault, bands });
+  });
+  if (r.ok) revalidatePath("/billing/fuel");
+  return r;
+}
+export async function deleteFuelTableAction(id: string) {
+  const R = await import("@/domain/rates");
+  const r = await act((ctx) => R.deleteFuelTable(ctx, id));
+  if (r.ok) revalidatePath("/billing/fuel");
+  return r;
+}
+export async function setFuelPriceAction(date: string, price: string) {
+  const R = await import("@/domain/rates");
+  const r = await act((ctx) => {
+    const n = Number(price.replace(/[$,\s]/g, ""));
+    if (!price.trim() || !Number.isFinite(n)) throw Object.assign(new Error("Enter the diesel price per gallon"), { name: "ValidationError", field: "price" });
+    return R.setFuelPrice(ctx, date, Math.round(n * 100));
+  });
+  if (r.ok) revalidatePath("/billing/fuel");
   return r;
 }

@@ -310,7 +310,7 @@ export default async function OrderPage({ params }: PageProps<"/orders/[id]">) {
             label: "Money",
             content: (
               <div className="space-y-6 max-w-6xl">
-                <MoneyBox order={J({ id: order.id, rateCents: order.rateCents, rateTbd: order.rateTbd, currency: order.currency, rateType: order.rateType, rateUnitCents: order.rateUnitCents, rateQty: order.rateQty, fuelRule: order.fuelRule, fuelPct: order.fuelPct, tollsFeesCents: order.tollsFeesCents, updatedAt: order.updatedAt })} readOnly={readOnly || order.tonu} suggestedMiles={miles} weightLb={weightLb} />
+                <MoneyBox order={J({ id: order.id, rateCents: order.rateCents, rateTbd: order.rateTbd, currency: order.currency, rateType: order.rateType, rateUnitCents: order.rateUnitCents, rateQty: order.rateQty, fuelRule: order.fuelRule, fuelPct: order.fuelPct, fuelCentsPerMile: order.fuelCentsPerMile, tollsFeesCents: order.tollsFeesCents, updatedAt: order.updatedAt })} readOnly={readOnly || order.tonu} suggestedMiles={miles} weightLb={weightLb} />
                 {billingView && <Charges orderId={id} charges={J(chargeRows)} docs={docRows.filter((d) => d.status !== "pending").map((d) => ({ id: d.id, code: d.code, fileName: d.fileName }))} requiredDocs={requiredDocs} requiredRefs={requiredRefsFor(cust as { requiredRefs?: string[] | null } | undefined, order.refs ?? {})} pnl={pnl} locked={["invoiced", "paid"].includes(order.state)} role={ctx.role} currency={order.currency} />}
               </div>
             ),

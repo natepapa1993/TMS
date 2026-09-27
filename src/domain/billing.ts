@@ -42,6 +42,14 @@ export async function ensureCharges(ctx: Ctx, orderId: string) {
   if (order.fuelRule === "pct" && order.fuelPct) {
     const pct = order.fuelPct;
     rows.push({ id: newId(), tenantId: ctx.tenantId, orderId, kind: "fuel", description: `Fuel surcharge ${pct}%`, qty: pct * 100, unit: "pct", rateCents: order.rateCents, amountCents: Math.round((order.rateCents * pct) / 100), currency: order.currency, source: "rate_con", createdBy: ctx.userId, updatedBy: ctx.userId });
+  } else if (order.fuelRule === "per_mile" && order.fuelCentsPerMile) {
+    // cents per mile on the rated miles: the per-mile quantity when the load is priced per mile, else the legs' planned miles
+    let miles = order.rateType === "per_mile" && order.rateQty ? order.rateQty : 0;
+    if (!miles) {
+      const legs = await db.select({ miles: s.legs.plannedMiles, state: s.legs.state }).from(s.legs).where(and(eq(s.legs.tenantId, ctx.tenantId), eq(s.legs.orderId, orderId)));
+      miles = legs.filter((l) => l.state !== "cancelled").reduce((a, l) => a + (l.miles ?? 0), 0);
+    }
+    if (miles > 0) rows.push({ id: newId(), tenantId: ctx.tenantId, orderId, kind: "fuel", description: `Fuel surcharge ${order.fuelCentsPerMile}¢/mi × ${miles} mi`, qty: miles, unit: "mi", rateCents: order.fuelCentsPerMile, amountCents: order.fuelCentsPerMile * miles, currency: order.currency, source: "rate_con", createdBy: ctx.userId, updatedBy: ctx.userId });
   }
   await db.insert(s.charges).values(rows);
   return db.select().from(s.charges).where(and(eq(s.charges.tenantId, ctx.tenantId), eq(s.charges.orderId, orderId)));

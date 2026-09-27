@@ -43,7 +43,7 @@ async function stopFromPayload(ctx: Parameters<Parameters<typeof act>[0]>[0], st
   };
 }
 
-export type LoadInput = { customerId: string; brokerId: string; billingEntityId: string; equipment: string; rate: string; rateTbd: boolean; currency: string; refs: Record<string, string>; cargoNote: string; freight: { commodity: string; pieces: string; packaging: string; weightLb: string; hazmat: boolean }[]; stops: StopPayload[]; book: boolean; rateConDocId?: string | null };
+export type LoadInput = { customerId: string; brokerId: string; billingEntityId: string; equipment: string; rate: string; rateTbd: boolean; currency: string; refs: Record<string, string>; cargoNote: string; freight: { commodity: string; pieces: string; packaging: string; weightLb: string; hazmat: boolean }[]; stops: StopPayload[]; book: boolean; rateConDocId?: string | null; contract?: { rateId: string; rateType: string; unitCents: number; miles: number | null; fuelRule: string; fuelPct: number | null; fuelCentsPerMile: number | null } | null };
 
 /** Read an uploaded rate con into a draft for the builder (AI reader). */
 export async function readRateConAction(form: FormData) {
@@ -52,6 +52,20 @@ export async function readRateConAction(form: FormData) {
   const { readRateConForBuilder } = await import("@/domain/ratecon-reader");
   const bytes = Buffer.from(await f.arrayBuffer());
   return act((ctx) => readRateConForBuilder(ctx, { fileName: f.name, mimeType: f.type || "application/pdf", bytes }));
+}
+
+/** The customer's contract rate for the lane being built (first pickup → last delivery), with estimated miles. */
+export async function suggestRateAction(input: { customerId: string; equipment: string; stops: { locationId: string | null; name: string; city: string; state: string; windowStart?: string }[] }) {
+  return act(async (ctx) => {
+    if (!input.customerId || input.stops.length < 2) return null;
+    const { suggestCustomerRate, routeMiles } = await import("@/domain/rates");
+    const from = input.stops[0];
+    const to = input.stops[input.stops.length - 1];
+    if (!from.name.trim() || !to.name.trim()) return null;
+    const miles = await routeMiles(ctx, input.stops.map((x) => x.locationId));
+    const date = from.windowStart ? from.windowStart.slice(0, 10) : null;
+    return suggestCustomerRate(ctx, { customerId: input.customerId, equipment: input.equipment, from: { name: from.name, address: { city: from.city, state: from.state } }, to: { name: to.name, address: { city: to.city, state: to.state } }, miles, date });
+  });
 }
 
 /** The load builder: any number of stops; the legs are cut from them. */
@@ -83,6 +97,17 @@ export async function createLoadAction(input: LoadInput) {
       cargoNote: input.cargoNote || null,
       stops,
       book: input.book,
+      ...(input.contract
+        ? {
+            customerRateId: input.contract.rateId,
+            rateType: input.contract.rateType === "per_mile" ? "per_mile" : "flat",
+            rateUnitCents: input.contract.rateType === "per_mile" ? input.contract.unitCents : null,
+            rateQty: input.contract.rateType === "per_mile" ? input.contract.miles : null,
+            fuelRule: input.contract.fuelRule,
+            fuelPct: input.contract.fuelPct,
+            fuelCentsPerMile: input.contract.fuelCentsPerMile,
+          }
+        : {}),
     });
     if (input.rateConDocId) {
       const { attachDraftRateCon } = await import("@/domain/ratecon-reader");
@@ -126,7 +151,7 @@ export async function moveStopAction(orderId: string, stopId: string, dir: -1 | 
   return r;
 }
 
-export async function updateOrderAction(orderId: string, values: { customerId?: string; brokerId?: string; billingEntityId?: string; equipment?: string; rate?: string; rateTbd?: boolean; currency?: string; refs?: Record<string, string>; cargoNote?: string; fuelRule?: string; fuelPct?: string; tollsFees?: string; rateType?: string; rateUnit?: string; rateQty?: string; priority?: string; salesAgentId?: string; csrId?: string; dispatcherId?: string }, expectedUpdatedAt?: string) {
+export async function updateOrderAction(orderId: string, values: { customerId?: string; brokerId?: string; billingEntityId?: string; equipment?: string; rate?: string; rateTbd?: boolean; currency?: string; refs?: Record<string, string>; cargoNote?: string; fuelRule?: string; fuelPct?: string; fuelCpm?: string; tollsFees?: string; rateType?: string; rateUnit?: string; rateQty?: string; priority?: string; salesAgentId?: string; csrId?: string; dispatcherId?: string }, expectedUpdatedAt?: string) {
   const r = await act(async (ctx) => {
     const patch: Record<string, unknown> = {};
     if (values.priority !== undefined) patch.priority = values.priority || "none";
@@ -148,7 +173,13 @@ export async function updateOrderAction(orderId: string, values: { customerId?: 
     if (values.equipment !== undefined) patch.equipment = values.equipment;
     if (values.currency !== undefined) patch.currency = values.currency;
     if (values.cargoNote !== undefined) patch.cargoNote = values.cargoNote || null;
-    if (values.fuelRule !== undefined) patch.fuelRule = values.fuelRule === "pct" ? "pct" : "included";
+    if (values.fuelRule !== undefined) patch.fuelRule = values.fuelRule === "pct" || values.fuelRule === "per_mile" ? values.fuelRule : "included";
+    if (values.fuelCpm !== undefined) {
+      const n = values.fuelCpm.trim() ? Number(values.fuelCpm.replace(/[¢\s]/g, "")) : null;
+      if (n != null && (!Number.isFinite(n) || n < 0 || n > 500)) throw Object.assign(new Error("Fuel ¢/mile must be 0–500"), { name: "ValidationError", field: "fuelCpm" });
+      patch.fuelCentsPerMile = n == null ? null : Math.round(n);
+      if (patch.fuelRule === "per_mile" && patch.fuelCentsPerMile == null) throw Object.assign(new Error("Enter the fuel surcharge in cents per mile"), { name: "ValidationError", field: "fuelCpm" });
+    }
     if (values.fuelPct !== undefined) {
       const n = values.fuelPct.trim() ? Number(values.fuelPct.replace("%", "")) : null;
       if (n != null && (!Number.isFinite(n) || n < 0 || n > 100)) throw Object.assign(new Error("Fuel % must be 0–100"), { name: "ValidationError", field: "fuelPct" });

@@ -45,7 +45,7 @@ export function LoadTabs({ tabs }: { tabs: TabDef[] }) {
 
 /* ---------- money box ---------- */
 
-type MoneyOrder = { id: string; rateCents: number | null; rateTbd: boolean; currency: string; rateType: string; rateUnitCents: number | null; rateQty: number | null; fuelRule: string; fuelPct: number | null; tollsFeesCents: number | null; updatedAt: string };
+type MoneyOrder = { id: string; rateCents: number | null; rateTbd: boolean; currency: string; rateType: string; rateUnitCents: number | null; rateQty: number | null; fuelRule: string; fuelPct: number | null; fuelCentsPerMile: number | null; tollsFeesCents: number | null; updatedAt: string };
 const RATE_TYPES: [string, string, string][] = [
   ["flat", "Flat", ""],
   ["per_mile", "Per mile", "Miles"],
@@ -57,7 +57,7 @@ const dollars = (c: number | null) => (c == null ? "" : (c / 100).toFixed(2));
 export function MoneyBox({ order, readOnly, suggestedMiles, weightLb }: { order: MoneyOrder; readOnly: boolean; suggestedMiles: number | null; weightLb: number | null }) {
   const router = useRouter();
   const t = useToast();
-  const [f, setF] = useState({ rateType: order.rateType, rate: dollars(order.rateCents), rateTbd: order.rateTbd, rateUnit: dollars(order.rateUnitCents), rateQty: order.rateQty != null ? String(order.rateQty) : "", currency: order.currency, fuelRule: order.fuelRule ?? "included", fuelPct: order.fuelPct != null ? String(order.fuelPct) : "", tollsFees: dollars(order.tollsFeesCents) });
+  const [f, setF] = useState({ rateType: order.rateType, rate: dollars(order.rateCents), rateTbd: order.rateTbd, rateUnit: dollars(order.rateUnitCents), rateQty: order.rateQty != null ? String(order.rateQty) : "", currency: order.currency, fuelRule: order.fuelRule ?? "included", fuelPct: order.fuelPct != null ? String(order.fuelPct) : "", fuelCpm: order.fuelCentsPerMile != null ? String(order.fuelCentsPerMile) : "", tollsFees: dollars(order.tollsFeesCents) });
   const [err, setErr] = useState<string | null>(null);
   const [pending, start] = useTransition();
   const unitType = f.rateType !== "flat";
@@ -69,7 +69,7 @@ export function MoneyBox({ order, readOnly, suggestedMiles, weightLb }: { order:
   const save = () =>
     start(async () => {
       setErr(null);
-      const r = await updateOrderAction(order.id, { rateType: f.rateType, rate: f.rate, rateTbd: f.rateTbd, rateUnit: unitType ? f.rateUnit : "", rateQty: unitType ? f.rateQty : "", currency: f.currency, fuelRule: f.fuelRule, fuelPct: f.fuelPct, tollsFees: f.tollsFees }, order.updatedAt);
+      const r = await updateOrderAction(order.id, { rateType: f.rateType, rate: f.rate, rateTbd: f.rateTbd, rateUnit: unitType ? f.rateUnit : "", rateQty: unitType ? f.rateQty : "", currency: f.currency, fuelRule: f.fuelRule, fuelPct: f.fuelPct, fuelCpm: f.fuelCpm, tollsFees: f.tollsFees }, order.updatedAt);
       if (r.ok) {
         t.ok("Rate saved");
         router.refresh();
@@ -142,8 +142,17 @@ export function MoneyBox({ order, readOnly, suggestedMiles, weightLb }: { order:
           <select id="m-fuel" className="select" value={f.fuelRule} onChange={(e) => setF({ ...f, fuelRule: e.target.value })} aria-label="Fuel rule">
             <option value="included">Included in the rate</option>
             <option value="pct">Surcharge % of line haul</option>
+            <option value="per_mile">Surcharge ¢ per mile</option>
           </select>
         </div>
+        {f.fuelRule === "per_mile" && (
+          <div>
+            <label className="label" htmlFor="m-fuelcpm">
+              Fuel surcharge ¢/mile
+            </label>
+            <input id="m-fuelcpm" className="input" inputMode="numeric" value={f.fuelCpm} onChange={(e) => setF({ ...f, fuelCpm: e.target.value })} aria-label="Fuel cents per mile" />
+          </div>
+        )}
         {f.fuelRule === "pct" && (
           <div>
             <label className="label" htmlFor="m-fuelpct">
