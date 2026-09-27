@@ -25,9 +25,7 @@ jobs:
       APP_URL: http://localhost:3123 # the e2e server port (playwright.config.ts)
     steps:
       - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-        with:
-          version: 10
+      - uses: pnpm/action-setup@v4 # version comes from package.json "packageManager"
       - uses: actions/setup-node@v4
         with:
           node-version: 22
