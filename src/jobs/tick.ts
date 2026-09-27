@@ -18,6 +18,11 @@ export async function tick(now = new Date()) {
     out.tenders = await expireTenders(now).catch((e) => ({ error: String(e) }));
     out.outbox = await deliverQueued().catch((e) => ({ error: String(e) }));
     if (n % 5 === 1) out.tracking = await flagStaleTracking(now).catch((e) => ({ error: String(e) }));
+    if (n % 5 === 2) {
+      const { flagDwell, flagUnacknowledgedPackets } = await import("@/domain/crossing");
+      out.dwell = await flagDwell(now).catch((e) => ({ error: String(e) }));
+      out.packets = await flagUnacknowledgedPackets(now).catch((e) => ({ error: String(e) }));
+    }
     if (n % 2 === 0) {
       const { pollMotiveAll } = await import("@/integrations/motive");
       out.motive = await pollMotiveAll(now).catch((e) => ({ error: String(e) }));

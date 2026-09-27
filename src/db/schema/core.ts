@@ -373,6 +373,7 @@ export const documents = pgTable(
     id: id(),
     tenantId: tenantId(),
     documentTypeId: text("document_type_id"),
+    code: text("code"), // crossing packet code: carta_retiro | carta_porte | doda | entry | ace_manifest | dtops | bol | invoice | packing_list ...
     subjectKind: text("subject_kind").notNull(), // driver | truck | trailer | carrier | customer | order | leg | crossing
     subjectId: text("subject_id").notNull(),
     fileName: text("file_name").notNull(),

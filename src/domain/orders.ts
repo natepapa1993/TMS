@@ -214,6 +214,12 @@ export async function createOrder(ctx: Ctx, input: CreateOrderInput) {
     let finalOrder = order;
     if (input.book) finalOrder = await bookIn(tx, ctx, order, stops);
     return { order: finalOrder, stops, legs };
+  }).then(async (r) => {
+    if (r.legs.some((l) => l.type === "crossing")) {
+      const { ensureCrossingsForOrder } = await import("./crossing");
+      await ensureCrossingsForOrder(ctx, r.order.id);
+    }
+    return r;
   });
 }
 

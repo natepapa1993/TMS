@@ -51,8 +51,7 @@ export async function deliverQueued(limit = 25) {
   let failed = 0;
   for (const m of rows) {
     try {
-      if (m.channel !== "email") throw new Error(`${m.channel} is not wired yet`);
-      const r = await resendFor(m.tenantId);
+      const r = m.channel === "email" ? await resendFor(m.tenantId) : null;
       if (!r) {
         console.log(`[outbox:logged] to=${m.to} subject=${m.subject}\n${m.body}`);
         await db.update(outbox).set({ state: "logged", sentAt: new Date(), attempts: sql`${outbox.attempts} + 1` }).where(eq(outbox.id, m.id));
