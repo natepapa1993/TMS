@@ -4,6 +4,7 @@ import { db } from "@/db/client";
 import * as s from "@/db/schema";
 import type { ComplianceItem } from "@/db/schema";
 import { newId } from "@/lib/ids";
+import { zoneOf, touches, crosses, type LegZone } from "./zones";
 import { assertCtx, requirePermission, systemCtx, type Ctx } from "@/lib/context";
 import { writeAudit } from "@/lib/audit";
 import { enqueue } from "@/lib/outbox";
@@ -24,13 +25,14 @@ export const FIELD_ITEMS: Record<SubjectKind, { key: string; label: string; bloc
   driver: [
     { key: "licenseExpires", label: "Licence", blocks: true, appliesWhen: (d) => d.driverType !== "B1" },
     { key: "medicalExpires", label: "Medical card", blocks: true },
-    { key: "mxLicenseExpires", label: "Licencia federal", blocks: true, appliesWhen: (d) => d.driverType !== "CDL" },
+    { key: "mxLicenseExpires", label: "Licencia federal", blocks: true, appliesWhen: (d) => d.driverType === "B1" || d.driverType === "DUAL" },
     { key: "fastExpires", label: "FAST card", blocks: false },
     { key: "i94Until", label: "I-94", blocks: true, appliesWhen: (d) => d.driverType === "B1" },
   ],
   truck: [
-    { key: "usPlateExpires", label: "US plate", blocks: true },
+    { key: "usPlateExpires", label: "US plate", blocks: true, appliesWhen: (t) => !!t.usPlate },
     { key: "mxPlateExpires", label: "MX plate", blocks: true, appliesWhen: (t) => !!t.mxPlate },
+    { key: "caPlateExpires", label: "Canadian plate", blocks: true, appliesWhen: (t) => !!t.caPlate },
     { key: "dotInspectionExpires", label: "Annual inspection", blocks: true },
   ],
   trailer: [{ key: "inspectionExpires", label: "Inspection", blocks: true }],
@@ -51,12 +53,15 @@ function statusOf(expiresAt: Date | null, alertDays: number, now: Date, tracksEx
   return "ok";
 }
 
-/** Does a document type scoped to some legs apply to this leg? "mx" covers the crossing too (it is driven on the Mexican side); "us" covers domestic. */
-export function scopeMatches(scope: string | null | undefined, legType: string) {
+/** Does a document type scoped to some legs apply to this leg? By the countries the leg touches: "mx", "us", "ca"; "crossing" when it crosses a border. */
+export function scopeMatches(scope: string | null | undefined, leg: LegZone | string) {
   if (!scope) return true;
-  if (scope === "mx") return legType === "mx" || legType === "crossing";
-  if (scope === "us") return legType === "us" || legType === "domestic";
-  return scope === legType;
+  const z = zoneOf(leg);
+  if (scope === "mx") return touches(z, "MX");
+  if (scope === "us") return touches(z, "US");
+  if (scope === "ca") return touches(z, "CA");
+  if (scope === "crossing") return crosses(z);
+  return scope === z.type;
 }
 
 /** The lists and the dispatchable flag from a set of items (the whole subject, or the items that apply to one leg). */
@@ -70,7 +75,7 @@ export function rollup(items: ComplianceItem[]) {
 }
 
 /** A subject's status as it applies to one leg type: a FAST card scoped to the crossing does not block a US run. */
-export function forLeg<T extends { items: ComplianceItem[] }>(st: T, legType: string | null | undefined): T & ReturnType<typeof rollup> {
+export function forLeg<T extends { items: ComplianceItem[] }>(st: T, legType: LegZone | string | null | undefined): T & ReturnType<typeof rollup> {
   if (!legType) return { ...st, ...rollup(st.items) };
   return { ...st, ...rollup(st.items.filter((i) => scopeMatches(i.legScope, legType))) };
 }
@@ -274,7 +279,7 @@ export async function overrideDispatch(ctx: Ctx, kind: SubjectKind, subjectId: s
 // ---------- where it bites (spec §6.3) ----------
 
 /** Findings for the eligibility engine: a blocked subject is red; expiring is yellow. */
-export async function complianceFindings(ctx: Ctx, kind: SubjectKind, subjectId: string, label: string, legType?: string | null) {
+export async function complianceFindings(ctx: Ctx, kind: SubjectKind, subjectId: string, label: string, legType?: LegZone | string | null) {
   const raw = await statusFor(ctx, kind, subjectId).catch(() => null);
   if (!raw) return [];
   const st = forLeg(raw, legType);

@@ -7,7 +7,7 @@ import { Pill } from "@/components/ui";
 export const dynamic = "force-dynamic";
 export const metadata = { title: "Load offer" };
 
-const LEG_TYPE_LABEL: Record<string, string> = { mx: "Mexico leg", crossing: "Border crossing", us: "US leg", domestic: "Domestic", equipment_move: "Equipment move" };
+const LEG_TYPE_LABEL: Record<string, string> = { mx: "Mexico leg", ca: "Canada leg", crossing: "Border crossing", us: "US leg", domestic: "Domestic", equipment_move: "Equipment move" };
 
 const place = (st: { name: string; address?: { line1?: string; city?: string; state?: string; postalCode?: string } | null } | null) => (st ? [st.name, [st.address?.line1, st.address?.city, [st.address?.state, st.address?.postalCode].filter(Boolean).join(" ")].filter(Boolean).join(", ")] : ["—", ""]);
 

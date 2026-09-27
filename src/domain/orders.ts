@@ -7,8 +7,9 @@ import { coords } from "@/lib/geo";
 import { assertCtx, requirePermission, type Ctx } from "@/lib/context";
 import { writeAudit, diff } from "@/lib/audit";
 import { assertLegTransition, assertOrderTransition, canOrderTransition, LEG_FORWARD, STAGE_OF_LEG, TransitionError } from "./states";
-import { LEG_TEMPLATES, templateByKey, suggestTemplate } from "./templates";
-import { checkDriver, checkTruck, summarize, type Finding } from "./eligibility";
+import { LEG_TEMPLATES, templateByKey } from "./templates";
+import { checkDriver, checkTruck, checkCarrierZone, summarize, type Finding } from "./eligibility";
+import { legZone, legsFromStops, HANDOFF, type LegZone } from "./zones";
 import { complianceFindings, statusMap, forLeg } from "./compliance";
 
 /**
@@ -152,8 +153,11 @@ export async function createOrder(ctx: Ctx, input: CreateOrderInput) {
   if (input.legPlan) {
     for (const lg of input.legPlan) if (lg.from < 0 || lg.to >= input.stops.length || lg.from >= lg.to) throw new ValidationError("leg plan does not fit the stops", "stops");
     template = { key: input.kind === "trip" ? "trip" : "custom", legs: input.legPlan };
+  } else if (!input.template) {
+    // the stops as entered, any number of them: a leg ends wherever the trailer changes hands
+    template = { key: "stops", legs: legsFromStops(input.stops) };
   } else {
-    const templateKey = input.template ?? suggestTemplate(input.stops.map((x) => x.country ?? "US"));
+    const templateKey = input.template;
     const found = templateByKey(templateKey);
     if (!found) throw new ValidationError(`unknown leg template ${templateKey}`, "template");
     if (found.stops.length !== input.stops.length) throw new ValidationError(`template "${found.label}" expects ${found.stops.length} stops, got ${input.stops.length}`, "template");
@@ -331,7 +335,7 @@ export async function copyOrder(ctx: Ctx, orderId: string) {
     freight: order.freight ?? [],
     cargoNote: order.cargoNote,
     legPlan: legPlan.length ? legPlan : null,
-    template: legPlan.length ? null : order.legTemplate,
+    template: legPlan.length || !order.legTemplate || !templateByKey(order.legTemplate) ? null : order.legTemplate,
     source: "copy",
     sourceRef: order.orderNumber,
     stops: stops.map((st) => ({ type: st.type, name: st.name, locationId: st.locationId, address: st.address, country: st.country, appointment: st.appointment, contact: st.contact, notes: st.notes })),
@@ -442,6 +446,163 @@ export async function checkSealContinuity(tx: Tx | typeof db, ctx: Ctx, orderId:
   return { opened, cleared };
 }
 
+// ---------- building the load stop by stop ----------
+
+const NOT_STARTED: LegState[] = ["unassigned", "planned", "declined"];
+
+/**
+ * Add, remove or reorder stops on a load, the way every TMS lets you: before anything is dispatched
+ * the stops are free and the legs are cut again from them (a leg keeps its truck or carrier when its
+ * two ends did not change). Once a leg is out, a pickup or drop can still be added or removed inside a
+ * leg that has not reached it; hand-offs after dispatch are a split.
+ */
+type StopDraft = { id: string | null; row: Partial<typeof s.stops.$inferInsert> & { type: StopType; name: string; country: string }; arrived: boolean };
+
+async function restructureStops(ctx: Ctx, orderId: string, change: (stops: StopDraft[]) => StopDraft[], note: string) {
+  assertCtx(ctx);
+  requirePermission(ctx, "orders.edit");
+  const result = await db.transaction(async (tx) => {
+    const order = await loadOrder(tx, ctx, orderId);
+    if (order.kind === "shipment") throw new ValidationError("a shipment rides its trip's stops; change them on the trip");
+    if (order.kind === "trip") throw new ValidationError("change a trip's stops on the trip builder");
+    if (["delivered", "ready_to_bill", "invoiced", "paid", "cancelled"].includes(order.state)) throw new ValidationError(`a ${order.state.replace(/_/g, " ")} load's stops are final`);
+    const before = await tx.select().from(s.stops).where(and(eq(s.stops.tenantId, ctx.tenantId), eq(s.stops.orderId, orderId))).orderBy(asc(s.stops.seq));
+    const legs = await tx.select().from(s.legs).where(and(eq(s.legs.tenantId, ctx.tenantId), eq(s.legs.orderId, orderId))).orderBy(asc(s.legs.seq));
+    const live = legs.filter((l) => l.state !== "cancelled");
+    const started = live.some((l) => !NOT_STARTED.includes(l.state));
+    const next = change(before.map((st) => ({ id: st.id, row: { ...st }, arrived: !!st.arrivedAt })));
+    if (next.length < 2) throw new ValidationError("a load needs at least two stops", "stops");
+    for (const st of next) if (!st.row.name?.trim()) throw new ValidationError("every stop needs a name", "stops");
+    const removed = before.filter((st) => !next.some((n) => n.id === st.id));
+    for (const r of removed) if (r.arrivedAt) throw new ValidationError(`${r.name} was already reached; it stays`);
+
+    if (started) {
+      // legs keep their ends: nothing may move across or remove a leg's first or last stop, or a stop already reached
+      const ends = new Set(live.flatMap((l) => [l.fromStopId, l.toStopId]));
+      for (const r of removed) if (ends.has(r.id)) throw new ValidationError(`${r.name} is where a leg starts or ends; with the load already out, split or pull back the leg instead`);
+      const order_ = next.map((n) => n.id).filter((x): x is string => !!x);
+      const kept = before.filter((st) => order_.includes(st.id)).map((st) => st.id);
+      if (kept.join() !== order_.join()) {
+        // moving stops once out: only stops not yet reached, and never past a leg end
+        for (const l of live) {
+          const a = order_.indexOf(l.fromStopId!);
+          const b = order_.indexOf(l.toStopId!);
+          if (a >= b) throw new ValidationError("that move would turn a leg around; split the leg instead");
+        }
+      }
+      for (const n of next) if (!n.id && HANDOFF.includes(n.row.type)) throw new ValidationError("the load is already out: add a yard or transfer by splitting the leg there");
+      const reachedSeqs = next.map((n, i) => (n.arrived ? i : -1)).filter((i) => i >= 0);
+      const lastReached = reachedSeqs.length ? Math.max(...reachedSeqs) : -1;
+      next.forEach((n, i) => {
+        if (!n.id && i <= lastReached) throw new ValidationError("a new stop has to come after the last stop the truck reached");
+      });
+    }
+
+    // write: temporary seqs first, then the final order
+    await tx.update(s.stops).set({ seq: sql`${s.stops.seq} + 10000` }).where(and(eq(s.stops.tenantId, ctx.tenantId), eq(s.stops.orderId, orderId)));
+    for (const r of removed) await tx.delete(s.stops).where(eq(s.stops.id, r.id));
+    const finalIds: string[] = [];
+    for (let i = 0; i < next.length; i++) {
+      const n = next[i];
+      if (n.id) {
+        await tx.update(s.stops).set({ seq: i + 1, updatedAt: new Date(), updatedBy: ctx.userId }).where(eq(s.stops.id, n.id));
+        finalIds.push(n.id);
+      } else {
+        const id = newId();
+        const r = n.row;
+        await tx.insert(s.stops).values({ id, tenantId: ctx.tenantId, orderId, seq: i + 1, type: r.type, locationId: r.locationId ?? null, name: r.name.trim(), address: r.address ?? null, country: r.country, lat: r.lat ?? null, lng: r.lng ?? null, windowStart: r.windowStart ?? null, windowEnd: r.windowEnd ?? null, appointment: r.appointment ?? false, contact: r.contact ?? null, refs: r.refs ?? {}, notes: r.notes ?? null, createdBy: ctx.userId, updatedBy: ctx.userId });
+        finalIds.push(id);
+      }
+    }
+    const stopsNow = await tx.select().from(s.stops).where(and(eq(s.stops.tenantId, ctx.tenantId), eq(s.stops.orderId, orderId))).orderBy(asc(s.stops.seq));
+
+    if (!started) {
+      // cut the legs again; a leg whose two ends are unchanged keeps its row, assignment and history
+      const plan = legsFromStops(stopsNow);
+      const keep = new Set<string>();
+      for (let k = 0; k < plan.length; k++) {
+        const p = plan[k];
+        const fromId = stopsNow[p.from].id;
+        const toId = stopsNow[p.to].id;
+        const same = live.find((l) => l.fromStopId === fromId && l.toStopId === toId && !keep.has(l.id));
+        if (same) {
+          keep.add(same.id);
+          await tx.update(s.legs).set({ seq: k + 1, type: p.type, updatedAt: new Date(), updatedBy: ctx.userId }).where(eq(s.legs.id, same.id));
+        } else {
+          const id = newId();
+          keep.add(id);
+          await tx.insert(s.legs).values({ id, tenantId: ctx.tenantId, orderId, seq: k + 1, type: p.type, fromStopId: fromId, toStopId: toId, state: "unassigned", createdBy: ctx.userId, updatedBy: ctx.userId });
+        }
+      }
+      for (const l of legs) {
+        if (keep.has(l.id)) continue;
+        const [x] = await tx.select({ id: s.crossings.id }).from(s.crossings).where(eq(s.crossings.legId, l.id)).limit(1);
+        if (x) {
+          const [doc] = await tx.select({ id: s.documents.id }).from(s.documents).where(and(eq(s.documents.subjectKind, "crossing"), eq(s.documents.subjectId, x.id))).limit(1);
+          if (doc) throw new ValidationError("the crossing on this load already has documents uploaded; move them or keep the border stops as they are");
+          await tx.delete(s.crossings).where(eq(s.crossings.id, x.id));
+        }
+        await tx.update(s.tenders).set({ state: "withdrawn", respondedAt: new Date(), respondedBy: "dispatcher", responseNote: "the leg was re-cut" }).where(and(eq(s.tenders.legId, l.id), eq(s.tenders.state, "sent")));
+        await tx.delete(s.legEvents).where(eq(s.legEvents.legId, l.id));
+        await tx.delete(s.legs).where(eq(s.legs.id, l.id));
+      }
+      await tx.update(s.orders).set({ legTemplate: "stops", updatedAt: new Date(), updatedBy: ctx.userId }).where(eq(s.orders.id, orderId));
+    } else {
+      // legs keep their ends; a leg's type follows the countries it now runs through
+      const international = new Set(stopsNow.map((x) => x.country)).size > 1;
+      for (const l of live) {
+        const a = stopsNow.findIndex((x) => x.id === l.fromStopId);
+        const b = stopsNow.findIndex((x) => x.id === l.toStopId);
+        const on = new Set(stopsNow.slice(a, b + 1).map((x) => x.country));
+        const type: LegType = l.type === "equipment_move" ? l.type : on.size > 1 ? "crossing" : on.has("MX") ? "mx" : on.has("CA") ? "ca" : international ? "us" : "domestic";
+        if (type !== l.type) await tx.update(s.legs).set({ type }).where(eq(s.legs.id, l.id));
+      }
+    }
+    await writeAudit(tx, ctx, "order", orderId, "update", { stops: { from: before.map((x) => x.name).join(", "), to: stopsNow.map((x) => x.name).join(", ") } }, note);
+    return { stops: stopsNow };
+  });
+  const { ensureCrossingsForOrder } = await import("./crossing");
+  await ensureCrossingsForOrder(ctx, orderId);
+  void result;
+  return getOrder(ctx, orderId);
+}
+
+/** Put a new stop on the load at a position (0 = first). */
+export async function addStop(ctx: Ctx, orderId: string, position: number, stop: StopInput) {
+  if (!stop.name?.trim()) throw new ValidationError("a stop needs a name", "name");
+  return restructureStops(
+    ctx,
+    orderId,
+    (list) => {
+      const at = Math.max(0, Math.min(position, list.length));
+      const row = { type: stop.type, name: stop.name.trim(), country: stop.country ?? "US", locationId: stop.locationId ?? null, address: stop.address ?? null, windowStart: stop.windowStart ?? null, windowEnd: stop.windowEnd ?? null, appointment: stop.appointment ?? false, contact: stop.contact ?? null, refs: stop.refs ?? {}, notes: stop.notes ?? null };
+      return [...list.slice(0, at), { id: null, row, arrived: false }, ...list.slice(at)];
+    },
+    `stop added: ${stop.name.trim()}`,
+  );
+}
+
+export async function removeStop(ctx: Ctx, orderId: string, stopId: string) {
+  return restructureStops(ctx, orderId, (list) => {
+    if (!list.some((x) => x.id === stopId)) throw new NotFoundError("stop", stopId);
+    return list.filter((x) => x.id !== stopId);
+  }, "stop removed");
+}
+
+/** Move a stop one place up (-1) or down (+1). */
+export async function moveStop(ctx: Ctx, orderId: string, stopId: string, dir: -1 | 1) {
+  return restructureStops(ctx, orderId, (list) => {
+    const i = list.findIndex((x) => x.id === stopId);
+    if (i < 0) throw new NotFoundError("stop", stopId);
+    const j = i + dir;
+    if (j < 0 || j >= list.length) return list;
+    if (list[i].arrived || list[j].arrived) throw new ValidationError("a stop already reached cannot move");
+    const out = [...list];
+    [out[i], out[j]] = [out[j], out[i]];
+    return out;
+  }, "stops reordered");
+}
+
 export async function orderTimeline(ctx: Ctx, orderId: string) {
   assertCtx(ctx);
   requirePermission(ctx, "orders.view");
@@ -531,6 +692,12 @@ async function setLegState(
   return after;
 }
 
+/** Where a leg runs, from its stops: the countries it touches decide who may run it. */
+export async function zoneForLeg(tx: Tx | typeof db, leg: Leg): Promise<LegZone> {
+  const stops = await tx.select({ id: s.stops.id, seq: s.stops.seq, country: s.stops.country }).from(s.stops).where(eq(s.stops.orderId, leg.orderId));
+  return legZone(leg, stops);
+}
+
 export type Assignment =
   | { kind: "truck"; truckId: string; driverId?: string | null; coDriverId?: string | null; trailerId?: string | null }
   | { kind: "carrier"; carrierId: string; carrierRateCents?: number | null };
@@ -538,7 +705,7 @@ export type Assignment =
 export type PlanOptions = { override?: boolean; reason?: string; plannedStart?: Date | null; plannedEnd?: Date | null; plannedMiles?: number | null };
 
 /** Run the eligibility engine for a proposed assignment. Pure read; used by planLeg and the picker. */
-export async function eligibilityFor(ctx: Ctx, legType: LegType, a: Assignment, now = new Date()) {
+export async function eligibilityFor(ctx: Ctx, legType: LegType | LegZone, a: Assignment, now = new Date()) {
   assertCtx(ctx);
   const findings: Finding[] = [];
   if (a.kind === "truck") {
@@ -568,7 +735,7 @@ export async function eligibilityFor(ctx: Ctx, legType: LegType, a: Assignment, 
     if (c.doNotUse) findings.push({ level: "red", code: "carrier_do_not_use", message: `${c.name} is marked do-not-use`, overridable: false });
     if (c.country === "MX" && c.caatExpires && c.caatExpires.getTime() < now.getTime()) findings.push({ level: "red", code: "caat_expired", message: `${c.name}: CAAT expired`, overridable: false });
     if (c.country === "US" && c.fmcsaStatus?.authority && c.fmcsaStatus.authority.toLowerCase() !== "active") findings.push({ level: "red", code: "fmcsa_not_authorized", message: `${c.name}: FMCSA authority ${c.fmcsaStatus.authority}`, overridable: false });
-    if ((legType === "us" || legType === "domestic") && c.country === "MX") findings.push({ level: "red", code: "mx_carrier_us_leg", message: `${c.name} is a Mexican carrier: cannot run a US leg`, overridable: false });
+    findings.push(...checkCarrierZone(c, legType));
     findings.push(...(await complianceFindings(ctx, "carrier", c.id, c.name, legType)));
   }
   return summarize(findings);
@@ -584,7 +751,7 @@ export async function planLeg(ctx: Ctx, legId: string, a: Assignment, opts: Plan
     const from: LegState = leg.state === "declined" || leg.state === "dispatched" || leg.state === "accepted" ? "planned" : "planned";
     if (!["unassigned", "declined", "planned", "dispatched", "accepted"].includes(leg.state)) throw new TransitionError("leg", leg.state, from, "leg already moving");
 
-    const elig = await eligibilityFor(ctx, leg.type, a);
+    const elig = await eligibilityFor(ctx, await zoneForLeg(tx, leg), a);
     if (elig.hardBlocked) throw new EligibilityError(elig.findings, true);
     if (!elig.ok) {
       if (!opts.override) throw new EligibilityError(elig.findings, false);
@@ -940,7 +1107,7 @@ export async function setLegDrivers(ctx: Ctx, legId: string, drivers: { driverId
     if (leg.assigneeKind !== "truck" || !leg.truckId) throw new ValidationError("leg is not assigned to a truck");
     if (leg.state === "completed" || leg.state === "cancelled") throw new TransitionError("leg", leg.state, "drivers", "leg is closed");
     const next = { driverId: drivers.driverId === undefined ? leg.driverId : drivers.driverId, coDriverId: drivers.coDriverId === undefined ? leg.coDriverId : drivers.coDriverId };
-    const elig = await eligibilityFor(ctx, leg.type, { kind: "truck", truckId: leg.truckId, ...next, trailerId: leg.trailerId });
+    const elig = await eligibilityFor(ctx, await zoneForLeg(db, leg), { kind: "truck", truckId: leg.truckId, ...next, trailerId: leg.trailerId });
     if (elig.hardBlocked) throw new EligibilityError(elig.findings, true);
     if (!elig.ok) {
       if (!opts.override) throw new EligibilityError(elig.findings, false);
@@ -975,6 +1142,7 @@ export async function candidatesForLeg(ctx: Ctx, legId: string, now = new Date()
   requirePermission(ctx, "orders.view");
   const leg = await db.select().from(s.legs).where(and(eq(s.legs.tenantId, ctx.tenantId), eq(s.legs.id, legId))).limit(1).then((r) => r[0]);
   if (!leg) throw new NotFoundError("leg", legId);
+  const zone = await zoneForLeg(db, leg);
   const trucks = await db.select().from(s.trucks).where(and(eq(s.trucks.tenantId, ctx.tenantId), sql`${s.trucks.archivedAt} is null`));
   const drivers = await db.select().from(s.drivers).where(and(eq(s.drivers.tenantId, ctx.tenantId), sql`${s.drivers.archivedAt} is null`));
   const busyRows = await db
@@ -988,7 +1156,7 @@ export async function candidatesForLeg(ctx: Ctx, legId: string, now = new Date()
   const compFindings = (kind: "truck" | "driver", id: string, label: string): Finding[] => {
     const raw = kind === "truck" ? truckComp.get(id) : driverComp.get(id);
     if (!raw) return [];
-    const st = forLeg(raw, leg.type);
+    const st = forLeg(raw, zone);
     if (!st.dispatchable && !st.override) return [{ level: "red", code: "compliance_block", message: `${label}: ${[...st.expired.map((x) => `${x} expired`), ...st.missing.map((x) => `${x} missing`)].join(", ")}`, overridable: !st.expired.some((l) => /licen|medical|I-94|plate/i.test(l)) }];
     const out: Finding[] = [];
     if (st.override) out.push({ level: "yellow", code: "compliance_override", message: `${label}: dispatch override (${st.override.reason})`, overridable: true });
@@ -998,7 +1166,7 @@ export async function candidatesForLeg(ctx: Ctx, legId: string, now = new Date()
 
   const out: Candidate[] = trucks.map((t) => {
     const drv = drivers.find((d) => d.currentTruckId === t.id) ?? null;
-    const findings = [...checkTruck(t, leg.type, now), ...compFindings("truck", t.id, `unit ${t.unitNumber}`), ...(drv ? [...checkDriver(drv, leg.type, now), ...compFindings("driver", drv.id, drv.name)] : [])];
+    const findings = [...checkTruck(t, zone, now), ...compFindings("truck", t.id, `unit ${t.unitNumber}`), ...(drv ? [...checkDriver(drv, zone, now), ...compFindings("driver", drv.id, drv.name)] : [])];
     if (!drv) findings.push({ level: "yellow", code: "no_driver", message: `${t.unitNumber} has no driver assigned`, overridable: true });
     const sum = summarize(findings);
     const busy = busyBy.get(t.id) ?? [];

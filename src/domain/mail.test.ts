@@ -112,7 +112,7 @@ describe("the pipeline without a model", () => {
     expect(card.proposal.equipment).toBe("53_dry");
     expect(card.proposal.stops[0].name).toContain("Planta Monterrey");
     expect(card.proposal.stops[0].country).toBe("MX"); // "Apodaca NL MX" is Mexico
-    expect(card.proposal.template).toBe("mx_crossing_us");
+    expect(card.proposal.stops).toHaveLength(2); // the two ends as read; dispatch adds any yard
     expect(card.proposal.stops[card.proposal.stops.length - 1].name).toContain("GM Arlington");
     expect(card.proposal.attachAs).toBe("RATE_CON");
     // the same email again is not a second card
@@ -297,8 +297,7 @@ describe("the pipeline with the model", () => {
     if (card.proposal.action !== "create_order") throw new Error(card.proposal.action);
     expect(card.proposal.customerName).toBe("Magna"); // by the name the model read
     expect(card.proposal.rateCents).toBe(310000);
-    expect(card.proposal.template).toBe("mx_crossing_us");
-    expect(card.proposal.stops.map((st) => st.country)).toEqual(["MX", "MX", "US", "US"]);
+    expect(card.proposal.stops.map((st) => st.country)).toEqual(["MX", "US"]);
     expect(card.proposal.stops[0]).toMatchObject({ name: "Magna Ramos Arizpe", city: "Ramos Arizpe", state: "COAH" });
     expect(card.proposal.refs.po).toBe("5700489439");
     expect(card.extracted.cargo?.value).toBe("26 pallets seats, 38,000 lb");

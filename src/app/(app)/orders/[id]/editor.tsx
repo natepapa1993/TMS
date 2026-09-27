@@ -2,9 +2,10 @@
 
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { updateOrderAction, updateStopAction } from "../actions";
+import { updateOrderAction, updateStopAction, addStopAction, removeStopAction, moveStopAction } from "../actions";
 import { bookAction, cancelAction, holdAction, releaseAction, setLegMilesAction, copyOrderAction } from "../../dispatch/actions";
-import { Confirm, Toast, useToast } from "@/components/ui";
+import { Confirm, Modal, Toast, useToast } from "@/components/ui";
+import { StopFields, blankStop, stopPayload, STOP_LABEL, COUNTRIES, type Loc, type StopDraft } from "@/components/stop-fields";
 
 const REF_LABEL: Record<string, string> = { rate_con: "Rate con", po: "PO", asn: "ASN", shipment: "Shipment", reference: "Reference" };
 type Order = { id: string; state: string; kind?: string; customerId: string | null; brokerId: string | null; billingEntityId: string | null; equipment: string; rateCents: number | null; rateTbd: boolean; currency: string; fuelRule: string; fuelPct: number | null; tollsFeesCents: number | null; refs: Record<string, string>; cargoNote: string | null; updatedAt: string };
@@ -64,6 +65,7 @@ export function OrderEditor({ order, customers, entities, readOnly }: { order: O
             <select className="select w-24" value={f.currency} onChange={(e) => setF({ ...f, currency: e.target.value })}>
               <option>USD</option>
               <option>MXN</option>
+              <option>CAD</option>
             </select>
           </div>
           <label className="flex items-center gap-2 mt-1.5 text-[12.5px] cursor-pointer">
@@ -138,20 +140,30 @@ export function OrderEditor({ order, customers, entities, readOnly }: { order: O
   );
 }
 
-export function StopEditor({ orderId, index, stop, readOnly }: { orderId: string; index: number; stop: Stop; readOnly: boolean }) {
+export function StopEditor({ orderId, index, count, stop, readOnly, restructure }: { orderId: string; index: number; count: number; stop: Stop; readOnly: boolean; restructure: boolean }) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [f, setF] = useState({ name: stop.name, address: fmtAddr(stop.address), country: stop.country, windowStart: toLocal(stop.windowStart), windowEnd: toLocal(stop.windowEnd), appointment: stop.appointment, contact: stop.contact ?? "", notes: stop.notes ?? "", sealIn: stop.sealIn ?? "", sealOut: stop.sealOut ?? "" });
   const [err, setErr] = useState<string | null>(null);
   const [pending, start] = useTransition();
   const done = !!stop.departedAt;
+  const t = useToast();
+  const [confirmRemove, setConfirmRemove] = useState(false);
+  const change = (label: string, fn: () => Promise<{ ok: boolean; error?: string }>) =>
+    start(async () => {
+      const r = await fn();
+      if (r.ok) {
+        t.ok(label);
+        router.refresh();
+      } else t.err(r.error ?? "Could not do that");
+    });
   return (
     <div className="rounded-lg border border-line">
       <div className="flex items-center gap-3 px-3 py-2.5 cursor-pointer" onClick={() => setOpen(!open)}>
         <span className={`w-6 h-6 rounded-full grid place-items-center text-[11px] font-extrabold ${done ? "bg-teal text-white" : stop.arrivedAt ? "bg-teal-soft text-teal" : "bg-line text-muted"}`}>{index + 1}</span>
         <div className="flex-1 min-w-0">
           <div className="font-bold truncate">
-            {stop.name} <span className="text-faint font-normal">· {stop.type.replace("_", " ")} · {stop.country}</span>
+            {stop.name} <span className="text-faint font-normal">· {STOP_LABEL[stop.type] ?? stop.type.replace("_", " ")} · {stop.country}</span>
           </div>
           <div className="text-muted text-[12.5px] truncate">
             {fmtAddr(stop.address) || "no address"}
@@ -161,16 +173,32 @@ export function StopEditor({ orderId, index, stop, readOnly }: { orderId: string
             {stop.sealIn || stop.sealOut ? <span className="mono"> · seal {stop.sealIn ? `in ${stop.sealIn}` : ""}{stop.sealIn && stop.sealOut ? " / " : ""}{stop.sealOut ? `out ${stop.sealOut}` : ""}</span> : ""}
           </div>
         </div>
+        {restructure && !readOnly && !stop.arrivedAt && (
+          <span className="flex gap-1" onClick={(e) => e.stopPropagation()}>
+            <button className="btn btn-ghost btn-sm" disabled={pending || index === 0} onClick={() => change("Stop moved — legs re-cut", () => moveStopAction(orderId, stop.id, -1))} aria-label={`Move stop ${index + 1} up`} title="Move up">
+              ↑
+            </button>
+            <button className="btn btn-ghost btn-sm" disabled={pending || index === count - 1} onClick={() => change("Stop moved — legs re-cut", () => moveStopAction(orderId, stop.id, 1))} aria-label={`Move stop ${index + 1} down`} title="Move down">
+              ↓
+            </button>
+            <button className="btn btn-ghost btn-sm text-red" disabled={pending || count <= 2} onClick={() => setConfirmRemove(true)} aria-label={`Remove stop ${index + 1}`} title="Remove">
+              ×
+            </button>
+          </span>
+        )}
         <span className="text-faint">{open ? "▴" : "▾"}</span>
       </div>
+      <Confirm open={confirmRemove} title={`Remove ${stop.name}?`} body="The legs are re-cut from the remaining stops. A leg that no longer exists loses its assignment." confirmLabel="Remove stop" danger onClose={() => setConfirmRemove(false)} onConfirm={() => { setConfirmRemove(false); change("Stop removed — legs re-cut", () => removeStopAction(orderId, stop.id)); }} />
+      <Toast message={t.toast?.message ?? null} tone={t.toast?.tone} onDone={t.clear} />
       {open && (
         <fieldset disabled={readOnly} className="px-3 pb-3 border-t border-line pt-3">
           <div className="grid grid-cols-2 md:grid-cols-[1.2fr_2fr_80px] gap-2">
             <input className="input" placeholder="Name" value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} />
             <input className="input" placeholder="Street, City, ST 00000" value={f.address} onChange={(e) => setF({ ...f, address: e.target.value })} />
-            <select className="select" value={f.country} onChange={(e) => setF({ ...f, country: e.target.value })}>
-              <option>MX</option>
-              <option>US</option>
+            <select className="select" value={f.country} onChange={(e) => setF({ ...f, country: e.target.value })} aria-label="Country">
+              {COUNTRIES.map(([v]) => (
+                <option key={v}>{v}</option>
+              ))}
             </select>
           </div>
           <div className="grid grid-cols-2 md:grid-cols-[1fr_1fr_auto_1fr] gap-2 mt-2">
@@ -315,5 +343,79 @@ export function LegMiles({ legId, miles, locked }: { legId: string; miles: numbe
       {state === "saved" && <span className="text-teal text-[11px] font-bold">✓</span>}
       {msg && <span className="error m-0 text-[11px]">{msg}</span>}
     </span>
+  );
+}
+
+/** "Add stop" on an existing load: a full stop, placed where it happens. Legs are re-cut on the server. */
+export function AddStop({ orderId, stops, locations, firstOpen }: { orderId: string; stops: { id: string; name: string }[]; locations: Loc[]; firstOpen: number }) {
+  const router = useRouter();
+  const [open, setOpen] = useState(false);
+  const [draft, setDraft] = useState<StopDraft>(() => blankStop("delivery", "US"));
+  const [position, setPosition] = useState(stops.length);
+  const [err, setErr] = useState<string | null>(null);
+  const [pending, start] = useTransition();
+  const close = () => {
+    setOpen(false);
+    setErr(null);
+    setDraft(blankStop("delivery", "US"));
+  };
+  const positions = Array.from({ length: stops.length + 1 }, (_, i) => i).filter((i) => i >= firstOpen);
+  return (
+    <>
+      <button className="btn btn-sm" onClick={() => { setPosition(stops.length); setOpen(true); }}>
+        + Add stop
+      </button>
+      <Modal
+        open={open}
+        onClose={close}
+        wide
+        title="Add a stop"
+        footer={
+          <>
+            <button className="btn" onClick={close}>
+              Cancel
+            </button>
+            <button
+              className="btn btn-primary"
+              disabled={pending}
+              onClick={() =>
+                start(async () => {
+                  setErr(null);
+                  if (!draft.name.trim()) return setErr("Where is the stop?");
+                  const r = await addStopAction(orderId, position, stopPayload(draft));
+                  if (r.ok) {
+                    close();
+                    router.refresh();
+                  } else setErr(r.error);
+                })
+              }
+            >
+              {pending ? "Adding…" : "Add stop"}
+            </button>
+          </>
+        }
+      >
+        <div className="space-y-3">
+          <div>
+            <label className="label" htmlFor="add-stop-position">
+              Where in the route
+            </label>
+            <select id="add-stop-position" className="select" value={position} onChange={(e) => setPosition(Number(e.target.value))}>
+              {positions.map((i) => (
+                <option key={i} value={i}>
+                  {i === 0 ? `Before ${stops[0]?.name ?? "the first stop"}` : i === stops.length ? `After ${stops[stops.length - 1]?.name} (last)` : `Between ${stops[i - 1].name} and ${stops[i].name}`}
+                </option>
+              ))}
+            </select>
+          </div>
+          <StopFields stop={draft} onChange={(p) => setDraft((d) => ({ ...d, ...p }))} locations={locations} index={99} invalid={!!err} />
+          {err && (
+            <div className="error" role="alert">
+              {err}
+            </div>
+          )}
+        </div>
+      </Modal>
+    </>
   );
 }

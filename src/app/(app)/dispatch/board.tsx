@@ -48,7 +48,6 @@ export type BoardData = {
   carriers: { id: string; name: string; country: string; doNotUse: boolean }[];
   drivers: { id: string; name: string; driverType: string; currentTruckId: string | null }[];
   trucks: { id: string; unitNumber: string; status: string }[];
-  templates: { key: string; label: string; description: string }[];
   role: string;
   ediInbox: number;
   messages: number;
@@ -62,7 +61,7 @@ const STAGES = [
   { key: "delivered", label: "Delivered", hint: "Ready for billing" },
 ] as const;
 
-const LEG_TYPE_LABEL: Record<string, string> = { mx: "MX", crossing: "Crossing", us: "US", domestic: "Domestic", equipment_move: "Equip." };
+const LEG_TYPE_LABEL: Record<string, string> = { mx: "MX", ca: "CA", crossing: "Crossing", us: "US", domestic: "Domestic", equipment_move: "Equip." };
 const money = (c: number | null, cur = "USD") => (c == null ? "TBD" : new Intl.NumberFormat("en-US", { style: "currency", currency: cur, maximumFractionDigits: 0 }).format(c / 100));
 const when = (s: string | null) => (s ? new Date(s).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) : null);
 const place = (st: Stop) => st.name + (st.address?.city ? `, ${st.address.city}` : "") + (st.address?.state ? ` ${st.address.state}` : "");
@@ -90,13 +89,13 @@ function forwardLabel(leg: Pick<Leg, "state" | "fromStopId" | "toStopId">, stops
   return map[leg.state] ?? null;
 }
 
-export function DispatchBoard({ data }: { data: BoardData }) {
+export function DispatchBoard({ data, initialOrder }: { data: BoardData; initialOrder?: string }) {
   const router = useRouter();
   const t = useToast();
-  const [stage, setStage] = useState<(typeof STAGES)[number]["key"]>("pending");
+  const initialRow = initialOrder ? data.rows.find((r) => r.order.id === initialOrder) : undefined;
+  const [stage, setStage] = useState<(typeof STAGES)[number]["key"]>(initialRow && initialRow.stage !== "closed" ? initialRow.stage : "pending");
   const [q, setQ] = useState("");
-  const [selectedId, setSelectedIdRaw] = useState<string | null>(null);
-  const [newOpen, setNewOpen] = useState(false);
+  const [selectedId, setSelectedIdRaw] = useState<string | null>(initialRow?.order.id ?? null);
   const [popup, setPopup] = useState<null | { kind: "assign" | "split" | "hold" | "cancel" | "oos" | "decline" | "drivers" | "track"; legId?: string }>(null);
   // Selecting another order always drops any popup that belonged to the previous one.
   const setSelectedId = useCallback((id: string | null) => {
@@ -132,7 +131,7 @@ export function DispatchBoard({ data }: { data: BoardData }) {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if ((e.target as HTMLElement)?.tagName?.match(/INPUT|TEXTAREA|SELECT/)) return;
-      if (e.key === "n") setNewOpen(true);
+      if (e.key === "n") router.push("/orders/new");
       if (e.key === "/") {
         e.preventDefault();
         document.getElementById("board-search")?.focus();
@@ -142,7 +141,7 @@ export function DispatchBoard({ data }: { data: BoardData }) {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [setSelectedId]);
+  }, [setSelectedId, router]);
 
   const canDispatch = ["owner", "dispatcher"].includes(data.role);
 
@@ -168,7 +167,7 @@ export function DispatchBoard({ data }: { data: BoardData }) {
               EDI{data.ediInbox ? ` · ${data.ediInbox} waiting` : ""}
             </Link>
             {canDispatch && (
-              <button className="btn btn-primary" onClick={() => setNewOpen(true)} title="Shortcut: n">
+              <button className="btn btn-primary" onClick={() => router.push("/orders/new")} title="Shortcut: n">
                 + New order
               </button>
             )}
@@ -198,7 +197,7 @@ export function DispatchBoard({ data }: { data: BoardData }) {
             {rows.length === 0 ? (
               <div className="py-16 text-center border-t border-line">
                 <div className="font-bold">{q ? "Nothing matches" : stage === "pending" ? "Nothing pending" : `Nothing ${stage}`}</div>
-                <div className="text-muted text-[13px] mt-1">{stage === "pending" && !q ? "New orders land here. Press n to add one." : " "}</div>
+                <div className="text-muted text-[13px] mt-1">{stage === "pending" && !q ? "New loads land here. Press n to build one." : " "}</div>
               </div>
             ) : (
               rows.map((r) => <BoardRow key={r.order.id} r={r} selected={r.order.id === selectedId} onClick={() => setSelectedId(r.order.id)} />)
@@ -230,13 +229,6 @@ export function DispatchBoard({ data }: { data: BoardData }) {
         />
       )}
 
-      <NewOrderModal open={newOpen} onClose={() => setNewOpen(false)} data={data} onCreated={(id) => {
-        setNewOpen(false);
-        setStage("pending");
-        setSelectedId(id);
-        t.ok("Order created and booked. It's in Pending.");
-        router.refresh();
-      }} />
 
       {selected && popup?.kind === "assign" && popupLeg && (
         <AssignModal
@@ -546,7 +538,7 @@ function SidePanel({ r, data, busy, canDispatch, onClose, onPopup, run }: { r: R
           <div className="pb-3">
             <KV k="Rate" v={r.order.rateTbd ? "TBD" : money(r.order.rateCents, r.order.currency)} />
             <KV k="Equipment" v={r.order.equipment.replace("_", " ")} />
-            <KV k="Template" v={data.templates.find((x) => x.key === r.order.legTemplate)?.label} />
+            <KV k="Legs" v={`${r.legs.length} · cut from ${r.stops.length} stops`} />
             {Object.entries(r.order.refs).map(([k, v]) => (
               <KV key={k} k={k.replace(/_/g, " ")} v={v} />
             ))}
@@ -576,125 +568,6 @@ function QuickBtn({ label, onClick, disabled, hint }: { label: string; onClick?:
 }
 
 /* ---------- popups ---------- */
-
-function NewOrderModal({ open, onClose, data, onCreated }: { open: boolean; onClose: () => void; data: BoardData; onCreated: (id: string) => void }) {
-  const [f, setF] = useState({ customerId: "", pickup: "", pickupCountry: "MX", delivery: "", deliveryCountry: "US", rate: "", template: "mx_crossing_us", ref: "" });
-  const [err, setErr] = useState<{ field?: string; message: string } | null>(null);
-  const [pending, start] = useTransition();
-  const reset = () => {
-    setErr(null);
-    setF((s) => ({ ...s, pickup: "", delivery: "", rate: "", ref: "" }));
-  };
-  const close = () => {
-    reset();
-    onClose();
-  };
-  const set = (k: keyof typeof f, v: string) => setF((s) => ({ ...s, [k]: v }));
-  const submit = () =>
-    start(async () => {
-      if (!f.customerId) return setErr({ field: "customerId", message: "Pick who's paying" });
-      if (!f.pickup.trim()) return setErr({ field: "pickup", message: "Where does it pick up?" });
-      if (!f.delivery.trim()) return setErr({ field: "delivery", message: "Where does it deliver?" });
-      const r = await A.quickOrderAction({ ...f, refs: f.ref.trim() ? { reference: f.ref.trim() } : undefined });
-      if (r.ok) {
-        reset();
-        onCreated(r.data.order.id);
-      } else setErr({ field: r.field, message: r.error });
-    });
-  return (
-    <Modal
-      open={open}
-      onClose={close}
-      title="New order"
-      footer={
-        <>
-          <button className="btn" onClick={close}>
-            Cancel
-          </button>
-          <button className="btn btn-primary" onClick={submit} disabled={pending}>
-            {pending ? "Creating…" : "Create & book"}
-          </button>
-        </>
-      }
-    >
-      <div className="space-y-3">
-        <div>
-          <label className="label">Customer / broker</label>
-          <select className="select" value={f.customerId} onChange={(e) => set("customerId", e.target.value)} aria-invalid={err?.field === "customerId"} autoFocus>
-            <option value="">—</option>
-            {data.customers.map((c) => (
-              <option key={c.id} value={c.id}>
-                {c.name}
-                {c.kind === "broker" ? " (broker)" : ""}
-              </option>
-            ))}
-          </select>
-          {data.customers.length === 0 && (
-            <div className="help">
-              No customers yet —{" "}
-              <Link href="/settings/customers?add=1" className="text-teal font-semibold">
-                add one
-              </Link>
-              .
-            </div>
-          )}
-        </div>
-        <div className="grid grid-cols-[1fr_88px] gap-2">
-          <div>
-            <label className="label">Pickup</label>
-            <input className="input" value={f.pickup} onChange={(e) => set("pickup", e.target.value)} placeholder="Planta Monterrey" aria-invalid={err?.field === "pickup"} />
-          </div>
-          <div>
-            <label className="label">Country</label>
-            <select className="select" value={f.pickupCountry} onChange={(e) => set("pickupCountry", e.target.value)}>
-              <option>MX</option>
-              <option>US</option>
-            </select>
-          </div>
-        </div>
-        <div className="grid grid-cols-[1fr_88px] gap-2">
-          <div>
-            <label className="label">Delivery</label>
-            <input className="input" value={f.delivery} onChange={(e) => set("delivery", e.target.value)} placeholder="GM Arlington" aria-invalid={err?.field === "delivery"} />
-          </div>
-          <div>
-            <label className="label">Country</label>
-            <select className="select" value={f.deliveryCountry} onChange={(e) => set("deliveryCountry", e.target.value)}>
-              <option>US</option>
-              <option>MX</option>
-            </select>
-          </div>
-        </div>
-        <div className="grid grid-cols-2 gap-2">
-          <div>
-            <label className="label">Rate (USD)</label>
-            <input className="input" inputMode="decimal" value={f.rate} onChange={(e) => set("rate", e.target.value)} placeholder="blank = TBD" aria-invalid={err?.field === "rate"} />
-          </div>
-          <div>
-            <label className="label">Reference / PO</label>
-            <input className="input" value={f.ref} onChange={(e) => set("ref", e.target.value)} />
-          </div>
-        </div>
-        <div>
-          <label className="label">Legs</label>
-          <select className="select" value={f.template} onChange={(e) => set("template", e.target.value)}>
-            {data.templates.map((t) => (
-              <option key={t.key} value={t.key}>
-                {t.label} — {t.description}
-              </option>
-            ))}
-          </select>
-        </div>
-        {err && (
-          <div className="error" role="alert">
-            {err.message}
-          </div>
-        )}
-        <div className="help">Yards are filled in from the template; rename them on the order. Everything else can be added later.</div>
-      </div>
-    </Modal>
-  );
-}
 
 function AssignModal({ leg, order, data, onClose, onDone }: { leg: Leg; order: Order; data: BoardData; onClose: () => void; onDone: (msg: string) => void }) {
   const [tab, setTab] = useState<"truck" | "carrier">(leg.type === "mx" ? "carrier" : "truck");
@@ -1032,7 +905,7 @@ function SplitModal({ leg, stops, onClose, onDone }: { leg: Leg; stops: Stop[]; 
       <div className="grid grid-cols-[1fr_110px_88px] gap-2">
         <div>
           <label className="label">Where</label>
-          <input className="input" value={name} onChange={(e) => setName(e.target.value)} placeholder="San Antonio yard" autoFocus />
+          <input className="input" value={name} onChange={(e) => setName(e.target.value)} placeholder="Yard or terminal name" autoFocus />
         </div>
         <div>
           <label className="label">Kind</label>
@@ -1047,6 +920,7 @@ function SplitModal({ leg, stops, onClose, onDone }: { leg: Leg; stops: Stop[]; 
           <select className="select" value={country} onChange={(e) => setCountry(e.target.value)}>
             <option>US</option>
             <option>MX</option>
+            <option>CA</option>
           </select>
         </div>
       </div>

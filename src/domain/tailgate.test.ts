@@ -35,7 +35,7 @@ beforeEach(async () => {
 });
 
 describe("legsForStops", () => {
-  it("cuts same-country runs into one leg and a US yard → MX border yard into the crossing, both directions", () => {
+  it("a leg ends where the trailer changes hands; a leg that changes country is the crossing — Mexico and Canada alike", () => {
     expect(T.legsForStops([{ type: "pickup", country: "US" }, { type: "pickup", country: "US" }, { type: "delivery", country: "US" }])).toEqual([{ type: "domestic", from: 0, to: 2 }]);
     expect(T.legsForStops([{ type: "pickup", country: "US" }, { type: "yard", country: "US" }, { type: "border_yard", country: "MX" }, { type: "delivery", country: "MX" }, { type: "delivery", country: "MX" }])).toEqual([
       { type: "us", from: 0, to: 1 },
@@ -47,7 +47,13 @@ describe("legsForStops", () => {
       { type: "crossing", from: 1, to: 2 },
       { type: "us", from: 2, to: 3 },
     ]);
-    expect(() => T.legsForStops([{ type: "pickup", country: "US" }, { type: "delivery", country: "MX" }])).toThrow(/yard/);
+    // one truck straight through: the whole run is the crossing
+    expect(T.legsForStops([{ type: "pickup", country: "US" }, { type: "delivery", country: "MX" }])).toEqual([{ type: "crossing", from: 0, to: 1 }]);
+    // Canada: Canton → Windsor → Toronto, a hand-off at the Windsor yard
+    expect(T.legsForStops([{ type: "pickup", country: "US" }, { type: "yard", country: "CA" }, { type: "delivery", country: "CA" }])).toEqual([
+      { type: "crossing", from: 0, to: 1 },
+      { type: "ca", from: 1, to: 2 },
+    ]);
     expect(() => T.legsForStops([{ type: "pickup", country: "US" }])).toThrow(/two stops/);
   });
 });

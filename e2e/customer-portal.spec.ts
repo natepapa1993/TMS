@@ -1,7 +1,7 @@
 // Features: F-13 customer portal through the browser — link from the customer record, their load with tracking, delivered with the POD, invoice with balance, a load request that lands on Dispatch and is booked
 import { test, expect, type Page } from "@playwright/test";
 import path from "node:path";
-import { signupFresh, quickAdd, future } from "./helpers";
+import { signupFresh, quickAdd, future, buildLoad } from "./helpers";
 
 const POD = path.join(__dirname, "fixtures", "bol.pdf");
 
@@ -41,17 +41,7 @@ test("customer's day: one link, a load tracked to delivered, the POD and the inv
   expect(url).toMatch(/\/cp\/[A-Za-z0-9_-]{20,}$/);
 
   // a domestic load for Magna, our truck
-  await page.goto("/dispatch");
-  await page.keyboard.press("n");
-  const d = page.getByRole("dialog");
-  await d.locator("select").first().selectOption({ label: "Magna" });
-  await d.getByPlaceholder("Planta Monterrey").fill("Magna Detroit");
-  await d.locator("select").nth(1).selectOption("US");
-  await d.getByPlaceholder("GM Arlington").fill("Toyota San Antonio");
-  await d.getByPlaceholder("blank = TBD").fill("1800");
-  await d.locator("select").last().selectOption("domestic");
-  await d.locator("button:has-text('Create & book')").click();
-  await expect(page.getByRole("status")).toContainText("Order created");
+  await buildLoad(page, { customer: "Magna", rate: "1800", stops: [{ type: "pickup", name: "Magna Detroit", country: "US" }, { type: "delivery", name: "Toyota San Antonio", country: "US" }] });
   const o1 = (await page.locator("aside .h2").first().textContent())!.match(/\d{2}-\d{5}/)![0];
   const panel = page.locator("aside").last();
   await panel.locator("button:has-text('Assign Domestic leg')").click();
@@ -123,11 +113,11 @@ test("customer's day: one link, a load tracked to delivered, the POD and the inv
   await phone.locator(".stage-tab", { hasText: "Request a load" }).click();
   await phone.locator("button:has-text('Send the request')").click();
   await expect(phone.locator("body")).toContainText("where do we pick up");
-  await phone.getByPlaceholder("Magna Ramos Arizpe").fill("Magna Ramos Arizpe");
+  await phone.getByLabel("Shipper / location").fill("Magna Ramos Arizpe");
   await phone.locator("select").first().selectOption("MX");
-  await phone.getByPlaceholder("Magna Arlington").fill("Magna Arlington");
+  await phone.getByLabel("Consignee / location").fill("Magna Arlington");
   await phone.locator("input.input").nth(9).fill("PO-9001"); // PO #
-  await phone.getByPlaceholder("26 pallets seats · 38,000 lb · no hazmat").fill("26 pallets seats");
+  await phone.getByLabel("What is it").fill("26 pallets seats");
   await phone.locator("button:has-text('Send the request')").click();
   await expect(phone.locator("body")).toContainText("Request received");
   await phone.locator("button:has-text('See your loads')").click();

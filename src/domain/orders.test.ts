@@ -1,4 +1,4 @@
-// Features: F-1.5 F-2.1 F-2.2 F-2.3 F-3.1 F-3.2 F-11.1 F-11.2 F-11.3 F-11.4 F-11.5 F-15 F-16 F-2.9 F-2.10 F-5.13
+// Features: F-1.5 F-2.1 F-2.2 F-2.3 F-3.1 F-3.2 F-11.1 F-11.2 F-11.3 F-11.4 F-11.5 F-15 F-16 F-2.9 F-2.10 F-5.13 F-2.11 F-2.12 F-3.10
 import { describe, it, expect, beforeEach } from "vitest";
 import { truncateAll, makeTenant } from "@/test/helpers";
 import { create } from "@/data/records";
@@ -26,6 +26,9 @@ import {
   getOrder,
   updateOrder,
   updateStop,
+  addStop,
+  removeStop,
+  moveStop,
   ValidationError,
   EligibilityError,
   NotFoundError,
@@ -71,14 +74,14 @@ beforeEach(async () => {
 });
 
 describe("order creation (F-2.1)", () => {
-  it("numbers orders YY-NNNNN per tenant and cuts legs from the template", async () => {
+  it("numbers orders YY-NNNNN per tenant and cuts legs from the stops as entered", async () => {
     const yy = String(new Date().getFullYear()).slice(-2);
     const o1 = await createOrder(a, { customerId: fleet.rxo, rateCents: 1000, stops: crossBorderStops });
     const o2 = await createOrder(a, { customerId: fleet.rxo, rateCents: 1000, stops: crossBorderStops });
     expect(o1.order.orderNumber).toBe(`${yy}-00001`);
     expect(o2.order.orderNumber).toBe(`${yy}-00002`);
-    expect(o1.order.legTemplate).toBe("mx_crossing_us");
-    expect(o1.legs.map((l) => l.type)).toEqual(["mx", "crossing", "us"]);
+    expect(o1.order.legTemplate).toBe("stops");
+    expect(o1.legs.map((l) => l.type)).toEqual(["mx", "crossing", "us"]); // hand-offs at the two yards
     expect(o1.legs.map((l) => l.state)).toEqual(["unassigned", "unassigned", "unassigned"]);
     expect(o1.stops.map((x) => x.seq)).toEqual([1, 2, 3, 4]);
     expect(o1.legs[0].fromStopId).toBe(o1.stops[0].id);
@@ -94,10 +97,16 @@ describe("order creation (F-2.1)", () => {
     expect(new Set(numbers).size).toBe(8);
   });
 
-  it("suggests the domestic template for US→US and rejects mismatched stop counts", async () => {
+  it("any number of stops: pickups and drops ride one leg; a hand-off starts the next; a leg that changes country is the crossing — Canada too", async () => {
     const o = await createOrder(a, { rateTbd: true, stops: [{ type: "pickup", name: "Dallas", country: "US" }, { type: "delivery", name: "Detroit", country: "US" }] });
-    expect(o.order.legTemplate).toBe("domestic");
-    expect(o.legs.length).toBe(1);
+    expect(o.legs.map((l) => l.type)).toEqual(["domestic"]);
+    const multi = await createOrder(a, { rateTbd: true, stops: [{ type: "pickup", name: "Canton", country: "US" }, { type: "pickup", name: "Toledo", country: "US" }, { type: "delivery", name: "Columbus", country: "US" }, { type: "delivery", name: "Cincinnati", country: "US" }] });
+    expect(multi.legs.map((l) => [l.type, l.fromStopId, l.toStopId])).toEqual([["domestic", multi.stops[0].id, multi.stops[3].id]]);
+    const ca = await createOrder(a, { rateTbd: true, stops: [{ type: "pickup", name: "Canton", country: "US" }, { type: "delivery", name: "Windsor", country: "CA" }, { type: "delivery", name: "Toronto", country: "CA" }] });
+    expect(ca.legs.map((l) => l.type)).toEqual(["crossing"]); // one truck straight through
+    const caHand = await createOrder(a, { rateTbd: true, stops: [{ type: "pickup", name: "Canton", country: "US" }, { type: "yard", name: "Windsor yard", country: "CA" }, { type: "delivery", name: "Toronto", country: "CA" }] });
+    expect(caHand.legs.map((l) => l.type)).toEqual(["crossing", "ca"]);
+    // a template can still be asked for by name, and must fit
     await expect(createOrder(a, { rateTbd: true, template: "mx_crossing_us", stops: [{ type: "pickup", name: "A" }, { type: "delivery", name: "B" }] })).rejects.toBeInstanceOf(ValidationError);
     await expect(createOrder(a, { rateTbd: true, stops: [{ type: "pickup", name: "A" }] })).rejects.toBeInstanceOf(ValidationError);
     await expect(createOrder(a, { rateCents: -5, stops: crossBorderStops })).rejects.toBeInstanceOf(ValidationError);
@@ -215,6 +224,91 @@ describe("planning & eligibility (F-3, T2)", () => {
     const c2 = await candidatesForLeg(a, o2.legs[1].id);
     expect(c2[0].unitNumber).toBe("2109");
     expect(c2.find((x) => x.unitNumber === "2117")!.reason).toContain(o.order.orderNumber);
+  });
+});
+
+describe("building the load stop by stop", () => {
+  it("before dispatch: add, move and remove stops freely; legs are cut again and a leg with the same two ends keeps its assignment", async () => {
+    const o = await createOrder(a, { customerId: fleet.rxo, rateCents: 100000, stops: [{ type: "pickup", name: "Canton", country: "US" }, { type: "delivery", name: "Chicago", country: "US" }], book: true });
+    await planLeg(a, o.legs[0].id, { kind: "truck", truckId: fleet.t2104, driverId: fleet.reyes });
+    // a second pickup in the middle: still one leg, same ends → keeps the truck
+    let g = await addStop(a, o.order.id, 1, { type: "pickup", name: "Toledo", country: "US" });
+    expect(g.stops.map((x) => [x.seq, x.name])).toEqual([[1, "Canton"], [2, "Toledo"], [3, "Chicago"]]);
+    expect(g.legs).toHaveLength(1);
+    expect(g.legs[0].id).toBe(o.legs[0].id);
+    expect(g.legs[0].truckId).toBe(fleet.t2104);
+    // a drop at the end: the leg's far end changes → a new unassigned leg replaces it
+    g = await addStop(a, o.order.id, 3, { type: "delivery", name: "Milwaukee", country: "US" });
+    expect(g.stops.map((x) => x.name)).toEqual(["Canton", "Toledo", "Chicago", "Milwaukee"]);
+    expect(g.legs).toHaveLength(1);
+    expect(g.legs[0].state).toBe("unassigned");
+    // reorder, then remove
+    g = await moveStop(a, o.order.id, g.stops[2].id, 1);
+    expect(g.stops.map((x) => x.name)).toEqual(["Canton", "Toledo", "Milwaukee", "Chicago"]);
+    g = await removeStop(a, o.order.id, g.stops.find((x) => x.name === "Toledo")!.id);
+    expect(g.stops.map((x) => [x.seq, x.name])).toEqual([[1, "Canton"], [2, "Milwaukee"], [3, "Chicago"]]);
+    await expect(removeStop(a, o.order.id, g.stops[0].id).then(() => removeStop(a, o.order.id, g.stops[1].id))).rejects.toThrow(/at least two stops/);
+    // a hand-off yard and a Canadian delivery: three legs, the crossing gets its workbench
+    const x = await createOrder(a, { customerId: fleet.rxo, rateCents: 100000, stops: [{ type: "pickup", name: "Canton", country: "US" }, { type: "delivery", name: "Toronto", country: "CA" }], book: true });
+    expect(x.legs.map((l) => l.type)).toEqual(["crossing"]);
+    g = await addStop(a, x.order.id, 1, { type: "yard", name: "Detroit yard", country: "US" });
+    expect(g.legs.map((l) => l.type)).toEqual(["us", "crossing"]);
+    const { crossings } = await import("@/db/schema");
+    const xs = await db.select().from(crossings).where(eq(crossings.orderId, x.order.id));
+    expect(xs.map((c) => c.legId)).toEqual([g.legs[1].id]);
+  });
+
+  it("once a leg is out: a drop can be added or removed inside a leg ahead of the truck; a hand-off, a reached stop or a leg end cannot", async () => {
+    const o = await createOrder(a, { customerId: fleet.rxo, rateCents: 100000, stops: [{ type: "pickup", name: "Canton", country: "US" }, { type: "delivery", name: "Chicago", country: "US" }], book: true });
+    const leg = o.legs[0].id;
+    await planLeg(a, leg, { kind: "truck", truckId: fleet.t2104, driverId: fleet.reyes });
+    await dispatchLeg(a, leg);
+    await acceptLeg(a, leg);
+    for (const st of ["en_route_to_pickup", "at_pickup"] as const) await advanceLeg(a, leg, st);
+    let g = await addStop(a, o.order.id, 1, { type: "delivery", name: "Gary", country: "US" });
+    expect(g.stops.map((x) => x.name)).toEqual(["Canton", "Gary", "Chicago"]);
+    expect(g.legs[0].id).toBe(leg);
+    expect(g.legs[0].state).toBe("at_pickup");
+    await expect(addStop(a, o.order.id, 0, { type: "pickup", name: "Before", country: "US" })).rejects.toThrow(/after the last stop the truck reached/);
+    await expect(addStop(a, o.order.id, 2, { type: "yard", name: "Yard", country: "US" })).rejects.toThrow(/splitting the leg/);
+    await expect(removeStop(a, o.order.id, g.stops[2].id)).rejects.toThrow(/where a leg starts or ends/);
+    await expect(removeStop(a, o.order.id, g.stops[0].id)).rejects.toThrow(/already reached/);
+    g = await removeStop(a, o.order.id, g.stops[1].id);
+    expect(g.stops.map((x) => x.name)).toEqual(["Canton", "Chicago"]);
+    // delivered loads are final
+    for (const st of ["loaded", "en_route", "at_delivery", "completed"] as const) await advanceLeg(a, leg, st);
+    await expect(addStop(a, o.order.id, 1, { type: "delivery", name: "Late", country: "US" })).rejects.toThrow(/final/);
+  });
+});
+
+describe("Canada (who may run where)", () => {
+  it("cabotage both ways, plates by country, and a Mexican carrier never runs in Canada", async () => {
+    const { checkDriver, checkTruck, checkCarrierZone } = await import("./eligibility");
+    const zUS = { type: "domestic" as const, countries: ["US" as const] };
+    const zCA = { type: "ca" as const, countries: ["CA" as const] };
+    const zX = { type: "crossing" as const, countries: ["US" as const, "CA" as const] };
+    const codes = (f: { code: string }[]) => f.map((x) => x.code);
+    const cdl = { id: "1", name: "Reyes", driverType: "CDL", licenseExpires: future, medicalExpires: future, fastExpires: future };
+    const can = { id: "2", name: "Tremblay", driverType: "CA", licenseExpires: future, medicalExpires: future, fastExpires: future };
+    const b1 = { id: "3", name: "Xochihua", driverType: "B1", licenseExpires: future, medicalExpires: future, fastExpires: future, i94Until: future };
+    expect(codes(checkDriver(cdl, zX))).toEqual([]);
+    expect(codes(checkDriver(cdl, zCA))).toEqual(["cabotage_canada"]);
+    expect(codes(checkDriver(can, zX))).toEqual([]);
+    expect(codes(checkDriver(can, zCA))).toEqual([]);
+    expect(codes(checkDriver(can, zUS))).toEqual(["cabotage_us"]);
+    expect(codes(checkDriver(b1, zCA))).toContain("b1_canada");
+    expect(codes(checkDriver(b1, zX))).toContain("b1_canada");
+    expect(codes(checkDriver({ ...cdl, fastExpires: past }, zX))).toEqual(["fast_expired"]);
+    expect(codes(checkTruck({ id: "t", unitNumber: "9", caPlate: "AB12", caPlateExpires: future }, zX))).toEqual([]); // a Canadian plate runs both
+    expect(codes(checkTruck({ id: "t", unitNumber: "9" }, zCA))).toEqual(["no_us_plate"]);
+    expect(codes(checkTruck({ id: "t", unitNumber: "9", caPlate: "AB12", caPlateExpires: past }, zCA))).toEqual(["ca_plate_expired"]);
+    expect(codes(checkCarrierZone({ name: "Garza", country: "MX" }, zX))).toEqual(["mx_carrier_canada"]);
+    expect(codes(checkCarrierZone({ name: "Maple", country: "CA" }, zUS))).toEqual(["cabotage_us"]);
+    expect(codes(checkCarrierZone({ name: "Lone Star", country: "US" }, zCA))).toEqual(["cabotage_canada"]);
+    expect(codes(checkCarrierZone({ name: "Maple", country: "CA" }, zX))).toEqual([]);
+    // through planLeg: the zone comes from the load's stops
+    const o = await createOrder(a, { customerId: fleet.rxo, rateCents: 1000, stops: [{ type: "pickup", name: "Windsor", country: "CA" }, { type: "delivery", name: "Toronto", country: "CA" }], book: true });
+    await expect(planLeg(a, o.legs[0].id, { kind: "truck", truckId: fleet.t2104, driverId: fleet.reyes })).rejects.toThrow(/cabotage/);
   });
 });
 

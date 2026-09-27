@@ -27,18 +27,30 @@ export type RuleSeed = Omit<typeof s.crossingDocRules.$inferInsert, "id" | "tena
 
 /** Base rules every new company starts with. Editable in Settings; per-port / per-customer rows override by code. */
 export const DEFAULT_CROSSING_RULES: RuleSeed[] = [
-  { code: "carta_retiro", label: "Carta de retiro (Solicitud de Retiro)", providedBy: "us", requiredWhen: "always", allowNa: false, packetOrder: 10 },
-  { code: "carta_porte", label: "Carta porte (CFDI complemento)", providedBy: "mx_broker", requiredWhen: "brown_plates", allowNa: true, packetOrder: 20 },
-  { code: "doda", label: "DODA", providedBy: "mx_broker", requiredWhen: "always", allowNa: false, lastDocument: true, packetOrder: 30 },
-  { code: "entry", label: "US entry (7501 / pre-file)", providedBy: "us_broker", requiredWhen: "optional", allowNa: true, packetOrder: 40 },
-  { code: "ace_manifest", label: "ACE e-Manifest", providedBy: "us_broker", requiredWhen: "always", allowNa: false, packetOrder: 50 },
-  { code: "dtops", label: "DTOPS decal / single-crossing receipt", providedBy: "us", requiredWhen: "optional", allowNa: true, packetOrder: 60 },
-  { code: "bol", label: "Bill of lading", providedBy: "shipper", requiredWhen: "always", allowNa: false, packetOrder: 70 },
-  { code: "invoice", label: "Commercial invoice", providedBy: "shipper", requiredWhen: "always", allowNa: true, packetOrder: 80 },
-  { code: "packing_list", label: "Packing list", providedBy: "shipper", requiredWhen: "optional", allowNa: true, packetOrder: 90 },
+  // Mexico border (either direction)
+  { code: "carta_retiro", label: "Carta de retiro (Solicitud de Retiro)", providedBy: "us", requiredWhen: "always", allowNa: false, packetOrder: 10, border: "mx" },
+  { code: "carta_porte", label: "Carta porte (CFDI complemento)", providedBy: "mx_broker", requiredWhen: "brown_plates", allowNa: true, packetOrder: 20, border: "mx" },
+  { code: "doda", label: "DODA", providedBy: "mx_broker", requiredWhen: "always", allowNa: false, lastDocument: true, packetOrder: 30, border: "mx" },
+  // entering the US (from Mexico or Canada)
+  { code: "entry", label: "US entry (7501 / pre-file / PAPS)", providedBy: "us_broker", requiredWhen: "optional", allowNa: true, packetOrder: 40, border: "any", direction: "into_us" },
+  { code: "ace_manifest", label: "ACE e-Manifest", providedBy: "us_broker", requiredWhen: "always", allowNa: false, packetOrder: 50, border: "any", direction: "into_us" },
+  { code: "dtops", label: "DTOPS decal / single-crossing receipt", providedBy: "us", requiredWhen: "optional", allowNa: true, packetOrder: 60, border: "any", direction: "into_us" },
+  // entering Canada
+  { code: "pars", label: "PARS / cargo control # (CA customs broker)", providedBy: "ca_broker", requiredWhen: "always", allowNa: false, lastDocument: true, packetOrder: 35, border: "ca", direction: "into_ca" },
+  { code: "aci_emanifest", label: "ACI eManifest (CBSA)", providedBy: "us", requiredWhen: "always", allowNa: false, packetOrder: 45, border: "ca", direction: "into_ca" },
+  { code: "cci", label: "Canada customs invoice (CCI)", providedBy: "shipper", requiredWhen: "optional", allowNa: true, packetOrder: 85, border: "ca", direction: "into_ca" },
+  // every border
+  { code: "bol", label: "Bill of lading", providedBy: "shipper", requiredWhen: "always", allowNa: false, packetOrder: 70, border: "any" },
+  { code: "invoice", label: "Commercial invoice", providedBy: "shipper", requiredWhen: "always", allowNa: true, packetOrder: 80, border: "any" },
+  { code: "packing_list", label: "Packing list", providedBy: "shipper", requiredWhen: "optional", allowNa: true, packetOrder: 90, border: "any" },
 ];
 
-export const PROVIDED_BY_LABEL: Record<string, string> = { us: "us", shipper: "shipper", mx_broker: "MX customs broker", us_broker: "US customs broker", carrier: "carrier" };
+/** Which border a crossing is on: Canada when either side is Canada, otherwise Mexico. */
+export const borderOf = (c: { fromCountry: string; toCountry: string }) => (c.fromCountry === "CA" || c.toCountry === "CA" ? "ca" : "mx");
+/** A rule applies to a crossing when it is for that border (or any) and that direction (or any). */
+export const ruleApplies = (r: { border?: string | null; direction?: string | null }, c: { fromCountry: string; toCountry: string }) => (!r.border || r.border === "any" || r.border === borderOf(c)) && (!r.direction || r.direction === "any" || r.direction === `into_${c.toCountry.toLowerCase()}`);
+
+export const PROVIDED_BY_LABEL: Record<string, string> = { us: "us", shipper: "shipper", mx_broker: "MX customs broker", us_broker: "US customs broker", ca_broker: "CA customs broker", carrier: "carrier" };
 
 /** Fields each document carries for the cross-checks (spec §3.3 / §3.4). Humans can always type them. */
 export const DOC_FIELDS: Record<string, { key: string; label: string; kind?: "text" | "number" | "datetime" }[]> = {
@@ -97,12 +109,32 @@ export const DOC_FIELDS: Record<string, { key: string; label: string; kind?: "te
     { key: "confirmation", label: "Confirmation #" },
   ],
   packing_list: [{ key: "pieces", label: "Pieces", kind: "number" }],
+  pars: [
+    { key: "ccn", label: "Cargo control # (CCN)" },
+    { key: "transactionNumber", label: "Transaction #" },
+  ],
+  aci_emanifest: [
+    { key: "trailer", label: "Trailer #" },
+    { key: "driver", label: "Driver name" },
+    { key: "usPlate", label: "US plate" },
+    { key: "caPlate", label: "CA plate" },
+    { key: "ccn", label: "Cargo control # (CCN)" },
+    { key: "submittedAt", label: "Submitted at", kind: "datetime" },
+    { key: "estimatedArrival", label: "Estimated arrival", kind: "datetime" },
+  ],
+  cci: [
+    { key: "pieces", label: "Pieces", kind: "number" },
+    { key: "grossWeight", label: "Gross weight (kg)", kind: "number" },
+  ],
 };
 
 export async function ensureDefaultRules(ctx: Ctx, tx: Tx | typeof db = db) {
-  const existing = await tx.select({ id: s.crossingDocRules.id }).from(s.crossingDocRules).where(eq(s.crossingDocRules.tenantId, ctx.tenantId)).limit(1);
-  if (existing.length) return false;
-  await tx.insert(s.crossingDocRules).values(DEFAULT_CROSSING_RULES.map((r) => ({ ...r, id: newId(), tenantId: ctx.tenantId, createdBy: ctx.userId, updatedBy: ctx.userId })));
+  const existing = await tx.select({ code: s.crossingDocRules.code }).from(s.crossingDocRules).where(and(eq(s.crossingDocRules.tenantId, ctx.tenantId), isNull(s.crossingDocRules.portId), isNull(s.crossingDocRules.customerId)));
+  // A company that started before a border was supported gets that border's documents added; its own edits stay.
+  const have = new Set(existing.map((r) => r.code));
+  const missing = DEFAULT_CROSSING_RULES.filter((r) => !have.has(r.code));
+  if (!missing.length) return false;
+  await tx.insert(s.crossingDocRules).values(missing.map((r) => ({ ...r, id: newId(), tenantId: ctx.tenantId, createdBy: ctx.userId, updatedBy: ctx.userId })));
   return true;
 }
 
@@ -129,6 +161,19 @@ export const CROSSING_LABEL: Record<CrossingState, string> = {
   returned: "Returned to MX",
   cancelled: "Cancelled",
 };
+const COUNTRY_WORD: Record<string, { en: string; adj: string; es: string }> = { MX: { en: "MX", adj: "Mexican", es: "mexicana" }, US: { en: "US", adj: "US", es: "americana" }, CA: { en: "CA", adj: "Canadian", es: "canadiense" } };
+const word = (c: string) => COUNTRY_WORD[c] ?? { en: c, adj: c, es: c };
+/** The state label for this crossing's direction: "At MX customs" northbound from Mexico, "At US customs" / "In CA customs" going into Canada. */
+export function crossingStateLabel(state: CrossingState, c?: { fromCountry: string; toCountry: string } | null): string {
+  if (!c || (c.fromCountry === "MX" && c.toCountry === "US")) return CROSSING_LABEL[state];
+  if (state === "awaiting_mx_arrival") return "Leg to the border rolling";
+  if (state === "at_mx_customs") return `At ${word(c.fromCountry).en} customs`;
+  if (state === "in_us_customs") return `In ${word(c.toCountry).en} customs`;
+  if (state === "returned") return `Returned to ${word(c.fromCountry).en}`;
+  if (state === "awaiting_doda" && borderOf(c) === "ca") return "Waiting on PARS";
+  return CROSSING_LABEL[state];
+}
+
 export type Bucket = "waiting" | "verify" | "ready" | "crossing" | "held" | "cleared";
 export const BUCKET_LABEL: Record<Bucket, string> = { waiting: "Waiting on docs", verify: "Verify", ready: "Ready", crossing: "Crossing", held: "Held / returned", cleared: "Cleared" };
 export function bucketOf(state: CrossingState): Bucket {
@@ -164,9 +209,12 @@ export async function ensureCrossing(ctx: Ctx, legId: string) {
   if (leg.type !== "crossing") throw new ValidationError("only a crossing leg has a crossing");
   const [order] = await db.select().from(s.orders).where(eq(s.orders.id, leg.orderId)).limit(1);
   await ensureDefaultRules(ctx);
+  const ends = await db.select({ id: s.stops.id, country: s.stops.country }).from(s.stops).where(inArray(s.stops.id, [leg.fromStopId, leg.toStopId].filter((x): x is string => !!x)));
+  const fromCountry = (ends.find((x) => x.id === leg.fromStopId)?.country ?? "MX").toUpperCase();
+  const toCountry = (ends.find((x) => x.id === leg.toStopId)?.country ?? "US").toUpperCase();
   const [c] = await db
     .insert(s.crossings)
-    .values({ id: newId(), tenantId: ctx.tenantId, legId, orderId: leg.orderId, portId: order.portId ?? null, state: "created", createdBy: ctx.userId, updatedBy: ctx.userId })
+    .values({ id: newId(), tenantId: ctx.tenantId, legId, orderId: leg.orderId, portId: order.portId ?? null, fromCountry, toCountry, state: "created", createdBy: ctx.userId, updatedBy: ctx.userId })
     .returning();
   await event(db, ctx, c.id, { kind: "transition", toState: "created", source: "system" });
   await writeAudit(db, ctx, "crossing", c.id, "create", undefined, `crossing for ${order.orderNumber} leg ${leg.seq}`);
@@ -204,6 +252,7 @@ export async function computeRequirements(ctx: Ctx, c: Crossing): Promise<Requir
   const byCode = new Map<string, typeof rules[number]>();
   const specificity = (r: typeof rules[number]) => (r.customerId ? 2 : 0) + (r.portId ? 1 : 0);
   for (const r of rules) {
+    if (!ruleApplies(r, c)) continue;
     if (r.portId && r.portId !== c.portId) continue;
     if (r.customerId && r.customerId !== order?.customerId && r.customerId !== order?.brokerId) continue;
     const cur = byCode.get(r.code);
@@ -371,17 +420,17 @@ export const CHECK_LABEL: Record<string, string> = {
   trailer: "Trailer number matches on every document",
   tractor_plates: "Tractor plates match the assigned truck",
   driver: "Driver on the manifest is the assigned driver",
-  seal: "Seal number matches BOL / invoice / carta porte / DODA",
+  seal: "Seal number agrees across the documents",
   folio_fiscal: "Carta porte UUID matches the DODA folio",
   pedimento: "Pedimento on DODA matches the entry",
-  weight: "Gross weight agrees across carta porte / manifest / invoice",
-  pieces: "Piece counts agree across invoice / carta porte / manifest",
+  weight: "Gross weight agrees across the documents",
+  pieces: "Piece counts agree across the documents",
   patente: "Patente on DODA is the customer's MX broker",
   scac: "SCAC on the manifest is the entity the truck runs under",
   plate_class: "Plate class rule: brown plates need a carta porte",
   expiry: "No driver / truck document expires before the crossing",
   dtops: "DTOPS on file for this truck and year",
-  timing: "ACE manifest filed at least 1 h before arrival (30 min FAST)",
+  timing: "Manifest (ACE into the US, ACI into Canada) filed at least 1 h before arrival (30 min FAST into the US)",
 };
 
 /** jsonb reorders keys, so compare values by content. */
@@ -397,13 +446,23 @@ export function runChecksPure(input: {
   now: Date;
   docs: Record<string, Record<string, unknown>>; // code → fields
   trailerNumber: string | null;
-  truck: { unitNumber: string; usPlate: string | null; mxPlate: string | null; mxPlateClass: string | null; scac: string | null; entityScac: string | null; dtopsYear: number | null; dtopsConfirmation: string | null; usPlateExpires: Date | null; mxPlateExpires: Date | null; dotInspectionExpires: Date | null } | null;
+  truck: { unitNumber: string; usPlate: string | null; mxPlate: string | null; caPlate?: string | null; mxPlateClass: string | null; scac: string | null; entityScac: string | null; dtopsYear: number | null; dtopsConfirmation: string | null; usPlateExpires: Date | null; mxPlateExpires: Date | null; caPlateExpires?: Date | null; dotInspectionExpires: Date | null } | null;
   driver: { name: string; licenseExpires: Date | null; mxLicenseExpires: Date | null; medicalExpires: Date | null; fastExpires: Date | null; i94Until: Date | null } | null;
   mxBrokerPatente: string | null;
   weightTolerancePct?: number;
   requireSeal?: boolean;
+  /** the side the truck leaves and the side it enters; Mexico → US when not given */
+  fromCountry?: string;
+  toCountry?: string;
 }): CheckResult[] {
   const { docs, truck, driver } = input;
+  const from = input.fromCountry ?? "MX";
+  const into = input.toCountry ?? "US";
+  const touchesMx = from === "MX" || into === "MX";
+  const touchesCa = from === "CA" || into === "CA";
+  const intoUs = into === "US";
+  const manifest = into === "CA" ? "aci_emanifest" : "ace_manifest";
+  const manifestName = into === "CA" ? "ACI eManifest" : "ACE manifest";
   const out: CheckResult[] = [];
   const has = (code: string) => !!docs[code];
   const field = (code: string, key: string) => docs[code]?.[key];
@@ -417,23 +476,26 @@ export function runChecksPure(input: {
     out.push({ code, state: "pass", message: `${key} agrees (${[...distinct][0]})`, values: vals });
   };
 
-  compareAcross("trailer", "trailer", ["carta_retiro", "carta_porte", "doda", "ace_manifest", "bol"], { label: "assigned", value: input.trailerNumber });
+  compareAcross("trailer", "trailer", ["carta_retiro", "carta_porte", "doda", "ace_manifest", "aci_emanifest", "bol"], { label: "assigned", value: input.trailerNumber });
   // plates
   {
     const vals: Record<string, unknown> = {};
-    for (const src of ["carta_porte", "ace_manifest", "carta_retiro"]) {
+    for (const src of ["carta_porte", "ace_manifest", "aci_emanifest", "carta_retiro"]) {
       if (field(src, "usPlate")) vals[`${src}.us`] = field(src, "usPlate");
       if (field(src, "mxPlate")) vals[`${src}.mx`] = field(src, "mxPlate");
+      if (field(src, "caPlate")) vals[`${src}.ca`] = field(src, "caPlate");
     }
     if (!truck || !Object.keys(vals).length) out.push({ code: "tractor_plates", state: "skipped", message: truck ? "no plates on any document yet" : "no truck assigned", values: vals });
     else {
-      const bad = Object.entries(vals).filter(([k, v]) => (k.endsWith(".us") ? norm(v) !== norm(truck.usPlate) : norm(v) !== norm(truck.mxPlate)));
-      out.push(bad.length ? { code: "tractor_plates", state: "fail", message: `plates differ from unit ${truck.unitNumber} (US ${truck.usPlate ?? "—"} / MX ${truck.mxPlate ?? "—"}): ${bad.map(([k, v]) => `${k}=${v}`).join(", ")}`, values: { ...vals, truck: `${truck.usPlate}/${truck.mxPlate}` } } : { code: "tractor_plates", state: "pass", message: `plates match unit ${truck.unitNumber}`, values: vals });
+      const plateOf = (k: string) => (k.endsWith(".us") ? truck.usPlate : k.endsWith(".ca") ? (truck.caPlate ?? null) : truck.mxPlate);
+      const bad = Object.entries(vals).filter(([k, v]) => norm(v) !== norm(plateOf(k)));
+      const onTruck = [`US ${truck.usPlate ?? "—"}`, touchesMx ? `MX ${truck.mxPlate ?? "—"}` : null, touchesCa ? `CA ${truck.caPlate ?? "—"}` : null].filter(Boolean).join(" / ");
+      out.push(bad.length ? { code: "tractor_plates", state: "fail", message: `plates differ from unit ${truck.unitNumber} (${onTruck}): ${bad.map(([k, v]) => `${k}=${v}`).join(", ")}`, values: { ...vals, truck: onTruck } } : { code: "tractor_plates", state: "pass", message: `plates match unit ${truck.unitNumber}`, values: vals });
     }
   }
   // driver
   {
-    const m = field("ace_manifest", "driver");
+    const m = field(manifest, "driver");
     if (!m || !driver) out.push({ code: "driver", state: "skipped", message: !driver ? "no driver assigned" : "no driver on the manifest yet", values: {} });
     else {
       const a = words(m);
@@ -446,7 +508,7 @@ export function runChecksPure(input: {
   // seal
   {
     const vals: Record<string, unknown> = {};
-    for (const src of ["bol", "invoice", "carta_porte", "doda"]) if (field(src, "seal")) vals[src] = field(src, "seal");
+    for (const src of ["bol", "invoice", "cci", "carta_porte", "doda"]) if (field(src, "seal")) vals[src] = field(src, "seal");
     const distinct = new Set(Object.values(vals).map(norm));
     if (!Object.keys(vals).length) out.push({ code: "seal", state: input.requireSeal ? "fail" : "skipped", message: input.requireSeal ? "customer requires a seal and none is recorded" : "no seal recorded yet", values: vals });
     else if (distinct.size > 1) out.push({ code: "seal", state: "fail", message: `seal differs: ${Object.entries(vals).map(([k, v]) => `${k}=${v}`).join(", ")}`, values: vals });
@@ -459,7 +521,7 @@ export function runChecksPure(input: {
   {
     const tol = input.weightTolerancePct ?? 2;
     const vals: Record<string, number> = {};
-    for (const src of ["carta_porte", "ace_manifest", "invoice", "bol"]) {
+    for (const src of ["carta_porte", "ace_manifest", "invoice", "cci", "bol"]) {
       const n = num(field(src, "grossWeight"));
       if (n != null && Number.isFinite(n)) vals[src] = n;
     }
@@ -472,23 +534,26 @@ export function runChecksPure(input: {
       out.push({ code: "weight", state: pct <= tol ? "pass" : "fail", message: pct <= tol ? `weights within ${tol}% (${min}–${max} kg)` : `weights differ by ${pct.toFixed(1)}%: ${Object.entries(vals).map(([k, v]) => `${k}=${v}`).join(", ")}`, values: vals });
     }
   }
-  compareAcross("pieces", "pieces", ["invoice", "carta_porte", "ace_manifest", "bol", "packing_list"]);
+  compareAcross("pieces", "pieces", ["invoice", "cci", "carta_porte", "ace_manifest", "bol", "packing_list"]);
   // patente
   {
     const p = field("doda", "patente");
-    if (!p || !input.mxBrokerPatente) out.push({ code: "patente", state: "skipped", message: !p ? "no patente on the DODA yet" : "customer has no MX broker patente on file", values: { doda: p ?? null, broker: input.mxBrokerPatente } });
+    if (!touchesMx) out.push({ code: "patente", state: "skipped", message: "not a Mexico crossing", values: {} });
+    else if (!p || !input.mxBrokerPatente) out.push({ code: "patente", state: "skipped", message: !p ? "no patente on the DODA yet" : "customer has no MX broker patente on file", values: { doda: p ?? null, broker: input.mxBrokerPatente } });
     else out.push({ code: "patente", state: norm(p) === norm(input.mxBrokerPatente) ? "pass" : "fail", message: norm(p) === norm(input.mxBrokerPatente) ? `patente ${p} is the customer's broker` : `DODA patente ${p} is not the customer's broker (${input.mxBrokerPatente})`, values: { doda: p, broker: input.mxBrokerPatente } });
   }
   // scac
   {
     const m = field("ace_manifest", "scac");
     const ours = truck?.scac || truck?.entityScac || null;
-    if (!m || !ours) out.push({ code: "scac", state: "skipped", message: !m ? "no SCAC on the manifest yet" : "no SCAC on the truck or its entity", values: { manifest: m ?? null, truck: ours } });
+    if (!intoUs) out.push({ code: "scac", state: "skipped", message: "SCAC is compared on the US (ACE) manifest; not entering the US", values: {} });
+    else if (!m || !ours) out.push({ code: "scac", state: "skipped", message: !m ? "no SCAC on the manifest yet" : "no SCAC on the truck or its entity", values: { manifest: m ?? null, truck: ours } });
     else out.push({ code: "scac", state: norm(m) === norm(ours) ? "pass" : "fail", message: norm(m) === norm(ours) ? `manifest SCAC ${m} matches` : `manifest shows ${m}; unit ${truck?.unitNumber} runs under ${ours}`, values: { manifest: m, truck: ours } });
   }
   // plate class rule
   {
-    if (!truck) out.push({ code: "plate_class", state: "skipped", message: "no truck assigned", values: {} });
+    if (!touchesMx) out.push({ code: "plate_class", state: "skipped", message: "not a Mexico crossing", values: {} });
+    else if (!truck) out.push({ code: "plate_class", state: "skipped", message: "no truck assigned", values: {} });
     else if (truck.mxPlateClass === "brown" && !has("carta_porte")) out.push({ code: "plate_class", state: "fail", message: `unit ${truck.unitNumber} has brown plates and there is no carta porte`, values: { plateClass: "brown", cartaPorte: false } });
     else out.push({ code: "plate_class", state: "pass", message: truck.mxPlateClass === "brown" ? "brown plates with carta porte" : `${truck.mxPlateClass ?? "no"} plates`, values: { plateClass: truck.mxPlateClass, cartaPorte: has("carta_porte") } });
   }
@@ -498,12 +563,13 @@ export function runChecksPure(input: {
     const chk = (label: string, d: Date | null | undefined) => d && d.getTime() < input.now.getTime() && expired.push(`${label} (${d.toISOString().slice(0, 10)})`);
     if (truck) {
       chk("US plate", truck.usPlateExpires);
-      chk("MX plate", truck.mxPlateExpires);
+      if (touchesMx) chk("MX plate", truck.mxPlateExpires);
+      if (touchesCa) chk("CA plate", truck.caPlateExpires);
       chk("annual inspection", truck.dotInspectionExpires);
     }
     if (driver) {
       chk("licence", driver.licenseExpires);
-      chk("licencia federal", driver.mxLicenseExpires);
+      if (touchesMx) chk("licencia federal", driver.mxLicenseExpires);
       chk("medical", driver.medicalExpires);
       chk("FAST", driver.fastExpires);
       chk("I-94", driver.i94Until);
@@ -515,23 +581,26 @@ export function runChecksPure(input: {
     const year = input.now.getUTCFullYear();
     const onDoc = has("dtops");
     const onTruck = !!truck && truck.dtopsYear === year && !!truck.dtopsConfirmation;
-    out.push(!truck ? { code: "dtops", state: "skipped", message: "no truck assigned", values: {} } : onDoc || onTruck ? { code: "dtops", state: "pass", message: onTruck ? `DTOPS ${year} on the truck record (${truck.dtopsConfirmation})` : "DTOPS receipt in the packet", values: { year, onTruck, onDoc } } : { code: "dtops", state: "fail", message: `no DTOPS ${year} decal or receipt for unit ${truck.unitNumber}`, values: { year } });
+    out.push(!intoUs ? { code: "dtops", state: "skipped", message: "DTOPS is for entering the US", values: {} } : !truck ? { code: "dtops", state: "skipped", message: "no truck assigned", values: {} } : onDoc || onTruck ? { code: "dtops", state: "pass", message: onTruck ? `DTOPS ${year} on the truck record (${truck.dtopsConfirmation})` : "DTOPS receipt in the packet", values: { year, onTruck, onDoc } } : { code: "dtops", state: "fail", message: `no DTOPS ${year} decal or receipt for unit ${truck.unitNumber}`, values: { year } });
   }
   // timing
   {
-    const sub = field("ace_manifest", "submittedAt");
-    const eta = field("ace_manifest", "estimatedArrival");
-    const fast = /^(y|yes|si|sí|true|1)$/i.test(String(field("ace_manifest", "fast") ?? ""));
+    const sub = field(manifest, "submittedAt");
+    const eta = field(manifest, "estimatedArrival");
+    const fast = intoUs && /^(y|yes|si|sí|true|1)$/i.test(String(field(manifest, "fast") ?? ""));
     const a = sub ? new Date(String(sub)) : null;
     const b = eta ? new Date(String(eta)) : null;
     if (!a || !b || Number.isNaN(a.getTime()) || Number.isNaN(b.getTime())) out.push({ code: "timing", state: "skipped", message: "manifest submitted / arrival times not recorded", values: { submittedAt: sub ?? null, estimatedArrival: eta ?? null } });
     else {
       const minutes = (b.getTime() - a.getTime()) / 60000;
       const need = fast ? 30 : 60;
-      out.push({ code: "timing", state: minutes >= need ? "pass" : "fail", message: minutes >= need ? `manifest filed ${Math.round(minutes)} min before arrival` : `manifest filed only ${Math.round(minutes)} min before arrival; earliest allowed arrival ${new Date(a.getTime() + need * 60000).toISOString()}`, values: { submittedAt: a.toISOString(), estimatedArrival: b.toISOString(), fast, need } });
+      out.push({ code: "timing", state: minutes >= need ? "pass" : "fail", message: minutes >= need ? `${manifestName} filed ${Math.round(minutes)} min before arrival` : `${manifestName} filed only ${Math.round(minutes)} min before arrival; earliest allowed arrival ${new Date(a.getTime() + need * 60000).toISOString()}`, values: { submittedAt: a.toISOString(), estimatedArrival: b.toISOString(), fast, need } });
     }
   }
-  return out;
+  // checks that belong to another border are not shown at all
+  const MX_ONLY = ["folio_fiscal", "pedimento", "patente", "plate_class"];
+  const US_ENTRY_ONLY = ["dtops", "scac"];
+  return out.filter((r) => (touchesMx || !MX_ONLY.includes(r.code)) && (intoUs || !US_ENTRY_ONLY.includes(r.code)));
 }
 
 export async function runChecks(ctx: Ctx, crossingId: string) {
@@ -551,12 +620,16 @@ export async function runChecks(ctx: Ctx, crossingId: string) {
     now: new Date(),
     docs: byCode,
     trailerNumber: c.trailerNumber,
-    truck: truck ? { unitNumber: truck.unitNumber, usPlate: truck.usPlate, mxPlate: truck.mxPlate, mxPlateClass: truck.mxPlateClass, scac: truck.scac, entityScac: entity?.scac ?? null, dtopsYear: truck.dtopsYear, dtopsConfirmation: truck.dtopsConfirmation, usPlateExpires: truck.usPlateExpires, mxPlateExpires: truck.mxPlateExpires, dotInspectionExpires: truck.dotInspectionExpires } : null,
+    fromCountry: c.fromCountry,
+    toCountry: c.toCountry,
+    truck: truck ? { unitNumber: truck.unitNumber, usPlate: truck.usPlate, mxPlate: truck.mxPlate, caPlate: truck.caPlate, caPlateExpires: truck.caPlateExpires, mxPlateClass: truck.mxPlateClass, scac: truck.scac, entityScac: entity?.scac ?? null, dtopsYear: truck.dtopsYear, dtopsConfirmation: truck.dtopsConfirmation, usPlateExpires: truck.usPlateExpires, mxPlateExpires: truck.mxPlateExpires, dotInspectionExpires: truck.dotInspectionExpires } : null,
     driver: driver ? { name: driver.name, licenseExpires: driver.licenseExpires, mxLicenseExpires: driver.mxLicenseExpires, medicalExpires: driver.medicalExpires, fastExpires: driver.fastExpires, i94Until: driver.i94Until } : null,
     mxBrokerPatente: broker?.patente ?? null,
     requireSeal: !!customer?.requiredDocs?.includes("SEAL"),
   });
   const existing = await db.select().from(s.crossingChecks).where(eq(s.crossingChecks.crossingId, crossingId));
+  const stale = existing.filter((e) => !results.some((r) => r.code === e.code)).map((e) => e.id);
+  if (stale.length) await db.delete(s.crossingChecks).where(inArray(s.crossingChecks.id, stale));
   for (const r of results) {
     const prev = existing.find((e) => e.code === r.code);
     // an override survives while the compared values are unchanged
@@ -586,18 +659,20 @@ export async function overrideCheck(ctx: Ctx, crossingId: string, code: string, 
 export async function runEligibility(ctx: Ctx, c: Crossing) {
   const [leg] = await db.select().from(s.legs).where(eq(s.legs.id, c.legId)).limit(1);
   const findings: Finding[] = [];
+  const { zoneForLeg } = await import("./orders");
+  const zone = leg ? await zoneForLeg(db, leg) : ("crossing" as const);
   if (!leg?.truckId) findings.push({ level: "red", code: "no_truck", message: "no crossing truck assigned", overridable: false });
   else {
     const [truck] = await db.select().from(s.trucks).where(eq(s.trucks.id, leg.truckId)).limit(1);
-    if (truck) findings.push(...checkTruck(truck, "crossing"));
+    if (truck) findings.push(...checkTruck(truck, zone));
   }
   if (!leg?.driverId) findings.push({ level: "red", code: "no_driver", message: "no crossing driver assigned", overridable: false });
   else {
     const [d] = await db.select().from(s.drivers).where(eq(s.drivers.id, leg.driverId)).limit(1);
-    if (d) findings.push(...checkDriver(d, "crossing"));
+    if (d) findings.push(...checkDriver(d, zone));
     if (leg.coDriverId) {
       const [co] = await db.select().from(s.drivers).where(eq(s.drivers.id, leg.coDriverId)).limit(1);
-      if (co) findings.push(...checkDriver(co, "crossing"));
+      if (co) findings.push(...checkDriver(co, zone));
     }
   }
   const sum = summarize(findings);
@@ -657,8 +732,10 @@ export async function recompute(ctx: Ctx, crossingId: string) {
   else if (anyDoc) to = "docs_in_progress";
   else if (c.arrivedYardAt) to = "at_border_yard";
   else {
-    const [mx] = await db.select({ state: s.legs.state }).from(s.legs).where(and(eq(s.legs.orderId, c.orderId), eq(s.legs.type, "mx"))).limit(1);
-    to = mx && ["loaded", "en_route", "at_delivery", "completed"].includes(mx.state) ? "awaiting_mx_arrival" : "created";
+    // the leg that brings the trailer to the border
+    const [mine] = await db.select({ fromStopId: s.legs.fromStopId }).from(s.legs).where(eq(s.legs.id, c.legId)).limit(1);
+    const [before] = mine?.fromStopId ? await db.select({ state: s.legs.state }).from(s.legs).where(and(eq(s.legs.orderId, c.orderId), eq(s.legs.toStopId, mine.fromStopId))).limit(1) : [];
+    to = before && ["loaded", "en_route", "at_delivery", "completed"].includes(before.state) ? "awaiting_mx_arrival" : "created";
   }
   if (to !== c.state) await setState(db, ctx, c, to, { source: "system" });
   return load(ctx, crossingId);
@@ -704,6 +781,16 @@ export const STEP_LABEL: Partial<Record<CrossingState, { en: string; es: string 
   in_us_customs: { en: "At US customs", es: "En aduana americana" },
   cleared: { en: "Cleared — on the US side", es: "Liberado — lado americano" },
 };
+
+/** The driver-facing step labels for this crossing's direction. */
+export function stepLabel(state: CrossingState, c?: { fromCountry: string; toCountry: string } | null) {
+  if (!c || (c.fromCountry === "MX" && c.toCountry === "US")) return STEP_LABEL[state];
+  const f = word(c.fromCountry), t = word(c.toCountry);
+  if (state === "at_mx_customs") return { en: `At ${f.adj} customs (leaving)`, es: `En aduana ${f.es} (salida)` };
+  if (state === "in_us_customs") return { en: `At ${t.adj} customs`, es: `En aduana ${t.es}` };
+  if (state === "cleared") return { en: `Cleared — on the ${t.en} side`, es: `Liberado — lado ${t.es}` };
+  return STEP_LABEL[state];
+}
 
 /** One physical step forward (driver tap, GPS, or dispatcher). Backwards needs the owner. */
 export async function step(ctx: Ctx, crossingId: string, to: CrossingState, e: { source?: string; verified?: boolean; note?: string | null; at?: Date } = {}) {
@@ -754,7 +841,7 @@ export async function markReturned(ctx: Ctx, crossingId: string, reason: string,
   assertCtx(ctx);
   if (!reason?.trim()) throw new ValidationError("a reason is required", "reason");
   const c = await load(ctx, crossingId);
-  await db.insert(s.flags).values({ id: newId(), tenantId: ctx.tenantId, orderId: c.orderId, legId: c.legId, code: "crossing_returned", level: "red", title: `Returned to the MX side: ${reason.trim()}`, detail: `was ${CROSSING_LABEL[c.state]}`, owner: "dispatch" });
+  await db.insert(s.flags).values({ id: newId(), tenantId: ctx.tenantId, orderId: c.orderId, legId: c.legId, code: "crossing_returned", level: "red", title: `Returned to the ${c.fromCountry} side: ${reason.trim()}`, detail: `was ${CROSSING_LABEL[c.state]}`, owner: "dispatch" });
   return setState(db, ctx, c, "returned", { source, note: reason.trim() }, { returnedReason: reason.trim(), packetSentAt: null, packetAckAt: null });
 }
 

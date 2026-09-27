@@ -127,6 +127,20 @@
       "when": 1790507008590,
       "tag": "0017_mail_messages",
       "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1790515641289,
+      "tag": "0018_canada",
+      "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1790516745633,
+      "tag": "0019_crossing_border",
+      "breakpoints": true
     }
   ]
 }

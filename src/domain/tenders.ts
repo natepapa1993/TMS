@@ -29,7 +29,7 @@ export type SendTenderInput = {
   reason?: string;
 };
 
-const LEG_TYPE_LABEL: Record<string, string> = { mx: "Mexico", crossing: "Crossing", us: "US", domestic: "Domestic", equipment_move: "Equipment move" };
+const LEG_TYPE_LABEL: Record<string, string> = { mx: "Mexico", ca: "Canada", crossing: "Crossing", us: "US", domestic: "Domestic", equipment_move: "Equipment move" };
 
 export async function sendTender(ctx: Ctx, legId: string, input: SendTenderInput) {
   assertCtx(ctx);

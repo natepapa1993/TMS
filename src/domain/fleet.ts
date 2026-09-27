@@ -5,7 +5,7 @@ import { assertCtx, requirePermission, type Ctx } from "@/lib/context";
 import { LEG_LABEL } from "./states";
 
 const OPEN: s.LegState[] = ["planned", "dispatched", "accepted", "en_route_to_pickup", "at_pickup", "loaded", "en_route", "at_delivery"];
-const TYPE: Record<string, string> = { mx: "Mexico", crossing: "Crossing", us: "US", domestic: "Domestic", equipment_move: "Equipment move" };
+const TYPE: Record<string, string> = { mx: "Mexico", ca: "Canada", crossing: "Crossing", us: "US", domestic: "Domestic", equipment_move: "Equipment move" };
 
 /**
  * Where every trailer (caja) is: on which load right now, or where it was last dropped and for how long.

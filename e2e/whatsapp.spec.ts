@@ -1,7 +1,7 @@
 // Features: F-4.2 WhatsApp Business through the browser — integration card, webhook verify + signed inbound, tender channel, driver reply on the timeline, Messages page
 import { test, expect } from "@playwright/test";
 import { createHmac } from "node:crypto";
-import { signupFresh, quickAdd, future } from "./helpers";
+import { signupFresh, quickAdd, future, buildLoad } from "./helpers";
 
 test("WhatsApp day: connect the number, a tender goes by WhatsApp, Meta verifies the webhook, a driver reply lands on the load and in Messages", async ({ page }) => {
   test.setTimeout(150_000);
@@ -46,17 +46,7 @@ test("WhatsApp day: connect the number, a tender goes by WhatsApp, Meta verifies
   expect((await page.request.get(`${path}?hub.mode=subscribe&hub.verify_token=wrong&hub.challenge=1`)).status()).toBe(403);
 
   // a tender by WhatsApp: the message is queued for the carrier's number (the token is fake, so it stays queued with the API's answer)
-  await page.goto("/dispatch");
-  await page.keyboard.press("n");
-  const d = page.getByRole("dialog");
-  await d.locator("select").first().selectOption({ label: "RXO (broker)" });
-  await d.getByPlaceholder("Planta Monterrey").fill("Laredo Yard");
-  await d.locator("select").nth(1).selectOption("US");
-  await d.getByPlaceholder("GM Arlington").fill("Toyota San Antonio");
-  await d.getByPlaceholder("blank = TBD").fill("1800");
-  await d.locator("select").last().selectOption("domestic");
-  await d.locator("button:has-text('Create & book')").click();
-  await expect(page.getByRole("status")).toContainText("Order created");
+  await buildLoad(page, { customer: "RXO (broker)", rate: "1800", stops: [{ type: "pickup", name: "Laredo Yard", country: "US" }, { type: "delivery", name: "Toyota San Antonio", country: "US" }] });
   const panel = page.locator("aside").last();
   await panel.locator("button:has-text('Assign Domestic leg')").click();
   let dlg = page.getByRole("dialog");

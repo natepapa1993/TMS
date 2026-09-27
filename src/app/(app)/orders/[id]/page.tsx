@@ -7,8 +7,9 @@ import { PageHeader } from "@/components/page-header";
 import { Pill } from "@/components/ui";
 import { LEG_LABEL } from "@/domain/states";
 import { formatCents } from "@/data/fields";
-import { OrderEditor, StopEditor, OrderActions, LegMiles } from "./editor";
+import { OrderEditor, StopEditor, OrderActions, LegMiles, AddStop } from "./editor";
 import { Charges } from "./charges";
+import type { Loc } from "@/components/stop-fields";
 import { chargesFor, orderPnl, requiredRefsFor } from "@/domain/billing";
 import { documents } from "@/db/schema";
 import { and, inArray } from "drizzle-orm";
@@ -18,7 +19,7 @@ import { eq } from "drizzle-orm";
 
 export const dynamic = "force-dynamic";
 
-const LEG_TYPE_LABEL: Record<string, string> = { mx: "MX", crossing: "Crossing", us: "US", domestic: "Domestic", equipment_move: "Equipment" };
+const LEG_TYPE_LABEL: Record<string, string> = { mx: "MX", ca: "CA", crossing: "Crossing", us: "US", domestic: "Domestic", equipment_move: "Equipment" };
 const STATE_LABEL: Record<string, string> = { draft: "Draft", booked: "Booked", dispatched: "Dispatched", in_transit: "In transit", exception: "On hold", delivered: "Delivered", ready_to_bill: "Ready to bill", invoiced: "Invoiced", paid: "Paid", cancelled: "Cancelled" };
 
 export default async function OrderPage({ params }: PageProps<"/orders/[id]">) {
@@ -36,6 +37,7 @@ export default async function OrderPage({ params }: PageProps<"/orders/[id]">) {
     list(ctx, "carrier", { limit: 2000, archived: "all" }),
     db.select({ id: users.id, name: users.name }).from(users).where(eq(users.tenantId, ctx.tenantId)),
   ]);
+  const locations = await list(ctx, "location", { limit: 2000 });
   const name = (rows: { id: string; [k: string]: unknown }[], key: string) => new Map(rows.map((r) => [r.id, String(r[key])]));
   const cName = name(customers, "name");
   const tName = name(trucks, "unitNumber");
@@ -47,6 +49,9 @@ export default async function OrderPage({ params }: PageProps<"/orders/[id]">) {
   const cust = customers.find((c) => c.id === (order.customerId ?? order.brokerId));
   const stopById = new Map(stops.map((s) => [s.id, s]));
   const readOnly = ["paid", "cancelled"].includes(order.state);
+  // Stops can be added, moved and removed until the load is delivered; once it rolls, only ahead of the truck.
+  const restructure = !["delivered", "ready_to_bill", "invoiced", "paid", "cancelled"].includes(order.state) && order.kind !== "trip";
+  const lastReached = stops.reduce((m, s, i) => (s.arrivedAt ? i : m), -1);
 
   return (
     <div>
@@ -85,10 +90,13 @@ export default async function OrderPage({ params }: PageProps<"/orders/[id]">) {
             <OrderEditor order={JSON.parse(JSON.stringify(order))} customers={customers.map((c) => ({ id: c.id, name: String(c.name), kind: String(c.kind) }))} entities={entities.map((e) => ({ id: e.id, name: String(e.legalName) }))} readOnly={readOnly} />
           </div>
           <div className="card p-5">
-            <div className="h2 mb-3">Stops</div>
+            <div className="flex items-center justify-between mb-3">
+              <div className="h2">Stops</div>
+              {restructure && <AddStop orderId={order.id} stops={stops.map((s) => ({ id: s.id, name: s.name }))} firstOpen={lastReached + 1} locations={locations.map((l) => ({ id: l.id, name: String(l.name), country: String(l.country), kind: String(l.kind), address: (l.address ?? null) as Loc["address"] }))} />}
+            </div>
             <div className="space-y-2">
               {stops.map((s, i) => (
-                <StopEditor key={s.id} orderId={order.id} index={i} stop={JSON.parse(JSON.stringify(s))} readOnly={readOnly} />
+                <StopEditor key={s.id} orderId={order.id} index={i} count={stops.length} stop={JSON.parse(JSON.stringify(s))} readOnly={readOnly} restructure={restructure} />
               ))}
             </div>
           </div>

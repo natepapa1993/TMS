@@ -213,6 +213,7 @@ export const carriers = pgTable(
     kind: text("kind").notNull().default("any"), // mx | crossing | us | any
     mcNumber: text("mc_number"),
     dotNumber: text("dot_number"),
+    nscNumber: text("nsc_number"), // Canada: National Safety Code / CVOR — the Canadian operating authority
     scac: text("scac"),
     rfc: text("rfc"),
     caat: text("caat"),
@@ -283,6 +284,9 @@ export const trucks = pgTable(
     mxPlate: text("mx_plate"),
     mxPlateClass: text("mx_plate_class"), // blue | brown
     mxPlateExpires: timestamp("mx_plate_expires", { withTimezone: true }),
+    caPlate: text("ca_plate"), // Canadian plate (IRP-apportioned Canadian units run the US on it too)
+    caPlateProvince: text("ca_plate_province"),
+    caPlateExpires: timestamp("ca_plate_expires", { withTimezone: true }),
     entityId: text("entity_id"), // billing entity or partner CAAT holder the unit runs under
     caat: text("caat"),
     scac: text("scac"),

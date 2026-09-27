@@ -21,7 +21,7 @@ export async function candidatesAction(legId: string) {
 export async function carrierEligibilityAction(legId: string, carrierId: string) {
   return act(async (ctx) => {
     const leg = await O.getLeg(ctx, legId);
-    return O.eligibilityFor(ctx, leg.type, { kind: "carrier", carrierId });
+    return O.eligibilityFor(ctx, await O.zoneForLeg((await import("@/db/client")).db, leg), { kind: "carrier", carrierId });
   });
 }
 
@@ -142,36 +142,6 @@ export async function setDriversAction(legId: string, drivers: { driverId?: stri
 
 export async function oosAction(truckId: string, reason: string) {
   const r = await act((ctx) => O.setTruckOos(ctx, truckId, reason));
-  if (r.ok) touch();
-  return r;
-}
-
-/** The +New popup: four fields and the order exists, booked, in Pending (spec §2.1 quick-add). */
-export async function quickOrderAction(input: { customerId: string; pickup: string; pickupCountry: string; delivery: string; deliveryCountry: string; rate: string; template?: string; refs?: Record<string, string> }) {
-  const r = await act(async (ctx) => {
-    const rateCents = input.rate.trim() ? Math.round(Number(input.rate.replace(/[$,\s]/g, "")) * 100) : null;
-    if (input.rate.trim() && !Number.isFinite(rateCents)) throw Object.assign(new Error("Rate must be a number"), { name: "ValidationError", field: "rate" });
-    const template = input.template || O.LEG_TEMPLATES.find((t) => t.key === "mx_crossing_us")!.key;
-    const t = O.LEG_TEMPLATES.find((x) => x.key === template)!;
-    // Build stops from the template: user names the ends, yards are placeholders they can rename on the order.
-    // A name that is a location on file (case aside) links the stop to it: its address and coordinates come along.
-    const { db } = await import("@/db/client");
-    const { locations } = await import("@/db/schema");
-    const { and, eq, isNull } = await import("drizzle-orm");
-    const locs = await db.select({ id: locations.id, name: locations.name, country: locations.country, address: locations.address }).from(locations).where(and(eq(locations.tenantId, ctx.tenantId), isNull(locations.archivedAt)));
-    const link = (name: string, country: string) => {
-      const l = locs.find((x) => x.name.trim().toLowerCase() === name.trim().toLowerCase() && x.country === country) ?? locs.find((x) => x.name.trim().toLowerCase() === name.trim().toLowerCase());
-      return l ? { locationId: l.id, address: l.address ?? undefined, country: l.country } : {};
-    };
-    const stops = t.stops.map((type, i) => {
-      if (i === 0) return { type, name: input.pickup, country: input.pickupCountry, ...link(input.pickup, input.pickupCountry) };
-      if (i === t.stops.length - 1) return { type, name: input.delivery, country: input.deliveryCountry, ...link(input.delivery, input.deliveryCountry) };
-      const name = type === "border_yard" ? "Border yard (MX)" : type === "yard" ? "Laredo yard" : type;
-      const country = type === "border_yard" ? "MX" : "US";
-      return { type, name, country, ...link(name, country) };
-    });
-    return O.createOrder(ctx, { customerId: input.customerId, rateCents, rateTbd: rateCents == null, stops, template, refs: input.refs, book: true });
-  });
   if (r.ok) touch();
   return r;
 }

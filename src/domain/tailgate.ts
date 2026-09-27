@@ -1,3 +1,4 @@
+import { legsFromStops } from "./zones";
 import { and, eq, inArray, asc } from "drizzle-orm";
 import { pdfText } from "@/lib/pdf-text";
 import { PDFDocument, StandardFonts, rgb } from "pdf-lib";
@@ -20,27 +21,11 @@ import { assertOrderTransition, canOrderTransition } from "./states";
 export type TripStopInput = StopInput & { type: StopType };
 
 /** Cut legs from a stop list: same-country runs become one leg; a US yard ↔ MX border yard pair becomes the crossing. */
+/** A trip's legs: the same cut as every load (a leg ends where the trailer changes hands), at least two stops. */
 export function legsForStops(stops: { type: StopType; country?: string }[]): { type: LegType; from: number; to: number }[] {
   if (stops.length < 2) throw new ValidationError("a trip needs at least two stops", "stops");
-  const legs: { type: LegType; from: number; to: number }[] = [];
-  let start = 0;
-  const hasCrossing = stops.some((st, i) => i > 0 && isCrossingPair(stops[i - 1], st));
-  for (let i = 1; i < stops.length; i++) {
-    const a = stops[i - 1];
-    const b = stops[i];
-    if (isCrossingPair(a, b)) {
-      if (start < i - 1) legs.push({ type: runType(stops[start].country, hasCrossing), from: start, to: i - 1 });
-      legs.push({ type: "crossing", from: i - 1, to: i });
-      start = i;
-    } else if ((a.country ?? "US") !== (b.country ?? "US")) {
-      throw new ValidationError(`a border between "${stops[i - 1].type}" and "${b.type}" needs a US yard and a Mexican border yard in between`, "stops");
-    }
-  }
-  if (start < stops.length - 1) legs.push({ type: runType(stops[start].country, hasCrossing), from: start, to: stops.length - 1 });
-  return legs;
+  return legsFromStops(stops);
 }
-const isCrossingPair = (a: { type: StopType; country?: string }, b: { type: StopType; country?: string }) => (a.type === "yard" && (a.country ?? "US") === "US" && b.type === "border_yard" && b.country === "MX") || (a.type === "border_yard" && a.country === "MX" && b.type === "yard" && (b.country ?? "US") === "US");
-const runType = (country: string | undefined, crossing: boolean): LegType => (country === "MX" ? "mx" : crossing ? "us" : "domestic");
 
 /** Trailer capacity by equipment when the unit has none on record. */
 export const EQUIPMENT_CAPACITY: Record<string, { linearFt: number; weightLbs: number; cubeFt: number }> = {

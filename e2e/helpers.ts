@@ -42,3 +42,36 @@ export async function quickAdd(page: Page, path: string, label: string, values: 
 }
 
 export const future = (days: number) => new Date(Date.now() + days * 86400_000).toISOString().slice(0, 10);
+
+export type LoadStop = { type: "pickup" | "delivery" | "yard" | "border_yard" | "transload" | "customs" | "terminal"; name: string; country: "US" | "MX" | "CA" };
+
+/** Mexico → US through a border yard and a US yard: MX leg, the crossing, the US leg. */
+export const mxToUs = (pickup: string, delivery: string): LoadStop[] => [
+  { type: "pickup", name: pickup, country: "MX" },
+  { type: "border_yard", name: "Border yard (MX)", country: "MX" },
+  { type: "yard", name: "Laredo yard", country: "US" },
+  { type: "delivery", name: delivery, country: "US" },
+];
+
+/**
+ * Build a load in the load builder (n on Dispatch), book it, and land on Dispatch with it open.
+ * Returns the order number.
+ */
+export async function buildLoad(page: Page, o: { customer: string; rate?: string; stops: LoadStop[] }) {
+  await page.goto("/dispatch");
+  await page.keyboard.press("n");
+  await page.waitForURL("**/orders/new", { waitUntil: "commit" });
+  await page.locator("#l-customer").selectOption({ label: o.customer });
+  if (o.rate) await page.locator("#l-rate").fill(o.rate);
+  for (let i = 2; i < o.stops.length; i++) await page.click("button:has-text('+ Add stop')");
+  await expect(page.getByTestId("stop")).toHaveCount(o.stops.length);
+  for (const [i, st] of o.stops.entries()) {
+    await page.getByLabel(`Stop ${i + 1} type`).selectOption(st.type);
+    await page.getByLabel(`Stop ${i + 1} location`).fill(st.name);
+    await page.getByLabel(`Stop ${i + 1} country`).selectOption(st.country);
+  }
+  await page.click("button:has-text('Create & book')");
+  await page.waitForURL("**/dispatch?order=**", { waitUntil: "commit" });
+  await expect(page.locator("aside .h2").first()).toContainText(/\d{2}-\d{5}/);
+  return (await page.locator("aside .h2").first().textContent())!.match(/\d{2}-\d{5}/)![0];
+}

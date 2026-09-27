@@ -1,7 +1,7 @@
 // Features: F-3.9 F-6 F-5.11 compliance through the browser — rule, blocked driver on the board and in the picker, upload from the record, a renewal from the driver's phone confirmed by safety, snooze, 24h override, export, incidents F-6.9
 import { test, expect } from "@playwright/test";
 import path from "node:path";
-import { signupFresh, quickAdd, future } from "./helpers";
+import { signupFresh, quickAdd, future, buildLoad, mxToUs } from "./helpers";
 
 test("safety director day: a blocking rule, the driver goes red everywhere, the driver's photo waits for safety, upload fixes it, export, incident", async ({ page, browser }) => {
   test.setTimeout(150_000);
@@ -35,16 +35,7 @@ test("safety director day: a blocking rule, the driver goes red everywhere, the 
   await expect(row.locator(".pill-amber", { hasText: /\w{3} \d/ })).toHaveCount(1); // medical field expiring shows the date
 
   // dispatch picker: red with the reason
-  await page.goto("/dispatch");
-  await page.keyboard.press("n");
-  const d = page.getByRole("dialog");
-  await d.locator("select").first().selectOption({ label: "RXO (broker)" });
-  await d.getByPlaceholder("Planta Monterrey").fill("Laredo Yard");
-  await d.locator("select").nth(1).selectOption("US");
-  await d.getByPlaceholder("GM Arlington").fill("Toyota San Antonio");
-  await d.locator("select").last().selectOption("domestic");
-  await d.locator("button:has-text('Create & book')").click();
-  await expect(page.getByRole("status")).toContainText("Order created");
+  await buildLoad(page, { customer: "RXO (broker)", stops: [{ type: "pickup", name: "Laredo Yard", country: "US" }, { type: "delivery", name: "Toyota San Antonio", country: "US" }] });
   await page.locator("aside").last().locator("button:has-text('Assign Domestic leg')").click();
   const cand = page.getByRole("dialog").locator(".cursor-pointer", { hasText: "2104" });
   await expect(cand).toContainText("needs override");
@@ -156,15 +147,7 @@ test("fleet: a trailer added from Fleet shows free, then on the load it is named
   await expect(row).toContainText("free");
   await expect(row).toContainText("never on a load");
   // the caja is named on a crossing → the trailer is on that load
-  await page.goto("/dispatch");
-  await page.keyboard.press("n");
-  const nd = page.getByRole("dialog");
-  await expect(nd).toBeVisible();
-  await nd.locator("select").first().selectOption({ label: "RXO (broker)" });
-  await nd.getByPlaceholder("Planta Monterrey").fill("Planta Monterrey");
-  await nd.getByPlaceholder("GM Arlington").fill("GM Arlington");
-  await nd.locator("button:has-text('Create & book')").click();
-  await expect(page.getByRole("status")).toContainText("Order created");
+  await buildLoad(page, { customer: "RXO (broker)", stops: mxToUs("Planta Monterrey", "GM Arlington") });
   await page.goto("/crossing");
   await page.locator("a[href^='/crossing/']").first().click();
   await page.waitForURL("**/crossing/**", { waitUntil: "commit" });

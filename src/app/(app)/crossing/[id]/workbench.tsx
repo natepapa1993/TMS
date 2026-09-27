@@ -16,7 +16,7 @@ type Doc = { id: string; code: string | null; fileName: string; mimeType: string
 type Check = { code: string; state: string; message: string | null; values: Record<string, unknown> | null; overrideReason: string | null; overrideBy: string | null };
 type Ev = { id: string; at: string; kind: string; fromState: string | null; toState: string | null; source: string; verified: boolean; userId: string | null; note: string | null };
 type Data = {
-  crossing: { id: string; state: CrossingState; requirements: Requirement[]; trailerNumber: string | null; sealNumber: string | null; bridge: string | null; arrivedYardAt: string | null; departedYardAt: string | null; heldReason: string | null; returnedReason: string | null; packetBuiltAt: string | null; packetSentAt: string | null; packetAckAt: string | null; packetToken: string | null; eligibility: { ok: boolean; hardBlocked: boolean; findings: { level: string; code: string; message: string; overridable: boolean }[] } | null; eligibilityOverride: { reason: string } | null };
+  crossing: { id: string; state: CrossingState; requirements: Requirement[]; trailerNumber: string | null; sealNumber: string | null; bridge: string | null; arrivedYardAt: string | null; departedYardAt: string | null; heldReason: string | null; returnedReason: string | null; packetBuiltAt: string | null; packetSentAt: string | null; packetAckAt: string | null; packetToken: string | null; eligibility: { ok: boolean; hardBlocked: boolean; findings: { level: string; code: string; message: string; overridable: boolean }[] } | null; eligibilityOverride: { reason: string } | null; fromCountry: string; toCountry: string };
   leg: { id: string; state: string; truckId: string | null; driverId: string | null } | null;
   order: { id: string; orderNumber: string };
   checks: Check[];
@@ -33,6 +33,7 @@ type Data = {
   checkLabel: Record<string, string>;
   stateOrder: CrossingState[];
   stateLabel: Record<string, string>;
+  stepLabel: Record<string, string>;
   role: string;
 };
 
@@ -98,7 +99,7 @@ export function CrossingWorkbench({ data }: { data: Data }) {
         </div>
         <div className="text-[12.5px] text-muted">
           {c.departedYardAt ? `Left the yard ${fmt(c.departedYardAt)}${c.arrivedYardAt ? ` (there since ${fmt(c.arrivedYardAt)})` : ""}` : c.arrivedYardAt ? `At the yard since ${fmt(c.arrivedYardAt)}` : "Not at the border yard yet"}
-          {data.broker ? ` · MX broker ${data.broker.name}${data.broker.patente ? ` (patente ${data.broker.patente})` : ""}` : " · customer has no MX broker on file"}
+          {c.fromCountry !== "MX" && c.toCountry !== "MX" ? "" : data.broker ? ` · MX broker ${data.broker.name}${data.broker.patente ? ` (patente ${data.broker.patente})` : ""}` : " · customer has no MX broker on file"}
         </div>
         <div className="flex gap-2">
           {!c.arrivedYardAt && canEdit && (
@@ -215,7 +216,7 @@ export function CrossingWorkbench({ data }: { data: Data }) {
             <div className="flex-1 grid place-items-center text-center p-8">
               <div>
                 <div className="font-bold">{selCode ? "Nothing uploaded for this yet" : "Pick a document on the left"}</div>
-                <div className="text-muted text-[13px] mt-1">Upload a PDF or photo; type the numbers the checks compare (trailer, seal, pedimento…). The system reads what it can; you can always type.</div>
+                <div className="text-muted text-[13px] mt-1">Upload a PDF or photo; type the numbers the checks compare (trailer, seal, plates…). The system reads what it can; you can always type.</div>
                 {selCode && canEdit && beforePacket && selCode !== "carta_retiro" && (
                   <button className="btn btn-primary mt-4" onClick={() => setUploadFor(selCode)}>
                     Upload {c.requirements.find((r) => r.code === selCode)?.label}
@@ -351,8 +352,8 @@ export function CrossingWorkbench({ data }: { data: Data }) {
             {canEdit && (
               <div className="flex flex-wrap gap-2 mt-3">
                 {next && c.state !== "held" && (
-                  <button className="btn btn-primary btn-sm" disabled={pending} onClick={() => run(STEP[next] ?? next, () => A.stepAction(c.id, next))}>
-                    {STEP[next]}
+                  <button className="btn btn-primary btn-sm" disabled={pending} onClick={() => run(data.stepLabel[next] ?? STEP[next] ?? next, () => A.stepAction(c.id, next))}>
+                    {data.stepLabel[next] ?? STEP[next]}
                   </button>
                 )}
                 {c.state === "held" ? (

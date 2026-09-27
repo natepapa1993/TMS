@@ -9,7 +9,7 @@ import { TripView } from "./view";
 
 export const dynamic = "force-dynamic";
 
-const LEG_TYPE_LABEL: Record<string, string> = { mx: "Mexico", crossing: "Crossing", us: "US", domestic: "Domestic", equipment_move: "Equipment move" };
+const LEG_TYPE_LABEL: Record<string, string> = { mx: "Mexico", ca: "Canada", crossing: "Crossing", us: "US", domestic: "Domestic", equipment_move: "Equipment move" };
 const ORDER_LABEL: Record<string, string> = { draft: "Draft", booked: "Booked", dispatched: "Dispatched", in_transit: "In transit", exception: "On hold", delivered: "Delivered", ready_to_bill: "Ready to bill", invoiced: "Invoiced", paid: "Paid", cancelled: "Cancelled" };
 
 export default async function TripPage({ params }: PageProps<"/trips/[id]">) {

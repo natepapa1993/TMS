@@ -87,6 +87,7 @@ export async function driverToday(tenantId: string, driverId: string) {
   ]);
   const crossingLegIds = legs.filter((l) => l.type === "crossing").map((l) => l.id);
   const xs = crossingLegIds.length ? await db.select().from(s.crossings).where(inArray(s.crossings.legId, crossingLegIds)) : [];
+  const XL = xs.length ? await import("./crossing") : null;
   // photos already on file for these orders (and, on a trip, on its shipments): the app shows a check instead of asking twice
   const shipments = orderIds.length ? await db.select({ id: s.orders.id, tripId: s.orders.tripId, deliveryStopId: s.orders.deliveryStopId }).from(s.orders).where(and(eq(s.orders.tenantId, tenantId), inArray(s.orders.tripId, orderIds))) : [];
   const docOrderIds = [...orderIds, ...shipments.map((x) => x.id)];
@@ -98,7 +99,7 @@ export async function driverToday(tenantId: string, driverId: string) {
     const truck = trucks.find((t) => t.id === leg.truckId) ?? null;
     const x = xs.find((c) => c.legId === leg.id);
     const crossing = x
-      ? { id: x.id, state: x.state, trailerNumber: x.trailerNumber, packetToken: x.packetSentAt ? x.packetToken : null, packetSentAt: x.packetSentAt, nextStep: ({ packet_sent: "departed_yard", departed_yard: "at_mx_customs", at_mx_customs: "in_us_customs", in_us_customs: "cleared" } as Record<string, string>)[x.state] ?? null }
+      ? { id: x.id, state: x.state, trailerNumber: x.trailerNumber, packetToken: x.packetSentAt ? x.packetToken : null, packetSentAt: x.packetSentAt, nextStep: ({ packet_sent: "departed_yard", departed_yard: "at_mx_customs", at_mx_customs: "in_us_customs", in_us_customs: "cleared" } as Record<string, string>)[x.state] ?? null, fromCountry: x.fromCountry, toCountry: x.toCountry, stateLabel: XL!.crossingStateLabel(x.state, x), steps: Object.fromEntries((["departed_yard", "at_mx_customs", "in_us_customs", "cleared"] as const).map((k) => [k, XL!.stepLabel(k, x) ?? { en: k, es: k }])) }
       : null;
     const mid = pendingMidStop(leg, stops.filter((x) => x.orderId === leg.orderId));
     const next = mid ? { to: leg.state, label: `${mid.which === "arrived" ? "Arrived at" : "Leaving"} ${mid.stop.name}`, es: `${mid.which === "arrived" ? "Llegué a" : "Saliendo de"} ${mid.stop.name}` } : nextStep(leg.state);

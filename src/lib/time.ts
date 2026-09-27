@@ -53,11 +53,16 @@ const STATE_ZONE: Record<string, string> = {
   AGS: "America/Mexico_City", CAMP: "America/Mexico_City", CDMX: "America/Mexico_City", DF: "America/Mexico_City", COL: "America/Mexico_City", DGO: "America/Mexico_City", GTO: "America/Mexico_City", GRO: "America/Mexico_City", HGO: "America/Mexico_City", JAL: "America/Mexico_City", MEX: "America/Mexico_City", MICH: "America/Mexico_City", MOR: "America/Mexico_City", OAX: "America/Mexico_City", PUE: "America/Mexico_City", QRO: "America/Mexico_City", SLP: "America/Mexico_City", TAB: "America/Mexico_City", TLAX: "America/Mexico_City", VER: "America/Mexico_City", YUC: "America/Mexico_City", ZAC: "America/Mexico_City", CHIS: "America/Mexico_City",
 };
 
+/** Canadian provinces and territories by their postal abbreviation. */
+const PROVINCE_ZONE: Record<string, string> = { ON: "America/Toronto", QC: "America/Toronto", NB: "America/Moncton", NS: "America/Halifax", PE: "America/Halifax", NL: "America/St_Johns", MB: "America/Winnipeg", SK: "America/Regina", AB: "America/Edmonton", BC: "America/Vancouver", YT: "America/Whitehorse", NT: "America/Yellowknife", NU: "America/Iqaluit" };
+
 /** Zone for a wall-clock time: an explicit code wins, then the stop's state, then the company's zone. */
 export function zoneFor(p: { code?: string | null; state?: string | null; country?: string | null }, fallback: string) {
   if (p.code && CODE_ZONE[p.code.toUpperCase()]) return CODE_ZONE[p.code.toUpperCase()];
   const st = (p.state ?? "").toUpperCase().replace(/[^A-Z_]/g, "");
-  if (st && STATE_ZONE[st]) return STATE_ZONE[st];
+  if (p.country === "CA" && st && PROVINCE_ZONE[st]) return PROVINCE_ZONE[st];
+  if (st && STATE_ZONE[st] && p.country !== "CA") return STATE_ZONE[st];
+  if (p.country === "CA") return "America/Toronto";
   if (p.country === "MX") return "America/Mexico_City";
   return fallback;
 }

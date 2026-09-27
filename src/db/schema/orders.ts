@@ -18,7 +18,7 @@ export const ORDER_STATES = [
 ] as const;
 export type OrderState = (typeof ORDER_STATES)[number];
 
-export const LEG_TYPES = ["mx", "crossing", "us", "domestic", "equipment_move"] as const;
+export const LEG_TYPES = ["mx", "ca", "crossing", "us", "domestic", "equipment_move"] as const;
 export type LegType = (typeof LEG_TYPES)[number];
 
 export const LEG_STATES = [

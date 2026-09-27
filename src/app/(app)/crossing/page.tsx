@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { requireCtx } from "@/lib/auth";
-import { crossingBoard, bucketOf, BUCKET_LABEL, CROSSING_LABEL, type Bucket } from "@/domain/crossing";
+import { crossingBoard, bucketOf, BUCKET_LABEL, crossingStateLabel, type Bucket } from "@/domain/crossing";
 import { list } from "@/data/records";
 import { PageHeader } from "@/components/page-header";
 import { redirect } from "next/navigation";
@@ -92,7 +92,7 @@ export default async function CrossingBoardPage({ searchParams }: PageProps<"/cr
                   </div>
                   <div>{h == null ? <span className="text-faint">—</span> : <span className={`font-bold ${h >= 48 ? "text-red" : h >= 24 ? "text-amber" : ""}`}>{h} h</span>}</div>
                   <div>
-                    <Pill tone={tone[bucketOf(r.c.state)]}>{CROSSING_LABEL[r.c.state]}</Pill>
+                    <Pill tone={tone[bucketOf(r.c.state)]}>{crossingStateLabel(r.c.state, r.c)}</Pill>
                   </div>
                 </Link>
               );

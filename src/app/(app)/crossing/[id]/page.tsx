@@ -1,7 +1,8 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { requireCtx } from "@/lib/auth";
-import { crossingPage, CROSSING_LABEL, CROSSING_ORDER, bucketOf, DOC_FIELDS, CHECK_LABEL, PROVIDED_BY_LABEL } from "@/domain/crossing";
+import { crossingPage, CROSSING_LABEL, CROSSING_ORDER, bucketOf, DOC_FIELDS, CHECK_LABEL, PROVIDED_BY_LABEL, crossingStateLabel, stepLabel } from "@/domain/crossing";
+import type { CrossingState } from "@/db/schema";
 import { PageHeader } from "@/components/page-header";
 import { Pill } from "@/components/ui";
 import { CrossingWorkbench } from "./workbench";
@@ -40,7 +41,7 @@ export default async function CrossingPage({ params }: PageProps<"/crossing/[id]
         title={
           <span className="flex items-center gap-3 flex-wrap">
             <span className="mono">{p.order.orderNumber}</span>
-            <Pill tone={tone[bucket]}>{CROSSING_LABEL[p.crossing.state]}</Pill>
+            <Pill tone={tone[bucket]}>{crossingStateLabel(p.crossing.state, p.crossing)}</Pill>
             {hours != null && <span className={`pill ${hours >= 48 ? "pill-red" : hours >= 24 ? "pill-amber" : "pill-slate"}`}>at yard {hours} h</span>}
             {p.waitingOn && p.crossing.state !== "held" && idx < CROSSING_ORDER.indexOf("packet_sent") && (
               <span className="pill pill-amber" title="The single next missing item and who owes it">
@@ -75,7 +76,8 @@ export default async function CrossingPage({ params }: PageProps<"/crossing/[id]
               docFields: DOC_FIELDS,
               checkLabel: CHECK_LABEL,
               stateOrder: CROSSING_ORDER,
-              stateLabel: CROSSING_LABEL,
+              stateLabel: Object.fromEntries((Object.keys(CROSSING_LABEL) as CrossingState[]).map((k) => [k, crossingStateLabel(k, p.crossing)])),
+              stepLabel: Object.fromEntries((["departed_yard", "at_mx_customs", "in_us_customs", "cleared"] as CrossingState[]).map((k) => [k, stepLabel(k, p.crossing)?.en ?? k])),
               role: ctx.role,
             }),
           )}

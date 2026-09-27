@@ -1,3 +1,4 @@
+import { normCountry } from "./zones";
 import { and, eq, gte, desc, inArray, sql, or } from "drizzle-orm";
 import { db } from "@/db/client";
 import * as s from "@/db/schema";
@@ -257,30 +258,22 @@ async function handle204(ctx: Ctx, p: Partner, set: { control: string; segments:
   }
 }
 
-/** Customer stops, with the yard placeholders the crossing templates expect in between (renamed on the order). */
-function stopsFromTender(t: Tender204, companyZone: string): { stops: StopInput[]; template: string } {
+/** The customer's stops as they sent them; the legs are cut from them like any load. */
+function stopsFromTender(t: Tender204, companyZone: string): { stops: StopInput[]; template: string | null } {
   const at = (st: Tender204["stops"][number], l: { date: string; time: string; code: string | null } | null, fallback: Date | null) => (l ? localToInstant(l.date, l.time, zoneFor({ code: l.code, state: st.party?.state, country: st.party?.country }, companyZone)) : fallback);
   const ends: StopInput[] = t.stops.map((st) => ({
     type: st.type,
     name: st.party?.name || (st.type === "pickup" ? "Pickup" : "Delivery"),
     address: st.party ? { line1: st.party.line1 ?? undefined, city: st.party.city ?? undefined, state: st.party.state ?? undefined, postalCode: st.party.postalCode ?? undefined, country: st.party.country ?? undefined } : undefined,
-    country: st.party?.country === "MX" ? "MX" : "US",
+    country: normCountry(st.party?.country),
     windowStart: at(st, st.earliestLocal, st.earliest), // wall-clock times land in the stop's own zone
     windowEnd: at(st, st.latestLocal, st.latest),
     appointment: st.appointment,
     refs: st.refs,
     notes: [st.commodity && `${st.commodity}${st.pieces ? ` · ${st.pieces} pcs` : ""}${st.weightLbs ? ` · ${st.weightLbs} lb` : ""}`, ...st.notes].filter(Boolean).join(" · ") || null,
   }));
-  const first = ends[0]?.country ?? "US";
-  const last = ends[ends.length - 1]?.country ?? "US";
-  const yards: StopInput[] = [
-    { type: "border_yard", name: "Border yard (MX)", country: "MX" },
-    { type: "yard", name: "Laredo yard", country: "US" },
-  ];
-  if (first === "MX" && last === "US" && ends.length === 2) return { stops: [ends[0], ...yards, ends[1]], template: "mx_crossing_us" };
-  if (first === "MX" && last === "MX" && ends.length === 2) return { stops: [ends[0], ...yards], template: "mx_crossing" }; // delivers at the Laredo yard; the US leg is added when the customer says where
-  if (first === "US" && last === "US" && ends.length === 2) return { stops: ends, template: "domestic" };
-  throw new ValidationError(`${ends.length} stops (${first} → ${last}) do not fit a leg template; create the order by hand from the inbox`);
+  if (ends.length < 2) throw new ValidationError("the tender has fewer than two stops");
+  return { stops: ends, template: null };
 }
 
 /** Draft order from a parsed tender (no booking: a dispatcher reviews it). Links the inbound message. */

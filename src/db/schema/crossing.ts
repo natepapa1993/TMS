@@ -34,6 +34,8 @@ export const crossings = pgTable(
     orderId: text("order_id").notNull(),
     portId: text("port_id"),
     bridge: text("bridge"),
+    fromCountry: text("from_country").notNull().default("MX"), // the side the truck leaves
+    toCountry: text("to_country").notNull().default("US"), // the side it enters
     state: text("state").$type<CrossingState>().notNull().default("created"),
     previousState: text("previous_state").$type<CrossingState>(),
     trailerNumber: text("trailer_number"), // the caja, as dispatch knows it
@@ -103,6 +105,8 @@ export const crossingDocRules = pgTable(
     allowNa: boolean("allow_na").notNull().default(false),
     lastDocument: boolean("last_document").notNull().default(false),
     packetOrder: integer("packet_order").notNull().default(50),
+    border: text("border").notNull().default("mx"), // mx | ca | any — which border the document belongs to
+    direction: text("direction").notNull().default("any"), // any | into_us | into_mx | into_ca
     portId: text("port_id"), // null = every port
     customerId: text("customer_id"), // null = every customer
     enabled: boolean("enabled").notNull().default(true),

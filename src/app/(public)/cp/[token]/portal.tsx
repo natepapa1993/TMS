@@ -303,7 +303,7 @@ function RequestForm({ token, company, s, onDone }: { token: string; company: st
       <div className="grid grid-cols-2 gap-2">
         <div className="col-span-2">
           <label className="label">{s.shipper}</label>
-          <input className="input" value={f.pName} onChange={set("pName")} placeholder="Magna Ramos Arizpe" aria-invalid={err?.field === "pickup"} />
+          <input className="input" value={f.pName} onChange={set("pName")} aria-label={s.shipper} aria-invalid={err?.field === "pickup"} />
         </div>
         <div>
           <label className="label">{s.city}</label>
@@ -312,13 +312,14 @@ function RequestForm({ token, company, s, onDone }: { token: string; company: st
         <div className="grid grid-cols-2 gap-2">
           <div>
             <label className="label">{s.state}</label>
-            <input className="input" value={f.pState} onChange={set("pState")} placeholder="TX" />
+            <input className="input" value={f.pState} onChange={set("pState")} />
           </div>
           <div>
             <label className="label">{s.country}</label>
             <select className="select" value={f.pCountry} onChange={set("pCountry")}>
               <option value="US">US</option>
               <option value="MX">MX</option>
+              <option value="CA">CA</option>
             </select>
           </div>
         </div>
@@ -331,7 +332,7 @@ function RequestForm({ token, company, s, onDone }: { token: string; company: st
       <div className="grid grid-cols-2 gap-2">
         <div className="col-span-2">
           <label className="label">{s.consignee}</label>
-          <input className="input" value={f.dName} onChange={set("dName")} placeholder="Magna Arlington" aria-invalid={err?.field === "delivery"} />
+          <input className="input" value={f.dName} onChange={set("dName")} aria-label={s.consignee} aria-invalid={err?.field === "delivery"} />
         </div>
         <div>
           <label className="label">{s.city}</label>
@@ -347,6 +348,7 @@ function RequestForm({ token, company, s, onDone }: { token: string; company: st
             <select className="select" value={f.dCountry} onChange={set("dCountry")}>
               <option value="US">US</option>
               <option value="MX">MX</option>
+              <option value="CA">CA</option>
             </select>
           </div>
         </div>
@@ -377,11 +379,11 @@ function RequestForm({ token, company, s, onDone }: { token: string; company: st
         </div>
         <div>
           <label className="label">{s.whoToCall}</label>
-          <input className="input" value={f.contact} onChange={set("contact")} placeholder="Ana · +52 844 000 0000" />
+          <input className="input" value={f.contact} onChange={set("contact")} placeholder="Name · phone" />
         </div>
         <div className="col-span-2">
           <label className="label">{s.whatIsIt}</label>
-          <input className="input" value={f.cargo} onChange={set("cargo")} placeholder="26 pallets seats · 38,000 lb · no hazmat" />
+          <input className="input" value={f.cargo} onChange={set("cargo")} placeholder="Pieces · weight · hazmat?" aria-label={s.whatIsIt} />
         </div>
       </div>
       {err && <div className="error mt-3">{err.message}</div>}

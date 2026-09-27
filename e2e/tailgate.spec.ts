@@ -20,9 +20,11 @@ test("tailgate day: stops → shipments (LIFO, capacity) → book → run the tr
 
   // build: a US milk run, three stops
   await page.goto("/trips/new");
-  await page.locator("select").nth(1).selectOption({ label: "US milk run" });
   const rows = page.getByTestId("stop-row");
+  await expect(rows).toHaveCount(2); // a pickup and a delivery to start; nothing filled in for you
+  await page.click("button:has-text('+ Stop')");
   await expect(rows).toHaveCount(3);
+  await rows.nth(1).getByLabel("Stop type").selectOption("pickup");
   await rows.nth(0).getByLabel("Stop 1 name").fill("Canton dock");
   await rows.nth(0).getByLabel("City").fill("Canton");
   await rows.nth(0).getByLabel("State").fill("MI");

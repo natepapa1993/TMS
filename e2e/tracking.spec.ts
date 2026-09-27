@@ -1,7 +1,7 @@
 // Features: F-4 F-5 F-5.11 F-5.13 F-5.14 — tender by email link, driver app (steps, seal + POD photos, a line to dispatch), customer tracking link, all through the browser
 import { test, expect, type Page } from "@playwright/test";
 import path from "node:path";
-import { signupFresh, quickAdd, future } from "./helpers";
+import { signupFresh, quickAdd, future, buildLoad, mxToUs } from "./helpers";
 
 async function fleet(page: Page) {
   await page.goto("/settings/company");
@@ -29,15 +29,7 @@ async function fleet(page: Page) {
 }
 
 async function newOrder(page: Page) {
-  await page.goto("/dispatch");
-  await page.keyboard.press("n");
-  const d = page.getByRole("dialog");
-  await d.locator("select").first().selectOption({ label: "RXO (broker)" });
-  await d.getByPlaceholder("Planta Monterrey").fill("Planta Monterrey");
-  await d.getByPlaceholder("GM Arlington").fill("GM Arlington");
-  await d.getByPlaceholder("blank = TBD").fill("2850");
-  await d.locator("button:has-text('Create & book')").click();
-  await expect(page.getByRole("status")).toContainText("Order created");
+  await buildLoad(page, { customer: "RXO (broker)", rate: "2850", stops: mxToUs("Planta Monterrey", "GM Arlington") });
 }
 
 test("tender by email: carrier opens the link, accepts with driver details; dispatcher sees it on the leg", async ({ page, browser }) => {

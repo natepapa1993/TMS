@@ -1,6 +1,6 @@
 // Features: F-2.1 F-2.3 F-3.1 F-3.2 F-11.1 F-11.2 F-11.3 F-11.4 F-11.5 F-15 (through the real UI) F-2.9 F-1.6
 import { test, expect, type Page } from "@playwright/test";
-import { signupFresh, quickAdd, future, login } from "./helpers";
+import { signupFresh, quickAdd, future, login, buildLoad, mxToUs } from "./helpers";
 
 // T1 through the real UI: order → assign (eligibility enforced) → send → drive → delivered.
 // Plus the ease rules the owner asked for: OOS, split, add a driver to a unit, hold.
@@ -29,20 +29,11 @@ async function readyFleet(page: Page) {
 }
 
 async function newOrder(page: Page) {
-  await page.goto("/dispatch");
-  await page.keyboard.press("n");
-  const d = page.getByRole("dialog");
-  await expect(d).toBeVisible();
-  await d.locator("select").first().selectOption({ label: "RXO (broker)" });
-  await d.getByPlaceholder("Planta Monterrey").fill("Planta Monterrey");
-  await d.getByPlaceholder("GM Arlington").fill("GM Arlington");
-  await d.getByPlaceholder("blank = TBD").fill("2850");
-  await d.locator("button:has-text('Create & book')").click();
-  await expect(page.getByRole("status")).toContainText("Order created");
+  await buildLoad(page, { customer: "RXO (broker)", rate: "2850", stops: mxToUs("Planta Monterrey", "GM Arlington") });
   await expect(page.locator("aside .h2").first()).toContainText(/\d{2}-\d{5}/);
 }
 
-test("dispatcher day: new order in four fields, B-1 blocked on the US leg, carrier on MX, truck crosses, delivered", async ({ page }) => {
+test("dispatcher day: build a load stop by stop, B-1 blocked on the US leg, carrier on MX, truck crosses, delivered", async ({ page }) => {
   await signupFresh(page);
   await readyFleet(page);
   await newOrder(page);
@@ -169,7 +160,7 @@ test("unit OOS from Fleet pulls the planned leg back to Pending; split makes a s
   await page.click(".row[role=button]");
   await expect(panel.locator(".rounded-lg.border").nth(1)).toContainText("Pending");
   await panel.locator("button:has-text('Split')").click();
-  await page.getByRole("dialog").getByPlaceholder("San Antonio yard").fill("San Antonio Yard");
+  await page.getByRole("dialog").getByPlaceholder("Yard or terminal name").fill("San Antonio Yard");
   await page.getByRole("dialog").locator("button:has-text('Split')").click();
   await expect(page.getByRole("status")).toContainText("Split");
   await expect(panel.locator(".rounded-lg.border")).toHaveCount(4);
@@ -241,16 +232,7 @@ test("book it again: a copy of an order is a new draft with the same shape and n
   await page.locator("#f-knowledgeMd").fill("Wants a tracking link on every load. POD within 24h.");
   await page.click("button:has-text('Save changes')");
   await expect(page.getByRole("status")).toContainText("Saved");
-  await page.goto("/dispatch");
-  await page.keyboard.press("n");
-  const d = page.getByRole("dialog");
-  await expect(d).toBeVisible();
-  await d.locator("select").first().selectOption({ label: "RXO (broker)" });
-  await d.getByPlaceholder("Planta Monterrey").fill("Planta Monterrey");
-  await d.getByPlaceholder("GM Arlington").fill("GM Arlington");
-  await d.getByPlaceholder("blank = TBD").fill("2850");
-  await d.locator("button:has-text('Create & book')").click();
-  await expect(page.getByRole("status")).toContainText("Order created");
+  await buildLoad(page, { customer: "RXO (broker)", rate: "2850", stops: mxToUs("Planta Monterrey", "GM Arlington") });
   const panel = page.locator("aside").last();
   await expect(panel.getByTestId("customer-note")).toContainText("POD within 24h");
   await panel.locator("summary:has-text('Details')").click();

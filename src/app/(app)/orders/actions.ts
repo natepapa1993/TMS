@@ -6,6 +6,7 @@ import { act } from "@/lib/action";
 import * as O from "@/domain/orders";
 import type { StopType } from "@/db/schema";
 import { parseDate, parseAddress } from "@/data/fields";
+import type { StopPayload } from "@/components/stop-fields";
 
 const touch = (id?: string) => {
   revalidatePath("/dispatch");
@@ -15,26 +16,51 @@ const touch = (id?: string) => {
 
 export type StopForm = { type: StopType; name: string; address: string; country: string; windowStart: string; windowEnd: string; appointment: boolean; contact: string; notes: string; sealIn?: string; sealOut?: string };
 
-function toStopInput(st: StopForm) {
+
+/** A stop from the builder: a saved location or typed in; "save as a location" creates the location first. */
+async function stopFromPayload(ctx: Parameters<Parameters<typeof act>[0]>[0], st: StopPayload): Promise<O.StopInput> {
+  const address = st.line1 || st.city || st.state || st.postalCode ? { line1: st.line1 || undefined, city: st.city || undefined, state: st.state ? st.state.toUpperCase() : undefined, postalCode: st.postalCode || undefined, country: st.country } : null;
+  let locationId = st.locationId || null;
+  if (!locationId && st.saveLocation && st.name) {
+    if (!address?.line1 && !address?.city) throw Object.assign(new Error(`add an address to save "${st.name}" as a location`), { name: "ValidationError", field: "stops" });
+    const { create } = await import("@/data/records");
+    const kind = ({ pickup: "shipper", delivery: "consignee" } as Record<string, string>)[st.type] ?? st.type;
+    const loc = await create(ctx, "location", { name: st.name, kind, country: st.country, address });
+    locationId = loc.id;
+  }
   return {
-    type: st.type,
+    type: st.type as StopType,
     name: st.name,
-    address: st.address.trim() ? parseAddress(st.address) : null,
+    locationId,
+    address,
     country: st.country || "US",
     windowStart: st.windowStart ? new Date(st.windowStart) : null,
     windowEnd: st.windowEnd ? new Date(st.windowEnd) : null,
     appointment: !!st.appointment,
     contact: st.contact || null,
+    refs: st.ref ? { reference: st.ref } : {},
     notes: st.notes || null,
   };
 }
 
-export async function createOrderAction(input: { customerId: string; brokerId: string; billingEntityId: string; equipment: string; rate: string; rateTbd: boolean; currency: string; refs: Record<string, string>; cargoNote: string; template: string; stops: StopForm[]; book: boolean }) {
+export type LoadInput = { customerId: string; brokerId: string; billingEntityId: string; equipment: string; rate: string; rateTbd: boolean; currency: string; refs: Record<string, string>; cargoNote: string; freight: { commodity: string; pieces: string; packaging: string; weightLb: string; hazmat: boolean }[]; stops: StopPayload[]; book: boolean };
+
+/** The load builder: any number of stops; the legs are cut from them. */
+export async function createLoadAction(input: LoadInput) {
   const r = await act(async (ctx) => {
     const rateCents = input.rate.trim() ? Math.round(Number(input.rate.replace(/[$,\s]/g, "")) * 100) : null;
     if (input.rate.trim() && !Number.isFinite(rateCents)) throw Object.assign(new Error("Rate must be a number"), { name: "ValidationError", field: "rate" });
+    if (input.stops.length < 2) throw Object.assign(new Error("a load needs at least a pickup and a delivery"), { name: "ValidationError", field: "stops" });
+    if (!input.stops.some((s) => s.type === "pickup")) throw Object.assign(new Error("add the pickup"), { name: "ValidationError", field: "stops" });
+    if (!input.stops.some((s) => s.type === "delivery")) throw Object.assign(new Error("add the delivery"), { name: "ValidationError", field: "stops" });
     const refs: Record<string, string> = {};
     for (const [k, v] of Object.entries(input.refs)) if (v?.trim()) refs[k] = v.trim();
+    const freight = input.freight
+      .filter((l) => l.commodity.trim() || l.pieces.trim() || l.weightLb.trim())
+      .map((l) => ({ commodity: l.commodity.trim() || "freight", pieces: l.pieces.trim() ? Number(l.pieces) : undefined, packaging: l.packaging.trim() || undefined, weightLb: l.weightLb.trim() ? Number(l.weightLb.replace(/[,\s]/g, "")) : undefined, hazmat: l.hazmat || undefined }));
+    for (const l of freight) if ((l.pieces != null && !Number.isFinite(l.pieces)) || (l.weightLb != null && !Number.isFinite(l.weightLb))) throw Object.assign(new Error("pieces and weight are numbers"), { name: "ValidationError", field: "freight" });
+    const stops = [];
+    for (const st of input.stops) stops.push(await stopFromPayload(ctx, st));
     return O.createOrder(ctx, {
       customerId: input.customerId || null,
       brokerId: input.brokerId || null,
@@ -44,16 +70,45 @@ export async function createOrderAction(input: { customerId: string; brokerId: s
       rateTbd: input.rateTbd || rateCents == null,
       currency: input.currency || "USD",
       refs,
+      freight,
       cargoNote: input.cargoNote || null,
-      template: input.template,
-      stops: input.stops.map(toStopInput),
+      stops,
       book: input.book,
     });
   });
   if (r.ok) {
     touch();
-    redirect(`/orders/${r.data.order.id}`);
+    redirect(`/dispatch?order=${r.data.order.id}`);
   }
+  return r;
+}
+
+export async function addStopAction(orderId: string, position: number, stop: StopPayload) {
+  const r = await act(async (ctx) => {
+    if (!stop.name) throw Object.assign(new Error("the stop needs a location name"), { name: "ValidationError", field: "name" });
+    const input = await stopFromPayload(ctx, stop);
+    await O.addStop(ctx, orderId, position, input);
+    return { ok: true };
+  });
+  if (r.ok) touch(orderId);
+  return r;
+}
+
+export async function removeStopAction(orderId: string, stopId: string) {
+  const r = await act(async (ctx) => {
+    await O.removeStop(ctx, orderId, stopId);
+    return { ok: true };
+  });
+  if (r.ok) touch(orderId);
+  return r;
+}
+
+export async function moveStopAction(orderId: string, stopId: string, dir: -1 | 1) {
+  const r = await act(async (ctx) => {
+    await O.moveStop(ctx, orderId, stopId, dir);
+    return { ok: true };
+  });
+  if (r.ok) touch(orderId);
   return r;
 }
 

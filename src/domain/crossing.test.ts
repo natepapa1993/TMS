@@ -1,4 +1,4 @@
-// Features: F-3 crossing — rules → checklist, documents, cross-checks, eligibility, packet, Solicitud de Retiro, 16-state machine, dwell
+// Features: F-3 F-3.10 crossing — rules → checklist, documents, cross-checks, eligibility, packet, Solicitud de Retiro, 16-state machine, dwell
 import { describe, it, expect, beforeEach, vi, afterEach } from "vitest";
 import { PDFDocument } from "pdf-lib";
 import { truncateAll, makeTenant } from "@/test/helpers";
@@ -312,5 +312,63 @@ describe("crossing lifecycle (spec §3.1)", () => {
     await expect(X.uploadDocument(b, c.id, { code: "bol", fileName: "x.pdf", mimeType: "application/pdf", bytes: await pdf("x") })).rejects.toThrow(/not found/);
     expect((await X.crossingBoard(b)).length).toBe(0);
     expect((await X.crossingBoard(a)).length).toBe(1);
+  });
+});
+
+describe("Canada crossings", () => {
+  const usToCa = [
+    { type: "pickup" as const, name: "Shipper Detroit", country: "US" },
+    { type: "delivery" as const, name: "Consignee Toronto", country: "CA" },
+  ];
+  it("US → Canada gets the Canadian checklist (PARS, ACI), not the Mexican or US-entry documents", async () => {
+    const o = await createOrder(a, { customerId: f.rxo, rateCents: 150000, stops: usToCa, book: true });
+    expect(o.legs.map((l) => l.type)).toEqual(["crossing"]);
+    const [c] = await db.select().from(crossings).where(eq(crossings.legId, o.legs[0].id));
+    expect([c.fromCountry, c.toCountry]).toEqual(["US", "CA"]);
+    const codes = c.requirements.map((r) => r.code);
+    expect(codes).toEqual(expect.arrayContaining(["pars", "aci_emanifest", "bol", "invoice"]));
+    for (const mx of ["carta_retiro", "carta_porte", "doda", "ace_manifest", "dtops", "entry"]) expect(codes).not.toContain(mx);
+    expect(X.crossingStateLabel("in_us_customs", c)).toBe("In CA customs");
+    expect(X.crossingStateLabel("at_mx_customs", c)).toBe("At US customs");
+    expect(X.stepLabel("cleared", c)?.en).toBe("Cleared — on the CA side");
+  });
+
+  it("Canada → US needs the ACE manifest and no Canadian entry documents", async () => {
+    const o = await createOrder(a, { customerId: f.rxo, rateCents: 150000, stops: [...usToCa].reverse().map((s, i) => ({ ...s, type: i === 0 ? ("pickup" as const) : ("delivery" as const) })), book: true });
+    const [c] = await db.select().from(crossings).where(eq(crossings.legId, o.legs[0].id));
+    const codes = c.requirements.map((r) => r.code);
+    expect(codes).toContain("ace_manifest");
+    expect(codes).not.toContain("pars");
+    expect(codes).not.toContain("doda");
+  });
+
+  it("Mexico → US keeps the Mexican checklist and labels", async () => {
+    const { c } = await crossingOrder();
+    expect(c.requirements.map((r) => r.code)).toEqual(expect.arrayContaining(["carta_retiro", "doda", "ace_manifest"]));
+    expect(c.requirements.map((r) => r.code)).not.toContain("pars");
+    expect(X.crossingStateLabel("at_mx_customs", c)).toBe("At MX customs");
+  });
+
+  it("a company set up before Canada gets the Canadian rules added, keeping its own edits", async () => {
+    await X.ensureDefaultRules(a);
+    await db.update(crossingDocRules).set({ label: "DODA (ours)" }).where(and(eq(crossingDocRules.tenantId, a.tenantId), eq(crossingDocRules.code, "doda")));
+    await db.delete(crossingDocRules).where(and(eq(crossingDocRules.tenantId, a.tenantId), eq(crossingDocRules.code, "pars")));
+    expect(await X.ensureDefaultRules(a)).toBe(true);
+    const rules = await db.select().from(crossingDocRules).where(eq(crossingDocRules.tenantId, a.tenantId));
+    expect(rules.map((r) => r.code)).toContain("pars");
+    expect(rules.find((r) => r.code === "doda")?.label).toBe("DODA (ours)");
+    expect(rules.length).toBe(X.DEFAULT_CROSSING_RULES.length);
+  });
+
+  it("checks into Canada read the ACI eManifest and skip the Mexico- and US-only checks", () => {
+    const docs = { aci_emanifest: { trailer: "10743", driver: "Benjamin Xochihua", usPlate: "RC59022", caPlate: "AB12345", submittedAt: "2026-09-27T10:00:00Z", estimatedArrival: "2026-09-27T10:20:00Z" }, bol: { trailer: "10743", seal: "S-1" } };
+    const r = runChecksPure({ now: new Date(), docs, trailerNumber: "10743", truck: { ...truck, caPlate: "AB12345", dtopsYear: null, dtopsConfirmation: null, mxPlateExpires: past }, driver: { ...driver, mxLicenseExpires: past }, mxBrokerPatente: null, fromCountry: "US", toCountry: "CA" });
+    const by = Object.fromEntries(r.map((x) => [x.code, x]));
+    for (const code of ["dtops", "plate_class", "scac", "patente", "pedimento", "folio_fiscal"]) expect(by[code]).toBeUndefined();
+    expect(by.expiry.state).toBe("pass"); // MX plate and licencia federal don't matter going to Canada
+    expect(by.tractor_plates.state).toBe("pass");
+    expect(by.driver.state).toBe("pass");
+    expect(by.timing.state).toBe("fail");
+    expect(by.timing.message).toContain("ACI eManifest");
   });
 });

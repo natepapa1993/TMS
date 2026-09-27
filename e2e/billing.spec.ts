@@ -1,7 +1,7 @@
 // Features: F-7 F-7.2 F-9 billing & settlements through the browser, ending with the QuickBooks export and the owner's reports — charges, docs gate, invoice issue/send/receipt, AR, carrier bill three-way, driver statement, driver app pay, company settings
 import { test, expect, type Page } from "@playwright/test";
 import path from "node:path";
-import { signupFresh, quickAdd, future } from "./helpers";
+import { signupFresh, quickAdd, future, buildLoad } from "./helpers";
 
 const POD = path.join(__dirname, "fixtures", "bol.pdf");
 
@@ -40,18 +40,7 @@ async function masterData(page: Page) {
 
 /** A domestic order for RXO at `rate`, created from the dispatch board. */
 async function newDomestic(page: Page, rate: string) {
-  await page.goto("/dispatch");
-  await page.keyboard.press("n");
-  const d = page.getByRole("dialog");
-  await expect(d).toBeVisible();
-  await d.locator("select").first().selectOption({ label: "RXO (broker)" });
-  await d.getByPlaceholder("Planta Monterrey").fill("Laredo Yard");
-  await d.locator("select").nth(1).selectOption("US");
-  await d.getByPlaceholder("GM Arlington").fill("Toyota San Antonio");
-  await d.getByPlaceholder("blank = TBD").fill(rate);
-  await d.locator("select").last().selectOption("domestic");
-  await d.locator("button:has-text('Create & book')").click();
-  await expect(page.getByRole("status")).toContainText("Order created");
+  await buildLoad(page, { customer: "RXO (broker)", rate: rate, stops: [{ type: "pickup", name: "Laredo Yard", country: "US" }, { type: "delivery", name: "Toyota San Antonio", country: "US" }] });
   const num = (await page.locator("aside .h2").first().textContent())!.match(/\d{2}-\d{5}/)![0];
   return num;
 }

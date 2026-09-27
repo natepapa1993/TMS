@@ -1,7 +1,6 @@
 import { requireCtx } from "@/lib/auth";
 import { board, type BoardRow } from "@/domain/orders";
 import { list } from "@/data/records";
-import { LEG_TEMPLATES } from "@/domain/templates";
 import { DispatchBoard, type BoardData, type Row } from "./board";
 import { openTendersForOrders } from "@/domain/tenders";
 import { publicUrl } from "@/lib/tokens";
@@ -14,7 +13,9 @@ import { mailInbox } from "@/domain/mail";
 export const metadata = { title: "Dispatch" };
 export const dynamic = "force-dynamic";
 
-export default async function DispatchPage() {
+export default async function DispatchPage({ searchParams }: PageProps<"/dispatch">) {
+  const sp = await searchParams;
+  const initialOrder = typeof sp.order === "string" ? sp.order : undefined;
   const ctx = await requireCtx();
   const [rows, customers, carriers, drivers, trucks] = await Promise.all([
     board(ctx),
@@ -38,14 +39,13 @@ export default async function DispatchPage() {
     carriers: carriers.map((c) => ({ id: c.id, name: String(c.name), country: String(c.country), doNotUse: !!c.doNotUse })).sort((p, q) => p.name.localeCompare(q.name)),
     drivers: drivers.map((d) => ({ id: d.id, name: String(d.name), driverType: String(d.driverType), currentTruckId: (d.currentTruckId as string | null) ?? null })).sort((p, q) => p.name.localeCompare(q.name)),
     trucks: trucks.map((t) => ({ id: t.id, unitNumber: String(t.unitNumber), status: String(t.status) })).sort((p, q) => p.unitNumber.localeCompare(q.unitNumber, undefined, { numeric: true })),
-    templates: LEG_TEMPLATES.map((t) => ({ key: t.key, label: t.label, description: t.description })),
     role: ctx.role,
     ediInbox: inbox.length,
     messages: msgs.filter((m) => !m.m.handledAt).length + mail.length,
     requests,
     etas,
   };
-  return <DispatchBoard data={data} />;
+  return <DispatchBoard data={data} initialOrder={initialOrder} />;
 }
 
 const iso = (d: Date | null | undefined) => (d ? d.toISOString() : null);

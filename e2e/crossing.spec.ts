@@ -1,7 +1,7 @@
 // Features: F-3 crossing through the browser — checklist, uploads with typed fields, cross-check failure + override, Solicitud de Retiro, packet, driver taps through the border
 import { test, expect, type Page } from "@playwright/test";
 import path from "node:path";
-import { signupFresh, quickAdd, future } from "./helpers";
+import { signupFresh, quickAdd, future, buildLoad, mxToUs } from "./helpers";
 
 const fx = (n: string) => path.join(__dirname, "fixtures", `${n}.pdf`);
 
@@ -49,15 +49,7 @@ test("border day: waiting on DODA → seal mismatch → override → packet → 
   await signupFresh(page);
   await fleet(page);
   // order + crossing assignment
-  await page.goto("/dispatch");
-  await page.keyboard.press("n");
-  const d = page.getByRole("dialog");
-  await d.locator("select").first().selectOption({ label: "RXO (broker)" });
-  await d.getByPlaceholder("Planta Monterrey").fill("Planta Monterrey");
-  await d.getByPlaceholder("GM Arlington").fill("GM Arlington");
-  await d.getByPlaceholder("blank = TBD").fill("2850");
-  await d.locator("button:has-text('Create & book')").click();
-  await expect(page.getByRole("status")).toContainText("Order created");
+  await buildLoad(page, { customer: "RXO (broker)", rate: "2850", stops: mxToUs("Planta Monterrey", "GM Arlington") });
   const panel = page.locator("aside").last();
   await panel.locator(".rounded-lg.border >> nth=1 >> button:has-text('Assign')").click();
   await page.getByRole("dialog").locator(".cursor-pointer", { hasText: "2117" }).click();
@@ -98,7 +90,7 @@ test("border day: waiting on DODA → seal mismatch → override → packet → 
   await expect(page.locator("main")).toContainText("1 failing");
   await expect(page.locator("main")).toContainText("seal differs");
   await expect(page.locator("button:has-text('Build packet')")).toBeDisabled();
-  await page.locator("li", { hasText: "Seal number matches" }).locator("button:has-text('Override')").click();
+  await page.locator("li", { hasText: "Seal number agrees" }).locator("button:has-text('Override')").click();
   await page.getByRole("dialog").locator("input").fill("seal replaced at the yard, S-772 recorded");
   await page.getByRole("dialog").locator("button:has-text('Override')").click();
   await expect(page.getByRole("status")).toContainText("Overridden");
@@ -149,14 +141,7 @@ test("a returned crossing withdraws the packet and re-verifies; hold from the dr
   test.setTimeout(120_000);
   await signupFresh(page);
   await fleet(page);
-  await page.goto("/dispatch");
-  await page.keyboard.press("n");
-  const d = page.getByRole("dialog");
-  await d.locator("select").first().selectOption({ label: "RXO (broker)" });
-  await d.getByPlaceholder("Planta Monterrey").fill("Planta Monterrey");
-  await d.getByPlaceholder("GM Arlington").fill("GM Arlington");
-  await d.locator("button:has-text('Create & book')").click();
-  await expect(page.getByRole("status")).toContainText("Order created");
+  await buildLoad(page, { customer: "RXO (broker)", stops: mxToUs("Planta Monterrey", "GM Arlington") });
   const panel = page.locator("aside").last();
   await panel.locator(".rounded-lg.border >> nth=1 >> button:has-text('Assign')").click();
   await page.getByRole("dialog").locator(".cursor-pointer", { hasText: "2117" }).click();
@@ -206,15 +191,7 @@ test("AI reader: the workbench offers Read with AI, tells you when it is not con
   test.setTimeout(150_000);
   await signupFresh(page);
   await fleet(page);
-  await page.goto("/dispatch");
-  await page.keyboard.press("n");
-  const d = page.getByRole("dialog");
-  await d.locator("select").first().selectOption({ label: "RXO (broker)" });
-  await d.getByPlaceholder("Planta Monterrey").fill("Planta Monterrey");
-  await d.getByPlaceholder("GM Arlington").fill("GM Arlington");
-  await d.getByPlaceholder("blank = TBD").fill("2850");
-  await d.locator("button:has-text('Create & book')").click();
-  await expect(page.getByRole("status")).toContainText("Order created");
+  await buildLoad(page, { customer: "RXO (broker)", rate: "2850", stops: mxToUs("Planta Monterrey", "GM Arlington") });
   await page.goto("/crossing");
   await page.click(".row:has-text('26-00001')");
   await page.waitForURL("**/crossing/**");

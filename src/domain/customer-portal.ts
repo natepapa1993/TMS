@@ -1,3 +1,4 @@
+import { normCountry } from "./zones";
 import { and, eq, inArray, or, desc, gte, sql } from "drizzle-orm";
 import { db } from "@/db/client";
 import * as s from "@/db/schema";
@@ -152,18 +153,15 @@ export async function portalRequestLoad(tenantId: string, customerId: string, in
   const stop = (type: s.StopType, p: LoadRequest["pickup"]): StopInput => ({
     type,
     name: p.name.trim(),
-    country: p.country === "MX" ? "MX" : "US",
-    address: p.city || p.state ? { city: p.city?.trim() || undefined, state: p.state?.trim().toUpperCase() || undefined, country: p.country === "MX" ? "MX" : "US" } : null,
+    country: normCountry(p.country),
+    address: p.city || p.state ? { city: p.city?.trim() || undefined, state: p.state?.trim().toUpperCase() || undefined, country: normCountry(p.country) } : null,
     windowStart: p.windowStart ?? null,
     windowEnd: p.windowEnd ?? null,
     notes: p.notes?.trim() || null,
     contact: input.contact?.trim() || null,
   });
+  // the two ends as the customer gave them; dispatch adds any yard or hand-off stops when it plans the load
   const stops = [stop("pickup", input.pickup), stop("delivery", input.delivery)];
-  if (stops[0].country !== stops[1].country) {
-    // a border move: the yards come from dispatch, who know which port; the request carries the two ends
-    stops.splice(1, 0, ...(stops[0].country === "MX" ? [{ type: "border_yard" as const, name: "Border yard (MX)", country: "MX" }, { type: "yard" as const, name: "Laredo yard", country: "US" }] : [{ type: "yard" as const, name: "Laredo yard", country: "US" }, { type: "border_yard" as const, name: "Border yard (MX)", country: "MX" }]));
-  }
   const refs: Record<string, string> = {};
   if (input.po?.trim()) refs.po = input.po.trim();
   if (input.reference?.trim()) refs.reference = input.reference.trim();

@@ -14,8 +14,10 @@ import type { LegState } from "@/db/schema";
  */
 
 type Stop = { id: string; name: string; type: string; country: string; address: { line1?: string; city?: string; state?: string } | null; windowStart: string | null; windowEnd: string | null; contact: string | null; notes: string | null; arrivedAt?: string | null; departedAt?: string | null; sealIn?: string | null; sealOut?: string | null };
-type Item = { leg: { id: string; seq: number; type: string; state: LegState }; order: { orderNumber: string; equipment: string; cargoNote: string | null; refs: Record<string, string> }; from: Stop | null; to: Stop | null; mids?: Stop[]; truck: { unitNumber: string } | null; next: { to: LegState; label: string; es: string } | null; crossing: { id: string; state: string; trailerNumber: string | null; packetToken: string | null; nextStep: string | null } | null; docs: { pod: boolean; seal: boolean }; sealExpected: string | null };
+type Item = { leg: { id: string; seq: number; type: string; state: LegState }; order: { orderNumber: string; equipment: string; cargoNote: string | null; refs: Record<string, string> }; from: Stop | null; to: Stop | null; mids?: Stop[]; truck: { unitNumber: string } | null; next: { to: LegState; label: string; es: string } | null; crossing: { id: string; state: string; trailerNumber: string | null; packetToken: string | null; nextStep: string | null; stateLabel?: string; steps?: Record<string, { en: string; es: string }> } | null; docs: { pod: boolean; seal: boolean }; sealExpected: string | null };
 const XSTEP: Record<string, { en: string; es: string }> = { departed_yard: { en: "Departed the yard", es: "Salí del patio" }, at_mx_customs: { en: "At Mexican customs", es: "En aduana mexicana" }, in_us_customs: { en: "At US customs", es: "En aduana americana" }, cleared: { en: "Cleared — US side", es: "Liberado — lado americano" } };
+// the English part of XLABEL, as the server labels a Mexico → US crossing; any other direction uses the server's label
+const XLABEL_EN: Record<string, string> = { packet_sent: "Packet sent", departed_yard: "Departed yard", at_mx_customs: "At MX customs", in_us_customs: "In US customs", cleared: "Cleared", held: "Held", returned: "Returned to MX" };
 const XLABEL: Record<string, string> = { packet_sent: "Packet sent · Paquete enviado", departed_yard: "Departed yard · Salió del patio", at_mx_customs: "MX customs · Aduana MX", in_us_customs: "US customs · Aduana US", cleared: "Cleared · Liberado", held: "Held · Detenido", returned: "Returned · Regresado" };
 type OwnItem = { key: string; label: string; status: string; expiresAt: string | null; documentTypeId: string | null; tracksExpiry: boolean; pending: { fileName: string; at: string } | null; rejected: { reason: string; at: string } | null };
 type Msg = { id: string; who: "driver" | "dispatch"; body: string; at: string; seen: boolean };
@@ -202,7 +204,7 @@ export function DriverApp({ token, data }: { token: string; data: Data }) {
               <div className="font-extrabold text-[15px]">Border · Frontera</div>
               <div className="text-muted text-[12.5px]">{x!.trailerNumber ? `Caja ${x!.trailerNumber}` : ""}</div>
             </div>
-            <span className={`pill ${x!.state === "held" ? "pill-red" : "pill-amber"}`}>{XLABEL[x!.state] ?? x!.state}</span>
+            <span className={`pill ${x!.state === "held" ? "pill-red" : "pill-amber"}`}>{XLABEL[x!.state] && (!x!.stateLabel || x!.stateLabel === XLABEL_EN[x!.state]) ? XLABEL[x!.state] : (x!.stateLabel ?? x!.state)}</span>
           </div>
           <div className="px-5 py-4 space-y-3">
             {x!.packetToken && (
@@ -212,8 +214,8 @@ export function DriverApp({ token, data }: { token: string; data: Data }) {
             )}
             {x!.state !== "held" && x!.nextStep && (
               <button className="btn btn-primary w-full justify-center flex-col gap-0" style={{ height: 64, fontSize: 17 }} onClick={() => xstep(x!.nextStep)} disabled={pending || holding}>
-                {XSTEP[x!.nextStep]?.en}
-                <span className="text-[12.5px] font-semibold opacity-80">{XSTEP[x!.nextStep]?.es}</span>
+                {(x!.steps?.[x!.nextStep] ?? XSTEP[x!.nextStep])?.en}
+                <span className="text-[12.5px] font-semibold opacity-80">{(x!.steps?.[x!.nextStep] ?? XSTEP[x!.nextStep])?.es}</span>
               </button>
             )}
             {x!.state !== "held" &&

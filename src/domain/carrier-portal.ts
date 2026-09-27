@@ -20,7 +20,7 @@ import { LEG_LABEL } from "./states";
  * the authorization and the carrier record is the boundary.
  */
 
-const LEG_TYPE_LABEL: Record<string, string> = { mx: "Mexico", crossing: "Crossing", us: "US", domestic: "Domestic", equipment_move: "Equipment move" };
+const LEG_TYPE_LABEL: Record<string, string> = { mx: "Mexico", ca: "Canada", crossing: "Crossing", us: "US", domestic: "Domestic", equipment_move: "Equipment move" };
 const NEXT: Partial<Record<s.LegState, { to: s.LegState; en: string; es: string }>> = {
   dispatched: { to: "accepted", en: "Accept this load", es: "Aceptar esta carga" },
   accepted: { to: "en_route_to_pickup", en: "Rolling to pickup", es: "En camino a cargar" },

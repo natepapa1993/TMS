@@ -10,7 +10,7 @@ import { fmtIn } from "@/lib/time";
 import { parseEmail, openImap, type ParsedEmail, type MailBox, type ImapConfig } from "@/integrations/mail";
 import { API, DEFAULT_MODEL } from "@/integrations/extractor";
 import { NotFoundError, ValidationError, createOrder, getOrder } from "./orders";
-import { suggestTemplate } from "./templates";
+import { normCountry } from "./zones";
 
 /**
  * The inbox agent (spec Module 12): every email to dispatch@ is classified, its fields read, matched
@@ -70,9 +70,13 @@ export function extractByRules(m: { subject: string; text: string }): MailExtrac
   one("pickupName", /\b(?:pick\s*up|pickup|origin|shipper|origen)\s*[:\-]\s*([^\n]{3,80})/i, 0.5);
   one("deliveryName", /\b(?:deliver(?:y|s)?(?: to)?|destination|consignee|destino|drop)\s*[:\-]\s*([^\n]{3,80})/i, 0.5);
   one("equipment", /\b(53'? ?(?:dry|van|reefer)|48'? ?dry|flatbed|sprinter|straight truck)\b/i, 0.5);
-  // which side of the border an end is on, from how people write addresses: "Apodaca NL MX", "Monterrey, N.L.", "Laredo, TX"
-  const MX_STATES = /\b(NL|N\.L\.|COAH|COAHUILA|TAMPS|TAMAULIPAS|CHIH|CHIHUAHUA|SON|SONORA|BC|BCN|JAL|JALISCO|GTO|QRO|QUER[EÉ]TARO|SLP|AGS|ZAC|DGO|DURANGO|EDOMEX|CDMX|PUE|PUEBLA|VER|MICH|SIN|NAY|COL|HGO|TLAX|MOR|OAX|CHIS|TAB|CAMP|YUC|QROO)\b/i;
-  const side = (v: string | null) => (v == null ? null : /\b(MX|MEX|M[eé]xico|Mexico)\b/i.test(v) || MX_STATES.test(v) ? "MX" : /\b(USA?|TX|MI|OH|IL|IN|TN|KY|GA|AL|SC|NC|CA|AZ|NM|LA|MS|MO|OK|KS|AR|FL|PA|NY|NJ|WI|MN|IA|VA|WV|MD|ON)\b/.test(v) ? "US" : null);
+  // which country an end is in, from how people write addresses: "Apodaca NL MX", "Monterrey, N.L.", "Laredo, TX", "Windsor, ON"
+  const MX_NAMES = /\b(M[eé]xico|Nuevo Le[oó]n|Coahuila|Tamaulipas|Chihuahua|Sonora|Jalisco|Guanajuato|Quer[eé]taro|San Luis Potos[ií]|Aguascalientes|Puebla|Durango|Zacatecas|CDMX|EDOMEX)\b/i;
+  const MX_CODES = /(?:,|\s)(NL|N\.L\.|COAH|TAMPS|CHIH|SON|JAL|GTO|QRO|SLP|AGS|ZAC|DGO|PUE|VER|MICH|SIN|MX|MEX)\b/;
+  const CA_NAMES = /\b(Canada|Ontario|Qu[eé]bec|Alberta|Manitoba|Saskatchewan|British Columbia|Nova Scotia|New Brunswick)\b/i;
+  const CA_CODES = /(?:,|\s)(ON|QC|AB|MB|SK|NS|NB|PE|CAN)\b/;
+  const US_CODES = /(?:,|\s)(USA?|TX|MI|OH|IL|IN|TN|KY|GA|AL|SC|NC|CA(?!N)|AZ|NM|LA|MS|MO|OK|KS|AR|FL|PA|NY|NJ|WI|MN|IA|VA|WV|MD)\b/;
+  const side = (v: string | null) => (v == null ? null : CA_NAMES.test(v) || CA_CODES.test(v) ? "CA" : MX_NAMES.test(v) || MX_CODES.test(v) ? "MX" : US_CODES.test(v) ? "US" : null);
   for (const [end, key] of [["pickup", "pickupName"], ["delivery", "deliveryName"]] as const) {
     const c = side(out[key]?.value != null ? String(out[key].value) : null);
     if (c) out[`${end}Country`] = { value: c, confidence: 0.55 };
@@ -215,12 +219,11 @@ async function propose(tenantId: string, m: ParsedEmail, kind: MailKind, ex: Mai
   const ctx = systemCtx(tenantId);
   if ((kind === "rate_con" || kind === "tender") && !match.orderId) {
     const cust = await matchCustomer(tenantId, m.from, ex);
-    const pc = (str(ex, "pickupCountry") ?? (str(ex, "pickupState") && /^(NL|COAH|TAMPS|CHIH|SON|BC|JAL|GTO|QRO|SLP|AGS|ZAC|DGO|MEX|CDMX|PUE|VER|MICH|SIN)$/i.test(str(ex, "pickupState")!) ? "MX" : "US")).toUpperCase() === "MX" ? "MX" : "US";
-    const dc = (str(ex, "deliveryCountry") ?? "US").toUpperCase() === "MX" ? "MX" : "US";
-    const template = suggestTemplate(pc === "MX" && dc === "US" ? ["MX", "MX", "US", "US"] : pc === "US" && dc === "MX" ? ["US", "US", "MX", "MX"] : [pc, dc]);
-    const tmpl = (await import("./templates")).templateByKey(template)!;
-    const ends = { pickup: { type: "pickup", name: str(ex, "pickupName") ?? [str(ex, "pickupCity"), str(ex, "pickupState")].filter(Boolean).join(", ") ?? "Pickup", city: str(ex, "pickupCity") ?? undefined, state: str(ex, "pickupState") ?? undefined, country: pc, windowStart: str(ex, "pickupAt") }, delivery: { type: "delivery", name: str(ex, "deliveryName") ?? [str(ex, "deliveryCity"), str(ex, "deliveryState")].filter(Boolean).join(", ") ?? "Delivery", city: str(ex, "deliveryCity") ?? undefined, state: str(ex, "deliveryState") ?? undefined, country: dc, windowEnd: str(ex, "deliveryAt") } };
-    const stops = tmpl.stops.map((type, i) => (i === 0 ? ends.pickup : i === tmpl.stops.length - 1 ? ends.delivery : { type, name: type === "border_yard" ? "Border yard (MX)" : type === "yard" ? "Laredo yard" : type, country: type === "border_yard" ? "MX" : "US" }));
+    const pc = normCountry((str(ex, "pickupCountry") ?? "US").toUpperCase());
+    const dc = normCountry((str(ex, "deliveryCountry") ?? "US").toUpperCase());
+    const template = ""; // the legs are cut from the stops; dispatch adds any yard or hand-off stops
+    const ends = { pickup: { type: "pickup", name: str(ex, "pickupName") ?? ([str(ex, "pickupCity"), str(ex, "pickupState")].filter(Boolean).join(", ") || "Pickup"), city: str(ex, "pickupCity") ?? undefined, state: str(ex, "pickupState") ?? undefined, country: pc, windowStart: str(ex, "pickupAt") }, delivery: { type: "delivery", name: str(ex, "deliveryName") ?? ([str(ex, "deliveryCity"), str(ex, "deliveryState")].filter(Boolean).join(", ") || "Delivery"), city: str(ex, "deliveryCity") ?? undefined, state: str(ex, "deliveryState") ?? undefined, country: dc, windowEnd: str(ex, "deliveryAt") } };
+    const stops = [ends.pickup, ends.delivery];
     const rate = typeof ex.rate?.value === "number" ? Math.round(ex.rate.value * 100) : null;
     const eq = str(ex, "equipment");
     const equipment = eq ? (EQUIP.find(([re]) => re.test(eq))?.[1] ?? null) : null;
@@ -476,7 +479,7 @@ export async function approveMail(ctx: Ctx, id: string, edits: MailEdits = {}) {
         refs: p.refs,
         cargoNote: p.cargoNote,
         source: "email",
-        template: p.template,
+        template: p.template || undefined,
         stops: p.stops.map((st) => ({ type: st.type as s.StopType, name: st.name, country: st.country, address: st.city || st.state ? { city: st.city, state: st.state } : undefined, windowStart: st.windowStart ? new Date(st.windowStart) : undefined, windowEnd: st.windowEnd ? new Date(st.windowEnd) : undefined })),
         book: false,
       });

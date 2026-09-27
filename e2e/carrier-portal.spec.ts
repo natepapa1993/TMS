@@ -1,7 +1,7 @@
 // Features: F-10 F-5.12 carrier portal through the browser — link from the carrier record, offer accepted with a driver, load walked to delivered, rate con, invoice against the leg, COI upload lands in compliance, scorecard F-2.10
 import { test, expect } from "@playwright/test";
 import path from "node:path";
-import { signupFresh, quickAdd, future } from "./helpers";
+import { signupFresh, quickAdd, future, buildLoad, mxToUs } from "./helpers";
 
 test("carrier's day: one link, accept the offer, run the load, get paid, keep documents current", async ({ page, browser }) => {
   test.setTimeout(180_000);
@@ -25,15 +25,7 @@ test("carrier's day: one link, accept the offer, run the load, get paid, keep do
   await expect(page.locator("main")).toContainText("Scorecard");
 
   // an MX leg tendered by email to Garza
-  await page.goto("/dispatch");
-  await page.keyboard.press("n");
-  const d = page.getByRole("dialog");
-  await d.locator("select").first().selectOption({ label: "RXO (broker)" });
-  await d.getByPlaceholder("Planta Monterrey").fill("Planta Monterrey");
-  await d.getByPlaceholder("GM Arlington").fill("GM Arlington");
-  await d.getByPlaceholder("blank = TBD").fill("2850");
-  await d.locator("button:has-text('Create & book')").click();
-  await expect(page.getByRole("status")).toContainText("Order created");
+  await buildLoad(page, { customer: "RXO (broker)", rate: "2850", stops: mxToUs("Planta Monterrey", "GM Arlington") });
   const panel = page.locator("aside").last();
   await panel.locator("button:has-text('Assign MX leg')").click();
   const dlg = page.getByRole("dialog");

@@ -57,7 +57,7 @@ beforeEach(async () => {
 const outMessages = (type?: string) => db.select().from(ediMessages).where(type ? and(eq(ediMessages.direction, "out"), eq(ediMessages.type, type)) : eq(ediMessages.direction, "out"));
 
 describe("inbound 204", () => {
-  it("a tender becomes a draft cross-border order with the customer's refs, windows and yard placeholders; 997 and 990 go back; a repeat is refused", async () => {
+  it("a tender becomes a draft cross-border order with the customer's refs, windows and stops as sent; 997 and 990 go back; a repeat is refused", async () => {
     const r = await E.receiveInterchange(f.partner, tender("RC-778812"));
     expect(r.sets).toHaveLength(1);
     expect(r.sets[0].ok).toBe(true);
@@ -68,13 +68,13 @@ describe("inbound 204", () => {
     expect(o.order.sourceRef).toBe("RC-778812");
     expect(o.order.refs).toMatchObject({ rate_con: "RC-778812", po: "4500991" });
     expect(o.order.rateCents).toBe(285000);
-    expect(o.order.legTemplate).toBe("mx_crossing_us");
-    expect(o.stops.map((s) => `${s.type}:${s.name}:${s.country}`)).toEqual(["pickup:Planta Monterrey:MX", "border_yard:Border yard (MX):MX", "yard:Laredo yard:US", "delivery:GM Arlington:US"]);
+    expect(o.order.legTemplate).toBe("stops");
+    expect(o.stops.map((s) => `${s.type}:${s.name}:${s.country}`)).toEqual(["pickup:Planta Monterrey:MX", "delivery:GM Arlington:US"]); // the customer's stops, nothing invented
     expect(o.stops[0].windowStart?.toISOString()).toBe("2026-09-27T14:00:00.000Z"); // 08:00 in Monterrey (UTC-6), not 08:00Z
-    expect(o.stops[3].windowStart?.toISOString()).toBe("2026-09-28T20:00:00.000Z"); // 15:00 in Arlington TX (CDT)
+    expect(o.stops[1].windowStart?.toISOString()).toBe("2026-09-28T20:00:00.000Z"); // 15:00 in Arlington TX (CDT)
     expect(o.stops[0].address).toMatchObject({ line1: "Av. Industrial 100", city: "Monterrey", state: "NL" });
     expect(o.stops[0].notes).toContain("AUTO PARTS");
-    expect(o.legs).toHaveLength(3);
+    expect(o.legs.map((l) => l.type)).toEqual(["crossing"]);
     // 997 immediately
     const ack = (await outMessages("997"))[0];
     expect(ack.content).toContain("AK1*SM*123~");
@@ -127,7 +127,7 @@ describe("inbound 204", () => {
     void r2;
   });
 
-  it("a domestic tender uses the domestic template; a cancellation cancels a draft and flags a moving load", async () => {
+  it("a domestic tender is one domestic leg; a cancellation cancels a draft and flags a moving load", async () => {
     const domestic = `S5*1*CL*5000*L*4*PLT~
 G62*37*20260927*1*0800~
 N1*SH*Laredo Yard~
@@ -137,8 +137,7 @@ N1*CN*Toyota San Antonio~
 N4*San Antonio*TX*78264*US~`;
     const r = await E.receiveInterchange(f.partner, tender("RC-9", { stops: domestic }));
     const o = await getOrder(a, r.sets[0].orderId!);
-    expect(o.order.legTemplate).toBe("domestic");
-    expect(o.legs).toHaveLength(1);
+    expect(o.legs.map((l) => l.type)).toEqual(["domestic"]);
     // cancel while a draft → cancelled
     const c = await E.receiveInterchange(f.partner, tender("RC-9", { purpose: "01", isa: "000000200", stops: "" }));
     expect(c.sets[0].note).toMatch(/cancelled 26-00001/);

@@ -118,7 +118,7 @@ export default async function IntegrationsPage() {
             )
           }
         />
-        <div className="card p-4 text-[13px] text-muted">Waiting on outside access: Sylectus Virtual Fleet and DAT / Truckstop posting (API access), NAD and Viatpro crossing documents (credentials), native AS2 (the VAN's certificates). The EDI VAN mailbox over SFTP lives on each EDI partner's record.</div>
+        <div className="card p-4 text-[13px] text-muted">Waiting on outside access: Sylectus Virtual Fleet and DAT / Truckstop posting (API access), NAD and Viatpro crossing documents (credentials), native AS2 (the VAN&rsquo;s certificates). The EDI VAN mailbox over SFTP lives on each EDI partner&rsquo;s record.</div>
       </div>
     </div>
   );

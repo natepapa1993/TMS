@@ -89,7 +89,7 @@ describe("customer portal", () => {
     expect((await P.customerPortalLink(a, f.rxo)).url).not.toBe(link.url);
   });
 
-  it("a load request becomes a draft order on Dispatch with a flag; a border request gets the yards; booking it clears the flag", async () => {
+  it("a load request becomes a draft order on Dispatch with a flag; a border request keeps the two ends as given; booking it clears the flag", async () => {
     await expect(P.portalRequestLoad(a.tenantId, f.magna, { pickup: { name: "", country: "US" }, delivery: { name: "x", country: "US" } })).rejects.toBeInstanceOf(ValidationError);
     const r = await P.portalRequestLoad(a.tenantId, f.magna, {
       pickup: { name: "Magna Ramos Arizpe", city: "Ramos Arizpe", state: "coah", country: "MX", windowStart: new Date(Date.now() + 86400_000) },
@@ -103,9 +103,9 @@ describe("customer portal", () => {
     expect(r.order.source).toBe("portal");
     expect(r.order.customerId).toBe(f.magna);
     expect(r.order.rateTbd).toBe(true);
-    expect(r.stops.map((st) => st.type)).toEqual(["pickup", "border_yard", "yard", "delivery"]);
+    expect(r.stops.map((st) => st.type)).toEqual(["pickup", "delivery"]); // the two ends as asked; dispatch adds any yard
     expect(r.stops[0].address?.state).toBe("COAH");
-    expect(r.legs.map((l) => l.type)).toEqual(["mx", "crossing", "us"]);
+    expect(r.legs.map((l) => l.type)).toEqual(["crossing"]);
     const fl = await db.select().from(flags).where(and(eq(flags.orderId, r.order.id), eq(flags.code, "portal_request")));
     expect(fl).toHaveLength(1);
     expect(fl[0].title).toBe("Load request from Magna");
