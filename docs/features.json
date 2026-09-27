@@ -227,10 +227,13 @@
     },
     {
       "id": "F-6",
-      "name": "Compliance: document types, expiries, DQ file, Clearinghouse, blocks",
+      "name": "Compliance: document rules \u2192 status per driver/truck/trailer/carrier, dispatchable flag in the picker/tender/crossing, uploads on the record, snooze, 24-h owner override, CSV export, daily digest, incident register",
       "milestone": "M3",
-      "status": "planned",
-      "tests": []
+      "status": "done",
+      "tests": [
+        "src/domain/compliance.test.ts",
+        "e2e/compliance.spec.ts"
+      ]
     },
     {
       "id": "F-7",

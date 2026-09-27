@@ -8,6 +8,7 @@ import { writeAudit, diff } from "@/lib/audit";
 import { assertLegTransition, assertOrderTransition, canOrderTransition, LEG_FORWARD, STAGE_OF_LEG, TransitionError } from "./states";
 import { LEG_TEMPLATES, templateByKey, suggestTemplate } from "./templates";
 import { checkDriver, checkTruck, summarize, type Finding } from "./eligibility";
+import { complianceFindings, statusMap } from "./compliance";
 
 /**
  * Orders & dispatch service (spec §2, §11.1–11.3, §11.15). Every write runs in one transaction,
@@ -402,12 +403,14 @@ export async function eligibilityFor(ctx: Ctx, legType: LegType, a: Assignment, 
     if (!truck) throw new NotFoundError("truck", a.truckId);
     if (truck.archivedAt) findings.push({ level: "red", code: "truck_archived", message: `${truck.unitNumber} is archived`, overridable: false });
     findings.push(...checkTruck(truck, legType, now));
+    findings.push(...(await complianceFindings(ctx, "truck", truck.id, `unit ${truck.unitNumber}`)));
     for (const did of [a.driverId, a.coDriverId]) {
       if (!did) continue;
       const [drv] = await db.select().from(s.drivers).where(and(eq(s.drivers.tenantId, ctx.tenantId), eq(s.drivers.id, did))).limit(1);
       if (!drv) throw new NotFoundError("driver", did);
       if (drv.archivedAt) findings.push({ level: "red", code: "driver_archived", message: `${drv.name} is archived`, overridable: false });
       findings.push(...checkDriver(drv, legType, now));
+      findings.push(...(await complianceFindings(ctx, "driver", drv.id, drv.name)));
     }
     if (a.driverId && a.coDriverId && a.driverId === a.coDriverId) findings.push({ level: "red", code: "same_driver", message: "driver and co-driver are the same person", overridable: false });
     if (a.trailerId) {
@@ -423,6 +426,7 @@ export async function eligibilityFor(ctx: Ctx, legType: LegType, a: Assignment, 
     if (c.country === "MX" && c.caatExpires && c.caatExpires.getTime() < now.getTime()) findings.push({ level: "red", code: "caat_expired", message: `${c.name}: CAAT expired`, overridable: false });
     if (c.country === "US" && c.fmcsaStatus?.authority && c.fmcsaStatus.authority.toLowerCase() !== "active") findings.push({ level: "red", code: "fmcsa_not_authorized", message: `${c.name}: FMCSA authority ${c.fmcsaStatus.authority}`, overridable: false });
     if ((legType === "us" || legType === "domestic") && c.country === "MX") findings.push({ level: "red", code: "mx_carrier_us_leg", message: `${c.name} is a Mexican carrier: cannot run a US leg`, overridable: false });
+    findings.push(...(await complianceFindings(ctx, "carrier", c.id, c.name)));
   }
   return summarize(findings);
 }
@@ -756,10 +760,20 @@ export async function candidatesForLeg(ctx: Ctx, legId: string, now = new Date()
     .where(and(eq(s.legs.tenantId, ctx.tenantId), inArray(s.legs.state, [...ACTIVE_LEG]), sql`${s.legs.id} <> ${legId}`));
   const busyBy = new Map<string, { orderNumber: string; state: LegState }[]>();
   for (const b of busyRows) if (b.truckId) busyBy.set(b.truckId, [...(busyBy.get(b.truckId) ?? []), { orderNumber: b.orderNumber, state: b.state }]);
+  const [truckComp, driverComp] = await Promise.all([statusMap(ctx, "truck"), statusMap(ctx, "driver")]);
+  const compFindings = (kind: "truck" | "driver", id: string, label: string): Finding[] => {
+    const st = kind === "truck" ? truckComp.get(id) : driverComp.get(id);
+    if (!st) return [];
+    if (!st.dispatchable && !st.override) return [{ level: "red", code: "compliance_block", message: `${label}: ${[...st.expired.map((x) => `${x} expired`), ...st.missing.map((x) => `${x} missing`)].join(", ")}`, overridable: !st.expired.some((l) => /licen|medical|I-94|plate/i.test(l)) }];
+    const out: Finding[] = [];
+    if (st.override) out.push({ level: "yellow", code: "compliance_override", message: `${label}: dispatch override (${st.override.reason})`, overridable: true });
+    if (st.expiring.length) out.push({ level: "yellow", code: "compliance_expiring", message: `${label}: ${st.expiring.join(", ")} expiring`, overridable: true });
+    return out;
+  };
 
   const out: Candidate[] = trucks.map((t) => {
     const drv = drivers.find((d) => d.currentTruckId === t.id) ?? null;
-    const findings = [...checkTruck(t, leg.type, now), ...(drv ? checkDriver(drv, leg.type, now) : [])];
+    const findings = [...checkTruck(t, leg.type, now), ...compFindings("truck", t.id, `unit ${t.unitNumber}`), ...(drv ? [...checkDriver(drv, leg.type, now), ...compFindings("driver", drv.id, drv.name)] : [])];
     if (!drv) findings.push({ level: "yellow", code: "no_driver", message: `${t.unitNumber} has no driver assigned`, overridable: true });
     const sum = summarize(findings);
     const busy = busyBy.get(t.id) ?? [];

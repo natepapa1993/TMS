@@ -6,6 +6,9 @@ import { FIELDS, KIND_META, kindByPath } from "@/data/fields";
 import { loadRefs } from "@/data/refs";
 import { PageHeader } from "@/components/page-header";
 import { RecordEditor } from "./editor";
+import { SubjectDocuments } from "./documents";
+import { statusFor, subjectDocuments, type SubjectKind } from "@/domain/compliance";
+import { list } from "@/data/records";
 import { db } from "@/db/client";
 import { users } from "@/db/schema";
 import { eq } from "drizzle-orm";
@@ -20,6 +23,10 @@ export default async function RecordPage({ params }: PageProps<"/settings/[kind]
   const meta = KIND_META[kind];
   const [{ options }, hist, blockers, people] = await Promise.all([loadRefs(ctx, kind), history(ctx, kind, id), archiveBlockers(ctx, kind, id), db.select({ id: users.id, name: users.name }).from(users).where(eq(users.tenantId, ctx.tenantId))]);
   const who = new Map(people.map((p) => [p.id, p.name]));
+  const isSubject = ["driver", "truck", "trailer", "carrier"].includes(kind);
+  const [docs, compliance, types] = isSubject
+    ? await Promise.all([subjectDocuments(ctx, kind as SubjectKind, id), statusFor(ctx, kind as SubjectKind, id).catch(() => null), list(ctx, "documentType", { limit: 200 })])
+    : [[], null, []];
   const labelField = FIELDS[kind][0].name;
   const title = String(row[labelField] ?? meta.singular);
   return (
@@ -58,6 +65,16 @@ export default async function RecordPage({ params }: PageProps<"/settings/[kind]
           />
         </div>
         <aside className="space-y-4">
+          {isSubject && (
+            <SubjectDocuments
+              kind={kind as SubjectKind}
+              subjectId={id}
+              docs={JSON.parse(JSON.stringify(docs))}
+              types={types.filter((x) => x.appliesTo === kind).map((x) => ({ id: x.id, name: String(x.name), tracksExpiry: !!x.tracksExpiry, required: !!x.required, blocksDispatch: !!x.blocksDispatch }))}
+              status={compliance ? JSON.parse(JSON.stringify({ dispatchable: compliance.dispatchable, items: compliance.items, override: compliance.override })) : null}
+              canEdit={["owner", "compliance", "dispatcher", "mx_office"].includes(ctx.role)}
+            />
+          )}
           {kind === "truck" && (
             <div className="card p-4">
               <div className="eyebrow mb-2">Status</div>

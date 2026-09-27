@@ -15,7 +15,7 @@ type Stop = { id: string; name: string; type: string; country: string; address: 
 type Item = { leg: { id: string; seq: number; type: string; state: LegState }; order: { orderNumber: string; equipment: string; cargoNote: string | null; refs: Record<string, string> }; from: Stop | null; to: Stop | null; truck: { unitNumber: string } | null; next: { to: LegState; label: string; es: string } | null; crossing: { id: string; state: string; trailerNumber: string | null; packetToken: string | null; nextStep: string | null } | null };
 const XSTEP: Record<string, { en: string; es: string }> = { departed_yard: { en: "Departed the yard", es: "Salí del patio" }, at_mx_customs: { en: "At Mexican customs", es: "En aduana mexicana" }, in_us_customs: { en: "At US customs", es: "En aduana americana" }, cleared: { en: "Cleared — US side", es: "Liberado — lado americano" } };
 const XLABEL: Record<string, string> = { packet_sent: "Packet sent · Paquete enviado", departed_yard: "Departed yard · Salió del patio", at_mx_customs: "MX customs · Aduana MX", in_us_customs: "US customs · Aduana US", cleared: "Cleared · Liberado", held: "Held · Detenido", returned: "Returned · Regresado" };
-type Data = { driver: { name: string; driverType: string }; current: Item | null; items: Item[] };
+type Data = { driver: { name: string; driverType: string }; current: Item | null; items: Item[]; own: { label: string; status: string; expiresAt: string | null }[] };
 
 type Fix = { lat: number; lng: number; accuracyM: number | null; speedMph: number | null; heading: number | null };
 
@@ -225,6 +225,22 @@ export function DriverApp({ token, data }: { token: string; data: Data }) {
               </button>
             ))}
           </div>
+        </div>
+      )}
+      {data.own.length > 0 && (
+        <div className="card mt-5 p-4">
+          <div className="eyebrow mb-1">Your documents · Tus documentos</div>
+          <ul className="space-y-1 text-[13px]">
+            {data.own.map((i) => (
+              <li key={i.label} className="flex justify-between">
+                <span>{i.label}</span>
+                <span className={i.status === "expired" ? "text-red font-bold" : i.status === "missing" ? "text-amber font-bold" : "text-amber font-semibold"}>
+                  {i.status === "expired" ? "EXPIRED · VENCIDO" : i.status === "missing" ? "missing · falta" : `expires ${i.expiresAt ? new Date(i.expiresAt).toLocaleDateString() : ""}`}
+                </span>
+              </li>
+            ))}
+          </ul>
+          <div className="help mt-1">Send a photo of the renewal to dispatch. · Manda foto de la renovación a despacho.</div>
         </div>
       )}
       <div className="mt-5 text-center text-[12px] text-faint">Keep this page open while driving so dispatch can see you. · Deja esta página abierta.</div>

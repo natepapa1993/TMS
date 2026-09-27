@@ -1,0 +1,328 @@
+import { and, eq, inArray, desc, gt, sql } from "drizzle-orm";
+import { createHash } from "node:crypto";
+import { db } from "@/db/client";
+import * as s from "@/db/schema";
+import type { ComplianceItem } from "@/db/schema";
+import { newId } from "@/lib/ids";
+import { assertCtx, requirePermission, systemCtx, type Ctx } from "@/lib/context";
+import { writeAudit } from "@/lib/audit";
+import { enqueue } from "@/lib/outbox";
+import { ValidationError, NotFoundError } from "./orders";
+
+/**
+ * Compliance engine (spec §6). Rules = document types the owner edits. For each driver / truck /
+ * trailer / carrier the engine produces one row: every required document type and every built-in
+ * expiry field with ok / expiring / expired / missing, and a `dispatchable` boolean the assign picker,
+ * tender panel and crossing eligibility read.
+ */
+
+export type SubjectKind = "driver" | "truck" | "trailer" | "carrier";
+export const SUBJECT_KINDS: SubjectKind[] = ["driver", "truck", "trailer", "carrier"];
+
+/** Built-in dated fields that are compliance items even without a document type (spec §6.5). */
+export const FIELD_ITEMS: Record<SubjectKind, { key: string; label: string; blocks: boolean; appliesWhen?: (r: Record<string, unknown>) => boolean }[]> = {
+  driver: [
+    { key: "licenseExpires", label: "Licence", blocks: true, appliesWhen: (d) => d.driverType !== "B1" },
+    { key: "medicalExpires", label: "Medical card", blocks: true },
+    { key: "mxLicenseExpires", label: "Licencia federal", blocks: true, appliesWhen: (d) => d.driverType !== "CDL" },
+    { key: "fastExpires", label: "FAST card", blocks: false },
+    { key: "i94Until", label: "I-94", blocks: true, appliesWhen: (d) => d.driverType === "B1" },
+  ],
+  truck: [
+    { key: "usPlateExpires", label: "US plate", blocks: true },
+    { key: "mxPlateExpires", label: "MX plate", blocks: true, appliesWhen: (t) => !!t.mxPlate },
+    { key: "dotInspectionExpires", label: "Annual inspection", blocks: true },
+  ],
+  trailer: [{ key: "inspectionExpires", label: "Inspection", blocks: true }],
+  carrier: [
+    { key: "caatExpires", label: "CAAT", blocks: true, appliesWhen: (c) => c.country === "MX" },
+    { key: "sctPermitExpires", label: "SCT permit", blocks: false, appliesWhen: (c) => c.country === "MX" },
+    { key: "ctpatExpires", label: "C-TPAT", blocks: false, appliesWhen: (c) => !!c.ctpat },
+  ],
+};
+
+const TABLE: Record<SubjectKind, typeof s.drivers | typeof s.trucks | typeof s.trailers | typeof s.carriers> = { driver: s.drivers, truck: s.trucks, trailer: s.trailers, carrier: s.carriers };
+
+function statusOf(expiresAt: Date | null, alertDays: number, now: Date, tracksExpiry: boolean): ComplianceItem["status"] {
+  if (!tracksExpiry) return "ok";
+  if (!expiresAt) return "ok"; // present, no date known: the human left it blank on purpose
+  if (expiresAt.getTime() < now.getTime()) return "expired";
+  if (expiresAt.getTime() < now.getTime() + alertDays * 86400_000) return "expiring";
+  return "ok";
+}
+
+/** Evaluate one subject and store the result. */
+export async function evaluateSubject(ctx: Ctx, kind: SubjectKind, subjectId: string, now = new Date()) {
+  assertCtx(ctx);
+  const table = TABLE[kind];
+  const [rec] = await db.select().from(table).where(and(eq(table.tenantId, ctx.tenantId), eq(table.id, subjectId))).limit(1);
+  if (!rec) throw new NotFoundError(kind, subjectId);
+  const r = rec as unknown as Record<string, unknown>;
+  const types = await db.select().from(s.documentTypes).where(and(eq(s.documentTypes.tenantId, ctx.tenantId), eq(s.documentTypes.appliesTo, kind), sql`${s.documentTypes.archivedAt} is null`));
+  const docs = await db.select().from(s.documents).where(and(eq(s.documents.tenantId, ctx.tenantId), eq(s.documents.subjectKind, kind), eq(s.documents.subjectId, subjectId), inArray(s.documents.status, ["present", "verified"])));
+  const snoozes = await db.select().from(s.complianceSnoozes).where(and(eq(s.complianceSnoozes.tenantId, ctx.tenantId), eq(s.complianceSnoozes.subjectKind, kind), eq(s.complianceSnoozes.subjectId, subjectId), gt(s.complianceSnoozes.until, now)));
+  const items: ComplianceItem[] = [];
+
+  for (const t of types) {
+    const doc = docs.filter((d) => d.documentTypeId === t.id).sort((p, q) => (q.expiresAt?.getTime() ?? 0) - (p.expiresAt?.getTime() ?? 0))[0];
+    const alertDays = Math.max(...(t.alertDays.length ? t.alertDays : [30]));
+    const graceOpen = !!t.graceUntil && t.graceUntil.getTime() > now.getTime();
+    let status: ComplianceItem["status"] = doc ? statusOf(doc.expiresAt, alertDays, now, t.tracksExpiry) : t.required ? "missing" : "ok";
+    const snooze = snoozes.find((z) => z.itemKey === t.id);
+    if (snooze && status !== "ok") status = "snoozed";
+    items.push({ key: t.id, label: t.name, status, expiresAt: doc?.expiresAt?.toISOString() ?? null, documentId: doc?.id ?? null, blocksDispatch: t.blocksDispatch && !graceOpen, required: t.required, alertDays, snoozedUntil: snooze?.until.toISOString() ?? null, snoozeReason: snooze?.reason ?? null });
+  }
+  for (const f of FIELD_ITEMS[kind]) {
+    if (f.appliesWhen && !f.appliesWhen(r)) continue;
+    const d = r[f.key] as Date | null;
+    let status: ComplianceItem["status"] = d ? statusOf(d, 30, now, true) : f.blocks ? "missing" : "ok"; // an optional date left blank is not an alert
+    const snooze = snoozes.find((z) => z.itemKey === `field:${f.key}`);
+    if (snooze && status !== "ok") status = "snoozed";
+    items.push({ key: `field:${f.key}`, label: f.label, status, expiresAt: d?.toISOString() ?? null, documentId: null, blocksDispatch: f.blocks, required: true, alertDays: 30, snoozedUntil: snooze?.until.toISOString() ?? null, snoozeReason: snooze?.reason ?? null });
+  }
+  const expired = items.filter((i) => i.status === "expired").map((i) => i.label);
+  const expiring = items.filter((i) => i.status === "expiring").map((i) => i.label);
+  const missing = items.filter((i) => i.status === "missing").map((i) => i.label);
+  // a missing built-in date is not a block by itself (the owner may not track it); expired ones and missing required documents are
+  const dispatchable = !items.some((i) => i.blocksDispatch && (i.status === "expired" || (i.status === "missing" && !i.key.startsWith("field:"))));
+  const [existing] = await db.select({ id: s.complianceStatus.id }).from(s.complianceStatus).where(and(eq(s.complianceStatus.tenantId, ctx.tenantId), eq(s.complianceStatus.subjectKind, kind), eq(s.complianceStatus.subjectId, subjectId))).limit(1);
+  const row = { dispatchable, expired, expiring, missing, items, ranAt: now };
+  if (existing) await db.update(s.complianceStatus).set(row).where(eq(s.complianceStatus.id, existing.id));
+  else await db.insert(s.complianceStatus).values({ id: newId(), tenantId: ctx.tenantId, subjectKind: kind, subjectId, ...row });
+  return { kind, subjectId, ...row };
+}
+
+/** Evaluate every active subject of a tenant (nightly, on rule change, on demand). */
+export async function evaluateAll(ctx: Ctx, now = new Date()) {
+  assertCtx(ctx);
+  let n = 0;
+  let blocked = 0;
+  for (const kind of SUBJECT_KINDS) {
+    const table = TABLE[kind];
+    const rows = await db.select({ id: table.id }).from(table).where(and(eq(table.tenantId, ctx.tenantId), sql`${table.archivedAt} is null`));
+    for (const r of rows) {
+      const res = await evaluateSubject(ctx, kind, r.id, now);
+      n++;
+      if (!res.dispatchable) blocked++;
+    }
+  }
+  return { evaluated: n, blocked };
+}
+
+/** Job: every tenant, once an hour is plenty (spec says nightly + on save; the on-save path is immediate). */
+export async function evaluateAllTenants(now = new Date()) {
+  const tenants = await db.select({ id: s.tenants.id }).from(s.tenants);
+  let evaluated = 0;
+  for (const t of tenants) evaluated += (await evaluateAll(systemCtx(t.id), now)).evaluated;
+  return { tenants: tenants.length, evaluated };
+}
+
+export type ComplianceRead = { dispatchable: boolean; expired: string[]; expiring: string[]; missing: string[]; items: ComplianceItem[]; ranAt: Date; override: { reason: string; expiresAt: Date } | null };
+
+/** Read the stored result (evaluating on first sight). Includes any live 24-h override. */
+export async function statusFor(ctx: Ctx, kind: SubjectKind, subjectId: string): Promise<ComplianceRead> {
+  assertCtx(ctx);
+  let [row] = await db.select().from(s.complianceStatus).where(and(eq(s.complianceStatus.tenantId, ctx.tenantId), eq(s.complianceStatus.subjectKind, kind), eq(s.complianceStatus.subjectId, subjectId))).limit(1);
+  if (!row) {
+    await evaluateSubject(ctx, kind, subjectId);
+    [row] = await db.select().from(s.complianceStatus).where(and(eq(s.complianceStatus.tenantId, ctx.tenantId), eq(s.complianceStatus.subjectKind, kind), eq(s.complianceStatus.subjectId, subjectId))).limit(1);
+  }
+  const [ov] = await db.select().from(s.complianceOverrides).where(and(eq(s.complianceOverrides.tenantId, ctx.tenantId), eq(s.complianceOverrides.subjectKind, kind), eq(s.complianceOverrides.subjectId, subjectId), gt(s.complianceOverrides.expiresAt, new Date()))).orderBy(desc(s.complianceOverrides.createdAt)).limit(1);
+  return { dispatchable: row.dispatchable, expired: row.expired, expiring: row.expiring, missing: row.missing, items: row.items, ranAt: row.ranAt, override: ov ? { reason: ov.reason, expiresAt: ov.expiresAt } : null };
+}
+
+export async function statusMap(ctx: Ctx, kind: SubjectKind) {
+  assertCtx(ctx);
+  const rows = await db.select().from(s.complianceStatus).where(and(eq(s.complianceStatus.tenantId, ctx.tenantId), eq(s.complianceStatus.subjectKind, kind)));
+  const ovs = await db.select().from(s.complianceOverrides).where(and(eq(s.complianceOverrides.tenantId, ctx.tenantId), eq(s.complianceOverrides.subjectKind, kind), gt(s.complianceOverrides.expiresAt, new Date())));
+  return new Map(rows.map((r) => [r.subjectId, { ...r, override: ovs.find((o) => o.subjectId === r.subjectId) ?? null }]));
+}
+
+// ---------- subject documents ----------
+
+export type SubjectUpload = { documentTypeId: string; fileName: string; mimeType: string; bytes: Buffer; expiresAt?: Date | null; issuedAt?: Date | null; number?: string | null; notes?: string | null; source?: string };
+
+export async function uploadSubjectDocument(ctx: Ctx, kind: SubjectKind, subjectId: string, input: SubjectUpload) {
+  assertCtx(ctx);
+  requirePermission(ctx, "records.edit");
+  if (!input.bytes?.length) throw new ValidationError("empty file", "file");
+  if (input.bytes.length > 15 * 1024 * 1024) throw new ValidationError("file is over 15 MB", "file");
+  if (!/^(application\/pdf|image\/(jpeg|png))$/.test(input.mimeType)) throw new ValidationError("PDF, JPG or PNG only", "file");
+  const [type] = await db.select().from(s.documentTypes).where(and(eq(s.documentTypes.tenantId, ctx.tenantId), eq(s.documentTypes.id, input.documentTypeId))).limit(1);
+  if (!type) throw new NotFoundError("document type", input.documentTypeId);
+  if (type.appliesTo !== kind) throw new ValidationError(`${type.name} applies to ${type.appliesTo}s, not ${kind}s`, "documentTypeId");
+  if (type.tracksExpiry && !input.expiresAt) throw new ValidationError(`${type.name} needs an expiry date`, "expiresAt");
+  const table = TABLE[kind];
+  const [rec] = await db.select({ id: table.id }).from(table).where(and(eq(table.tenantId, ctx.tenantId), eq(table.id, subjectId))).limit(1);
+  if (!rec) throw new NotFoundError(kind, subjectId);
+  const sha = createHash("sha256").update(input.bytes).digest("hex");
+  const doc = await db.transaction(async (tx) => {
+    const [blob] = await tx.insert(s.documentBlobs).values({ id: newId(), tenantId: ctx.tenantId, sha256: sha, mimeType: input.mimeType, sizeBytes: input.bytes.length, bytes: input.bytes }).returning({ id: s.documentBlobs.id });
+    const prior = await tx.select().from(s.documents).where(and(eq(s.documents.tenantId, ctx.tenantId), eq(s.documents.subjectKind, kind), eq(s.documents.subjectId, subjectId), eq(s.documents.documentTypeId, type.id), inArray(s.documents.status, ["present", "verified"])));
+    for (const p of prior) await tx.update(s.documents).set({ status: "superseded", updatedAt: new Date(), updatedBy: ctx.userId }).where(eq(s.documents.id, p.id));
+    const [row] = await tx
+      .insert(s.documents)
+      .values({ id: newId(), tenantId: ctx.tenantId, documentTypeId: type.id, code: null, subjectKind: kind, subjectId, fileName: input.fileName, mimeType: input.mimeType, sizeBytes: input.bytes.length, storageKey: `blob:${blob.id}`, sha256: sha, issuedAt: input.issuedAt ?? null, expiresAt: input.expiresAt ?? null, number: input.number ?? null, source: input.source ?? "upload", status: "present", version: (Math.max(0, ...prior.map((p) => p.version)) || 0) + 1, notes: input.notes ?? null, createdBy: ctx.userId, updatedBy: ctx.userId })
+      .returning();
+    await writeAudit(tx, ctx, kind, subjectId, "update", { [type.name]: { from: prior[0]?.expiresAt ?? null, to: input.expiresAt ?? "present" } }, `${type.name} uploaded: ${input.fileName}`);
+    return row;
+  });
+  await evaluateSubject(ctx, kind, subjectId);
+  return doc;
+}
+
+export async function subjectDocuments(ctx: Ctx, kind: SubjectKind, subjectId: string) {
+  assertCtx(ctx);
+  requirePermission(ctx, "records.view");
+  return db.select().from(s.documents).where(and(eq(s.documents.tenantId, ctx.tenantId), eq(s.documents.subjectKind, kind), eq(s.documents.subjectId, subjectId))).orderBy(desc(s.documents.createdAt));
+}
+
+export async function snooze(ctx: Ctx, kind: SubjectKind, subjectId: string, itemKey: string, until: Date, reason: string) {
+  assertCtx(ctx);
+  requirePermission(ctx, "compliance.edit");
+  if (!reason?.trim()) throw new ValidationError("a reason is required", "reason");
+  if (until.getTime() < Date.now()) throw new ValidationError("snooze date is in the past", "until");
+  if (until.getTime() > Date.now() + 90 * 86400_000) throw new ValidationError("snooze at most 90 days", "until");
+  await db.insert(s.complianceSnoozes).values({ id: newId(), tenantId: ctx.tenantId, subjectKind: kind, subjectId, itemKey, until, reason: reason.trim(), createdBy: ctx.userId });
+  await writeAudit(db, ctx, kind, subjectId, "update", { snooze: { from: null, to: itemKey } }, `${reason.trim()} until ${until.toISOString().slice(0, 10)}`);
+  return evaluateSubject(ctx, kind, subjectId);
+}
+
+/** Owner override: dispatch a blocked subject today. Logged, gone in 24 h. */
+export async function overrideDispatch(ctx: Ctx, kind: SubjectKind, subjectId: string, reason: string) {
+  assertCtx(ctx);
+  if (ctx.role !== "owner" && ctx.role !== "system") requirePermission(ctx, "dispatch.override");
+  if (!reason?.trim()) throw new ValidationError("a reason is required", "reason");
+  const st = await statusFor(ctx, kind, subjectId);
+  if (st.expired.some((l) => /licen|medical|I-94|plate/i.test(l))) throw new ValidationError(`cannot override an expired legal document (${st.expired.join(", ")})`);
+  const expiresAt = new Date(Date.now() + 24 * 3600_000);
+  await db.insert(s.complianceOverrides).values({ id: newId(), tenantId: ctx.tenantId, subjectKind: kind, subjectId, reason: reason.trim(), expiresAt, createdBy: ctx.userId });
+  await writeAudit(db, ctx, kind, subjectId, "override", { dispatchable: { from: false, to: "24h" } }, reason.trim());
+  return { expiresAt };
+}
+
+// ---------- where it bites (spec §6.3) ----------
+
+/** Findings for the eligibility engine: a blocked subject is red; expiring is yellow. */
+export async function complianceFindings(ctx: Ctx, kind: SubjectKind, subjectId: string, label: string) {
+  const st = await statusFor(ctx, kind, subjectId).catch(() => null);
+  if (!st) return [];
+  const out: { level: "red" | "yellow"; code: string; message: string; overridable: boolean }[] = [];
+  if (!st.dispatchable && !st.override) {
+    const why = [...st.expired.map((x) => `${x} expired`), ...st.missing.map((x) => `${x} missing`)].join(", ");
+    out.push({ level: "red", code: "compliance_block", message: `${label}: ${why}`, overridable: !st.expired.some((l) => /licen|medical|I-94|plate/i.test(l)) });
+  } else if (st.override) out.push({ level: "yellow", code: "compliance_override", message: `${label}: dispatch override until ${st.override.expiresAt.toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric" })} (${st.override.reason})`, overridable: true });
+  if (st.expiring.length) out.push({ level: "yellow", code: "compliance_expiring", message: `${label}: ${st.expiring.join(", ")} expiring soon`, overridable: true });
+  return out;
+}
+
+// ---------- dashboard ----------
+
+export async function dashboard(ctx: Ctx) {
+  assertCtx(ctx);
+  requirePermission(ctx, "compliance.view");
+  const [types, status] = await Promise.all([db.select().from(s.documentTypes).where(and(eq(s.documentTypes.tenantId, ctx.tenantId), sql`${s.documentTypes.archivedAt} is null`)), db.select().from(s.complianceStatus).where(eq(s.complianceStatus.tenantId, ctx.tenantId))]);
+  const subjects: Record<SubjectKind, { id: string; label: string; sub: string; archived: boolean }[]> = { driver: [], truck: [], trailer: [], carrier: [] };
+  const [d, t, tr, c] = await Promise.all([db.select().from(s.drivers).where(and(eq(s.drivers.tenantId, ctx.tenantId), sql`${s.drivers.archivedAt} is null`)), db.select().from(s.trucks).where(and(eq(s.trucks.tenantId, ctx.tenantId), sql`${s.trucks.archivedAt} is null`)), db.select().from(s.trailers).where(and(eq(s.trailers.tenantId, ctx.tenantId), sql`${s.trailers.archivedAt} is null`)), db.select().from(s.carriers).where(and(eq(s.carriers.tenantId, ctx.tenantId), sql`${s.carriers.archivedAt} is null`))]);
+  subjects.driver = d.map((x) => ({ id: x.id, label: x.name, sub: x.driverType, archived: false }));
+  subjects.truck = t.map((x) => ({ id: x.id, label: x.unitNumber, sub: `${x.usPlate ?? "—"} / ${x.mxPlate ?? "—"}`, archived: false }));
+  subjects.trailer = tr.map((x) => ({ id: x.id, label: x.unitNumber, sub: x.kind, archived: false }));
+  subjects.carrier = c.map((x) => ({ id: x.id, label: x.name, sub: x.country, archived: false }));
+  const overrides = await db.select().from(s.complianceOverrides).where(and(eq(s.complianceOverrides.tenantId, ctx.tenantId), gt(s.complianceOverrides.expiresAt, new Date())));
+  const tiles = { expired: 0, expiring: 0, missing: 0, blocked: 0, subjects: 0, lastRun: null as Date | null };
+  for (const r of status) {
+    tiles.subjects++;
+    tiles.expired += r.expired.length;
+    tiles.expiring += r.expiring.length;
+    tiles.missing += r.missing.length;
+    if (!r.dispatchable) tiles.blocked++;
+    if (!tiles.lastRun || r.ranAt > tiles.lastRun) tiles.lastRun = r.ranAt;
+  }
+  return { types, status, subjects, overrides, tiles };
+}
+
+export function dashboardCsv(data: Awaited<ReturnType<typeof dashboard>>, kind: SubjectKind) {
+  const types = data.types.filter((t) => t.appliesTo === kind);
+  const fields = FIELD_ITEMS[kind];
+  const head = ["Subject", "Detail", "Dispatchable", "Expired", "Expiring", "Missing", ...types.map((t) => t.name), ...fields.map((f) => f.label), "Last run"];
+  const lines = [head];
+  for (const sub of data.subjects[kind]) {
+    const st = data.status.find((x) => x.subjectKind === kind && x.subjectId === sub.id);
+    const cell = (key: string) => {
+      const it = st?.items.find((i) => i.key === key);
+      return it ? (it.expiresAt ? `${it.status} ${it.expiresAt.slice(0, 10)}` : it.status) : "";
+    };
+    lines.push([sub.label, sub.sub, st ? (st.dispatchable ? "yes" : "NO") : "", st?.expired.join("; ") ?? "", st?.expiring.join("; ") ?? "", st?.missing.join("; ") ?? "", ...types.map((t) => cell(t.id)), ...fields.map((f) => cell(`field:${f.key}`)), st?.ranAt.toISOString() ?? ""]);
+  }
+  return lines.map((l) => l.map((v) => (/[",\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v)).join(",")).join("\n");
+}
+
+// ---------- alerts (spec §6.4) ----------
+
+/** Daily digest to the compliance role: expired + expiring, once per day per tenant. */
+export async function sendDigests(now = new Date()) {
+  const tenants = await db.select().from(s.tenants);
+  let sent = 0;
+  for (const t of tenants) {
+    const settings = (t.settings ?? {}) as Record<string, unknown>;
+    const last = settings.complianceDigestAt ? new Date(String(settings.complianceDigestAt)) : null;
+    const hourLocal = Number(new Intl.DateTimeFormat("en-US", { hour: "numeric", hour12: false, timeZone: t.timeZone }).format(now));
+    if (hourLocal < 7) continue;
+    if (last && now.getTime() - last.getTime() < 20 * 3600_000) continue;
+    const ctx = systemCtx(t.id);
+    const rows = await db.select().from(s.complianceStatus).where(and(eq(s.complianceStatus.tenantId, t.id), sql`(cardinality(${s.complianceStatus.expired}) > 0 or cardinality(${s.complianceStatus.expiring}) > 0 or cardinality(${s.complianceStatus.missing}) > 0)`));
+    const recipients = await db.select({ email: s.users.email, name: s.users.name }).from(s.users).where(and(eq(s.users.tenantId, t.id), inArray(s.users.role, ["compliance", "owner"]), sql`${s.users.archivedAt} is null`));
+    await db.update(s.tenants).set({ settings: { ...settings, complianceDigestAt: now.toISOString() } }).where(eq(s.tenants.id, t.id));
+    if (!rows.length || !recipients.length) continue;
+    const names = await labelsFor(ctx, rows.map((r) => ({ kind: r.subjectKind as SubjectKind, id: r.subjectId })));
+    const line = (r: (typeof rows)[number]) => `${r.subjectKind} ${names.get(`${r.subjectKind}:${r.subjectId}`) ?? r.subjectId}: ${[...r.expired.map((x) => `${x} EXPIRED`), ...r.expiring.map((x) => `${x} expiring`), ...r.missing.map((x) => `${x} missing`)].join(", ")}`;
+    const body = [`Compliance digest for ${t.name} — ${now.toLocaleDateString("en-US", { timeZone: t.timeZone })}`, "", `${rows.filter((r) => !r.dispatchable).length} subject(s) blocked from dispatch.`, "", ...rows.sort((p, q) => Number(q.expired.length > 0) - Number(p.expired.length > 0)).map(line), "", `Open the compliance board: ${(process.env.APP_URL ?? "").replace(/\/$/, "")}/compliance`].join("\n");
+    for (const rcp of recipients) await enqueue(ctx, { channel: "email", to: rcp.email, subject: `Compliance: ${rows.filter((r) => r.expired.length).length} expired, ${rows.filter((r) => r.expiring.length).length} expiring`, body, subjectKind: "compliance_digest", subjectId: t.id });
+    sent++;
+  }
+  return { sent };
+}
+
+async function labelsFor(ctx: Ctx, subs: { kind: SubjectKind; id: string }[]) {
+  const out = new Map<string, string>();
+  for (const kind of SUBJECT_KINDS) {
+    const ids = subs.filter((x) => x.kind === kind).map((x) => x.id);
+    if (!ids.length) continue;
+    const table = TABLE[kind];
+    const rows = await db.select().from(table).where(and(eq(table.tenantId, ctx.tenantId), inArray(table.id, ids)));
+    for (const r of rows as unknown as Record<string, string>[]) out.set(`${kind}:${r.id}`, r.name ?? r.unitNumber ?? r.id);
+  }
+  return out;
+}
+
+/** Driver app: the driver's own expiring items (spec §6.3). */
+export async function driverOwnItems(tenantId: string, driverId: string) {
+  const st = await statusFor(systemCtx(tenantId), "driver", driverId).catch(() => null);
+  if (!st) return [];
+  return st.items.filter((i) => i.status === "expiring" || i.status === "expired" || i.status === "missing").map((i) => ({ label: i.label, status: i.status, expiresAt: i.expiresAt }));
+}
+
+// ---------- incidents ----------
+
+export async function listIncidents(ctx: Ctx) {
+  assertCtx(ctx);
+  requirePermission(ctx, "compliance.view");
+  return db.select().from(s.incidents).where(and(eq(s.incidents.tenantId, ctx.tenantId), sql`${s.incidents.archivedAt} is null`)).orderBy(desc(s.incidents.occurredAt)).limit(500);
+}
+
+export async function saveIncident(ctx: Ctx, id: string | null, v: Partial<typeof s.incidents.$inferInsert>) {
+  assertCtx(ctx);
+  requirePermission(ctx, "compliance.edit");
+  if (!v.description?.trim()) throw new ValidationError("describe what happened", "description");
+  if (!v.occurredAt) throw new ValidationError("when did it happen?", "occurredAt");
+  const safe = { occurredAt: v.occurredAt, kind: v.kind ?? "accident", driverId: v.driverId ?? null, truckId: v.truckId ?? null, trailerId: v.trailerId ?? null, orderId: v.orderId ?? null, location: v.location ?? null, description: v.description.trim(), dotRecordable: !!v.dotRecordable, injuries: !!v.injuries, towAway: !!v.towAway, policeReport: v.policeReport ?? null, claimNumber: v.claimNumber ?? null, status: v.status ?? "open" };
+  if (id) {
+    const [row] = await db.update(s.incidents).set({ ...safe, updatedAt: new Date(), updatedBy: ctx.userId }).where(and(eq(s.incidents.tenantId, ctx.tenantId), eq(s.incidents.id, id))).returning();
+    if (!row) throw new NotFoundError("incident", id);
+    await writeAudit(db, ctx, "incident", id, "update");
+    return row;
+  }
+  const [row] = await db.insert(s.incidents).values({ id: newId(), tenantId: ctx.tenantId, ...safe, createdBy: ctx.userId, updatedBy: ctx.userId }).returning();
+  await writeAudit(db, ctx, "incident", row.id, "create", undefined, safe.description.slice(0, 120));
+  return row;
+}

@@ -22,6 +22,13 @@ export async function saveRecord(kind: RecordKind, id: string | null, raw: Recor
     revalidatePath(`/settings/${KIND_META[kind].path}`);
     revalidatePath("/fleet");
     revalidatePath("/dispatch");
+    revalidatePath("/compliance");
+    // compliance re-evaluates on every record / rule save (spec §6.1)
+    await act(async (ctx) => {
+      const C = await import("@/domain/compliance");
+      if (kind === "driver" || kind === "truck" || kind === "trailer" || kind === "carrier") await C.evaluateSubject(ctx, kind, r.data.id);
+      if (kind === "documentType") await C.evaluateAll(ctx);
+    });
   } else if (r.code === "duplicate") {
     const uniq = ValidationErrorLike(kind);
     return { ...r, errors: uniq ? { [uniq]: r.error } : undefined };

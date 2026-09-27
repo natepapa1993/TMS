@@ -32,7 +32,9 @@ export async function quickAdd(page: Page, path: string, label: string, values: 
   await expect(dialog).toBeVisible();
   for (const [k, v] of Object.entries(values)) {
     const el = dialog.locator(`#f-${k}`);
-    if ((await el.evaluate((e) => e.tagName)) === "SELECT") await el.selectOption(v);
+    const tag = await el.evaluate((e) => `${e.tagName}:${(e as HTMLInputElement).type}`);
+    if (tag.startsWith("SELECT")) await el.selectOption(v);
+    else if (tag === "INPUT:checkbox") await el.setChecked(v === "true");
     else await el.fill(v);
   }
   await dialog.locator("button:has-text('Add')").click();
