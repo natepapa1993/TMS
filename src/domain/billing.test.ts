@@ -1,5 +1,5 @@
 // Features: F-7 billing — charges, queue with docs + rate-con hard stop, invoice lifecycle with locked snapshot and entity numbering, receipts, void/credit/dispute, AR aging + reminders, carrier bills 3-way + short-pay + pay-when-paid + 1099, driver settlements + deductions + disputes, P&L, month-end close
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, vi, afterEach } from "vitest";
 import { PDFDocument } from "pdf-lib";
 import { truncateAll, makeTenant } from "@/test/helpers";
 import { create, update } from "@/data/records";
@@ -367,3 +367,36 @@ describe("driver settlements (7.7) and P&L (7.8)", () => {
   });
 });
 
+describe("the rate con read against the order", () => {
+  afterEach(() => vi.unstubAllGlobals());
+  it("with the extractor connected, an uploaded rate con that disagrees with the order raises a yellow flag; one that agrees clears it", async () => {
+    const { integrations, flags, documents } = await import("@/db/schema");
+    const { eq, and } = await import("drizzle-orm");
+    const { newId } = await import("@/lib/ids");
+    const o = await createOrder(a, { customerId: f.rxo, rateCents: 280000, stops: [{ type: "pickup", name: "Laredo Yard", country: "US" }, { type: "delivery", name: "Toyota", country: "US" }], template: "domestic", book: true });
+    // nothing connected: the upload is plain
+    const d0 = await B.uploadOrderDocument(a, o.order.id, { code: "RATE_CON", fileName: "rc.pdf", mimeType: "application/pdf", bytes: pdf });
+    expect((await db.select().from(documents).where(eq(documents.id, d0.id)))[0].extractionNote).toBeNull();
+    await db.insert(integrations).values({ id: newId(), tenantId: a.tenantId, provider: "extractor", enabled: true, config: { apiKey: "sk-ant-test" } });
+    const answer = (rate: number) => async () => new Response(JSON.stringify({ model: "claude-sonnet-4-5", usage: { input_tokens: 700 }, content: [{ type: "tool_use", name: "record_fields", input: { rate: { value: rate, confidence: 0.9 }, currency: { value: "USD", confidence: 0.9 }, rateConNumber: { value: "RC-778812", confidence: 0.95 }, po: { value: null, confidence: 0 }, pickupDate: { value: null, confidence: 0 }, deliveryDate: { value: null, confidence: 0 } } }] }), { status: 200 });
+    vi.stubGlobal("fetch", answer(2850));
+    const d1 = await B.uploadOrderDocument(a, o.order.id, { code: "RATE_CON", fileName: "rc2.pdf", mimeType: "application/pdf", bytes: pdf });
+    const [read] = await db.select().from(documents).where(eq(documents.id, d1.id));
+    expect(read.extractionNote).toMatch(/rate con says 2850.00, order says 2800.00/);
+    expect(read.extracted).toMatchObject({ rateConNumber: { value: "RC-778812" } });
+    let fl = await db.select().from(flags).where(and(eq(flags.orderId, o.order.id), eq(flags.code, "rate_con_differs")));
+    expect(fl).toHaveLength(1);
+    expect(fl[0].title).toBe("Rate con says $2,850.00; the order says $2,800.00");
+    expect(fl[0].level).toBe("yellow");
+    expect(fl[0].clearedAt).toBeNull();
+    // the corrected paper agrees → cleared
+    vi.stubGlobal("fetch", answer(2800));
+    await B.uploadOrderDocument(a, o.order.id, { code: "RATE_CON", fileName: "rc3.pdf", mimeType: "application/pdf", bytes: pdf });
+    fl = await db.select().from(flags).where(and(eq(flags.orderId, o.order.id), eq(flags.code, "rate_con_differs")));
+    expect(fl[0].clearedAt).toBeTruthy();
+    // a model outage never blocks the upload
+    vi.stubGlobal("fetch", async () => new Response(JSON.stringify({ error: { message: "overloaded" } }), { status: 529 }));
+    const d3 = await B.uploadOrderDocument(a, o.order.id, { code: "RATE_CON", fileName: "rc4.pdf", mimeType: "application/pdf", bytes: pdf });
+    expect((await db.select().from(documents).where(eq(documents.id, d3.id)))[0].extractionNote).toMatch(/^failed/);
+  });
+});

@@ -8,7 +8,7 @@ import { Confirm, Modal, Pill, Toast, useToast } from "@/components/ui";
 import { formatCents } from "@/data/fields";
 import { createInvoiceAction, acceptMismatchAction, uploadOrderDocAction } from "./actions";
 
-type Row = { order: { id: string; orderNumber: string; state: string; currency: string; deliveredAt: string | null }; customerName: string | null; entityName: string | null; chargesCents: number; rateConCents: number | null; mismatch: boolean; requiredDocs: { code: string; present: boolean }[]; docsComplete: boolean; ageDays: number; invoiceId: string | null };
+type Row = { order: { id: string; orderNumber: string; state: string; currency: string; deliveredAt: string | null }; customerName: string | null; entityName: string | null; chargesCents: number; rateConCents: number | null; mismatch: boolean; requiredDocs: { code: string; present: boolean }[]; docsComplete: boolean; ageDays: number; invoiceId: string | null; paperSays: string | null };
 
 export function Queue({ rows, role }: { rows: Row[]; role: string }) {
   const router = useRouter();
@@ -83,6 +83,11 @@ export function Queue({ rows, role }: { rows: Row[]; role: string }) {
                         </button>
                       ) : (
                         <Pill tone="green">{formatCents(r.rateConCents, r.order.currency)}</Pill>
+                      )}
+                      {r.paperSays && (
+                        <div className="text-[11.5px] text-amber font-semibold mt-0.5 max-w-[220px]" title="Read from the uploaded rate confirmation by the AI extractor">
+                          {r.paperSays}
+                        </div>
                       )}
                     </td>
                     <td className="space-x-1">

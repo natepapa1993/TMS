@@ -107,7 +107,7 @@ export async function chargesFor(ctx: Ctx, orderId: string) {
 
 // ---------- billing queue (7.2) ----------
 
-export type QueueRow = { order: Order; customerName: string | null; entityName: string | null; chargesCents: number; rateConCents: number | null; mismatch: boolean; requiredDocs: { code: string; present: boolean }[]; docsComplete: boolean; ageDays: number; invoiceId: string | null };
+export type QueueRow = { order: Order; customerName: string | null; entityName: string | null; chargesCents: number; rateConCents: number | null; mismatch: boolean; requiredDocs: { code: string; present: boolean }[]; docsComplete: boolean; ageDays: number; invoiceId: string | null; paperSays: string | null };
 
 export async function billingQueue(ctx: Ctx): Promise<QueueRow[]> {
   assertCtx(ctx);
@@ -123,6 +123,7 @@ export async function billingQueue(ctx: Ctx): Promise<QueueRow[]> {
     db.select().from(s.billingEntities).where(eq(s.billingEntities.tenantId, ctx.tenantId)),
     db.select({ id: s.invoices.id, orderIds: s.invoices.orderIds }).from(s.invoices).where(and(eq(s.invoices.tenantId, ctx.tenantId), inArray(s.invoices.state, ["draft"]))),
   ]);
+  const paperFlags = await db.select({ orderId: s.flags.orderId, title: s.flags.title }).from(s.flags).where(and(eq(s.flags.tenantId, ctx.tenantId), inArray(s.flags.orderId, ids), eq(s.flags.code, "rate_con_differs"), sql`${s.flags.clearedAt} is null`));
   const out: QueueRow[] = [];
   for (const o of ords) {
     let cs = chargeRows.filter((c) => c.orderId === o.id);
@@ -131,7 +132,7 @@ export async function billingQueue(ctx: Ctx): Promise<QueueRow[]> {
     const entity = entities.find((e) => e.id === (o.billingEntityId ?? cust?.billingEntityId)) ?? entities.find((e) => e.isDefault) ?? entities[0];
     const required = (cust?.requiredDocs ?? ["POD", "BOL", "RATE_CON"]).map((code) => ({ code, present: docs.some((d) => d.subjectId === o.id && d.code === code) }));
     const chargesCents = cs.filter((c) => c.billable).reduce((a, c) => a + c.amountCents, 0);
-    out.push({ order: o, customerName: cust?.name ?? null, entityName: entity?.legalName ?? null, chargesCents, rateConCents: o.rateCents, mismatch: o.rateCents != null && chargesCents !== o.rateCents && !((o.custom as Record<string, unknown>)?.rateConMismatchAccepted), requiredDocs: required, docsComplete: required.every((r) => r.present), ageDays: o.deliveredAt ? Math.floor((Date.now() - o.deliveredAt.getTime()) / 86400_000) : 0, invoiceId: drafts.find((d) => d.orderIds.includes(o.id))?.id ?? null });
+    out.push({ order: o, customerName: cust?.name ?? null, entityName: entity?.legalName ?? null, chargesCents, rateConCents: o.rateCents, mismatch: o.rateCents != null && chargesCents !== o.rateCents && !((o.custom as Record<string, unknown>)?.rateConMismatchAccepted), requiredDocs: required, docsComplete: required.every((r) => r.present), ageDays: o.deliveredAt ? Math.floor((Date.now() - o.deliveredAt.getTime()) / 86400_000) : 0, invoiceId: drafts.find((d) => d.orderIds.includes(o.id))?.id ?? null, paperSays: paperFlags.find((x) => x.orderId === o.id)?.title ?? null });
   }
   return out;
 }
@@ -153,7 +154,7 @@ export async function uploadOrderDocument(ctx: Ctx, orderId: string, input: { co
   if (!/^(application\/pdf|image\/(jpeg|png))$/.test(input.mimeType)) throw new ValidationError("PDF, JPG or PNG only", "file");
   await loadOrder(ctx, orderId);
   const sha = createHash("sha256").update(input.bytes).digest("hex");
-  return db.transaction(async (tx) => {
+  const row = await db.transaction(async (tx) => {
     const [blob] = await tx.insert(s.documentBlobs).values({ id: newId(), tenantId: ctx.tenantId, sha256: sha, mimeType: input.mimeType, sizeBytes: input.bytes.length, bytes: input.bytes }).returning({ id: s.documentBlobs.id });
     const prior = await tx.select().from(s.documents).where(and(eq(s.documents.tenantId, ctx.tenantId), eq(s.documents.subjectKind, "order"), eq(s.documents.subjectId, orderId), eq(s.documents.code, input.code), inArray(s.documents.status, ["present", "verified"])));
     for (const p of prior) await tx.update(s.documents).set({ status: "superseded" }).where(eq(s.documents.id, p.id));
@@ -161,6 +162,53 @@ export async function uploadOrderDocument(ctx: Ctx, orderId: string, input: { co
     await writeAudit(tx, ctx, "order", orderId, "update", { [input.code]: { from: prior[0]?.fileName ?? null, to: input.fileName } });
     return row;
   });
+  if (input.code === "RATE_CON") await readRateCon(ctx, row.id, input).catch(() => null); // never blocks the upload
+  return row;
+}
+
+/**
+ * The customer's rate confirmation, read by the AI extractor when one is connected: the rate on their
+ * paper against the rate on our order. A difference is a yellow flag for billing before anything invoices;
+ * a match is noted on the document. A person still confirms; the AI never edits the order.
+ */
+export async function readRateCon(ctx: Ctx, documentId: string, input: { fileName: string; mimeType: string; bytes: Buffer }, fetchImpl?: typeof fetch) {
+  const [integ] = await db.select().from(s.integrations).where(and(eq(s.integrations.tenantId, ctx.tenantId), eq(s.integrations.provider, "extractor"))).limit(1);
+  if (!integ?.enabled || !integ.config.apiKey) return { ran: false as const, reason: "AI extractor not connected" };
+  const [doc] = await db.select().from(s.documents).where(and(eq(s.documents.tenantId, ctx.tenantId), eq(s.documents.id, documentId))).limit(1);
+  if (!doc) throw new NotFoundError("document", documentId);
+  const order = await loadOrder(ctx, doc.subjectId);
+  const { extractWithModel } = await import("@/integrations/extractor");
+  const fields = [
+    { key: "rate", label: "Total rate / amount the carrier is paid, as a number", kind: "number" as const },
+    { key: "currency", label: "Currency of the rate (USD or MXN)" },
+    { key: "rateConNumber", label: "Rate confirmation / load / order number" },
+    { key: "po", label: "PO or customer reference number" },
+    { key: "pickupDate", label: "Pickup date", kind: "datetime" as const },
+    { key: "deliveryDate", label: "Delivery date", kind: "datetime" as const },
+  ];
+  try {
+    const r = await extractWithModel({ apiKey: integ.config.apiKey, model: integ.config.model || undefined }, { code: "RATE_CON", label: "Rate confirmation", mimeType: input.mimeType, bytes: input.bytes }, fields, fetchImpl);
+    const rateRead = r.fields.rate?.value != null && r.fields.rate.value !== "" ? Math.round(Number(r.fields.rate.value) * 100) : null;
+    const extracted = Object.fromEntries(Object.entries(r.fields).filter(([, v]) => v.value != null && v.value !== ""));
+    let note = `${r.model} · read`;
+    if (rateRead != null && Number.isFinite(rateRead) && order.rateCents != null) {
+      if (Math.abs(rateRead - order.rateCents) >= 100) {
+        note = `${r.model} · rate con says ${(rateRead / 100).toFixed(2)}, order says ${(order.rateCents / 100).toFixed(2)}`;
+        const [open] = await db.select({ id: s.flags.id }).from(s.flags).where(and(eq(s.flags.orderId, order.id), eq(s.flags.code, "rate_con_differs"), sql`${s.flags.clearedAt} is null`)).limit(1);
+        if (!open) await db.insert(s.flags).values({ id: newId(), tenantId: ctx.tenantId, orderId: order.id, code: "rate_con_differs", level: "yellow", title: `Rate con says $${(rateRead / 100).toLocaleString("en-US", { minimumFractionDigits: 2 })}; the order says $${(order.rateCents / 100).toLocaleString("en-US", { minimumFractionDigits: 2 })}`, detail: `Read from ${input.fileName} by the AI extractor. Fix the order or the customer before invoicing.`, owner: "billing", data: { documentId, rateReadCents: rateRead } });
+      } else {
+        note = `${r.model} · rate matches the order`;
+        await db.update(s.flags).set({ clearedAt: new Date(), clearedBy: "system" }).where(and(eq(s.flags.orderId, order.id), eq(s.flags.code, "rate_con_differs"), sql`${s.flags.clearedAt} is null`));
+      }
+    }
+    await db.update(s.documents).set({ extracted, extractionAt: new Date(), extractionNote: note }).where(eq(s.documents.id, documentId));
+    await db.update(s.integrations).set({ lastRunAt: new Date(), lastError: null, lastResult: note }).where(eq(s.integrations.id, integ.id));
+    return { ran: true as const, rateReadCents: rateRead, note };
+  } catch (e) {
+    await db.update(s.documents).set({ extractionNote: `failed: ${(e as Error).message}` }).where(eq(s.documents.id, documentId));
+    await db.update(s.integrations).set({ lastRunAt: new Date(), lastError: (e as Error).message }).where(eq(s.integrations.id, integ.id));
+    return { ran: false as const, reason: (e as Error).message };
+  }
 }
 
 // ---------- invoices (7.1, 7.4) ----------
