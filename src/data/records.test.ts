@@ -1,3 +1,4 @@
+// Features: F-1.2 F-1.3 F-1.4 F-1.5 F-15 F-16
 import { describe, it, expect, beforeAll, beforeEach } from "vitest";
 import { truncateAll, makeTenant } from "@/test/helpers";
 import { create, get, list, update, archive, restore, history, findByUniqueKey, NotFoundError, ArchiveBlockedError, ConflictError } from "./records";

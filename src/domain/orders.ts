@@ -103,6 +103,14 @@ export async function getOrder(ctx: Ctx, orderId: string) {
   });
 }
 
+export async function getLeg(ctx: Ctx, legId: string) {
+  assertCtx(ctx);
+  requirePermission(ctx, "orders.view");
+  const [l] = await db.select().from(s.legs).where(and(eq(s.legs.tenantId, ctx.tenantId), eq(s.legs.id, legId))).limit(1);
+  if (!l) throw new NotFoundError("leg", legId);
+  return l;
+}
+
 export async function listOrders(ctx: Ctx, opts: { states?: OrderState[]; limit?: number } = {}) {
   assertCtx(ctx);
   requirePermission(ctx, "orders.view");
@@ -260,6 +268,40 @@ export async function updateOrder(ctx: Ctx, orderId: string, values: Partial<Cre
     await writeAudit(tx, ctx, "order", orderId, "update", diff(before as unknown as Record<string, unknown>, after as unknown as Record<string, unknown>));
     return after;
   });
+}
+
+export async function updateStop(ctx: Ctx, stopId: string, values: Partial<StopInput>) {
+  assertCtx(ctx);
+  requirePermission(ctx, "orders.edit");
+  return db.transaction(async (tx) => {
+    const [before] = await tx.select().from(s.stops).where(and(eq(s.stops.tenantId, ctx.tenantId), eq(s.stops.id, stopId))).limit(1);
+    if (!before) throw new NotFoundError("stop", stopId);
+    const order = await loadOrder(tx, ctx, before.orderId);
+    if (["paid", "cancelled"].includes(order.state)) throw new ValidationError(`a ${order.state} order is read-only`);
+    if (values.name !== undefined && !values.name?.trim()) throw new ValidationError("a stop needs a name", "name");
+    const allowed = ["name", "locationId", "address", "country", "windowStart", "windowEnd", "appointment", "contact", "refs", "notes", "type"] as const;
+    const safe: Record<string, unknown> = {};
+    for (const k of allowed) if (k in values) safe[k] = values[k];
+    if (typeof safe.name === "string") safe.name = safe.name.trim();
+    const [after] = await tx
+      .update(s.stops)
+      .set({ ...safe, updatedAt: new Date(), updatedBy: ctx.userId })
+      .where(and(eq(s.stops.tenantId, ctx.tenantId), eq(s.stops.id, stopId)))
+      .returning();
+    await writeAudit(tx, ctx, "stop", stopId, "update", diff(before as unknown as Record<string, unknown>, after as unknown as Record<string, unknown>));
+    return after;
+  });
+}
+
+export async function orderTimeline(ctx: Ctx, orderId: string) {
+  assertCtx(ctx);
+  requirePermission(ctx, "orders.view");
+  const [events, audits, flagRows] = await Promise.all([
+    db.select().from(s.legEvents).where(and(eq(s.legEvents.tenantId, ctx.tenantId), eq(s.legEvents.orderId, orderId))).orderBy(desc(s.legEvents.at)).limit(200),
+    db.select().from(s.auditLog).where(and(eq(s.auditLog.tenantId, ctx.tenantId), eq(s.auditLog.entityId, orderId))).orderBy(desc(s.auditLog.at)).limit(100),
+    db.select().from(s.flags).where(and(eq(s.flags.tenantId, ctx.tenantId), eq(s.flags.orderId, orderId))).orderBy(desc(s.flags.openedAt)),
+  ]);
+  return { events, audits, flags: flagRows };
 }
 
 export async function cancelOrder(ctx: Ctx, orderId: string, reason: string) {

@@ -39,3 +39,17 @@ jobs:
       - run: pnpm test
       - run: pnpm features
       - run: pnpm build
+      # Human-interface run: the app built above, a fresh database, real browser (spec §10.6).
+      - run: pnpm db:migrate
+      - run: pnpm exec playwright install --with-deps chromium
+      - run: pnpm test:e2e
+        env:
+          CI: "1"
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: playwright-report
+          path: |
+            playwright-report
+            test-results
+          retention-days: 7

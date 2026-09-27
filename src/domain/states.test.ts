@@ -1,3 +1,4 @@
+// Features: F-2.2
 import { describe, it, expect } from "vitest";
 import { ORDER_STATES, LEG_STATES } from "@/db/schema";
 import { ORDER_TRANSITIONS, LEG_TRANSITIONS, canOrderTransition, canLegTransition, assertLegTransition, nextLegState, TransitionError, STAGE_OF_LEG } from "./states";

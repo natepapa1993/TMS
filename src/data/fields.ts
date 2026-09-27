@@ -1,0 +1,556 @@
+import type { RecordKind } from "./records";
+
+/**
+ * Field definitions for every master-data record (spec §1.1–1.3). One place drives the list
+ * columns, the quick-add popup (the few fields you need to get going), the full record screen
+ * (grouped sections, everything editable), CSV import mapping, and value coercion.
+ */
+
+export type FieldType = "text" | "number" | "cents" | "date" | "select" | "boolean" | "textarea" | "ref" | "email" | "phone" | "address";
+
+export type Field = {
+  name: string;
+  label: string;
+  type: FieldType;
+  required?: boolean;
+  quick?: boolean; // shows in the quick-add popup
+  column?: boolean; // shows in the list
+  group: string;
+  options?: { value: string; label: string }[];
+  ref?: RecordKind; // for type=ref
+  help?: string;
+  placeholder?: string;
+  unique?: boolean;
+};
+
+const COUNTRY = [
+  { value: "US", label: "United States" },
+  { value: "MX", label: "Mexico" },
+];
+
+const EQUIPMENT = [
+  { value: "53_dry", label: "53' dry van" },
+  { value: "53_reefer", label: "53' reefer" },
+  { value: "48_dry", label: "48' dry van" },
+  { value: "flatbed", label: "Flatbed" },
+  { value: "sprinter", label: "Sprinter" },
+  { value: "straight", label: "Straight truck" },
+  { value: "power_only", label: "Power only" },
+];
+
+export const FIELDS: Record<RecordKind, Field[]> = {
+  billingEntity: [
+    { name: "legalName", label: "Legal name", type: "text", required: true, quick: true, column: true, group: "Company" },
+    { name: "dba", label: "DBA", type: "text", column: true, group: "Company" },
+    { name: "country", label: "Country", type: "select", options: COUNTRY, required: true, quick: true, column: true, group: "Company" },
+    { name: "taxId", label: "EIN / RFC", type: "text", quick: true, group: "Company", unique: true },
+    { name: "invoicePrefix", label: "Invoice prefix", type: "text", required: true, quick: true, column: true, group: "Invoicing", help: "Invoice numbers become PREFIX-000123", placeholder: "247" },
+    { name: "nextInvoiceNumber", label: "Next invoice #", type: "number", group: "Invoicing" },
+    { name: "terms", label: "Default terms", type: "text", group: "Invoicing", placeholder: "Net 30" },
+    { name: "isDefault", label: "Default entity", type: "boolean", group: "Invoicing" },
+    { name: "mcNumber", label: "MC #", type: "text", group: "Authority" },
+    { name: "dotNumber", label: "DOT #", type: "text", group: "Authority" },
+    { name: "scac", label: "SCAC", type: "text", group: "Authority" },
+    { name: "caat", label: "CAAT", type: "text", group: "Authority" },
+    { name: "remitTo", label: "Remit-to address", type: "address", group: "Invoicing" },
+  ],
+  user: [
+    { name: "name", label: "Name", type: "text", required: true, quick: true, column: true, group: "User" },
+    { name: "email", label: "Email", type: "email", required: true, quick: true, column: true, group: "User", unique: true },
+    {
+      name: "role",
+      label: "Role",
+      type: "select",
+      required: true,
+      quick: true,
+      column: true,
+      group: "User",
+      options: [
+        { value: "owner", label: "Owner" },
+        { value: "dispatcher", label: "Dispatcher" },
+        { value: "billing", label: "Billing" },
+        { value: "compliance", label: "Safety & compliance" },
+        { value: "mx_office", label: "Mexico office" },
+        { value: "driver", label: "Driver" },
+        { value: "carrier", label: "Carrier" },
+        { value: "customer", label: "Customer" },
+      ],
+    },
+    { name: "phone", label: "Phone", type: "phone", group: "User" },
+  ],
+  location: [
+    { name: "name", label: "Name", type: "text", required: true, quick: true, column: true, group: "Location", unique: true },
+    {
+      name: "kind",
+      label: "Kind",
+      type: "select",
+      required: true,
+      quick: true,
+      column: true,
+      group: "Location",
+      options: [
+        { value: "shipper", label: "Shipper" },
+        { value: "consignee", label: "Consignee" },
+        { value: "yard", label: "Yard" },
+        { value: "border_yard", label: "Border yard" },
+        { value: "warehouse", label: "Warehouse" },
+        { value: "transload", label: "Transload" },
+        { value: "customs", label: "Customs" },
+        { value: "terminal", label: "Terminal" },
+      ],
+    },
+    { name: "country", label: "Country", type: "select", options: COUNTRY, required: true, quick: true, column: true, group: "Location" },
+    { name: "address", label: "Address", type: "address", required: true, quick: true, group: "Location" },
+    { name: "hours", label: "Hours", type: "text", group: "Details", placeholder: "Mon–Fri 7:00–17:00" },
+    { name: "contactName", label: "Contact", type: "text", group: "Details" },
+    { name: "contactPhone", label: "Contact phone", type: "phone", group: "Details" },
+    { name: "geofenceMeters", label: "Geofence (m)", type: "number", group: "Tracking" },
+    { name: "lat", label: "Latitude", type: "text", group: "Tracking" },
+    { name: "lng", label: "Longitude", type: "text", group: "Tracking" },
+    { name: "portId", label: "Port of entry", type: "ref", ref: "port", group: "Tracking" },
+    { name: "notes", label: "Notes", type: "textarea", group: "Details" },
+  ],
+  port: [
+    { name: "name", label: "Name", type: "text", required: true, quick: true, column: true, group: "Port", unique: true, placeholder: "Laredo / Nuevo Laredo" },
+    { name: "usCity", label: "US city", type: "text", quick: true, column: true, group: "Port" },
+    { name: "usState", label: "US state", type: "text", group: "Port" },
+    { name: "mxCity", label: "MX city", type: "text", quick: true, column: true, group: "Port" },
+    { name: "mxState", label: "MX state", type: "text", group: "Port" },
+    { name: "notes", label: "Notes", type: "textarea", group: "Details" },
+    { name: "knowledgeMd", label: "Crossing knowledge", type: "textarea", group: "Details", help: "What every dispatcher should know about this port: bridges, hours, quirks." },
+  ],
+  customer: [
+    { name: "name", label: "Name", type: "text", required: true, quick: true, column: true, group: "Customer", unique: true },
+    {
+      name: "kind",
+      label: "Type",
+      type: "select",
+      required: true,
+      quick: true,
+      column: true,
+      group: "Customer",
+      options: [
+        { value: "customer", label: "Customer (shipper)" },
+        { value: "broker", label: "Broker / 3PL" },
+      ],
+    },
+    { name: "country", label: "Country", type: "select", options: COUNTRY, required: true, quick: true, group: "Customer" },
+    { name: "mcNumber", label: "MC #", type: "text", group: "Customer" },
+    { name: "dotNumber", label: "DOT #", type: "text", group: "Customer" },
+    { name: "billingEmail", label: "Billing email", type: "email", quick: true, column: true, group: "Billing" },
+    { name: "termsDays", label: "Terms (days)", type: "number", quick: true, column: true, group: "Billing" },
+    { name: "payWhenPaid", label: "Pay-when-paid", type: "boolean", group: "Billing" },
+    { name: "billingEntityId", label: "Bill from entity", type: "ref", ref: "billingEntity", group: "Billing" },
+    {
+      name: "trackingRequirement",
+      label: "Tracking requirement",
+      type: "select",
+      group: "Requirements",
+      options: [
+        { value: "none", label: "None" },
+        { value: "link", label: "Tracking link" },
+        { value: "edi214", label: "EDI 214" },
+        { value: "portal", label: "Portal updates" },
+      ],
+    },
+    { name: "mxBrokerId", label: "Mexican customs broker", type: "ref", ref: "customsBroker", group: "Requirements" },
+    { name: "usBrokerId", label: "US customs broker", type: "ref", ref: "customsBroker", group: "Requirements" },
+    { name: "knowledgeMd", label: "What to know", type: "textarea", group: "Requirements", help: "Shows to dispatch on every order for this customer." },
+  ],
+  customsBroker: [
+    { name: "name", label: "Name", type: "text", required: true, quick: true, column: true, group: "Broker" },
+    { name: "country", label: "Country", type: "select", options: COUNTRY, required: true, quick: true, column: true, group: "Broker" },
+    { name: "patente", label: "Patente (MX)", type: "text", quick: true, column: true, group: "Broker" },
+    { name: "filerCode", label: "Filer code (US)", type: "text", group: "Broker" },
+    { name: "portalUrl", label: "Portal URL", type: "text", group: "Broker", placeholder: "https://" },
+  ],
+  carrier: [
+    { name: "name", label: "Name", type: "text", required: true, quick: true, column: true, group: "Carrier" },
+    { name: "country", label: "Country", type: "select", options: COUNTRY, required: true, quick: true, column: true, group: "Carrier" },
+    {
+      name: "kind",
+      label: "Runs",
+      type: "select",
+      quick: true,
+      column: true,
+      group: "Carrier",
+      options: [
+        { value: "any", label: "Any leg" },
+        { value: "mx", label: "Mexico legs" },
+        { value: "crossing", label: "Crossing" },
+        { value: "us", label: "US legs" },
+      ],
+    },
+    { name: "mcNumber", label: "MC #", type: "text", group: "Authority", unique: true },
+    { name: "dotNumber", label: "DOT #", type: "text", group: "Authority" },
+    { name: "scac", label: "SCAC", type: "text", group: "Authority" },
+    { name: "rfc", label: "RFC", type: "text", group: "Authority", unique: true },
+    { name: "caat", label: "CAAT", type: "text", group: "Authority" },
+    { name: "caatExpires", label: "CAAT expires", type: "date", group: "Authority" },
+    { name: "sctPermit", label: "SCT permit", type: "text", group: "Authority" },
+    { name: "sctPermitExpires", label: "SCT expires", type: "date", group: "Authority" },
+    { name: "ctpat", label: "C-TPAT", type: "boolean", group: "Authority" },
+    { name: "ctpatExpires", label: "C-TPAT expires", type: "date", group: "Authority" },
+    {
+      name: "tenderChannel",
+      label: "Tender by",
+      type: "select",
+      group: "Dispatch",
+      options: [
+        { value: "email", label: "Email" },
+        { value: "whatsapp", label: "WhatsApp" },
+        { value: "portal", label: "Carrier portal" },
+        { value: "sylectus", label: "Sylectus" },
+        { value: "edi", label: "EDI" },
+      ],
+    },
+    { name: "dispatchEmail", label: "Dispatch email", type: "email", quick: true, group: "Dispatch" },
+    { name: "dispatchPhone", label: "Dispatch phone", type: "phone", group: "Dispatch" },
+    { name: "whatsapp", label: "WhatsApp", type: "phone", group: "Dispatch" },
+    { name: "doNotUse", label: "Do not use", type: "boolean", column: true, group: "Status" },
+    { name: "doNotUseReason", label: "Reason", type: "text", group: "Status" },
+  ],
+  carrierRate: [
+    { name: "carrierId", label: "Carrier", type: "ref", ref: "carrier", required: true, quick: true, column: true, group: "Lane" },
+    { name: "originZone", label: "From", type: "text", required: true, quick: true, column: true, group: "Lane", placeholder: "Toluca, MEX" },
+    { name: "destinationZone", label: "To", type: "text", required: true, quick: true, column: true, group: "Lane", placeholder: "Nuevo Laredo yard" },
+    { name: "equipment", label: "Equipment", type: "select", options: EQUIPMENT, group: "Lane" },
+    { name: "rateCents", label: "Rate", type: "cents", required: true, quick: true, column: true, group: "Rate" },
+    {
+      name: "currency",
+      label: "Currency",
+      type: "select",
+      group: "Rate",
+      options: [
+        { value: "USD", label: "USD" },
+        { value: "MXN", label: "MXN" },
+      ],
+    },
+    {
+      name: "fuelRule",
+      label: "Fuel",
+      type: "select",
+      group: "Rate",
+      options: [
+        { value: "included", label: "Included" },
+        { value: "pct", label: "Percent of linehaul" },
+        { value: "per_mile", label: "Per mile" },
+      ],
+    },
+    { name: "fuelValue", label: "Fuel value", type: "number", group: "Rate", help: "Percent or cents per mile, per the rule" },
+    { name: "validFrom", label: "Valid from", type: "date", group: "Validity" },
+    { name: "validTo", label: "Valid to", type: "date", group: "Validity" },
+    { name: "notes", label: "Notes", type: "textarea", group: "Validity" },
+  ],
+  truck: [
+    { name: "unitNumber", label: "Unit #", type: "text", required: true, quick: true, column: true, group: "Unit", unique: true },
+    {
+      name: "equipmentType",
+      label: "Type",
+      type: "select",
+      quick: true,
+      column: true,
+      group: "Unit",
+      options: [
+        { value: "tractor", label: "Tractor" },
+        { value: "sprinter", label: "Sprinter" },
+        { value: "straight", label: "Straight truck" },
+        { value: "cargo_van", label: "Cargo van" },
+      ],
+    },
+    { name: "year", label: "Year", type: "number", group: "Unit" },
+    { name: "make", label: "Make", type: "text", group: "Unit" },
+    { name: "model", label: "Model", type: "text", group: "Unit" },
+    { name: "vin", label: "VIN", type: "text", group: "Unit" },
+    {
+      name: "ownership",
+      label: "Ownership",
+      type: "select",
+      group: "Unit",
+      options: [
+        { value: "company", label: "Company" },
+        { value: "owner_op", label: "Owner-operator" },
+        { value: "leased", label: "Leased" },
+      ],
+    },
+    { name: "usPlate", label: "US plate", type: "text", quick: true, column: true, group: "Plates" },
+    { name: "usPlateState", label: "US plate state", type: "text", group: "Plates" },
+    { name: "usPlateExpires", label: "US plate expires", type: "date", group: "Plates" },
+    { name: "mxPlate", label: "MX plate", type: "text", quick: true, column: true, group: "Plates" },
+    {
+      name: "mxPlateClass",
+      label: "MX plate class",
+      type: "select",
+      quick: true,
+      column: true,
+      group: "Plates",
+      options: [
+        { value: "blue", label: "Blue (interior Mexico)" },
+        { value: "brown", label: "Brown (border zone)" },
+      ],
+      help: "Brown plates cannot run interior Mexico. The system enforces this.",
+    },
+    { name: "mxPlateExpires", label: "MX plate expires", type: "date", group: "Plates" },
+    { name: "entityId", label: "Runs under", type: "ref", ref: "billingEntity", group: "Authority" },
+    { name: "caat", label: "CAAT", type: "text", group: "Authority" },
+    { name: "scac", label: "SCAC", type: "text", group: "Authority" },
+    { name: "dotInspectionExpires", label: "Annual inspection", type: "date", group: "Compliance" },
+    { name: "dtopsYear", label: "DTOPS year", type: "number", group: "Compliance" },
+    { name: "dtopsConfirmation", label: "DTOPS confirmation", type: "text", group: "Compliance" },
+    { name: "eldProvider", label: "ELD provider", type: "text", group: "Tracking", placeholder: "Motive" },
+    { name: "eldVehicleId", label: "ELD vehicle id", type: "text", group: "Tracking" },
+    { name: "note", label: "Note", type: "textarea", group: "Compliance" },
+  ],
+  trailer: [
+    { name: "unitNumber", label: "Trailer #", type: "text", required: true, quick: true, column: true, group: "Trailer", unique: true },
+    { name: "kind", label: "Kind", type: "select", options: EQUIPMENT, quick: true, column: true, group: "Trailer" },
+    { name: "lengthFt", label: "Length (ft)", type: "number", group: "Trailer" },
+    { name: "vin", label: "VIN", type: "text", group: "Trailer" },
+    {
+      name: "ownership",
+      label: "Ownership",
+      type: "select",
+      group: "Trailer",
+      options: [
+        { value: "company", label: "Company" },
+        { value: "owner_op", label: "Owner-operator" },
+        { value: "leased", label: "Leased" },
+        { value: "customer", label: "Customer's" },
+      ],
+    },
+    { name: "usPlate", label: "US plate", type: "text", quick: true, column: true, group: "Plates" },
+    { name: "mxPlate", label: "MX plate", type: "text", group: "Plates" },
+    { name: "inspectionExpires", label: "Inspection expires", type: "date", group: "Compliance" },
+    { name: "gpsDeviceId", label: "GPS device", type: "text", group: "Tracking" },
+  ],
+  driver: [
+    { name: "name", label: "Name", type: "text", required: true, quick: true, column: true, group: "Driver" },
+    {
+      name: "driverType",
+      label: "Driver type",
+      type: "select",
+      required: true,
+      quick: true,
+      column: true,
+      group: "Driver",
+      options: [
+        { value: "B1", label: "B-1 (Mexican, crossing only)" },
+        { value: "CDL", label: "US CDL" },
+        { value: "DUAL", label: "Dual (runs both sides)" },
+      ],
+      help: "B-1 drivers can never be put on a US leg. No override.",
+    },
+    { name: "phone", label: "Phone", type: "phone", quick: true, column: true, group: "Driver" },
+    { name: "whatsapp", label: "WhatsApp", type: "phone", group: "Driver" },
+    { name: "currentTruckId", label: "Current unit", type: "ref", ref: "truck", quick: true, column: true, group: "Driver" },
+    { name: "hireDate", label: "Hire date", type: "date", group: "Driver" },
+    { name: "licenseNumber", label: "License #", type: "text", group: "US license", unique: true },
+    { name: "licenseState", label: "State", type: "text", group: "US license" },
+    { name: "licenseClass", label: "Class", type: "text", group: "US license" },
+    { name: "licenseExpires", label: "License expires", type: "date", group: "US license" },
+    { name: "medicalExpires", label: "Medical card expires", type: "date", group: "US license" },
+    { name: "nonDomiciledCdl", label: "Non-domiciled CDL", type: "boolean", group: "US license" },
+    { name: "mxLicenseNumber", label: "Licencia federal #", type: "text", group: "Mexico" },
+    { name: "mxLicenseExpires", label: "Licencia expires", type: "date", group: "Mexico" },
+    { name: "fastNumber", label: "FAST card #", type: "text", group: "Border" },
+    { name: "fastExpires", label: "FAST expires", type: "date", group: "Border" },
+    { name: "visaType", label: "Visa", type: "text", group: "Border", placeholder: "B-1/B-2" },
+    { name: "i94Until", label: "I-94 admit until", type: "date", group: "Border" },
+    { name: "commercialZoneOnly", label: "Commercial zone only", type: "boolean", group: "Border" },
+    { name: "elpAttestedAt", label: "English proficiency attested", type: "date", group: "Border" },
+    {
+      name: "payType",
+      label: "Pay type",
+      type: "select",
+      group: "Pay",
+      options: [
+        { value: "per_mile", label: "Per mile" },
+        { value: "pct", label: "Percent of load" },
+        { value: "flat", label: "Flat per leg" },
+        { value: "hourly", label: "Hourly" },
+      ],
+    },
+    { name: "payRateCents", label: "Pay rate", type: "cents", group: "Pay" },
+    { name: "eldDriverId", label: "ELD driver id", type: "text", group: "Pay" },
+  ],
+  documentType: [
+    { name: "name", label: "Name", type: "text", required: true, quick: true, column: true, group: "Document" },
+    {
+      name: "appliesTo",
+      label: "Applies to",
+      type: "select",
+      required: true,
+      quick: true,
+      column: true,
+      group: "Document",
+      options: [
+        { value: "driver", label: "Driver" },
+        { value: "truck", label: "Truck" },
+        { value: "trailer", label: "Trailer" },
+        { value: "carrier", label: "Carrier" },
+        { value: "customer", label: "Customer" },
+        { value: "order", label: "Order" },
+      ],
+    },
+    { name: "tracksExpiry", label: "Tracks expiry", type: "boolean", quick: true, column: true, group: "Rules" },
+    { name: "required", label: "Required", type: "boolean", column: true, group: "Rules" },
+    { name: "blocksDispatch", label: "Blocks dispatch when missing/expired", type: "boolean", column: true, group: "Rules" },
+    {
+      name: "legScope",
+      label: "Only for legs",
+      type: "select",
+      group: "Rules",
+      options: [
+        { value: "", label: "All legs" },
+        { value: "crossing", label: "Crossing" },
+        { value: "mx", label: "Mexico" },
+        { value: "us", label: "US" },
+      ],
+    },
+    { name: "graceUntil", label: "Grace until", type: "date", group: "Rules", help: "New rules can be introduced without blocking today's loads." },
+  ],
+};
+
+export const KIND_META: Record<RecordKind, { plural: string; singular: string; path: string; blurb: string; section: "Company" | "Fleet" | "Partners" | "Rules" }> = {
+  billingEntity: { plural: "Billing entities", singular: "Billing entity", path: "billing-entities", blurb: "Who invoices: prefix, EIN/RFC, remit-to", section: "Company" },
+  user: { plural: "Users", singular: "User", path: "users", blurb: "People who sign in and their role", section: "Company" },
+  location: { plural: "Locations", singular: "Location", path: "locations", blurb: "Shippers, yards, border yards, consignees", section: "Company" },
+  port: { plural: "Ports of entry", singular: "Port of entry", path: "ports", blurb: "Border crossings and bridges", section: "Company" },
+  truck: { plural: "Trucks", singular: "Truck", path: "trucks", blurb: "Units, plates, inspection, ELD", section: "Fleet" },
+  trailer: { plural: "Trailers", singular: "Trailer", path: "trailers", blurb: "Trailers and cajas", section: "Fleet" },
+  driver: { plural: "Drivers", singular: "Driver", path: "drivers", blurb: "B-1, CDL, dual; licenses, FAST, I-94", section: "Fleet" },
+  customer: { plural: "Customers & brokers", singular: "Customer", path: "customers", blurb: "Who pays, terms, tracking requirements", section: "Partners" },
+  carrier: { plural: "Carriers", singular: "Carrier", path: "carriers", blurb: "Mexican and US partner carriers", section: "Partners" },
+  carrierRate: { plural: "Carrier rates", singular: "Carrier rate", path: "carrier-rates", blurb: "Lane rates you pay carriers", section: "Partners" },
+  customsBroker: { plural: "Customs brokers", singular: "Customs broker", path: "customs-brokers", blurb: "Agentes aduanales and US brokers", section: "Partners" },
+  documentType: { plural: "Document types", singular: "Document type", path: "document-types", blurb: "What must be on file and when it blocks", section: "Rules" },
+};
+
+export const kindByPath = (path: string): RecordKind | null => (Object.keys(KIND_META) as RecordKind[]).find((k) => KIND_META[k].path === path) ?? null;
+
+/** Coerce a flat string map (form or CSV row) into typed values for the repository. Returns errors by field. */
+export function coerce(kind: RecordKind, raw: Record<string, string | undefined | null>, opts: { partial?: boolean } = {}) {
+  const values: Record<string, unknown> = {};
+  const errors: Record<string, string> = {};
+  for (const f of FIELDS[kind]) {
+    const present = Object.prototype.hasOwnProperty.call(raw, f.name);
+    if (!present && opts.partial) continue;
+    const v = (raw[f.name] ?? "").toString().trim();
+    if (!v) {
+      if (f.required && !opts.partial) errors[f.name] = `${f.label} is required`;
+      else if (f.type === "boolean") values[f.name] = false;
+      else if (f.type === "select") continue; // selects have DB defaults; an empty one is "leave it"
+      else if (opts.partial && present) values[f.name] = null; // clearing a field on the record screen
+      continue; // on create, leave the column out so the database default applies
+    }
+    switch (f.type) {
+      case "number": {
+        const n = Number(v);
+        if (!Number.isFinite(n)) errors[f.name] = `${f.label} must be a number`;
+        else values[f.name] = Math.trunc(n);
+        break;
+      }
+      case "cents": {
+        const n = Number(v.replace(/[$,\s]/g, ""));
+        if (!Number.isFinite(n)) errors[f.name] = `${f.label} must be an amount`;
+        else values[f.name] = Math.round(n * 100);
+        break;
+      }
+      case "date": {
+        const d = parseDate(v);
+        if (!d) errors[f.name] = `${f.label}: use YYYY-MM-DD or MM/DD/YYYY`;
+        else values[f.name] = d;
+        break;
+      }
+      case "boolean":
+        values[f.name] = ["1", "true", "yes", "y", "on", "x", "si", "sí"].includes(v.toLowerCase());
+        break;
+      case "select": {
+        const opt = f.options?.find((o) => o.value === v || o.label.toLowerCase() === v.toLowerCase());
+        if (!opt) errors[f.name] = `${f.label}: "${v}" is not one of ${f.options?.map((o) => o.label).join(", ")}`;
+        else values[f.name] = opt.value || null;
+        break;
+      }
+      case "email":
+        if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(v)) errors[f.name] = `${f.label} is not a valid email`;
+        else values[f.name] = v.toLowerCase();
+        break;
+      case "address": {
+        try {
+          values[f.name] = v.startsWith("{") ? JSON.parse(v) : parseAddress(v);
+        } catch {
+          errors[f.name] = `${f.label} could not be read`;
+        }
+        break;
+      }
+      default:
+        values[f.name] = v;
+    }
+  }
+  return { values, errors, ok: Object.keys(errors).length === 0 };
+}
+
+export function parseDate(v: string): Date | null {
+  const s = v.trim();
+  let m = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
+  if (m) return utc(+m[1], +m[2], +m[3]);
+  m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})$/);
+  if (m) return utc(m[3].length === 2 ? 2000 + +m[3] : +m[3], +m[1], +m[2]);
+  const d = new Date(s);
+  return Number.isNaN(d.getTime()) ? null : d;
+}
+function utc(y: number, mo: number, d: number) {
+  const dt = new Date(Date.UTC(y, mo - 1, d, 12));
+  return Number.isNaN(dt.getTime()) ? null : dt;
+}
+
+/** "line1, city, ST 12345, US" → address object. Good enough for quick-add and imports; the record screen has separate boxes. */
+export function parseAddress(v: string) {
+  const parts = v.split(",").map((x) => x.trim()).filter(Boolean);
+  const out: { line1?: string; city?: string; state?: string; postalCode?: string; country?: string } = {};
+  if (parts.length === 1) return { line1: parts[0] };
+  out.line1 = parts[0];
+  out.city = parts[1];
+  if (parts[2]) {
+    const m = parts[2].match(/^([A-Za-z.]+)\s*([\w-]+)?$/);
+    if (m) {
+      out.state = m[1];
+      out.postalCode = m[2];
+    } else out.state = parts[2];
+  }
+  if (parts[3]) out.country = parts[3].toUpperCase();
+  return out;
+}
+
+export function formatCents(c: number | null | undefined, currency = "USD") {
+  if (c == null) return "";
+  return new Intl.NumberFormat("en-US", { style: "currency", currency, maximumFractionDigits: 2 }).format(c / 100);
+}
+
+export function formatDate(d: Date | string | null | undefined) {
+  if (!d) return "";
+  const dt = typeof d === "string" ? new Date(d) : d;
+  return dt.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: "UTC" });
+}
+
+export function fieldDisplay(f: Field, value: unknown, refs?: Map<string, string>): string {
+  if (value == null || value === "") return "";
+  switch (f.type) {
+    case "cents":
+      return formatCents(value as number);
+    case "date":
+      return formatDate(value as Date);
+    case "boolean":
+      return value ? "Yes" : "No";
+    case "select":
+      return f.options?.find((o) => o.value === value)?.label ?? String(value);
+    case "ref":
+      return refs?.get(String(value)) ?? String(value);
+    case "address": {
+      const a = value as { line1?: string; city?: string; state?: string; postalCode?: string; country?: string };
+      return [a.line1, a.city, [a.state, a.postalCode].filter(Boolean).join(" "), a.country].filter(Boolean).join(", ");
+    }
+    default:
+      return String(value);
+  }
+}

@@ -1,3 +1,4 @@
+// Features: F-3.2 eligibility engine
 import { describe, it, expect } from "vitest";
 import { checkDriver, checkTruck, summarize } from "./eligibility";
 

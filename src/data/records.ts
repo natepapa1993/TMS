@@ -225,3 +225,8 @@ export async function findByUniqueKey(ctx: Ctx, kind: RecordKind, values: Record
     .limit(1);
   return (row as Row) ?? null;
 }
+
+/** The field a duplicate-key error most likely refers to (for the form to highlight). */
+export function ValidationErrorLike(kind: RecordKind): string | null {
+  return REGISTRY[kind].uniqueKey[0] ?? null;
+}
