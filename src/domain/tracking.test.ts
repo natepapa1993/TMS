@@ -254,6 +254,7 @@ describe("tracking (F-5)", () => {
     expect(v.stops.map((x) => x.name)).toContain("GM Arlington");
     expect(v.lastPosition!.place).toBe("Nuevo Laredo");
     expect(JSON.stringify(v)).not.toMatch(/rateCents|carrierRate|phone|285000/);
+    expect(v.customerCountry).toBe("US"); // the page's default language follows it
     const tok = await issueToken(a, "tracking_link", o.order.id);
     const again = await issueToken(a, "tracking_link", o.order.id);
     expect(again.id).toBe(tok.id); // reused

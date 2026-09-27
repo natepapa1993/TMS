@@ -278,6 +278,7 @@ export async function trackingView(tenantId: string, orderId: string) {
   const [order] = await db.select().from(s.orders).where(and(eq(s.orders.tenantId, tenantId), eq(s.orders.id, orderId))).limit(1);
   if (!order) throw new NotFoundError("order", orderId);
   const [tenant] = await db.select({ name: s.tenants.name }).from(s.tenants).where(eq(s.tenants.id, tenantId)).limit(1);
+  const [cust] = order.customerId ? await db.select({ country: s.customers.country }).from(s.customers).where(eq(s.customers.id, order.customerId)).limit(1) : [];
   const [stops, legs, events, last] = await Promise.all([
     db.select().from(s.stops).where(eq(s.stops.orderId, orderId)).orderBy(s.stops.seq),
     db.select().from(s.legs).where(eq(s.legs.orderId, orderId)).orderBy(s.legs.seq),
@@ -287,6 +288,7 @@ export async function trackingView(tenantId: string, orderId: string) {
   return {
     carrier: tenant?.name ?? "",
     order: { orderNumber: order.orderNumber, state: order.state, equipment: order.equipment, refs: { po: order.refs.po, reference: order.refs.reference, shipment: order.refs.shipment }, deliveredAt: order.deliveredAt },
+    customerCountry: cust?.country ?? null,
     stops: stops.map((st) => ({ id: st.id, seq: st.seq, type: st.type, name: st.name, city: st.address?.city ?? null, state: st.address?.state ?? null, country: st.country, windowStart: st.windowStart, windowEnd: st.windowEnd, arrivedAt: st.arrivedAt, departedAt: st.departedAt })),
     legs: legs.map((l) => ({ id: l.id, seq: l.seq, type: l.type, state: l.state, fromStopId: l.fromStopId, toStopId: l.toStopId })),
     events: events.map((e) => ({ at: e.at, legId: e.legId, toState: e.toState, verified: e.verified })),

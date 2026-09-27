@@ -24,6 +24,7 @@ const EQUIPMENT: [string, string][] = [["53_dry", "53' dry van"], ["53_reefer", 
 type Lang = "en" | "es";
 const STR = {
   en: {
+    lang: "en" as Lang,
     portal: "customer portal", intro: (c: string) => `Your loads with ${c}: where they are, the paperwork, and your invoices. Keep this link — it is yours.`, pastDue: "past due", open: "open", nothingOwed: "Nothing owed",
     loads: "Loads", delivered: "Delivered", invoices: "Invoices", request: "Request a load", nothingMoving: "Nothing moving right now.", requestArrow: "Request a load →", noDeliveries: "No deliveries in the last 90 days.",
     balance: "Balance", ofItPastDue: "of it past due", nothingPastDue: "nothing past due", terms: "terms net", noInvoices: "No invoices yet.", invoice: "Invoice", issued: "Issued", due: "Due", total: "Total", openCol: "Open", dPastDue: "d past due", partlyPaid: "partly paid",
@@ -33,6 +34,7 @@ const STR = {
     doc: { POD: "Proof of delivery", BOL: "Bill of lading", RATE_CON: "Rate confirmation", carta_porte: "Carta porte", invoice: "Commercial invoice", packing_list: "Packing list" } as Record<string, string>,
   },
   es: {
+    lang: "es" as Lang,
     portal: "portal del cliente", intro: (c: string) => `Tus embarques con ${c}: dónde van, los documentos y tus facturas. Guarda este enlace, es tuyo.`, pastDue: "vencido", open: "por pagar", nothingOwed: "Nada pendiente",
     loads: "Embarques", delivered: "Entregados", invoices: "Facturas", request: "Solicitar un embarque", nothingMoving: "Nada en movimiento por ahora.", requestArrow: "Solicitar un embarque →", noDeliveries: "Sin entregas en los últimos 90 días.",
     balance: "Saldo", ofItPastDue: "vencido", nothingPastDue: "nada vencido", terms: "crédito", noInvoices: "Aún no hay facturas.", invoice: "Factura", issued: "Emitida", due: "Vence", total: "Total", openCol: "Por pagar", dPastDue: "d de vencida", partlyPaid: "pago parcial",
@@ -216,7 +218,7 @@ function LoadCard({ l, token, s }: { l: Load; token: string; s: Strings }) {
         </div>
         <div className="flex flex-col gap-1.5 items-end shrink-0">
           {l.trackingUrl && ["booked", "dispatched", "in_transit", "exception"].includes(l.state) && (
-            <a className="btn btn-sm btn-primary" href={l.trackingUrl} target="_blank" rel="noreferrer">
+            <a className="btn btn-sm btn-primary" href={`${l.trackingUrl}?lang=${s.lang}`} target="_blank" rel="noreferrer">
               {s.track}
             </a>
           )}

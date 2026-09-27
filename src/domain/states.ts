@@ -96,3 +96,19 @@ export const LEG_LABEL: Record<LegState, string> = {
   declined: "Declined",
   cancelled: "Cancelled",
 };
+
+/** The same, in Spanish, for the customer-facing pages. */
+export const LEG_LABEL_ES: Record<LegState, string> = {
+  unassigned: "Pendiente",
+  planned: "Planeado",
+  dispatched: "Enviado",
+  accepted: "Aceptado",
+  en_route_to_pickup: "Hacia la carga",
+  at_pickup: "En la carga",
+  loaded: "Cargado",
+  en_route: "En ruta",
+  at_delivery: "En la entrega",
+  completed: "Entregado",
+  declined: "Rechazado",
+  cancelled: "Cancelado",
+};

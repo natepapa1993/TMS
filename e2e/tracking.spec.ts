@@ -158,6 +158,10 @@ test("driver app: link from Fleet, one button per step with GPS, customer tracki
   await expect(cust.locator("body")).toContainText("GPS");
   await expect(cust.locator("body")).not.toContainText("2,850");
   await expect(cust.locator("body")).not.toContainText("+52 867");
+  await cust.getByTestId("lang").click(); // Spanish, one tap
+  await expect(cust.locator("body")).toContainText("rastreo de embarque");
+  await expect(cust.locator("body")).toContainText("Entregado");
+  await expect(cust.locator("body")).toContainText("Última posición conocida");
   await ctx2.close();
 
   // dispatcher sees verified events and the US leg is next
