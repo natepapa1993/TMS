@@ -1,0 +1,712 @@
+import { and, eq, inArray, desc, sql, isNull, lt, gte, lte, arrayOverlaps } from "drizzle-orm";
+import { createHash } from "node:crypto";
+import { db } from "@/db/client";
+import * as s from "@/db/schema";
+import type { ChargeKind, InvoiceSnapshot, InvoiceLine, SettlementLine } from "@/db/schema";
+import { newId } from "@/lib/ids";
+import { assertCtx, requirePermission, type Ctx } from "@/lib/context";
+import { writeAudit, diff } from "@/lib/audit";
+import { newToken, publicUrl } from "@/lib/tokens";
+import { enqueue, deliverQueued } from "@/lib/outbox";
+import { NotFoundError, ValidationError } from "./orders";
+import { assertOrderTransition, TransitionError } from "./states";
+import { buildInvoicePdf, buildStatementPdf } from "./billing-pdf";
+
+/**
+ * Billing & settlements (spec §7). Our own ledger: charges on orders → invoices with locked
+ * snapshots and entity-prefixed numbers → receipts; carrier bills with a three-way check;
+ * driver settlements from pay rules; order P&L; a month-end close that locks the past.
+ */
+
+type Order = typeof s.orders.$inferSelect;
+
+// ---------- charges (7.3) ----------
+
+export const CHARGE_LABEL: Record<ChargeKind, string> = { linehaul: "Line haul", fuel: "Fuel surcharge", detention: "Detention", layover: "Layover", tonu: "TONU", lumper: "Lumper", border_fee: "Border fee", crossing_fee: "Crossing fee", storage: "Storage", extra_stop: "Extra stop", accessorial: "Accessorial", tax: "Tax", other: "Other" };
+
+async function loadOrder(ctx: Ctx, orderId: string): Promise<Order> {
+  const [o] = await db.select().from(s.orders).where(and(eq(s.orders.tenantId, ctx.tenantId), eq(s.orders.id, orderId))).limit(1);
+  if (!o) throw new NotFoundError("order", orderId);
+  return o;
+}
+
+/** Make sure the order has its line haul (and fuel) charge from the rate confirmation. Idempotent. */
+export async function ensureCharges(ctx: Ctx, orderId: string) {
+  assertCtx(ctx);
+  const order = await loadOrder(ctx, orderId);
+  const existing = await db.select().from(s.charges).where(and(eq(s.charges.tenantId, ctx.tenantId), eq(s.charges.orderId, orderId)));
+  if (existing.some((c) => c.kind === "linehaul")) return existing;
+  if (order.rateCents == null) return existing;
+  const rows: (typeof s.charges.$inferInsert)[] = [{ id: newId(), tenantId: ctx.tenantId, orderId, kind: "linehaul", description: "Line haul", qty: 1, unit: "flat", rateCents: order.rateCents, amountCents: order.rateCents, currency: order.currency, source: "rate_con", createdBy: ctx.userId, updatedBy: ctx.userId }];
+  if (order.fuelRule === "pct" && order.fuelPct) {
+    const pct = order.fuelPct;
+    rows.push({ id: newId(), tenantId: ctx.tenantId, orderId, kind: "fuel", description: `Fuel surcharge ${pct}%`, qty: pct * 100, unit: "pct", rateCents: order.rateCents, amountCents: Math.round((order.rateCents * pct) / 100), currency: order.currency, source: "rate_con", createdBy: ctx.userId, updatedBy: ctx.userId });
+  }
+  await db.insert(s.charges).values(rows);
+  return db.select().from(s.charges).where(and(eq(s.charges.tenantId, ctx.tenantId), eq(s.charges.orderId, orderId)));
+}
+
+export type ChargeInput = { kind: ChargeKind; description?: string; qty?: number; unit?: string; rateCents: number; currency?: string; billable?: boolean; legId?: string | null; data?: Record<string, unknown> };
+
+export async function addCharge(ctx: Ctx, orderId: string, input: ChargeInput) {
+  assertCtx(ctx);
+  requirePermission(ctx, "orders.edit");
+  const order = await loadOrder(ctx, orderId);
+  if (["invoiced", "paid", "cancelled"].includes(order.state)) throw new ValidationError(`order is ${order.state}: add a credit memo or a new invoice instead`);
+  if (!Number.isFinite(input.rateCents)) throw new ValidationError("rate must be a number", "rateCents");
+  const qty = input.qty ?? 1;
+  const unit = input.unit ?? "flat";
+  const amount = unit === "h" || unit === "pct" ? Math.round((input.rateCents * qty) / 100) : Math.round(input.rateCents * qty);
+  const [row] = await db
+    .insert(s.charges)
+    .values({ id: newId(), tenantId: ctx.tenantId, orderId, legId: input.legId ?? null, kind: input.kind, description: input.description?.trim() || CHARGE_LABEL[input.kind], qty, unit, rateCents: input.rateCents, amountCents: amount, currency: input.currency ?? order.currency, billable: input.billable ?? true, source: input.data ? "computed" : "manual", data: input.data, createdBy: ctx.userId, updatedBy: ctx.userId })
+    .returning();
+  await writeAudit(db, ctx, "order", orderId, "update", { charge: { from: null, to: `${row.description} ${amount}` } });
+  return row;
+}
+
+export async function removeCharge(ctx: Ctx, chargeId: string) {
+  assertCtx(ctx);
+  requirePermission(ctx, "orders.edit");
+  const [c] = await db.select().from(s.charges).where(and(eq(s.charges.tenantId, ctx.tenantId), eq(s.charges.id, chargeId))).limit(1);
+  if (!c) throw new NotFoundError("charge", chargeId);
+  if (c.invoiceId) throw new ValidationError("this charge is on an invoice; void or credit that first");
+  await db.delete(s.charges).where(eq(s.charges.id, chargeId));
+  await writeAudit(db, ctx, "order", c.orderId, "update", { charge: { from: `${c.description} ${c.amountCents}`, to: null } });
+}
+
+/** Detention from the stop clocks: free time and rate come from the customer (spec 7.3, 11.6 split clocks per side). */
+export async function computeDetention(ctx: Ctx, orderId: string, opts: { freeMinutes?: number; rateCentsPerHour?: number } = {}) {
+  assertCtx(ctx);
+  requirePermission(ctx, "orders.edit");
+  const order = await loadOrder(ctx, orderId);
+  const customer = order.customerId ? (await db.select().from(s.customers).where(eq(s.customers.id, order.customerId)).limit(1))[0] : null;
+  const free = opts.freeMinutes ?? customer?.detentionFreeMinutes ?? 120;
+  const rate = opts.rateCentsPerHour ?? customer?.detentionRateCents ?? 7500;
+  const stops = await db.select().from(s.stops).where(and(eq(s.stops.orderId, orderId), sql`${s.stops.arrivedAt} is not null`, sql`${s.stops.departedAt} is not null`));
+  const out = [];
+  for (const st of stops) {
+    if (st.type !== "pickup" && st.type !== "delivery") continue;
+    const minutes = Math.round((st.departedAt!.getTime() - st.arrivedAt!.getTime()) / 60000);
+    const billableMin = minutes - free;
+    if (billableMin <= 0) continue;
+    const hours100 = Math.round((billableMin / 60) * 100);
+    const [dupe] = await db.select({ id: s.charges.id }).from(s.charges).where(and(eq(s.charges.orderId, orderId), eq(s.charges.kind, "detention"), sql`${s.charges.data}->>'stopId' = ${st.id}`)).limit(1);
+    if (dupe) continue;
+    out.push(await addCharge(ctx, orderId, { kind: "detention", description: `Detention at ${st.name} (${st.country}) — ${Math.floor(billableMin / 60)}h ${billableMin % 60}m over ${free} min free`, qty: hours100, unit: "h", rateCents: rate, data: { stopId: st.id, arrivedAt: st.arrivedAt, departedAt: st.departedAt, freeMinutes: free, rateCents: rate, rule: "customer" } }));
+  }
+  return out;
+}
+
+export async function chargesFor(ctx: Ctx, orderId: string) {
+  assertCtx(ctx);
+  requirePermission(ctx, "billing.view");
+  return db.select().from(s.charges).where(and(eq(s.charges.tenantId, ctx.tenantId), eq(s.charges.orderId, orderId))).orderBy(s.charges.createdAt);
+}
+
+// ---------- billing queue (7.2) ----------
+
+export type QueueRow = { order: Order; customerName: string | null; entityName: string | null; chargesCents: number; rateConCents: number | null; mismatch: boolean; requiredDocs: { code: string; present: boolean }[]; docsComplete: boolean; ageDays: number; invoiceId: string | null };
+
+export async function billingQueue(ctx: Ctx): Promise<QueueRow[]> {
+  assertCtx(ctx);
+  requirePermission(ctx, "billing.view");
+  const ords = await db.select().from(s.orders).where(and(eq(s.orders.tenantId, ctx.tenantId), inArray(s.orders.state, ["delivered", "ready_to_bill"]))).orderBy(s.orders.deliveredAt);
+  if (!ords.length) return [];
+  const ids = ords.map((o) => o.id);
+  const [chargeRows, docs, customers, entities, drafts] = await Promise.all([
+    db.select().from(s.charges).where(and(eq(s.charges.tenantId, ctx.tenantId), inArray(s.charges.orderId, ids))),
+    db.select({ subjectId: s.documents.subjectId, code: s.documents.code }).from(s.documents).where(and(eq(s.documents.tenantId, ctx.tenantId), eq(s.documents.subjectKind, "order"), inArray(s.documents.subjectId, ids), inArray(s.documents.status, ["present", "verified"]))),
+    db.select().from(s.customers).where(eq(s.customers.tenantId, ctx.tenantId)),
+    db.select().from(s.billingEntities).where(eq(s.billingEntities.tenantId, ctx.tenantId)),
+    db.select({ id: s.invoices.id, orderIds: s.invoices.orderIds }).from(s.invoices).where(and(eq(s.invoices.tenantId, ctx.tenantId), inArray(s.invoices.state, ["draft"]))),
+  ]);
+  const out: QueueRow[] = [];
+  for (const o of ords) {
+    let cs = chargeRows.filter((c) => c.orderId === o.id);
+    if (!cs.some((c) => c.kind === "linehaul") && o.rateCents != null) cs = await ensureCharges(ctx, o.id);
+    const cust = customers.find((c) => c.id === (o.customerId ?? o.brokerId));
+    const entity = entities.find((e) => e.id === (o.billingEntityId ?? cust?.billingEntityId)) ?? entities.find((e) => e.isDefault) ?? entities[0];
+    const required = (cust?.requiredDocs ?? ["POD", "BOL", "RATE_CON"]).map((code) => ({ code, present: docs.some((d) => d.subjectId === o.id && d.code === code) }));
+    const chargesCents = cs.filter((c) => c.billable).reduce((a, c) => a + c.amountCents, 0);
+    out.push({ order: o, customerName: cust?.name ?? null, entityName: entity?.legalName ?? null, chargesCents, rateConCents: o.rateCents, mismatch: o.rateCents != null && chargesCents !== o.rateCents && !((o.custom as Record<string, unknown>)?.rateConMismatchAccepted), requiredDocs: required, docsComplete: required.every((r) => r.present), ageDays: o.deliveredAt ? Math.floor((Date.now() - o.deliveredAt.getTime()) / 86400_000) : 0, invoiceId: drafts.find((d) => d.orderIds.includes(o.id))?.id ?? null });
+  }
+  return out;
+}
+
+export async function acceptRateConMismatch(ctx: Ctx, orderId: string, note: string) {
+  assertCtx(ctx);
+  requirePermission(ctx, "billing.issue");
+  if (!note?.trim()) throw new ValidationError("say why the charges differ from the rate con (e.g. accessorial approved by email)", "note");
+  const o = await loadOrder(ctx, orderId);
+  await db.update(s.orders).set({ custom: { ...(o.custom ?? {}), rateConMismatchAccepted: note.trim() }, updatedAt: new Date(), updatedBy: ctx.userId }).where(eq(s.orders.id, orderId));
+  await writeAudit(db, ctx, "order", orderId, "override", { rateCon: { from: "mismatch", to: "accepted" } }, note.trim());
+}
+
+/** Upload a POD / BOL / rate con on the order (billing docs). */
+export async function uploadOrderDocument(ctx: Ctx, orderId: string, input: { code: string; fileName: string; mimeType: string; bytes: Buffer; source?: string }) {
+  assertCtx(ctx);
+  requirePermission(ctx, "orders.edit");
+  if (!input.bytes?.length) throw new ValidationError("empty file", "file");
+  if (!/^(application\/pdf|image\/(jpeg|png))$/.test(input.mimeType)) throw new ValidationError("PDF, JPG or PNG only", "file");
+  await loadOrder(ctx, orderId);
+  const sha = createHash("sha256").update(input.bytes).digest("hex");
+  return db.transaction(async (tx) => {
+    const [blob] = await tx.insert(s.documentBlobs).values({ id: newId(), tenantId: ctx.tenantId, sha256: sha, mimeType: input.mimeType, sizeBytes: input.bytes.length, bytes: input.bytes }).returning({ id: s.documentBlobs.id });
+    const prior = await tx.select().from(s.documents).where(and(eq(s.documents.tenantId, ctx.tenantId), eq(s.documents.subjectKind, "order"), eq(s.documents.subjectId, orderId), eq(s.documents.code, input.code), inArray(s.documents.status, ["present", "verified"])));
+    for (const p of prior) await tx.update(s.documents).set({ status: "superseded" }).where(eq(s.documents.id, p.id));
+    const [row] = await tx.insert(s.documents).values({ id: newId(), tenantId: ctx.tenantId, code: input.code, subjectKind: "order", subjectId: orderId, fileName: input.fileName, mimeType: input.mimeType, sizeBytes: input.bytes.length, storageKey: `blob:${blob.id}`, sha256: sha, source: input.source ?? "upload", version: (Math.max(0, ...prior.map((p) => p.version)) || 0) + 1, createdBy: ctx.userId, updatedBy: ctx.userId }).returning();
+    await writeAudit(tx, ctx, "order", orderId, "update", { [input.code]: { from: prior[0]?.fileName ?? null, to: input.fileName } });
+    return row;
+  });
+}
+
+// ---------- invoices (7.1, 7.4) ----------
+
+async function closedThrough(ctx: Ctx) {
+  const [t] = await db.select({ settings: s.tenants.settings }).from(s.tenants).where(eq(s.tenants.id, ctx.tenantId)).limit(1);
+  const v = (t?.settings as Record<string, unknown>)?.closedThrough;
+  return v ? new Date(String(v)) : null;
+}
+
+/** Month-end close (persona: head of billing). Nothing dated on or before this can be issued, voided or credited. */
+export async function closePeriod(ctx: Ctx, through: Date) {
+  assertCtx(ctx);
+  requirePermission(ctx, "billing.void");
+  const [t] = await db.select().from(s.tenants).where(eq(s.tenants.id, ctx.tenantId)).limit(1);
+  const prev = await closedThrough(ctx);
+  if (prev && through.getTime() < prev.getTime()) throw new ValidationError("a period cannot be re-opened from here");
+  await db.update(s.tenants).set({ settings: { ...(t.settings ?? {}), closedThrough: through.toISOString() } }).where(eq(s.tenants.id, ctx.tenantId));
+  await writeAudit(db, ctx, "tenant", ctx.tenantId, "update", { closedThrough: { from: prev?.toISOString() ?? null, to: through.toISOString() } }, "period closed");
+}
+
+async function assertOpenPeriod(ctx: Ctx, date: Date) {
+  const c = await closedThrough(ctx);
+  if (c && date.getTime() <= c.getTime()) throw new ValidationError(`the period through ${c.toISOString().slice(0, 10)} is closed`);
+}
+
+export async function createInvoice(ctx: Ctx, orderIds: string[], opts: { entityId?: string | null; consolidate?: boolean } = {}) {
+  assertCtx(ctx);
+  requirePermission(ctx, "billing.issue");
+  if (!orderIds.length) throw new ValidationError("pick at least one order", "orderIds");
+  const queue = (await billingQueue(ctx)).filter((q) => orderIds.includes(q.order.id));
+  if (queue.length !== orderIds.length) throw new ValidationError("an order is not ready to bill (not delivered, cancelled, or already invoiced)");
+  const custIds = new Set(queue.map((q) => q.order.customerId ?? q.order.brokerId));
+  if (custIds.size > 1) throw new ValidationError("one invoice is for one customer");
+  const customerId = [...custIds][0];
+  if (!customerId) throw new ValidationError("the order has no customer");
+  const bad = queue.filter((q) => !q.docsComplete || q.mismatch);
+  if (bad.length) throw new ValidationError(bad.map((q) => `${q.order.orderNumber}: ${!q.docsComplete ? `missing ${q.requiredDocs.filter((d) => !d.present).map((d) => d.code).join(", ")}` : "charges differ from the rate con"}`).join("; "));
+  const [cust] = await db.select().from(s.customers).where(eq(s.customers.id, customerId)).limit(1);
+  const entities = await db.select().from(s.billingEntities).where(and(eq(s.billingEntities.tenantId, ctx.tenantId), isNull(s.billingEntities.archivedAt)));
+  const entity = entities.find((e) => e.id === (opts.entityId ?? queue[0].order.billingEntityId ?? cust.billingEntityId)) ?? entities.find((e) => e.isDefault) ?? entities[0];
+  if (!entity) throw new ValidationError("add a billing entity first (Settings → Billing entities)");
+  const already = await db.select({ id: s.invoices.id }).from(s.invoices).where(and(eq(s.invoices.tenantId, ctx.tenantId), arrayOverlaps(s.invoices.orderIds, orderIds), sql`${s.invoices.state} <> 'void'`)).limit(1);
+  if (already.length) throw new ValidationError("one of these orders is already on an invoice");
+  const chargeRows = await db.select().from(s.charges).where(and(eq(s.charges.tenantId, ctx.tenantId), inArray(s.charges.orderId, orderIds), eq(s.charges.billable, true), isNull(s.charges.invoiceId)));
+  const subtotal = chargeRows.reduce((a, c) => a + c.amountCents, 0);
+  const currency = queue[0].order.currency;
+  return db.transaction(async (tx) => {
+    const [inv] = await tx.insert(s.invoices).values({ id: newId(), tenantId: ctx.tenantId, entityId: entity.id, customerId, orderIds, currency, termsDays: cust.termsDays, subtotalCents: subtotal, totalCents: subtotal, payWhenPaid: cust.payWhenPaid, token: newToken(), createdBy: ctx.userId, updatedBy: ctx.userId }).returning();
+    await tx.update(s.charges).set({ invoiceId: inv.id }).where(inArray(s.charges.id, chargeRows.map((c) => c.id)));
+    for (const o of queue) if (o.order.state === "delivered") await tx.update(s.orders).set({ state: "ready_to_bill", previousState: "delivered", updatedAt: new Date(), updatedBy: ctx.userId }).where(eq(s.orders.id, o.order.id));
+    await writeAudit(tx, ctx, "invoice", inv.id, "create", undefined, `draft for ${queue.map((q) => q.order.orderNumber).join(", ")}`);
+    return inv;
+  });
+}
+
+export async function invoiceById(ctx: Ctx, invoiceId: string) {
+  assertCtx(ctx);
+  requirePermission(ctx, "billing.view");
+  const [inv] = await db.select().from(s.invoices).where(and(eq(s.invoices.tenantId, ctx.tenantId), eq(s.invoices.id, invoiceId))).limit(1);
+  if (!inv) throw new NotFoundError("invoice", invoiceId);
+  const [lines, rcpts, memos, entity, customer, orders] = await Promise.all([
+    db.select().from(s.charges).where(eq(s.charges.invoiceId, invoiceId)).orderBy(s.charges.createdAt),
+    db.select().from(s.receipts).where(eq(s.receipts.invoiceId, invoiceId)).orderBy(desc(s.receipts.receivedAt)),
+    db.select().from(s.creditMemos).where(eq(s.creditMemos.invoiceId, invoiceId)).orderBy(desc(s.creditMemos.issuedAt)),
+    db.select().from(s.billingEntities).where(eq(s.billingEntities.id, inv.entityId)).limit(1).then((r) => r[0] ?? null),
+    db.select().from(s.customers).where(eq(s.customers.id, inv.customerId)).limit(1).then((r) => r[0] ?? null),
+    inv.orderIds.length ? db.select().from(s.orders).where(inArray(s.orders.id, inv.orderIds)) : Promise.resolve([]),
+  ]);
+  return { invoice: inv, lines, receipts: rcpts, creditMemos: memos, entity, customer, orders };
+}
+
+export async function issueInvoice(ctx: Ctx, invoiceId: string, opts: { issuedAt?: Date; exchangeRate?: number | null } = {}) {
+  assertCtx(ctx);
+  requirePermission(ctx, "billing.issue");
+  const { invoice: inv, lines, entity, customer, orders } = await invoiceById(ctx, invoiceId);
+  if (inv.state !== "draft") throw new TransitionError("order", inv.state, "issued", "only a draft can be issued");
+  if (!lines.length) throw new ValidationError("the invoice has no lines");
+  if (!entity || !customer) throw new ValidationError("entity or customer missing");
+  const issuedAt = opts.issuedAt ?? new Date();
+  await assertOpenPeriod(ctx, issuedAt);
+  // rate-con hard stop and required docs re-checked at issue (persona: head of billing)
+  const queue = (await billingQueue(ctx)).filter((q) => inv.orderIds.includes(q.order.id));
+  const bad = queue.filter((q) => !q.docsComplete || q.mismatch);
+  if (bad.length) throw new ValidationError(bad.map((q) => `${q.order.orderNumber}: ${!q.docsComplete ? `missing ${q.requiredDocs.filter((d) => !d.present).map((d) => d.code).join(", ")}` : "charges differ from the rate con"}`).join("; "));
+  if (inv.currency === "MXN" && !opts.exchangeRate) throw new ValidationError("an exchange rate is required for a MXN invoice", "exchangeRate");
+  const stops = inv.orderIds.length === 1 ? await db.select().from(s.stops).where(eq(s.stops.orderId, inv.orderIds[0])).orderBy(s.stops.seq) : [];
+  const refs: Record<string, string> = {};
+  for (const o of orders) for (const [k, v] of Object.entries(o.refs)) if (v) refs[orders.length > 1 ? `${o.orderNumber} ${k}` : k] = v;
+  const snapshot: InvoiceSnapshot = {
+    entity: { legalName: entity.legalName, dba: entity.dba, taxId: entity.taxId, remitTo: (entity.remitTo as Record<string, string | undefined>) ?? null, mc: entity.mcNumber, dot: entity.dotNumber },
+    billTo: { name: customer.name, email: customer.billingEmail, kind: customer.kind },
+    refs,
+    stops: stops.map((st) => ({ seq: st.seq, type: st.type, name: st.name, city: st.address?.city ?? null, state: st.address?.state ?? null, country: st.country, departedAt: st.departedAt?.toISOString() ?? null, arrivedAt: st.arrivedAt?.toISOString() ?? null })),
+    lines: lines.map<InvoiceLine>((l) => ({ chargeId: l.id, orderId: l.orderId, orderNumber: orders.find((o) => o.id === l.orderId)?.orderNumber ?? "", kind: l.kind, description: l.description, qty: l.qty, unit: l.unit, rateCents: l.rateCents, amountCents: l.amountCents })),
+    terms: `Net ${inv.termsDays}`,
+    currency: inv.currency,
+    exchangeRate: opts.exchangeRate ?? null,
+  };
+  const subtotal = lines.reduce((a, l) => a + l.amountCents, 0);
+  const dueAt = new Date(issuedAt.getTime() + inv.termsDays * 86400_000);
+  return db.transaction(async (tx) => {
+    // number from the entity's sequence, serialized on the entity row, never reused
+    const [ent] = await tx.execute(sql`select next_invoice_number as n, invoice_prefix as p from billing_entities where id = ${entity.id} for update`) as unknown as { n: number; p: string }[];
+    const number = `${ent.p}-${String(ent.n).padStart(6, "0")}`;
+    await tx.update(s.billingEntities).set({ nextInvoiceNumber: ent.n + 1 }).where(eq(s.billingEntities.id, entity.id));
+    const pdf = await buildInvoicePdf({ number, issuedAt, dueAt, snapshot, subtotalCents: subtotal, totalCents: subtotal });
+    const [blob] = await tx.insert(s.documentBlobs).values({ id: newId(), tenantId: ctx.tenantId, sha256: createHash("sha256").update(pdf).digest("hex"), mimeType: "application/pdf", sizeBytes: pdf.length, bytes: Buffer.from(pdf) }).returning({ id: s.documentBlobs.id });
+    const [after] = await tx.update(s.invoices).set({ state: "issued", number, issuedAt, dueAt, subtotalCents: subtotal, totalCents: subtotal, snapshot, exchangeRate: opts.exchangeRate ? Math.round(opts.exchangeRate * 10000) : null, pdfStorageKey: `blob:${blob.id}`, updatedAt: new Date(), updatedBy: ctx.userId }).where(eq(s.invoices.id, inv.id)).returning();
+    for (const oid of inv.orderIds) {
+      const [o] = await tx.select().from(s.orders).where(eq(s.orders.id, oid)).limit(1);
+      if (o && o.state !== "invoiced") {
+        assertOrderTransition(o.state === "delivered" ? "ready_to_bill" : o.state, "invoiced");
+        await tx.update(s.orders).set({ state: "invoiced", previousState: o.state, updatedAt: new Date(), updatedBy: ctx.userId }).where(eq(s.orders.id, oid));
+      }
+    }
+    await writeAudit(tx, ctx, "invoice", inv.id, "transition", { state: { from: "draft", to: "issued" }, number: { from: null, to: number } });
+    return after;
+  });
+}
+
+export async function sendInvoice(ctx: Ctx, invoiceId: string, to?: string | null) {
+  assertCtx(ctx);
+  requirePermission(ctx, "billing.issue");
+  const { invoice: inv, customer, entity } = await invoiceById(ctx, invoiceId);
+  if (!["issued", "sent", "partially_paid"].includes(inv.state)) throw new TransitionError("order", inv.state, "sent", "issue the invoice first");
+  const addr = to ?? customer?.billingEmail ?? null;
+  if (!addr) throw new ValidationError(`${customer?.name ?? "customer"} has no billing email`, "to");
+  const link = publicUrl(`/i/${inv.token}`);
+  const body = [`${customer?.name},`, ``, `Please find invoice ${inv.number} from ${entity?.legalName} for ${(inv.totalCents / 100).toLocaleString("en-US", { style: "currency", currency: inv.currency })}, due ${inv.dueAt?.toISOString().slice(0, 10)}.`, ``, `Download the PDF: ${link}`, ``, `Reference: ${inv.number}`].join("\n");
+  await enqueue(ctx, { channel: "email", to: addr, subject: `Invoice ${inv.number} · ${entity?.dba || entity?.legalName}`, body, subjectKind: "invoice", subjectId: inv.id });
+  await deliverQueued().catch(() => null);
+  const [after] = await db.update(s.invoices).set({ state: inv.state === "issued" ? "sent" : inv.state, sentAt: new Date(), sentTo: addr, updatedAt: new Date(), updatedBy: ctx.userId }).where(eq(s.invoices.id, inv.id)).returning();
+  await writeAudit(db, ctx, "invoice", inv.id, "transition", { state: { from: inv.state, to: after.state } }, `sent to ${addr}`);
+  return after;
+}
+
+export async function invoiceByToken(token: string) {
+  if (!token || token.length < 16) return null;
+  const [inv] = await db.select().from(s.invoices).where(eq(s.invoices.token, token)).limit(1);
+  if (!inv || !inv.pdfStorageKey) return null;
+  const id = inv.pdfStorageKey.replace(/^blob:/, "");
+  const [b] = await db.select().from(s.documentBlobs).where(eq(s.documentBlobs.id, id)).limit(1);
+  return b ? { invoice: inv, blob: b } : null;
+}
+
+export async function recordReceipt(ctx: Ctx, invoiceId: string, r: { amountCents: number; receivedAt?: Date; method?: string; reference?: string | null; note?: string | null }) {
+  assertCtx(ctx);
+  requirePermission(ctx, "billing.issue");
+  if (!Number.isFinite(r.amountCents) || r.amountCents <= 0) throw new ValidationError("amount must be positive", "amountCents");
+  const { invoice: inv } = await invoiceById(ctx, invoiceId);
+  if (!["issued", "sent", "partially_paid", "disputed"].includes(inv.state)) throw new TransitionError("order", inv.state, "paid", "no receipts on a draft, void or paid invoice");
+  const open = inv.totalCents - inv.creditedCents - inv.paidCents;
+  if (r.amountCents > open) throw new ValidationError(`over-payment: ${(r.amountCents / 100).toFixed(2)} is more than the ${(open / 100).toFixed(2)} open. Record the remainder as unapplied credit on another invoice.`, "amountCents");
+  return db.transaction(async (tx) => {
+    await tx.insert(s.receipts).values({ id: newId(), tenantId: ctx.tenantId, invoiceId, amountCents: r.amountCents, receivedAt: r.receivedAt ?? new Date(), method: r.method ?? "ach", reference: r.reference ?? null, note: r.note ?? null, createdBy: ctx.userId });
+    const paid = inv.paidCents + r.amountCents;
+    const full = paid >= inv.totalCents - inv.creditedCents;
+    const [after] = await tx.update(s.invoices).set({ paidCents: paid, state: full ? "paid" : "partially_paid", paidAt: full ? (r.receivedAt ?? new Date()) : null, updatedAt: new Date(), updatedBy: ctx.userId }).where(eq(s.invoices.id, invoiceId)).returning();
+    if (full) for (const oid of inv.orderIds) await tx.update(s.orders).set({ state: "paid", previousState: "invoiced", updatedAt: new Date(), updatedBy: ctx.userId }).where(and(eq(s.orders.id, oid), eq(s.orders.state, "invoiced")));
+    await writeAudit(tx, ctx, "invoice", invoiceId, "update", { paidCents: { from: inv.paidCents, to: paid } }, `${r.method ?? "ach"} ${r.reference ?? ""}`.trim());
+    return after;
+  });
+}
+
+export async function voidInvoice(ctx: Ctx, invoiceId: string, reason: string) {
+  assertCtx(ctx);
+  requirePermission(ctx, "billing.void");
+  if (!reason?.trim()) throw new ValidationError("a reason is required", "reason");
+  const { invoice: inv, receipts: rcpts } = await invoiceById(ctx, invoiceId);
+  if (rcpts.length) throw new ValidationError("this invoice has receipts: issue a credit memo instead");
+  if (!["issued", "sent", "draft", "disputed"].includes(inv.state)) throw new TransitionError("order", inv.state, "void", "only issued or sent invoices void");
+  if (inv.issuedAt) await assertOpenPeriod(ctx, inv.issuedAt);
+  return db.transaction(async (tx) => {
+    await tx.update(s.charges).set({ invoiceId: null }).where(eq(s.charges.invoiceId, invoiceId));
+    const [after] = await tx.update(s.invoices).set({ state: "void", voidedAt: new Date(), voidReason: reason.trim(), updatedAt: new Date(), updatedBy: ctx.userId }).where(eq(s.invoices.id, invoiceId)).returning();
+    for (const oid of inv.orderIds) await tx.update(s.orders).set({ state: "ready_to_bill", previousState: "invoiced", updatedAt: new Date(), updatedBy: ctx.userId }).where(and(eq(s.orders.id, oid), inArray(s.orders.state, ["invoiced", "ready_to_bill"])));
+    await writeAudit(tx, ctx, "invoice", invoiceId, "transition", { state: { from: inv.state, to: "void" } }, reason.trim());
+    return after;
+  });
+}
+
+export async function creditMemo(ctx: Ctx, invoiceId: string, m: { amountCents: number; reason: string; lines?: { description: string; amountCents: number }[] }) {
+  assertCtx(ctx);
+  requirePermission(ctx, "billing.void");
+  if (!m.reason?.trim()) throw new ValidationError("a reason is required", "reason");
+  if (!Number.isFinite(m.amountCents) || m.amountCents <= 0) throw new ValidationError("amount must be positive", "amountCents");
+  const { invoice: inv, entity } = await invoiceById(ctx, invoiceId);
+  if (inv.state === "draft" || inv.state === "void") throw new TransitionError("order", inv.state, "credit", "issue the invoice first");
+  if (m.amountCents > inv.totalCents - inv.creditedCents) throw new ValidationError("credit exceeds what is left on the invoice", "amountCents");
+  await assertOpenPeriod(ctx, new Date());
+  return db.transaction(async (tx) => {
+    const [ent] = await tx.execute(sql`select next_invoice_number as n, invoice_prefix as p from billing_entities where id = ${entity!.id} for update`) as unknown as { n: number; p: string }[];
+    const number = `${ent.p}-CM-${String(ent.n).padStart(6, "0")}`;
+    await tx.update(s.billingEntities).set({ nextInvoiceNumber: ent.n + 1 }).where(eq(s.billingEntities.id, entity!.id));
+    const [memo] = await tx.insert(s.creditMemos).values({ id: newId(), tenantId: ctx.tenantId, invoiceId, number, amountCents: m.amountCents, reason: m.reason.trim(), lines: m.lines ?? [{ description: m.reason.trim(), amountCents: m.amountCents }], createdBy: ctx.userId }).returning();
+    const credited = inv.creditedCents + m.amountCents;
+    const full = inv.paidCents >= inv.totalCents - credited;
+    await tx.update(s.invoices).set({ creditedCents: credited, state: full ? "paid" : inv.state, paidAt: full && !inv.paidAt ? new Date() : inv.paidAt, updatedAt: new Date(), updatedBy: ctx.userId }).where(eq(s.invoices.id, invoiceId));
+    await writeAudit(tx, ctx, "invoice", invoiceId, "update", { creditedCents: { from: inv.creditedCents, to: credited } }, `${number}: ${m.reason.trim()}`);
+    return memo;
+  });
+}
+
+export async function disputeInvoice(ctx: Ctx, invoiceId: string, reason: string, expectedAt?: Date | null) {
+  assertCtx(ctx);
+  requirePermission(ctx, "billing.issue");
+  if (!reason?.trim()) throw new ValidationError("a reason is required", "reason");
+  const { invoice: inv } = await invoiceById(ctx, invoiceId);
+  if (!["sent", "issued", "partially_paid"].includes(inv.state)) throw new TransitionError("order", inv.state, "disputed");
+  const [after] = await db.update(s.invoices).set({ state: "disputed", disputeReason: reason.trim(), disputeExpectedAt: expectedAt ?? null, updatedAt: new Date(), updatedBy: ctx.userId }).where(eq(s.invoices.id, invoiceId)).returning();
+  await writeAudit(db, ctx, "invoice", invoiceId, "transition", { state: { from: inv.state, to: "disputed" } }, reason.trim());
+  return after;
+}
+
+export async function setPromiseToPay(ctx: Ctx, invoiceId: string, at: Date | null) {
+  assertCtx(ctx);
+  requirePermission(ctx, "billing.issue");
+  await db.update(s.invoices).set({ promiseToPayAt: at, updatedAt: new Date(), updatedBy: ctx.userId }).where(and(eq(s.invoices.tenantId, ctx.tenantId), eq(s.invoices.id, invoiceId)));
+}
+
+export async function listInvoices(ctx: Ctx, opts: { states?: string[]; customerId?: string } = {}) {
+  assertCtx(ctx);
+  requirePermission(ctx, "billing.view");
+  const conds = [eq(s.invoices.tenantId, ctx.tenantId)];
+  if (opts.states?.length) conds.push(inArray(s.invoices.state, opts.states as never));
+  if (opts.customerId) conds.push(eq(s.invoices.customerId, opts.customerId));
+  return db.select().from(s.invoices).where(and(...conds)).orderBy(desc(s.invoices.createdAt)).limit(1000);
+}
+
+// ---------- AR (7.5) ----------
+
+export type AgingBucket = "current" | "1_30" | "31_60" | "61_90" | "90_plus";
+export function bucketFor(dueAt: Date | null, now: Date): AgingBucket {
+  if (!dueAt) return "current";
+  const d = Math.floor((now.getTime() - dueAt.getTime()) / 86400_000);
+  return d <= 0 ? "current" : d <= 30 ? "1_30" : d <= 60 ? "31_60" : d <= 90 ? "61_90" : "90_plus";
+}
+
+export async function aging(ctx: Ctx, now = new Date()) {
+  assertCtx(ctx);
+  requirePermission(ctx, "billing.view");
+  const open = await db.select().from(s.invoices).where(and(eq(s.invoices.tenantId, ctx.tenantId), inArray(s.invoices.state, ["issued", "sent", "partially_paid", "disputed"])));
+  const customers = await db.select({ id: s.customers.id, name: s.customers.name, payWhenPaid: s.customers.payWhenPaid }).from(s.customers).where(eq(s.customers.tenantId, ctx.tenantId));
+  const rows = new Map<string, { customerId: string; name: string; buckets: Record<AgingBucket, number>; total: number; invoices: (typeof open)[number][] }>();
+  for (const inv of open) {
+    const openCents = inv.totalCents - inv.creditedCents - inv.paidCents;
+    if (openCents <= 0) continue;
+    const r = rows.get(inv.customerId) ?? { customerId: inv.customerId, name: customers.find((c) => c.id === inv.customerId)?.name ?? "?", buckets: { current: 0, "1_30": 0, "31_60": 0, "61_90": 0, "90_plus": 0 }, total: 0, invoices: [] };
+    r.buckets[bucketFor(inv.dueAt, now)] += openCents;
+    r.total += openCents;
+    r.invoices.push(inv);
+    rows.set(inv.customerId, r);
+  }
+  const list = [...rows.values()].sort((p, q) => q.total - p.total);
+  const totals = list.reduce((a, r) => ({ current: a.current + r.buckets.current, "1_30": a["1_30"] + r.buckets["1_30"], "31_60": a["31_60"] + r.buckets["31_60"], "61_90": a["61_90"] + r.buckets["61_90"], "90_plus": a["90_plus"] + r.buckets["90_plus"], total: a.total + r.total }), { current: 0, "1_30": 0, "31_60": 0, "61_90": 0, "90_plus": 0, total: 0 });
+  return { rows: list, totals };
+}
+
+export async function statementPdf(ctx: Ctx, customerId: string, now = new Date()) {
+  assertCtx(ctx);
+  requirePermission(ctx, "billing.view");
+  const { rows } = await aging(ctx, now);
+  const r = rows.find((x) => x.customerId === customerId);
+  const [entity] = await db.select().from(s.billingEntities).where(and(eq(s.billingEntities.tenantId, ctx.tenantId), eq(s.billingEntities.isDefault, true))).limit(1);
+  const [cust] = await db.select().from(s.customers).where(eq(s.customers.id, customerId)).limit(1);
+  return buildStatementPdf({ entityName: entity?.legalName ?? "", customerName: cust?.name ?? "", asOf: now, currency: "USD", rows: (r?.invoices ?? []).map((i) => ({ number: i.number ?? "", issuedAt: i.issuedAt?.toISOString() ?? "", dueAt: i.dueAt?.toISOString() ?? "", totalCents: i.totalCents, openCents: i.totalCents - i.creditedCents - i.paidCents, daysPastDue: i.dueAt ? Math.floor((now.getTime() - i.dueAt.getTime()) / 86400_000) : 0 })) });
+}
+
+/** Job: reminder emails at the customer's configured days after due (default +3, +10, +20), once per step. */
+export async function sendReminders(now = new Date()) {
+  const open = await db.select().from(s.invoices).where(and(inArray(s.invoices.state, ["sent", "partially_paid"]), lt(s.invoices.dueAt, now)));
+  let sent = 0;
+  for (const inv of open) {
+    const [cust] = await db.select().from(s.customers).where(eq(s.customers.id, inv.customerId)).limit(1);
+    if (!cust?.billingEmail) continue;
+    const steps = (cust.reminderDays ?? [3, 10, 20]).slice().sort((a, b) => a - b); // [] = the customer opted out
+    const days = Math.floor((now.getTime() - inv.dueAt!.getTime()) / 86400_000);
+    const due = steps.filter((d) => days >= d);
+    if (!due.length) continue;
+    const step = due[due.length - 1];
+    const already = await db.select({ id: s.outbox.id }).from(s.outbox).where(and(eq(s.outbox.subjectKind, "invoice_reminder"), eq(s.outbox.subjectId, `${inv.id}:${step}`))).limit(1);
+    if (already.length) continue;
+    const ctx = { tenantId: inv.tenantId, userId: null, role: "system" as const };
+    const openCents = inv.totalCents - inv.creditedCents - inv.paidCents;
+    await enqueue(ctx, { channel: "email", to: cust.billingEmail, subject: `Reminder: invoice ${inv.number} is ${days} days past due`, body: `${cust.name},\n\nInvoice ${inv.number} for ${(openCents / 100).toLocaleString("en-US", { style: "currency", currency: inv.currency })} was due ${inv.dueAt!.toISOString().slice(0, 10)}.\n\nPDF: ${publicUrl(`/i/${inv.token}`)}\n\nIf payment is on its way, thank you — reply with the date and we will note it.`, subjectKind: "invoice_reminder", subjectId: `${inv.id}:${step}` });
+    sent++;
+  }
+  return { sent };
+}
+
+// ---------- carrier bills (7.6) ----------
+
+/** Every completed carrier leg gets an expected bill at the accepted tender rate. Idempotent. */
+export async function syncCarrierBills(ctx: Ctx) {
+  assertCtx(ctx);
+  const legs = await db.select().from(s.legs).where(and(eq(s.legs.tenantId, ctx.tenantId), eq(s.legs.assigneeKind, "carrier"), eq(s.legs.state, "completed")));
+  const existing = await db.select({ legId: s.carrierBills.legId }).from(s.carrierBills).where(eq(s.carrierBills.tenantId, ctx.tenantId));
+  const have = new Set(existing.map((e) => e.legId));
+  let created = 0;
+  for (const l of legs) {
+    if (have.has(l.id) || !l.carrierId) continue;
+    const [tender] = await db.select().from(s.tenders).where(and(eq(s.tenders.legId, l.id), eq(s.tenders.state, "accepted"))).orderBy(desc(s.tenders.respondedAt)).limit(1);
+    const [carrier] = await db.select({ quickPayPct: s.carriers.quickPayPct }).from(s.carriers).where(eq(s.carriers.id, l.carrierId)).limit(1);
+    const qp = carrier?.quickPayPct;
+    await db.insert(s.carrierBills).values({ id: newId(), tenantId: ctx.tenantId, carrierId: l.carrierId, orderId: l.orderId, legId: l.id, tenderId: tender?.id ?? null, expectedCents: tender?.rateCents ?? l.carrierRateCents ?? 0, currency: tender?.currency ?? "USD", quickPayPct: qp ? Math.round(qp * 100) : null, createdBy: ctx.userId, updatedBy: ctx.userId });
+    created++;
+  }
+  return { created };
+}
+
+export async function carrierBillsList(ctx: Ctx) {
+  assertCtx(ctx);
+  requirePermission(ctx, "billing.view");
+  await syncCarrierBills(ctx);
+  return db
+    .select({ bill: s.carrierBills, carrierName: s.carriers.name, orderNumber: s.orders.orderNumber, legSeq: s.legs.seq, legType: s.legs.type })
+    .from(s.carrierBills)
+    .innerJoin(s.carriers, eq(s.carriers.id, s.carrierBills.carrierId))
+    .innerJoin(s.orders, eq(s.orders.id, s.carrierBills.orderId))
+    .innerJoin(s.legs, eq(s.legs.id, s.carrierBills.legId))
+    .where(eq(s.carrierBills.tenantId, ctx.tenantId))
+    .orderBy(desc(s.carrierBills.createdAt))
+    .limit(1000);
+}
+
+async function loadBill(ctx: Ctx, id: string) {
+  const [b] = await db.select().from(s.carrierBills).where(and(eq(s.carrierBills.tenantId, ctx.tenantId), eq(s.carrierBills.id, id))).limit(1);
+  if (!b) throw new NotFoundError("carrier bill", id);
+  return b;
+}
+
+export async function receiveCarrierBill(ctx: Ctx, id: string, r: { invoicedCents: number; carrierInvoiceNumber?: string | null; docId?: string | null; accessorialCents?: number }) {
+  assertCtx(ctx);
+  requirePermission(ctx, "billing.issue");
+  const b = await loadBill(ctx, id);
+  if (!["expected", "received", "disputed"].includes(b.state)) throw new TransitionError("order", b.state, "received");
+  if (!Number.isFinite(r.invoicedCents) || r.invoicedCents < 0) throw new ValidationError("amount", "invoicedCents");
+  const [after] = await db.update(s.carrierBills).set({ state: "received", invoicedCents: r.invoicedCents, carrierInvoiceNumber: r.carrierInvoiceNumber ?? null, carrierInvoiceDocId: r.docId ?? null, accessorialCents: r.accessorialCents ?? b.accessorialCents, receivedAt: new Date(), updatedAt: new Date(), updatedBy: ctx.userId }).where(eq(s.carrierBills.id, id)).returning();
+  await writeAudit(db, ctx, "carrier_bill", id, "update", { invoicedCents: { from: b.invoicedCents, to: r.invoicedCents } });
+  return after;
+}
+
+/** Three-way check: tender rate (+accessorials) = carrier invoice, and a POD is on the order. */
+export async function threeWay(ctx: Ctx, id: string) {
+  const b = await loadBill(ctx, id);
+  const expected = b.expectedCents + b.accessorialCents;
+  const [pod] = await db.select({ id: s.documents.id }).from(s.documents).where(and(eq(s.documents.subjectKind, "order"), eq(s.documents.subjectId, b.orderId), eq(s.documents.code, "POD"), inArray(s.documents.status, ["present", "verified"]))).limit(1);
+  return { expected, invoiced: b.invoicedCents, podPresent: !!pod, rateMatch: b.invoicedCents != null && b.invoicedCents === expected, difference: b.invoicedCents != null ? b.invoicedCents - expected : null };
+}
+
+export async function approveCarrierBill(ctx: Ctx, id: string, a: { approvedCents?: number; note?: string | null; shortPayNote?: string | null; payDate?: Date | null; allowNoPod?: boolean }) {
+  assertCtx(ctx);
+  requirePermission(ctx, "billing.issue");
+  const b = await loadBill(ctx, id);
+  if (b.state !== "received" && b.state !== "disputed") throw new TransitionError("order", b.state, "approved", "record the carrier's invoice first");
+  const chk = await threeWay(ctx, id);
+  if (!chk.podPresent && !a.allowNoPod) throw new ValidationError("no POD on the order yet; upload it or approve explicitly without POD");
+  const approved = a.approvedCents ?? b.invoicedCents ?? chk.expected;
+  if (!chk.rateMatch && approved !== chk.expected && !a.note?.trim()) throw new ValidationError(`carrier billed ${(chk.invoiced! / 100).toFixed(2)} vs ${(chk.expected / 100).toFixed(2)} expected: approve the difference with a reason, or short-pay with a note`, "note");
+  if (approved < (b.invoicedCents ?? 0) && !a.shortPayNote?.trim()) throw new ValidationError("a short-pay needs a note that goes to the carrier", "shortPayNote");
+  const [after] = await db.update(s.carrierBills).set({ state: a.payDate ? "scheduled" : "approved", approvedCents: approved, approvalNote: a.note ?? null, shortPayNote: a.shortPayNote ?? null, approvedAt: new Date(), payDate: a.payDate ?? null, updatedAt: new Date(), updatedBy: ctx.userId }).where(eq(s.carrierBills.id, id)).returning();
+  await writeAudit(db, ctx, "carrier_bill", id, "transition", { state: { from: b.state, to: after.state }, approvedCents: { from: null, to: approved } }, a.note ?? a.shortPayNote ?? undefined);
+  return after;
+}
+
+export async function payCarrierBill(ctx: Ctx, id: string, p: { paidCents?: number; method: string; reference?: string | null; paidAt?: Date }) {
+  assertCtx(ctx);
+  requirePermission(ctx, "billing.issue");
+  const b = await loadBill(ctx, id);
+  if (!["approved", "scheduled"].includes(b.state)) throw new TransitionError("order", b.state, "paid", "approve the bill first");
+  // pay-when-paid: hold until the customer paid (persona)
+  const [inv] = await db.select().from(s.invoices).where(and(eq(s.invoices.tenantId, ctx.tenantId), sql`${b.orderId} = any(${s.invoices.orderIds})`, sql`${s.invoices.state} <> 'void'`)).limit(1);
+  if (inv?.payWhenPaid && inv.state !== "paid") throw new ValidationError(`pay-when-paid: customer invoice ${inv.number} is not paid yet`);
+  let amount = p.paidCents ?? b.approvedCents ?? 0;
+  const paidAt = p.paidAt ?? new Date();
+  if (b.quickPayPct && b.approvedAt && paidAt.getTime() - b.approvedAt.getTime() <= 7 * 86400_000 && p.paidCents == null) amount = Math.round(amount * (1 - b.quickPayPct / 10000));
+  const [after] = await db.update(s.carrierBills).set({ state: "paid", paidCents: amount, paidAt, method: p.method, reference: p.reference ?? null, updatedAt: new Date(), updatedBy: ctx.userId }).where(eq(s.carrierBills.id, id)).returning();
+  await writeAudit(db, ctx, "carrier_bill", id, "transition", { state: { from: b.state, to: "paid" }, paidCents: { from: null, to: amount } }, `${p.method} ${p.reference ?? ""}`.trim());
+  return after;
+}
+
+/** 1099 totals: paid to each carrier per calendar year (persona: 1099 by W-9). */
+export async function carrier1099(ctx: Ctx, year: number) {
+  assertCtx(ctx);
+  requirePermission(ctx, "billing.view");
+  const rows = await db
+    .select({ carrierId: s.carrierBills.carrierId, name: s.carriers.name, country: s.carriers.country, total: sql<number>`sum(${s.carrierBills.paidCents})::int` })
+    .from(s.carrierBills)
+    .innerJoin(s.carriers, eq(s.carriers.id, s.carrierBills.carrierId))
+    .where(and(eq(s.carrierBills.tenantId, ctx.tenantId), eq(s.carrierBills.state, "paid"), gte(s.carrierBills.paidAt, new Date(Date.UTC(year, 0, 1))), lte(s.carrierBills.paidAt, new Date(Date.UTC(year, 11, 31, 23, 59, 59)))))
+    .groupBy(s.carrierBills.carrierId, s.carriers.name, s.carriers.country);
+  return rows;
+}
+
+// ---------- driver settlements (7.7) ----------
+
+export async function buildSettlement(ctx: Ctx, driverId: string, periodStart: Date, periodEnd: Date) {
+  assertCtx(ctx);
+  requirePermission(ctx, "billing.issue");
+  const [driver] = await db.select().from(s.drivers).where(and(eq(s.drivers.tenantId, ctx.tenantId), eq(s.drivers.id, driverId))).limit(1);
+  if (!driver) throw new NotFoundError("driver", driverId);
+  const [existing] = await db.select().from(s.settlements).where(and(eq(s.settlements.tenantId, ctx.tenantId), eq(s.settlements.driverId, driverId), eq(s.settlements.periodStart, periodStart))).limit(1);
+  if (existing && existing.state !== "open") throw new ValidationError(`the ${periodStart.toISOString().slice(0, 10)} settlement is ${existing.state}`);
+  const legs = await db
+    .select({ leg: s.legs, orderNumber: s.orders.orderNumber, rateCents: s.orders.rateCents })
+    .from(s.legs)
+    .innerJoin(s.orders, eq(s.orders.id, s.legs.orderId))
+    .where(and(eq(s.legs.tenantId, ctx.tenantId), eq(s.legs.state, "completed"), sql`(${s.legs.driverId} = ${driverId} or ${s.legs.coDriverId} = ${driverId})`, gte(s.legs.completedAt, periodStart), lt(s.legs.completedAt, periodEnd)));
+  const lines: SettlementLine[] = [];
+  const rate = driver.payRateCents ?? 0;
+  for (const { leg, orderNumber, rateCents } of legs) {
+    const team = !!leg.coDriverId;
+    const share = team ? 0.5 : 1;
+    let line: SettlementLine;
+    if (driver.payType === "per_mile") {
+      const miles = leg.plannedMiles ?? 0;
+      line = { id: newId(), kind: "leg", legId: leg.id, orderNumber, description: `${orderNumber} leg ${leg.seq} · ${miles} mi × ${(rate / 100).toFixed(2)}${team ? " (team ½)" : ""}`, qty: miles, unit: "mi", rateCents: rate, amountCents: Math.round(miles * rate * share), source: leg.plannedMiles ? "planned miles" : "no miles on the leg" };
+    } else if (driver.payType === "pct") {
+      line = { id: newId(), kind: "leg", legId: leg.id, orderNumber, description: `${orderNumber} leg ${leg.seq} · ${rate / 100}% of ${((rateCents ?? 0) / 100).toFixed(2)}${team ? " (team ½)" : ""}`, qty: rate, unit: "pct", rateCents: rateCents ?? 0, amountCents: Math.round(((rateCents ?? 0) * rate) / 10000 * share), source: "order rate" };
+    } else {
+      line = { id: newId(), kind: "leg", legId: leg.id, orderNumber, description: `${orderNumber} leg ${leg.seq} · flat${team ? " (team ½)" : ""}`, qty: 1, unit: "flat", rateCents: rate, amountCents: Math.round(rate * share), source: "flat per leg" };
+    }
+    lines.push(line);
+    if (leg.type === "crossing") {
+      if (driver.crossingPayCents) lines.push({ id: newId(), kind: "accessorial", legId: leg.id, orderNumber, description: `${orderNumber} border crossing pay`, qty: 1, unit: "flat", rateCents: driver.crossingPayCents, amountCents: driver.crossingPayCents, source: "driver record" });
+    }
+  }
+  const items = await db.select().from(s.payItems).where(and(eq(s.payItems.tenantId, ctx.tenantId), eq(s.payItems.driverId, driverId), eq(s.payItems.active, true), lte(s.payItems.startsAt, periodEnd)));
+  for (const it of items) {
+    if (it.endsAt && it.endsAt.getTime() < periodStart.getTime()) continue;
+    if (!it.recurring && it.startsAt.getTime() < periodStart.getTime()) continue;
+    let amt = it.amountCents;
+    if (it.remainingCents != null) amt = Math.min(amt, it.remainingCents);
+    if (amt <= 0) continue;
+    lines.push({ id: newId(), kind: it.kind === "deduction" ? "deduction" : "reimbursement", description: it.description, qty: 1, unit: "flat", rateCents: amt, amountCents: it.kind === "deduction" ? -amt : amt, source: it.recurring ? "recurring" : "one-off" });
+  }
+  const gross = lines.filter((l) => l.amountCents > 0).reduce((a, l) => a + l.amountCents, 0);
+  const ded = -lines.filter((l) => l.amountCents < 0).reduce((a, l) => a + l.amountCents, 0);
+  const row = { lines, grossCents: gross, deductionsCents: ded, netCents: gross - ded, updatedAt: new Date(), updatedBy: ctx.userId };
+  if (existing) {
+    const [after] = await db.update(s.settlements).set(row).where(eq(s.settlements.id, existing.id)).returning();
+    return after;
+  }
+  const [after] = await db.insert(s.settlements).values({ id: newId(), tenantId: ctx.tenantId, driverId, periodStart, periodEnd, ...row, createdBy: ctx.userId }).returning();
+  await writeAudit(db, ctx, "settlement", after.id, "create", undefined, `${driver.name} ${periodStart.toISOString().slice(0, 10)}`);
+  return after;
+}
+
+export async function settlementTransition(ctx: Ctx, id: string, to: "reviewed" | "approved" | "paid" | "open", p: { method?: string; reference?: string } = {}) {
+  assertCtx(ctx);
+  requirePermission(ctx, "billing.issue");
+  const [st] = await db.select().from(s.settlements).where(and(eq(s.settlements.tenantId, ctx.tenantId), eq(s.settlements.id, id))).limit(1);
+  if (!st) throw new NotFoundError("settlement", id);
+  const allowed: Record<string, string[]> = { open: ["reviewed"], reviewed: ["approved", "open"], approved: ["paid", "reviewed"], paid: [] };
+  if (!allowed[st.state].includes(to)) throw new TransitionError("order", st.state, to);
+  if (to === "paid" && !p.method) throw new ValidationError("how was it paid?", "method");
+  const [after] = await db.update(s.settlements).set({ state: to, reviewedAt: to === "reviewed" ? new Date() : st.reviewedAt, approvedAt: to === "approved" ? new Date() : st.approvedAt, paidAt: to === "paid" ? new Date() : null, method: p.method ?? st.method, reference: p.reference ?? st.reference, updatedAt: new Date(), updatedBy: ctx.userId }).where(eq(s.settlements.id, id)).returning();
+  if (to === "paid") {
+    // advances paid back: reduce remaining on the pay items that produced deduction lines
+    const items = await db.select().from(s.payItems).where(and(eq(s.payItems.tenantId, ctx.tenantId), eq(s.payItems.driverId, st.driverId), sql`${s.payItems.remainingCents} is not null`));
+    for (const it of items) {
+      const line = st.lines.find((l) => l.kind === "deduction" && l.description === it.description);
+      if (line) await db.update(s.payItems).set({ remainingCents: Math.max(0, (it.remainingCents ?? 0) + line.amountCents), active: (it.remainingCents ?? 0) + line.amountCents > 0 }).where(eq(s.payItems.id, it.id));
+    }
+  }
+  await writeAudit(db, ctx, "settlement", id, "transition", { state: { from: st.state, to } }, p.reference);
+  return after;
+}
+
+export async function addSettlementLine(ctx: Ctx, id: string, line: { kind: SettlementLine["kind"]; description: string; amountCents: number }) {
+  assertCtx(ctx);
+  requirePermission(ctx, "billing.issue");
+  const [st] = await db.select().from(s.settlements).where(and(eq(s.settlements.tenantId, ctx.tenantId), eq(s.settlements.id, id))).limit(1);
+  if (!st) throw new NotFoundError("settlement", id);
+  if (st.state === "paid" || st.state === "approved") throw new ValidationError("send it back to reviewed to change lines");
+  if (!line.description?.trim() || !Number.isFinite(line.amountCents)) throw new ValidationError("description and amount");
+  const amount = line.kind === "deduction" ? -Math.abs(line.amountCents) : line.amountCents;
+  const lines = [...st.lines, { id: newId(), kind: line.kind, description: line.description.trim(), qty: 1, unit: "flat", rateCents: Math.abs(amount), amountCents: amount, source: "manual" }];
+  const gross = lines.filter((l) => l.amountCents > 0).reduce((a, l) => a + l.amountCents, 0);
+  const ded = -lines.filter((l) => l.amountCents < 0).reduce((a, l) => a + l.amountCents, 0);
+  const [after] = await db.update(s.settlements).set({ lines, grossCents: gross, deductionsCents: ded, netCents: gross - ded, updatedAt: new Date(), updatedBy: ctx.userId }).where(eq(s.settlements.id, id)).returning();
+  return after;
+}
+
+/** Driver sees approved/paid settlements (spec 7.7) plus one in review so a dispute lands before pay day. */
+export async function driverSettlements(tenantId: string, driverId: string) {
+  return db
+    .select()
+    .from(s.settlements)
+    .where(and(eq(s.settlements.tenantId, tenantId), eq(s.settlements.driverId, driverId), inArray(s.settlements.state, ["reviewed", "approved", "paid"])))
+    .orderBy(desc(s.settlements.periodStart))
+    .limit(8);
+}
+
+/** Driver disputes a line from the app (spec 7.10). */
+export async function disputeSettlementLine(tenantId: string, driverId: string, settlementId: string, lineId: string, reason: string) {
+  const [st] = await db.select().from(s.settlements).where(and(eq(s.settlements.tenantId, tenantId), eq(s.settlements.id, settlementId), eq(s.settlements.driverId, driverId))).limit(1);
+  if (!st) throw new NotFoundError("settlement", settlementId);
+  if (!reason?.trim()) throw new ValidationError("say what is wrong", "reason");
+  const lines = st.lines.map((l) => (l.id === lineId ? { ...l, disputed: reason.trim() } : l));
+  await db.update(s.settlements).set({ lines, state: st.state === "approved" ? "reviewed" : st.state, updatedAt: new Date() }).where(eq(s.settlements.id, settlementId));
+}
+
+export async function listSettlements(ctx: Ctx) {
+  assertCtx(ctx);
+  requirePermission(ctx, "billing.view");
+  return db.select({ st: s.settlements, driverName: s.drivers.name }).from(s.settlements).innerJoin(s.drivers, eq(s.drivers.id, s.settlements.driverId)).where(eq(s.settlements.tenantId, ctx.tenantId)).orderBy(desc(s.settlements.periodStart)).limit(500);
+}
+
+export async function addPayItem(ctx: Ctx, driverId: string, it: { kind: "deduction" | "reimbursement"; description: string; amountCents: number; recurring?: boolean; remainingCents?: number | null; endsAt?: Date | null }) {
+  assertCtx(ctx);
+  requirePermission(ctx, "billing.issue");
+  if (!it.description?.trim() || !Number.isFinite(it.amountCents) || it.amountCents <= 0) throw new ValidationError("description and a positive amount");
+  const [row] = await db.insert(s.payItems).values({ id: newId(), tenantId: ctx.tenantId, driverId, kind: it.kind, description: it.description.trim(), amountCents: it.amountCents, recurring: !!it.recurring, remainingCents: it.remainingCents ?? null, endsAt: it.endsAt ?? null, createdBy: ctx.userId, updatedBy: ctx.userId }).returning();
+  return row;
+}
+
+/** Sunday-to-Saturday week containing `d`, in UTC. */
+export function weekOf(d: Date) {
+  const start = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate() - d.getUTCDay()));
+  return { start, end: new Date(start.getTime() + 7 * 86400_000) };
+}
+
+// ---------- order P&L (7.8) ----------
+
+export async function orderPnl(ctx: Ctx, orderId: string) {
+  assertCtx(ctx);
+  requirePermission(ctx, "billing.view");
+  const order = await loadOrder(ctx, orderId);
+  await ensureCharges(ctx, orderId);
+  const [cs, bills, legs, tenant] = await Promise.all([
+    db.select().from(s.charges).where(and(eq(s.charges.orderId, orderId), eq(s.charges.billable, true))),
+    db.select().from(s.carrierBills).where(eq(s.carrierBills.orderId, orderId)),
+    db.select().from(s.legs).where(eq(s.legs.orderId, orderId)),
+    db.select({ settings: s.tenants.settings }).from(s.tenants).where(eq(s.tenants.id, ctx.tenantId)).limit(1).then((r) => r[0]),
+  ]);
+  const revenue = cs.reduce((a, c) => a + c.amountCents, 0);
+  const carrierCost = bills.reduce((a, b) => a + (b.paidCents ?? b.approvedCents ?? b.invoicedCents ?? b.expectedCents + b.accessorialCents), 0);
+  const sts = await db.select().from(s.settlements).where(eq(s.settlements.tenantId, ctx.tenantId));
+  let driverPay = 0;
+  for (const st of sts) for (const l of st.lines) if (l.legId && legs.some((g) => g.id === l.legId) && l.amountCents > 0) driverPay += l.amountCents;
+  const miles = legs.filter((l) => l.assigneeKind === "truck").reduce((a, l) => a + (l.plannedMiles ?? 0), 0);
+  const fuelCpm = Number((tenant?.settings as Record<string, unknown>)?.fuelCostCentsPerMile ?? 65);
+  const fuel = Math.round(miles * fuelCpm);
+  const extra = order.tollsFeesCents ?? 0;
+  const cost = carrierCost + driverPay + fuel + extra;
+  return { revenue, carrierCost, driverPay, fuel, miles, fuelCpm, extra, cost, margin: revenue - cost, marginPct: revenue ? Math.round(((revenue - cost) / revenue) * 1000) / 10 : 0 };
+}
+
+export { diff };

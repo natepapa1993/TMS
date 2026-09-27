@@ -29,6 +29,27 @@
       "when": 1790474765836,
       "tag": "0003_real_boomer",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1790475479420,
+      "tag": "0004_talented_psynapse",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1790476795584,
+      "tag": "0005_glamorous_sally_floyd",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1790476886476,
+      "tag": "0006_eager_tomorrow_man",
+      "breakpoints": true
     }
   ]
 }

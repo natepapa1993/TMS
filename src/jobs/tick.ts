@@ -22,6 +22,10 @@ export async function tick(now = new Date()) {
       const C = await import("@/domain/compliance");
       out.compliance = await C.evaluateAllTenants(now).catch((e) => ({ error: String(e) }));
     }
+    if (n % 30 === 5) {
+      const B = await import("@/domain/billing");
+      out.reminders = await B.sendReminders(now).catch((e) => ({ error: String(e) }));
+    }
     if (n % 15 === 4) {
       const C = await import("@/domain/compliance");
       out.digest = await C.sendDigests(now).catch((e) => ({ error: String(e) }));

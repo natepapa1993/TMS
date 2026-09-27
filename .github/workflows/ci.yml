@@ -22,7 +22,7 @@ jobs:
       DATABASE_URL: postgres://postgres:postgres@localhost:5432/postgres
       TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/postgres
       SESSION_SECRET: ci-session-secret-at-least-32-characters-long
-      APP_URL: http://localhost:3000
+      APP_URL: http://localhost:3123 # the e2e server port (playwright.config.ts)
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4

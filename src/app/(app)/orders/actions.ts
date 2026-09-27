@@ -57,7 +57,7 @@ export async function createOrderAction(input: { customerId: string; brokerId: s
   return r;
 }
 
-export async function updateOrderAction(orderId: string, values: { customerId?: string; brokerId?: string; billingEntityId?: string; equipment?: string; rate?: string; rateTbd?: boolean; currency?: string; refs?: Record<string, string>; cargoNote?: string }, expectedUpdatedAt?: string) {
+export async function updateOrderAction(orderId: string, values: { customerId?: string; brokerId?: string; billingEntityId?: string; equipment?: string; rate?: string; rateTbd?: boolean; currency?: string; refs?: Record<string, string>; cargoNote?: string; fuelRule?: string; fuelPct?: string; tollsFees?: string }, expectedUpdatedAt?: string) {
   const r = await act(async (ctx) => {
     const patch: Record<string, unknown> = {};
     if (values.customerId !== undefined) patch.customerId = values.customerId || null;
@@ -66,6 +66,18 @@ export async function updateOrderAction(orderId: string, values: { customerId?: 
     if (values.equipment !== undefined) patch.equipment = values.equipment;
     if (values.currency !== undefined) patch.currency = values.currency;
     if (values.cargoNote !== undefined) patch.cargoNote = values.cargoNote || null;
+    if (values.fuelRule !== undefined) patch.fuelRule = values.fuelRule === "pct" ? "pct" : "included";
+    if (values.fuelPct !== undefined) {
+      const n = values.fuelPct.trim() ? Number(values.fuelPct.replace("%", "")) : null;
+      if (n != null && (!Number.isFinite(n) || n < 0 || n > 100)) throw Object.assign(new Error("Fuel % must be 0–100"), { name: "ValidationError", field: "fuelPct" });
+      patch.fuelPct = n == null ? null : Math.round(n);
+      if (patch.fuelRule === "pct" && patch.fuelPct == null) throw Object.assign(new Error("Enter the fuel surcharge percent"), { name: "ValidationError", field: "fuelPct" });
+    }
+    if (values.tollsFees !== undefined) {
+      const c = values.tollsFees.trim() ? Math.round(Number(values.tollsFees.replace(/[$,\s]/g, "")) * 100) : null;
+      if (values.tollsFees.trim() && !Number.isFinite(c)) throw Object.assign(new Error("Tolls & fees must be an amount"), { name: "ValidationError", field: "tollsFees" });
+      patch.tollsFeesCents = c;
+    }
     if (values.rate !== undefined) {
       const c = values.rate.trim() ? Math.round(Number(values.rate.replace(/[$,\s]/g, "")) * 100) : null;
       if (values.rate.trim() && !Number.isFinite(c)) throw Object.assign(new Error("Rate must be a number"), { name: "ValidationError", field: "rate" });

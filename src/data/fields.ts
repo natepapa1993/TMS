@@ -6,7 +6,7 @@ import type { RecordKind } from "./records";
  * (grouped sections, everything editable), CSV import mapping, and value coercion.
  */
 
-export type FieldType = "text" | "number" | "cents" | "date" | "select" | "boolean" | "textarea" | "ref" | "email" | "phone" | "address";
+export type FieldType = "text" | "number" | "cents" | "date" | "select" | "boolean" | "textarea" | "ref" | "email" | "phone" | "address" | "list";
 
 export type Field = {
   name: string;
@@ -21,6 +21,7 @@ export type Field = {
   help?: string;
   placeholder?: string;
   unique?: boolean;
+  listOf?: "text" | "number"; // for type=list: comma-separated values; "none" saves an empty list
 };
 
 const COUNTRY = [
@@ -141,6 +142,10 @@ export const FIELDS: Record<RecordKind, Field[]> = {
     { name: "termsDays", label: "Terms (days)", type: "number", quick: true, column: true, group: "Billing" },
     { name: "payWhenPaid", label: "Pay-when-paid", type: "boolean", group: "Billing" },
     { name: "billingEntityId", label: "Bill from entity", type: "ref", ref: "billingEntity", group: "Billing" },
+    { name: "requiredDocs", label: "Docs before invoicing", type: "list", group: "Billing", help: "Codes the invoice needs on file · blank = POD, BOL, RATE_CON · type none if nothing is required", placeholder: "POD, BOL, RATE_CON" },
+    { name: "detentionFreeMinutes", label: "Detention free time (min)", type: "number", group: "Billing", help: "blank = 120" },
+    { name: "detentionRateCents", label: "Detention rate / hour", type: "cents", group: "Billing", help: "blank = 75.00" },
+    { name: "reminderDays", label: "Reminder days past due", type: "list", listOf: "number", group: "Billing", help: "blank = 3, 10, 20 · type none to opt out", placeholder: "3, 10, 20" },
     {
       name: "trackingRequirement",
       label: "Tracking requirement",
@@ -207,6 +212,7 @@ export const FIELDS: Record<RecordKind, Field[]> = {
     { name: "dispatchEmail", label: "Dispatch email", type: "email", quick: true, group: "Dispatch" },
     { name: "dispatchPhone", label: "Dispatch phone", type: "phone", group: "Dispatch" },
     { name: "whatsapp", label: "WhatsApp", type: "phone", group: "Dispatch" },
+    { name: "quickPayPct", label: "Quick-pay discount %", type: "number", group: "Payables", help: "taken off when we pay within 7 days of approval · blank = none" },
     { name: "doNotUse", label: "Do not use", type: "boolean", column: true, group: "Status" },
     { name: "doNotUseReason", label: "Reason", type: "text", group: "Status" },
   ],
@@ -370,7 +376,8 @@ export const FIELDS: Record<RecordKind, Field[]> = {
         { value: "hourly", label: "Hourly" },
       ],
     },
-    { name: "payRateCents", label: "Pay rate", type: "cents", group: "Pay" },
+    { name: "payRateCents", label: "Pay rate", type: "cents", group: "Pay", help: "per mile, per leg, per hour, or percent (62 = 62%) by pay type" },
+    { name: "crossingPayCents", label: "Crossing pay", type: "cents", group: "Pay", help: "flat, on top, for every crossing leg" },
     { name: "eldDriverId", label: "ELD driver id", type: "text", group: "Pay" },
   ],
   documentType: [
@@ -475,6 +482,15 @@ export function coerce(kind: RecordKind, raw: Record<string, string | undefined 
         if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(v)) errors[f.name] = `${f.label} is not a valid email`;
         else values[f.name] = v.toLowerCase();
         break;
+      case "list": {
+        const parts = v.toLowerCase() === "none" ? [] : (v.startsWith("[") ? (JSON.parse(v) as unknown[]).map(String) : v.split(/[,;\n]/)).map((x) => x.trim()).filter(Boolean);
+        if (f.listOf === "number") {
+          const nums = parts.map(Number);
+          if (nums.some((n) => !Number.isFinite(n))) errors[f.name] = `${f.label}: numbers separated by commas`;
+          else values[f.name] = nums;
+        } else values[f.name] = parts.map((x) => x.toUpperCase().replace(/[^A-Z0-9_]+/g, "_"));
+        break;
+      }
       case "address": {
         try {
           values[f.name] = v.startsWith("{") ? JSON.parse(v) : parseAddress(v);
@@ -550,6 +566,8 @@ export function fieldDisplay(f: Field, value: unknown, refs?: Map<string, string
       const a = value as { line1?: string; city?: string; state?: string; postalCode?: string; country?: string };
       return [a.line1, a.city, [a.state, a.postalCode].filter(Boolean).join(" "), a.country].filter(Boolean).join(", ");
     }
+    case "list":
+      return Array.isArray(value) ? (value.length ? value.join(", ") : "none") : String(value);
     default:
       return String(value);
   }

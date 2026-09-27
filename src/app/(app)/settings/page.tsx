@@ -48,13 +48,21 @@ export default async function SettingsPage({ searchParams }: PageProps<"/setting
           </div>
         )}
         <section>
-          <div className="eyebrow mb-2">Connections</div>
-          <Link href="/settings/integrations" className="card p-4 hover:border-teal transition-colors flex items-start justify-between gap-3 max-w-md">
-            <div>
-              <div className="font-extrabold">Integrations</div>
-              <div className="text-muted text-[12.5px] mt-0.5">Motive ELD tracking, email sending</div>
-            </div>
-          </Link>
+          <div className="eyebrow mb-2">Company &amp; connections</div>
+          <div className="grid grid-cols-2 xl:grid-cols-3 gap-3">
+            <Link href="/settings/company" className="card p-4 hover:border-teal transition-colors flex items-start justify-between gap-3">
+              <div>
+                <div className="font-extrabold">Company</div>
+                <div className="text-muted text-[12.5px] mt-0.5">Name, time zone, fuel cost per mile</div>
+              </div>
+            </Link>
+            <Link href="/settings/integrations" className="card p-4 hover:border-teal transition-colors flex items-start justify-between gap-3">
+              <div>
+                <div className="font-extrabold">Integrations</div>
+                <div className="text-muted text-[12.5px] mt-0.5">Motive ELD tracking, email sending</div>
+              </div>
+            </Link>
+          </div>
         </section>
         {SECTIONS.map((sec) => (
           <section key={sec}>

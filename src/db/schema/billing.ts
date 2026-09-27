@@ -1,0 +1,197 @@
+import { pgTable, text, timestamp, integer, jsonb, boolean, index, uniqueIndex } from "drizzle-orm/pg-core";
+import { sql } from "drizzle-orm";
+import { id, tenantId, audit } from "./core";
+
+/** Billing & settlements (spec §7): our own ledger — charges, invoices, receipts, credit memos, carrier bills, driver settlements. */
+
+export const CHARGE_KINDS = ["linehaul", "fuel", "detention", "layover", "tonu", "lumper", "border_fee", "crossing_fee", "storage", "extra_stop", "accessorial", "tax", "other"] as const;
+export type ChargeKind = (typeof CHARGE_KINDS)[number];
+
+export const charges = pgTable(
+  "charges",
+  {
+    id: id(),
+    tenantId: tenantId(),
+    orderId: text("order_id").notNull(),
+    legId: text("leg_id"),
+    kind: text("kind").$type<ChargeKind>().notNull(),
+    description: text("description").notNull(),
+    qty: integer("qty").notNull().default(1), // in hundredths for fractional (e.g. 2.5 h = 250) when unit is h
+    unit: text("unit").notNull().default("flat"), // flat | mi | h | stop | pct
+    rateCents: integer("rate_cents").notNull(),
+    amountCents: integer("amount_cents").notNull(),
+    currency: text("currency").notNull().default("USD"),
+    billable: boolean("billable").notNull().default(true),
+    source: text("source").notNull().default("manual"), // rate_con | manual | computed | tariff
+    data: jsonb("data").$type<Record<string, unknown>>(), // computed-from events, rule version…
+    invoiceId: text("invoice_id"),
+    ...audit(),
+  },
+  (t) => [index("charges_tenant_order").on(t.tenantId, t.orderId), index("charges_invoice").on(t.invoiceId)],
+);
+
+export const INVOICE_STATES = ["draft", "issued", "sent", "partially_paid", "paid", "closed", "void", "disputed"] as const;
+export type InvoiceState = (typeof INVOICE_STATES)[number];
+
+export type InvoiceLine = { chargeId: string | null; orderId: string; orderNumber: string; kind: string; description: string; qty: number; unit: string; rateCents: number; amountCents: number };
+export type InvoiceSnapshot = {
+  entity: { legalName: string; dba: string | null; taxId: string | null; remitTo: Record<string, string | undefined> | null; mc: string | null; dot: string | null };
+  billTo: { name: string; email: string | null; kind: string };
+  refs: Record<string, string>;
+  stops: { seq: number; type: string; name: string; city: string | null; state: string | null; country: string; departedAt: string | null; arrivedAt: string | null }[];
+  lines: InvoiceLine[];
+  terms: string;
+  currency: string;
+  exchangeRate: number | null;
+};
+
+export const invoices = pgTable(
+  "invoices",
+  {
+    id: id(),
+    tenantId: tenantId(),
+    entityId: text("entity_id").notNull(),
+    customerId: text("customer_id").notNull(),
+    number: text("number"), // assigned at issue, never reused
+    state: text("state").$type<InvoiceState>().notNull().default("draft"),
+    orderIds: text("order_ids").array().notNull().default([]),
+    currency: text("currency").notNull().default("USD"),
+    exchangeRate: integer("exchange_rate_e4"), // rate × 10,000, MXN per USD when currency is MXN
+    termsDays: integer("terms_days").notNull().default(30),
+    subtotalCents: integer("subtotal_cents").notNull().default(0),
+    totalCents: integer("total_cents").notNull().default(0),
+    paidCents: integer("paid_cents").notNull().default(0),
+    creditedCents: integer("credited_cents").notNull().default(0),
+    snapshot: jsonb("snapshot").$type<InvoiceSnapshot | null>(),
+    pdfStorageKey: text("pdf_storage_key"),
+    token: text("token"), // public link for the customer
+    issuedAt: timestamp("issued_at", { withTimezone: true }),
+    dueAt: timestamp("due_at", { withTimezone: true }),
+    sentAt: timestamp("sent_at", { withTimezone: true }),
+    sentTo: text("sent_to"),
+    paidAt: timestamp("paid_at", { withTimezone: true }),
+    voidedAt: timestamp("voided_at", { withTimezone: true }),
+    voidReason: text("void_reason"),
+    disputeReason: text("dispute_reason"),
+    disputeExpectedAt: timestamp("dispute_expected_at", { withTimezone: true }),
+    promiseToPayAt: timestamp("promise_to_pay_at", { withTimezone: true }),
+    payWhenPaid: boolean("pay_when_paid").notNull().default(false),
+    notes: text("notes"),
+    ...audit(),
+  },
+  (t) => [index("invoices_tenant_state").on(t.tenantId, t.state), index("invoices_tenant_customer").on(t.tenantId, t.customerId), uniqueIndex("invoices_tenant_number").on(t.tenantId, t.number)],
+);
+
+export const receipts = pgTable(
+  "receipts",
+  {
+    id: id(),
+    tenantId: tenantId(),
+    invoiceId: text("invoice_id").notNull(),
+    amountCents: integer("amount_cents").notNull(),
+    receivedAt: timestamp("received_at", { withTimezone: true }).notNull(),
+    method: text("method").notNull().default("ach"), // ach | check | card | wire | factoring | other
+    reference: text("reference"),
+    note: text("note"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    createdBy: text("created_by"),
+  },
+  (t) => [index("receipts_invoice").on(t.invoiceId)],
+);
+
+export const creditMemos = pgTable(
+  "credit_memos",
+  {
+    id: id(),
+    tenantId: tenantId(),
+    invoiceId: text("invoice_id").notNull(),
+    number: text("number").notNull(),
+    amountCents: integer("amount_cents").notNull(),
+    reason: text("reason").notNull(),
+    lines: jsonb("lines").$type<{ description: string; amountCents: number }[]>().notNull().default(sql`'[]'::jsonb`),
+    issuedAt: timestamp("issued_at", { withTimezone: true }).notNull().defaultNow(),
+    createdBy: text("created_by"),
+  },
+  (t) => [index("credit_memos_invoice").on(t.invoiceId)],
+);
+
+export const CARRIER_BILL_STATES = ["expected", "received", "approved", "scheduled", "paid", "disputed"] as const;
+
+export const carrierBills = pgTable(
+  "carrier_bills",
+  {
+    id: id(),
+    tenantId: tenantId(),
+    carrierId: text("carrier_id").notNull(),
+    orderId: text("order_id").notNull(),
+    legId: text("leg_id").notNull(),
+    tenderId: text("tender_id"),
+    state: text("state").$type<(typeof CARRIER_BILL_STATES)[number]>().notNull().default("expected"),
+    currency: text("currency").notNull().default("USD"),
+    expectedCents: integer("expected_cents").notNull().default(0), // tender rate + approved accessorials
+    accessorialCents: integer("accessorial_cents").notNull().default(0),
+    invoicedCents: integer("invoiced_cents"), // what the carrier billed
+    approvedCents: integer("approved_cents"), // what we will pay
+    carrierInvoiceNumber: text("carrier_invoice_number"),
+    carrierInvoiceDocId: text("carrier_invoice_doc_id"),
+    receivedAt: timestamp("received_at", { withTimezone: true }),
+    approvedAt: timestamp("approved_at", { withTimezone: true }),
+    approvalNote: text("approval_note"),
+    shortPayNote: text("short_pay_note"),
+    payDate: timestamp("pay_date", { withTimezone: true }),
+    paidAt: timestamp("paid_at", { withTimezone: true }),
+    paidCents: integer("paid_cents"),
+    method: text("method"),
+    reference: text("reference"),
+    quickPayPct: integer("quick_pay_pct"), // basis points
+    ...audit(),
+  },
+  (t) => [uniqueIndex("carrier_bills_leg").on(t.legId), index("carrier_bills_tenant_state").on(t.tenantId, t.state), index("carrier_bills_tenant_carrier").on(t.tenantId, t.carrierId)],
+);
+
+export const SETTLEMENT_STATES = ["open", "reviewed", "approved", "paid"] as const;
+export type SettlementLine = { id: string; kind: "leg" | "accessorial" | "deduction" | "reimbursement" | "adjustment"; legId?: string | null; orderNumber?: string | null; description: string; qty: number; unit: string; rateCents: number; amountCents: number; source: string; disputed?: string | null; response?: string | null };
+
+export const settlements = pgTable(
+  "settlements",
+  {
+    id: id(),
+    tenantId: tenantId(),
+    driverId: text("driver_id").notNull(),
+    periodStart: timestamp("period_start", { withTimezone: true }).notNull(),
+    periodEnd: timestamp("period_end", { withTimezone: true }).notNull(),
+    state: text("state").$type<(typeof SETTLEMENT_STATES)[number]>().notNull().default("open"),
+    currency: text("currency").notNull().default("USD"),
+    lines: jsonb("lines").$type<SettlementLine[]>().notNull().default(sql`'[]'::jsonb`),
+    grossCents: integer("gross_cents").notNull().default(0),
+    deductionsCents: integer("deductions_cents").notNull().default(0),
+    netCents: integer("net_cents").notNull().default(0),
+    reviewedAt: timestamp("reviewed_at", { withTimezone: true }),
+    approvedAt: timestamp("approved_at", { withTimezone: true }),
+    paidAt: timestamp("paid_at", { withTimezone: true }),
+    method: text("method"),
+    reference: text("reference"),
+    ...audit(),
+  },
+  (t) => [uniqueIndex("settlements_driver_period").on(t.tenantId, t.driverId, t.periodStart), index("settlements_tenant_state").on(t.tenantId, t.state)],
+);
+
+/** Recurring or one-off driver deductions and reimbursements (advances, escrow, fuel card…). */
+export const payItems = pgTable(
+  "pay_items",
+  {
+    id: id(),
+    tenantId: tenantId(),
+    driverId: text("driver_id").notNull(),
+    kind: text("kind").notNull(), // deduction | reimbursement
+    description: text("description").notNull(),
+    amountCents: integer("amount_cents").notNull(),
+    recurring: boolean("recurring").notNull().default(false),
+    remainingCents: integer("remaining_cents"), // for advances paid back over time
+    startsAt: timestamp("starts_at", { withTimezone: true }).notNull().defaultNow(),
+    endsAt: timestamp("ends_at", { withTimezone: true }),
+    active: boolean("active").notNull().default(true),
+    ...audit(),
+  },
+  (t) => [index("pay_items_driver").on(t.tenantId, t.driverId, t.active)],
+);

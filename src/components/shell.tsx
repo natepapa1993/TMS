@@ -11,7 +11,7 @@ const NAV = [
   { href: "/fleet", label: "Fleet", icon: "⛟" },
   { href: "/crossing", label: "Crossing", icon: "⇄" },
   { href: "/compliance", label: "Compliance", icon: "✓" },
-  { href: "/billing", label: "Billing", icon: "$", soon: true },
+  { href: "/billing", label: "Billing", icon: "$" },
   { href: "/settings", label: "Settings", icon: "⚙" },
 ];
 
@@ -33,10 +33,9 @@ export function Shell({ user, children }: { user: { name: string; role: string; 
           {NAV.map((n) => {
             const active = path === n.href || path.startsWith(n.href + "/");
             return (
-              <Link key={n.href} href={n.soon ? "#" : n.href} className={`rail-link ${n.soon ? "opacity-40 cursor-default" : ""}`} aria-current={active ? "page" : undefined} aria-disabled={n.soon} title={n.soon ? "Coming in a later milestone" : undefined}>
+              <Link key={n.href} href={n.href} className="rail-link" aria-current={active ? "page" : undefined}>
                 <span className="w-5 text-center text-[15px] opacity-90">{n.icon}</span>
                 {n.label}
-                {n.soon && <span className="ml-auto text-[10px] font-bold tracking-wider text-slate-400">M4</span>}
               </Link>
             );
           })}

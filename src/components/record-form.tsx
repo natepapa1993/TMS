@@ -19,6 +19,7 @@ function toInputValue(f: Field, v: unknown): string {
   }
   if (f.type === "cents") return typeof v === "number" ? (v / 100).toFixed(2) : String(v);
   if (f.type === "boolean") return v ? "true" : "";
+  if (f.type === "list") return Array.isArray(v) ? (v.length ? v.join(", ") : "none") : String(v);
   if (f.type === "address") {
     const a = v as { line1?: string; city?: string; state?: string; postalCode?: string; country?: string };
     return [a.line1, a.city, [a.state, a.postalCode].filter(Boolean).join(" "), a.country].filter(Boolean).join(", ");

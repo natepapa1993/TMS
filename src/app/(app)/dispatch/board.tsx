@@ -25,6 +25,7 @@ type Leg = {
   coDriverId: string | null;
   carrierId: string | null;
   carrierRateCents: number | null;
+  plannedMiles: number | null;
   fromStopId: string | null;
   toStopId: string | null;
   truckUnit: string | null;
@@ -662,6 +663,7 @@ function AssignModal({ leg, order, data, onClose, onDone }: { leg: Leg; order: O
   const [pick, setPick] = useState<{ truckId: string; driverId: string | null; coDriverId: string | null } | null>(null);
   const [carrierId, setCarrierId] = useState(leg.carrierId ?? "");
   const [carrierRate, setCarrierRate] = useState(leg.carrierRateCents != null ? (leg.carrierRateCents / 100).toFixed(2) : "");
+  const [miles, setMiles] = useState(leg.plannedMiles != null ? String(leg.plannedMiles) : "");
   const [override, setOverride] = useState("");
   const [needsOverride, setNeedsOverride] = useState<{ message: string; hard: boolean } | null>(null);
   const [err, setErr] = useState<string | null>(null);
@@ -677,7 +679,9 @@ function AssignModal({ leg, order, data, onClose, onDone }: { leg: Leg; order: O
   const go = () =>
     start(async () => {
       setErr(null);
-      const opts = needsOverride && override.trim() ? { override: true, reason: override.trim() } : {};
+      const milesN = miles.trim() ? Number(miles.replace(/[,\s]/g, "")) : null;
+      if (milesN != null && (!Number.isFinite(milesN) || milesN < 0)) return setErr("Miles must be a number");
+      const opts = { ...(needsOverride && override.trim() ? { override: true, reason: override.trim() } : {}), ...(tab === "truck" ? { plannedMiles: milesN } : {}) };
       if (tab === "carrier") {
         if (!carrierId) return setErr("Pick a carrier");
         if (sendNow && tender.channel === "email") {
@@ -759,6 +763,13 @@ function AssignModal({ leg, order, data, onClose, onDone }: { leg: Leg; order: O
                 </div>
               );
             })}
+            <div className="flex items-center gap-2 px-3 pt-3 mt-1 border-t border-line">
+              <label className="label m-0" htmlFor="plan-miles">
+                Planned miles
+              </label>
+              <input id="plan-miles" className="input w-28" inputMode="numeric" value={miles} onChange={(e) => setMiles(e.target.value)} placeholder="for pay & fuel" />
+              <span className="help m-0">Per-mile driver pay and the fuel estimate come from this. Editable later on the order.</span>
+            </div>
           </div>
         )
       ) : (

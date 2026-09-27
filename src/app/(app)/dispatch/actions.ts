@@ -25,7 +25,9 @@ export async function carrierEligibilityAction(legId: string, carrierId: string)
   });
 }
 
-export async function planAction(legId: string, a: O.Assignment, opts: { override?: boolean; reason?: string } = {}) {
+export type PlanOpts = { override?: boolean; reason?: string; plannedMiles?: number | null };
+
+export async function planAction(legId: string, a: O.Assignment, opts: PlanOpts = {}) {
   const r = await act((ctx) => O.planLeg(ctx, legId, a, opts));
   if (r.ok) touch();
   return r;
@@ -46,7 +48,7 @@ export async function dispatchAction(legId: string) {
   return r;
 }
 
-export async function planAndDispatchAction(legId: string, a: O.Assignment, opts: { override?: boolean; reason?: string } = {}) {
+export async function planAndDispatchAction(legId: string, a: O.Assignment, opts: PlanOpts = {}) {
   const r = await act(async (ctx) => {
     await O.planLeg(ctx, legId, a, opts);
     return O.dispatchLeg(ctx, legId);
@@ -179,4 +181,10 @@ export async function driverLinkAction(driverId: string) {
 
 export async function positionsAction() {
   return act((ctx) => latestTruckPositions(ctx));
+}
+
+export async function setLegMilesAction(legId: string, miles: string) {
+  const r = await act((ctx) => O.setLegMiles(ctx, legId, miles.trim() ? Number(miles.replace(/[,\s]/g, "")) : null));
+  if (r.ok) touch();
+  return r;
 }

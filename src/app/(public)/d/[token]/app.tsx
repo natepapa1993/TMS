@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { driverStepAction, driverPingAction } from "../../actions";
+import { driverStepAction, driverPingAction, disputeSettlementLineAction } from "../../actions";
 import { LEG_LABEL } from "@/domain/states";
 import type { LegState } from "@/db/schema";
 
@@ -15,7 +15,11 @@ type Stop = { id: string; name: string; type: string; country: string; address: 
 type Item = { leg: { id: string; seq: number; type: string; state: LegState }; order: { orderNumber: string; equipment: string; cargoNote: string | null; refs: Record<string, string> }; from: Stop | null; to: Stop | null; truck: { unitNumber: string } | null; next: { to: LegState; label: string; es: string } | null; crossing: { id: string; state: string; trailerNumber: string | null; packetToken: string | null; nextStep: string | null } | null };
 const XSTEP: Record<string, { en: string; es: string }> = { departed_yard: { en: "Departed the yard", es: "Salí del patio" }, at_mx_customs: { en: "At Mexican customs", es: "En aduana mexicana" }, in_us_customs: { en: "At US customs", es: "En aduana americana" }, cleared: { en: "Cleared — US side", es: "Liberado — lado americano" } };
 const XLABEL: Record<string, string> = { packet_sent: "Packet sent · Paquete enviado", departed_yard: "Departed yard · Salió del patio", at_mx_customs: "MX customs · Aduana MX", in_us_customs: "US customs · Aduana US", cleared: "Cleared · Liberado", held: "Held · Detenido", returned: "Returned · Regresado" };
-type Data = { driver: { name: string; driverType: string }; current: Item | null; items: Item[]; own: { label: string; status: string; expiresAt: string | null }[] };
+type Data = { driver: { name: string; driverType: string }; current: Item | null; items: Item[]; own: { label: string; status: string; expiresAt: string | null }[]; pay: PayStub[] };
+type PayLine = { id: string; kind: string; orderNumber?: string | null; description: string; amountCents: number; disputed?: string | null; response?: string | null };
+type PayStub = { id: string; periodStart: string; periodEnd: string; state: string; currency: string; lines: PayLine[]; grossCents: number; deductionsCents: number; netCents: number; paidAt: string | null };
+const money = (c: number, cur = "USD") => `${cur === "MXN" ? "MX$" : "$"}${(c / 100).toLocaleString("en-US", { minimumFractionDigits: 2 })}`;
+const PAY_STATE: Record<string, string> = { reviewed: "In review · En revisión", approved: "Approved · Aprobado", paid: "Paid · Pagado" };
 
 type Fix = { lat: number; lng: number; accuracyM: number | null; speedMph: number | null; heading: number | null };
 
@@ -243,6 +247,16 @@ export function DriverApp({ token, data }: { token: string; data: Data }) {
           <div className="help mt-1">Send a photo of the renewal to dispatch. · Manda foto de la renovación a despacho.</div>
         </div>
       )}
+      {data.pay.length > 0 && (
+        <div className="card mt-5 p-4">
+          <div className="eyebrow mb-1">Your pay · Tu pago</div>
+          <div className="space-y-2">
+            {data.pay.map((p) => (
+              <PayCard key={p.id} token={token} stub={p} onChanged={() => router.refresh()} />
+            ))}
+          </div>
+        </div>
+      )}
       <div className="mt-5 text-center text-[12px] text-faint">Keep this page open while driving so dispatch can see you. · Deja esta página abierta.</div>
     </div>
   );
@@ -266,6 +280,90 @@ function Place({ label, s, active }: { label: string; s: Stop | null; active: bo
         <a className="btn btn-sm mt-2" href={mapsHref(s)} target="_blank" rel="noreferrer">
           Navigate · Ir
         </a>
+      )}
+    </div>
+  );
+}
+
+function PayCard({ token, stub, onChanged }: { token: string; stub: PayStub; onChanged: () => void }) {
+  const [open, setOpen] = useState(false);
+  const [disputing, setDisputing] = useState<string | null>(null);
+  const [why, setWhy] = useState("");
+  const [err, setErr] = useState<string | null>(null);
+  const [pending, start] = useTransition();
+  const d = (s: string) => new Date(s).toLocaleDateString("en-US", { month: "short", day: "numeric" });
+  return (
+    <div className="rounded-lg border border-line p-3">
+      <button type="button" className="w-full flex items-center justify-between text-left" onClick={() => setOpen((o) => !o)} aria-expanded={open}>
+        <div>
+          <div className="font-extrabold text-[14px]">
+            Week of {d(stub.periodStart)} – {d(new Date(new Date(stub.periodEnd).getTime() - 1).toISOString())}
+          </div>
+          <div className={`text-[12px] font-semibold ${stub.state === "paid" ? "text-teal" : "text-muted"}`}>{PAY_STATE[stub.state] ?? stub.state}</div>
+        </div>
+        <div className="text-right">
+          <div className="font-extrabold text-[16px]">{money(stub.netCents, stub.currency)}</div>
+          <div className="text-[11px] text-faint">net · neto</div>
+        </div>
+      </button>
+      {open && (
+        <div className="mt-2 border-t border-line pt-2">
+          <ul className="space-y-1 text-[13px]">
+            {stub.lines.map((l) => (
+              <li key={l.id}>
+                <div className="flex justify-between gap-2">
+                  <span>
+                    {l.orderNumber ? <b>{l.orderNumber} · </b> : null}
+                    {l.description}
+                  </span>
+                  <span className={`font-semibold ${l.amountCents < 0 ? "text-red" : ""}`}>{money(l.amountCents, stub.currency)}</span>
+                </div>
+                {l.disputed ? (
+                  <div className="text-[12px] text-amber">
+                    Disputed: {l.disputed}
+                    {l.response ? ` — ${l.response}` : " (waiting for office · esperando oficina)"}
+                  </div>
+                ) : stub.state !== "paid" ? (
+                  <button type="button" className="text-[12px] text-teal font-semibold" onClick={() => setDisputing(l.id)}>
+                    Something wrong? · ¿Algo mal?
+                  </button>
+                ) : null}
+              </li>
+            ))}
+          </ul>
+          <div className="mt-2 text-[12px] text-muted flex justify-between">
+            <span>Gross · Bruto {money(stub.grossCents, stub.currency)}</span>
+            <span>Deductions · Deducciones -{money(stub.deductionsCents, stub.currency)}</span>
+          </div>
+          {disputing && (
+            <div className="mt-2">
+              <textarea className="w-full" rows={2} placeholder="What is wrong? · ¿Qué está mal?" value={why} onChange={(e) => setWhy(e.target.value)} />
+              {err && <div className="text-red text-[12px]">{err}</div>}
+              <div className="flex gap-2 mt-1">
+                <button
+                  type="button"
+                  className="btn btn-primary"
+                  disabled={pending || !why.trim()}
+                  onClick={() =>
+                    start(async () => {
+                      setErr(null);
+                      const r = await disputeSettlementLineAction(token, stub.id, disputing, why);
+                      if (!r.ok) return setErr(r.error);
+                      setDisputing(null);
+                      setWhy("");
+                      onChanged();
+                    })
+                  }
+                >
+                  Send · Enviar
+                </button>
+                <button type="button" className="btn" onClick={() => setDisputing(null)}>
+                  Cancel
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
       )}
     </div>
   );

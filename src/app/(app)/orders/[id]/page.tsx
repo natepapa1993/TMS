@@ -7,7 +7,11 @@ import { PageHeader } from "@/components/page-header";
 import { Pill } from "@/components/ui";
 import { LEG_LABEL } from "@/domain/states";
 import { formatCents } from "@/data/fields";
-import { OrderEditor, StopEditor, OrderActions } from "./editor";
+import { OrderEditor, StopEditor, OrderActions, LegMiles } from "./editor";
+import { Charges } from "./charges";
+import { chargesFor, orderPnl } from "@/domain/billing";
+import { documents } from "@/db/schema";
+import { and, inArray } from "drizzle-orm";
 import { db } from "@/db/client";
 import { users } from "@/db/schema";
 import { eq } from "drizzle-orm";
@@ -38,6 +42,9 @@ export default async function OrderPage({ params }: PageProps<"/orders/[id]">) {
   const dName = name(drivers, "name");
   const carName = name(carriers, "name");
   const who = new Map(people.map((p) => [p.id, p.name]));
+  const billingView = ["owner", "billing", "dispatcher"].includes(ctx.role) && ["delivered", "ready_to_bill", "invoiced", "paid", "in_transit", "dispatched", "exception"].includes(order.state);
+  const [chargeRows, pnl, orderDocs] = billingView ? await Promise.all([chargesFor(ctx, id), ["delivered", "ready_to_bill", "invoiced", "paid"].includes(order.state) ? orderPnl(ctx, id).catch(() => null) : Promise.resolve(null), db.select({ id: documents.id, code: documents.code, fileName: documents.fileName }).from(documents).where(and(eq(documents.tenantId, ctx.tenantId), eq(documents.subjectKind, "order"), eq(documents.subjectId, id), inArray(documents.status, ["present", "verified"])))]) : [[], null, []];
+  const cust = customers.find((c) => c.id === (order.customerId ?? order.brokerId));
   const stopById = new Map(stops.map((s) => [s.id, s]));
   const readOnly = ["paid", "cancelled"].includes(order.state);
 
@@ -75,6 +82,7 @@ export default async function OrderPage({ params }: PageProps<"/orders/[id]">) {
               ))}
             </div>
           </div>
+          {billingView && <Charges orderId={id} charges={JSON.parse(JSON.stringify(chargeRows))} docs={orderDocs} requiredDocs={(cust?.requiredDocs as string[] | undefined) ?? ["POD", "BOL", "RATE_CON"]} pnl={pnl} locked={["invoiced", "paid"].includes(order.state)} role={ctx.role} currency={order.currency} />}
           <div className="card p-5">
             <div className="h2 mb-3">Legs</div>
             <table className="table -mx-5 w-[calc(100%+40px)]">
@@ -85,6 +93,7 @@ export default async function OrderPage({ params }: PageProps<"/orders/[id]">) {
                   <th>From → To</th>
                   <th>Who</th>
                   <th>State</th>
+                  <th>Miles</th>
                   <th>Sent</th>
                   <th>Done</th>
                 </tr>
@@ -102,6 +111,9 @@ export default async function OrderPage({ params }: PageProps<"/orders/[id]">) {
                     </td>
                     <td>
                       <Pill tone={l.state === "completed" ? "green" : l.state === "declined" ? "red" : l.state === "unassigned" ? "slate" : "teal"}>{LEG_LABEL[l.state]}</Pill>
+                    </td>
+                    <td>
+                      <LegMiles legId={l.id} miles={l.plannedMiles} locked={readOnly || ["invoiced", "paid"].includes(order.state)} />
                     </td>
                     <td className="text-muted text-[12.5px]">{l.dispatchedAt ? new Date(l.dispatchedAt).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) : "—"}</td>
                     <td className="text-muted text-[12.5px]">{l.completedAt ? new Date(l.completedAt).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) : "—"}</td>

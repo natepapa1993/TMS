@@ -42,3 +42,16 @@ export async function driverPingAction(token: string, p: { lat: number; lng: num
     return toError(e);
   }
 }
+
+/** Driver disputes a settlement line from the app (spec 7.10). */
+export async function disputeSettlementLineAction(token: string, settlementId: string, lineId: string, reason: string): Promise<ActionResult<{ ok: true }>> {
+  const t = await resolveToken(token, "driver_app");
+  if (!t) return { ok: false, error: "invalid link", code: "not_found" };
+  try {
+    const { disputeSettlementLine } = await import("@/domain/billing");
+    await disputeSettlementLine(t.ctx.tenantId, t.subjectId, settlementId, lineId, reason);
+    return { ok: true, data: { ok: true } };
+  } catch (e) {
+    return toError(e);
+  }
+}

@@ -263,7 +263,7 @@ export async function updateOrder(ctx: Ctx, orderId: string, values: Partial<Cre
     const before = await loadOrder(tx, ctx, orderId);
     if (expectedUpdatedAt && before.updatedAt.getTime() !== expectedUpdatedAt.getTime()) throw new ValidationError("someone else changed this order; reload", "updatedAt");
     if (["paid", "cancelled"].includes(before.state)) throw new ValidationError(`a ${before.state} order is read-only`);
-    const allowed = ["customerId", "brokerId", "billingEntityId", "portId", "equipment", "refs", "rateCents", "rateTbd", "currency", "fuelRule", "freight", "cargoNote", "custom"] as const;
+    const allowed = ["customerId", "brokerId", "billingEntityId", "portId", "equipment", "refs", "rateCents", "rateTbd", "currency", "fuelRule", "fuelPct", "tollsFeesCents", "freight", "cargoNote", "custom"] as const;
     const safe: Record<string, unknown> = {};
     for (const k of allowed) if (k in values) safe[k] = values[k];
     if (typeof safe.rateCents === "number" && safe.rateCents < 0) throw new ValidationError("rate cannot be negative", "rateCents");
@@ -476,6 +476,21 @@ export async function planLeg(ctx: Ctx, legId: string, a: Assignment, opts: Plan
     }
     await recomputeOrder(tx, ctx, order.id);
     return { leg: after, findings: elig.findings };
+  });
+}
+
+/** Planned miles on a leg: drives per-mile driver pay and the fuel estimate. Editable until the order is invoiced. */
+export async function setLegMiles(ctx: Ctx, legId: string, miles: number | null) {
+  assertCtx(ctx);
+  requirePermission(ctx, "orders.edit");
+  if (miles != null && (!Number.isFinite(miles) || miles < 0 || miles > 10000)) throw new ValidationError("miles: 0–10,000", "plannedMiles");
+  return db.transaction(async (tx) => {
+    const leg = await loadLeg(tx, ctx, legId);
+    const order = await loadOrder(tx, ctx, leg.orderId);
+    if (["invoiced", "paid", "cancelled"].includes(order.state)) throw new ValidationError(`the order is ${order.state}; miles are locked`);
+    const [after] = await tx.update(s.legs).set({ plannedMiles: miles == null ? null : Math.round(miles), updatedAt: new Date(), updatedBy: ctx.userId }).where(eq(s.legs.id, legId)).returning();
+    await writeAudit(tx, ctx, "leg", legId, "update", diff(leg as unknown as Record<string, unknown>, after as unknown as Record<string, unknown>));
+    return after;
   });
 }
 

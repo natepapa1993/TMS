@@ -3,10 +3,10 @@
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { updateOrderAction, updateStopAction } from "../actions";
-import { bookAction, cancelAction, holdAction, releaseAction } from "../../dispatch/actions";
+import { bookAction, cancelAction, holdAction, releaseAction, setLegMilesAction } from "../../dispatch/actions";
 import { Confirm, Toast, useToast } from "@/components/ui";
 
-type Order = { id: string; state: string; customerId: string | null; brokerId: string | null; billingEntityId: string | null; equipment: string; rateCents: number | null; rateTbd: boolean; currency: string; refs: Record<string, string>; cargoNote: string | null; updatedAt: string };
+type Order = { id: string; state: string; customerId: string | null; brokerId: string | null; billingEntityId: string | null; equipment: string; rateCents: number | null; rateTbd: boolean; currency: string; fuelRule: string; fuelPct: number | null; tollsFeesCents: number | null; refs: Record<string, string>; cargoNote: string | null; updatedAt: string };
 type Stop = { id: string; type: string; name: string; country: string; address: { line1?: string; city?: string; state?: string; postalCode?: string; country?: string } | null; windowStart: string | null; windowEnd: string | null; appointment: boolean; contact: string | null; notes: string | null; arrivedAt: string | null; departedAt: string | null };
 
 const toLocal = (s: string | null) => (s ? new Date(new Date(s).getTime() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 16) : "");
@@ -15,7 +15,7 @@ const fmtAddr = (a: Stop["address"]) => (a ? [a.line1, a.city, [a.state, a.posta
 export function OrderEditor({ order, customers, entities, readOnly }: { order: Order; customers: { id: string; name: string; kind: string }[]; entities: { id: string; name: string }[]; readOnly: boolean }) {
   const router = useRouter();
   const t = useToast();
-  const [f, setF] = useState({ customerId: order.customerId ?? "", brokerId: order.brokerId ?? "", billingEntityId: order.billingEntityId ?? "", equipment: order.equipment, rate: order.rateCents != null ? (order.rateCents / 100).toFixed(2) : "", rateTbd: order.rateTbd, currency: order.currency, cargoNote: order.cargoNote ?? "" });
+  const [f, setF] = useState({ customerId: order.customerId ?? "", brokerId: order.brokerId ?? "", billingEntityId: order.billingEntityId ?? "", equipment: order.equipment, rate: order.rateCents != null ? (order.rateCents / 100).toFixed(2) : "", rateTbd: order.rateTbd, currency: order.currency, cargoNote: order.cargoNote ?? "", fuelRule: order.fuelRule ?? "included", fuelPct: order.fuelPct != null ? String(order.fuelPct) : "", tollsFees: order.tollsFeesCents != null ? (order.tollsFeesCents / 100).toFixed(2) : "" });
   const [refs, setRefs] = useState<Record<string, string>>({ rate_con: "", po: "", asn: "", shipment: "", reference: "", ...order.refs });
   const [err, setErr] = useState<string | null>(null);
   const [pending, start] = useTransition();
@@ -82,6 +82,24 @@ export function OrderEditor({ order, customers, entities, readOnly }: { order: O
         <div>
           <label className="label">Cargo note</label>
           <input className="input" value={f.cargoNote} onChange={(e) => setF({ ...f, cargoNote: e.target.value })} />
+        </div>
+        <div>
+          <label className="label">Fuel</label>
+          <div className="flex gap-2">
+            <select className="select" value={f.fuelRule} onChange={(e) => setF({ ...f, fuelRule: e.target.value })} aria-label="Fuel rule">
+              <option value="included">Included in the rate</option>
+              <option value="pct">Surcharge % of line haul</option>
+            </select>
+            {f.fuelRule === "pct" && <input className="input w-20" inputMode="numeric" value={f.fuelPct} onChange={(e) => setF({ ...f, fuelPct: e.target.value })} placeholder="%" aria-label="Fuel percent" />}
+          </div>
+        </div>
+        <div>
+          <label className="label">Tolls &amp; fees (cost)</label>
+          <div className="relative">
+            <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted">$</span>
+            <input className="input pl-7" inputMode="decimal" value={f.tollsFees} onChange={(e) => setF({ ...f, tollsFees: e.target.value })} placeholder="0.00" aria-label="Tolls and fees" />
+          </div>
+          <div className="help">Known extra cost for the P&amp;L — not billed.</div>
         </div>
       </div>
       <div className="eyebrow mt-4 mb-2">References</div>
@@ -241,5 +259,34 @@ export function OrderActions({ order }: { order: Order }) {
       <Confirm open={cancel} onClose={() => setCancel(false)} title="Cancel this order" body="Open legs are cancelled. A moving leg must come back first." needReason="Reason" confirmLabel="Cancel order" danger onConfirm={(r) => { setCancel(false); run("Cancelled", () => cancelAction(order.id, r)); }} />
       <Toast message={t.toast?.message ?? null} tone={t.toast?.tone} onDone={t.clear} />
     </>
+  );
+}
+
+/** Inline planned-miles cell on the legs table: type, blur or Enter to save. */
+export function LegMiles({ legId, miles, locked }: { legId: string; miles: number | null; locked: boolean }) {
+  const router = useRouter();
+  const [v, setV] = useState(miles != null ? String(miles) : "");
+  const [state, setState] = useState<"idle" | "saving" | "saved" | "error">("idle");
+  const [msg, setMsg] = useState<string | null>(null);
+  if (locked) return <span className="mono">{miles ?? "—"}</span>;
+  const save = async () => {
+    if (v === (miles != null ? String(miles) : "")) return;
+    setState("saving");
+    const r = await setLegMilesAction(legId, v);
+    if (r.ok) {
+      setState("saved");
+      setMsg(null);
+      router.refresh();
+    } else {
+      setState("error");
+      setMsg(r.error);
+    }
+  };
+  return (
+    <span className="inline-flex items-center gap-1">
+      <input className="input w-20 h-7 px-2 mono" inputMode="numeric" value={v} aria-label="Planned miles" onChange={(e) => setV(e.target.value)} onBlur={save} onKeyDown={(e) => e.key === "Enter" && (e.target as HTMLInputElement).blur()} placeholder="mi" aria-invalid={state === "error"} />
+      {state === "saved" && <span className="text-teal text-[11px] font-bold">✓</span>}
+      {msg && <span className="error m-0 text-[11px]">{msg}</span>}
+    </span>
   );
 }

@@ -237,8 +237,19 @@
     },
     {
       "id": "F-7",
-      "name": "Billing: invoices per entity, POD rules, short-pay, EDI 210, QBO",
+      "name": "Billing & settlements: own ledger \u2014 charges, docs gate, invoices per entity, receipts, credits, disputes, AR aging/statements/reminders, close, carrier bills (three-way, short-pay, quick pay), driver settlements + app, order P&L",
       "milestone": "M4",
+      "status": "done",
+      "tests": [
+        "src/domain/billing.test.ts",
+        "e2e/billing.spec.ts"
+      ],
+      "notes": "EDI 210 and QuickBooks export are F-7.2."
+    },
+    {
+      "id": "F-7.2",
+      "name": "EDI 210 invoices and QuickBooks Online export",
+      "milestone": "M4.5",
       "status": "planned",
       "tests": []
     },

@@ -17,5 +17,5 @@ export default defineConfig({
     launchOptions: { executablePath: existsSync(shell) ? shell : undefined, args: ["--no-proxy-server"] },
     viewport: { width: 1440, height: 900 },
   },
-  webServer: process.env.E2E_BASE_URL ? undefined : { command: `pnpm start -p ${port}`, url: `http://localhost:${port}/api/health`, reuseExistingServer: !process.env.CI, timeout: 120_000 },
+  webServer: process.env.E2E_BASE_URL ? undefined : { command: `pnpm start -p ${port}`, url: `http://localhost:${port}/api/health`, reuseExistingServer: !process.env.CI, timeout: 120_000, env: { APP_URL: `http://localhost:${port}` } }, // public links must point at this server
 });
