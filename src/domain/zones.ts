@@ -78,3 +78,24 @@ export function legsFromStops(stops: { type: StopType | string; country?: string
 }
 
 export const LEG_TYPE_LABEL: Record<string, string> = { mx: "Mexico", ca: "Canada", us: "US", domestic: "Domestic", crossing: "Crossing", equipment_move: "Equipment move" };
+
+/**
+ * Pure: what is wrong with a load's stop times, in order. A stop's window must not end before it starts,
+ * and a stop cannot be scheduled before the stop ahead of it. Stops without a time are skipped.
+ */
+export function stopTimeProblems(stops: { windowStart?: Date | string | null; windowEnd?: Date | string | null; name?: string | null }[]): string[] {
+  const t = (v: Date | string | null | undefined) => (v == null || v === "" ? null : new Date(v).getTime());
+  const out: string[] = [];
+  let prev: { at: number; i: number } | null = null;
+  stops.forEach((st, i) => {
+    const a = t(st.windowStart);
+    const b = t(st.windowEnd);
+    const label = `stop ${i + 1}${st.name ? ` (${st.name})` : ""}`;
+    if (a != null && b != null && b < a) out.push(`${label}: the window ends before it starts`);
+    const at = a ?? b;
+    if (at == null) return;
+    if (prev && at < prev.at) out.push(`${label} is scheduled before stop ${prev.i + 1}`);
+    prev = { at, i };
+  });
+  return out;
+}

@@ -6,6 +6,7 @@ import { act } from "@/lib/action";
 import * as O from "@/domain/orders";
 import type { StopType } from "@/db/schema";
 import { parseDate, parseAddress } from "@/data/fields";
+import { stopTimeProblems } from "@/domain/zones";
 import type { StopPayload } from "@/components/stop-fields";
 
 const touch = (id?: string) => {
@@ -83,6 +84,8 @@ export async function createLoadAction(input: LoadInput) {
       .map((l) => ({ commodity: l.commodity.trim() || "freight", pieces: l.pieces.trim() ? Number(l.pieces) : undefined, packaging: l.packaging.trim() || undefined, weightLb: l.weightLb.trim() ? Number(l.weightLb.replace(/[,\s]/g, "")) : undefined, hazmat: l.hazmat || undefined }));
     for (const l of freight) if ((l.pieces != null && !Number.isFinite(l.pieces)) || (l.weightLb != null && !Number.isFinite(l.weightLb))) throw Object.assign(new Error("pieces and weight are numbers"), { name: "ValidationError", field: "freight" });
     const stops = [];
+    const timing = stopTimeProblems(input.stops.map((st) => ({ windowStart: st.windowStart || null, windowEnd: st.windowEnd || null, name: st.name })));
+    if (timing.length) throw Object.assign(new Error(`Check the stop times: ${timing.join("; ")}`), { name: "ValidationError", field: "stops" });
     for (const st of input.stops) stops.push(await stopFromPayload(ctx, st));
     const created = await O.createOrder(ctx, {
       customerId: input.customerId || null,
@@ -215,8 +218,14 @@ export async function updateStopAction(orderId: string, stopId: string, st: Part
     if (st.type !== undefined) patch.type = st.type;
     if (st.country !== undefined) patch.country = st.country;
     if (st.address !== undefined) patch.address = st.address.trim() ? parseAddress(st.address) : null;
-    if (st.windowStart !== undefined) patch.windowStart = st.windowStart ? (parseDate(st.windowStart) ?? new Date(st.windowStart)) : null;
-    if (st.windowEnd !== undefined) patch.windowEnd = st.windowEnd ? (parseDate(st.windowEnd) ?? new Date(st.windowEnd)) : null;
+    // an ISO instant from the form keeps its time; a bare date means noon UTC (a day with no appointment time)
+    const instant = (v: string) => (/\dT\d/.test(v) ? new Date(v) : parseDate(v));
+    for (const k of ["windowStart", "windowEnd"] as const)
+      if (st[k] !== undefined) {
+        const d = st[k] ? instant(st[k]!) : null;
+        if (st[k] && (!d || Number.isNaN(d.getTime()))) throw Object.assign(new Error("That time could not be read"), { name: "ValidationError", field: k });
+        patch[k] = d;
+      }
     if (st.appointment !== undefined) patch.appointment = st.appointment;
     if (st.contact !== undefined) patch.contact = st.contact || null;
     if (st.notes !== undefined) patch.notes = st.notes || null;

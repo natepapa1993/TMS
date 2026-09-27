@@ -24,6 +24,7 @@ export type ExportData = {
   timeZone: string;
   invoices: { id: string; number: string; issuedAt: Date; dueAt: Date; termsDays: number; customer: string; currency: string; totalCents: number; memo: string; lines: { description: string; kind: string; qty: number; unit: string; rateCents: number; amountCents: number }[] }[];
   receipts: { id: string; receivedAt: Date; customer: string; invoiceNumber: string; amountCents: number; method: string; reference: string | null }[];
+  credits: { id: string; number: string; issuedAt: Date; customer: string; invoiceNumber: string; amountCents: number; reason: string; currency: string }[];
   bills: { id: string; kind: "carrier" | "driver"; vendor: string; date: Date; dueAt: Date | null; number: string; memo: string; currency: string; lines: { account: string; description: string; amountCents: number }[]; paidAt: Date | null; paidCents: number | null; paidRef: string | null }[];
 };
 
@@ -41,7 +42,7 @@ const incomeFor = (qb: QbAccounts, kind: string) => (kind === "linehaul" ? qb.in
 
 // ---------- collect ----------
 
-async function collect(ctx: Ctx, opts: { from: string; to: string; onlyNew: boolean; ids?: { invoices: string[]; receipts: string[]; bills: string[]; settlements: string[] } }): Promise<ExportData & { ids: NonNullable<typeof opts.ids> }> {
+async function collect(ctx: Ctx, opts: { from: string; to: string; onlyNew: boolean; ids?: { invoices: string[]; receipts: string[]; bills: string[]; settlements: string[]; credits?: string[] } }): Promise<ExportData & { ids: NonNullable<typeof opts.ids> }> {
   const company = await getCompany(ctx);
   const tz = company.timeZone;
   const from = zonedMidnight(opts.from, tz);
@@ -83,6 +84,21 @@ async function collect(ctx: Ctx, opts: { from: string; to: string; onlyNew: bool
     return { id: r.id, receivedAt: r.receivedAt, customer: inv ? cname(inv.customerId) : "Customer", invoiceNumber: inv?.number ?? "", amountCents: r.amountCents, method: r.method, reference: r.reference };
   });
 
+  // credit memos reduce what the customer owes: they go to QuickBooks as credit memos against the invoice
+  const cmRows = opts.ids
+    ? opts.ids.credits?.length
+      ? await db.select().from(s.creditMemos).where(and(eq(s.creditMemos.tenantId, ctx.tenantId), inArray(s.creditMemos.id, opts.ids.credits)))
+      : []
+    : await db
+        .select()
+        .from(s.creditMemos)
+        .where(and(eq(s.creditMemos.tenantId, ctx.tenantId), inWindow(s.creditMemos.issuedAt), ...(opts.onlyNew ? [isNull(s.creditMemos.exportedAt)] : [])));
+  const cmInv = cmRows.length ? await db.select({ id: s.invoices.id, number: s.invoices.number, customerId: s.invoices.customerId, currency: s.invoices.currency }).from(s.invoices).where(inArray(s.invoices.id, cmRows.map((r) => r.invoiceId))) : [];
+  const credits: ExportData["credits"] = cmRows.map((c) => {
+    const inv = cmInv.find((i) => i.id === c.invoiceId);
+    return { id: c.id, number: c.number, issuedAt: c.issuedAt, customer: inv ? cname(inv.customerId) : "Customer", invoiceNumber: inv?.number ?? "", amountCents: c.amountCents, reason: c.reason, currency: inv?.currency ?? "USD" };
+  });
+
   const cbRows = opts.ids
     ? opts.ids.bills.length
       ? await db.select().from(s.carrierBills).where(and(eq(s.carrierBills.tenantId, ctx.tenantId), inArray(s.carrierBills.id, opts.ids.bills)))
@@ -121,7 +137,7 @@ async function collect(ctx: Ctx, opts: { from: string; to: string; onlyNew: bool
       paidRef: st.reference,
     })),
   ];
-  return { qb: company.settings.qb, timeZone: tz, invoices, receipts, bills, ids: { invoices: invoices.map((i) => i.id), receipts: receipts.map((r) => r.id), bills: cbRows.map((b) => b.id), settlements: stRows.map((x) => x.id) } };
+  return { qb: company.settings.qb, timeZone: tz, invoices, receipts, credits, bills, ids: { invoices: invoices.map((i) => i.id), receipts: receipts.map((r) => r.id), bills: cbRows.map((b) => b.id), settlements: stRows.map((x) => x.id), credits: credits.map((c) => c.id) } };
 }
 
 // ---------- IIF (QuickBooks Desktop) ----------
@@ -131,7 +147,7 @@ const tsv = (cells: (string | number)[]) => cells.map((c) => String(c).replace(/
 export function buildIif(d: ExportData): string {
   const tz = d.timeZone;
   const out: string[] = [];
-  const customers = [...new Set(d.invoices.map((i) => i.customer).concat(d.receipts.map((r) => r.customer)))];
+  const customers = [...new Set(d.invoices.map((i) => i.customer).concat(d.receipts.map((r) => r.customer), d.credits.map((c) => c.customer)))];
   const vendors = [...new Set(d.bills.map((b) => b.vendor))];
   if (customers.length) out.push(tsv(["!CUST", "NAME"]), ...customers.map((c) => tsv(["CUST", c])));
   if (vendors.length) out.push(tsv(["!VEND", "NAME"]), ...vendors.map((v) => tsv(["VEND", v])));
@@ -151,6 +167,12 @@ export function buildIif(d: ExportData): string {
     const date = mdy(r.receivedAt, tz);
     out.push(tsv(["TRNS", "", "PAYMENT", date, d.qb.bankAccount, r.customer, "", dollars(r.amountCents), r.reference ?? "", `${r.method} for ${r.invoiceNumber}`, "N", "", ""]));
     out.push(tsv(["SPL", "", "PAYMENT", date, d.qb.arAccount, r.customer, "", dollars(-r.amountCents), r.invoiceNumber, "", "", "", ""]));
+    out.push("ENDTRNS");
+  }
+  for (const c of d.credits) {
+    const date = mdy(c.issuedAt, tz);
+    out.push(tsv(["TRNS", "", "CREDIT MEMO", date, d.qb.arAccount, c.customer, "", dollars(-c.amountCents), c.number, `credit on ${c.invoiceNumber}: ${c.reason}`, "N", "", ""]));
+    out.push(tsv(["SPL", "", "CREDIT MEMO", date, d.qb.incomeAccount, c.customer, "", dollars(c.amountCents), c.number, c.reason, "", "", "Credit"]));
     out.push("ENDTRNS");
   }
   for (const b of d.bills) {
@@ -177,7 +199,7 @@ const csvCell = (v: string | number) => {
 };
 const csv = (rows: (string | number)[][]) => rows.map((r) => r.map(csvCell).join(",")).join("\r\n") + "\r\n";
 
-export function buildQboCsv(d: ExportData): { invoices: string; bills: string; payments: string } {
+export function buildQboCsv(d: ExportData): { invoices: string; bills: string; payments: string; credits: string } {
   const tz = d.timeZone;
   const inv: (string | number)[][] = [["InvoiceNo", "Customer", "InvoiceDate", "DueDate", "Terms", "Memo", "Item(Product/Service)", "ItemDescription", "ItemQuantity", "ItemRate", "ItemAmount", "Currency"]];
   for (const i of d.invoices)
@@ -189,7 +211,9 @@ export function buildQboCsv(d: ExportData): { invoices: string; bills: string; p
   for (const b of d.bills) for (const l of b.lines) bills.push([b.number, b.vendor, mdy(b.date, tz), b.dueAt ? mdy(b.dueAt, tz) : "", "", b.memo, l.account, l.description, dollars(l.amountCents), b.currency, b.paidAt ? mdy(b.paidAt, tz) : "", b.paidCents != null ? dollars(b.paidCents) : "", b.paidRef ?? ""]);
   const pay: (string | number)[][] = [["PaymentDate", "Customer", "InvoiceNo", "Amount", "PaymentMethod", "ReferenceNo", "DepositTo"]];
   for (const r of d.receipts) pay.push([mdy(r.receivedAt, tz), r.customer, r.invoiceNumber, dollars(r.amountCents), r.method, r.reference ?? "", d.qb.bankAccount]);
-  return { invoices: csv(inv), bills: csv(bills), payments: csv(pay) };
+  const cm: (string | number)[][] = [["CreditMemoNo", "Customer", "CreditMemoDate", "AppliesToInvoice", "Item(Product/Service)", "ItemDescription", "ItemAmount", "Currency"]];
+  for (const c of d.credits) cm.push([c.number, c.customer, mdy(c.issuedAt, tz), c.invoiceNumber, "Credit", c.reason, dollars(c.amountCents), c.currency]);
+  return { invoices: csv(inv), bills: csv(bills), payments: csv(pay), credits: csv(cm) };
 }
 
 // ---------- runs ----------
@@ -199,7 +223,7 @@ export async function previewExport(ctx: Ctx, opts: { from: string; to: string; 
   requirePermission(ctx, "billing.view");
   validatePeriod(opts);
   const d = await collect(ctx, opts);
-  return { invoices: d.invoices.length, receipts: d.receipts.length, carrierBills: d.ids.bills.length, settlements: d.ids.settlements.length, invoicedCents: d.invoices.reduce((a, i) => a + i.totalCents, 0), receivedCents: d.receipts.reduce((a, r) => a + r.amountCents, 0), billsCents: d.bills.reduce((a, b) => a + b.lines.reduce((x, l) => x + l.amountCents, 0), 0) };
+  return { invoices: d.invoices.length, receipts: d.receipts.length, credits: d.credits.length, creditedCents: d.credits.reduce((a, c) => a + c.amountCents, 0), carrierBills: d.ids.bills.length, settlements: d.ids.settlements.length, invoicedCents: d.invoices.reduce((a, i) => a + i.totalCents, 0), receivedCents: d.receipts.reduce((a, r) => a + r.amountCents, 0), billsCents: d.bills.reduce((a, b) => a + b.lines.reduce((x, l) => x + l.amountCents, 0), 0) };
 }
 
 function validatePeriod(opts: { from: string; to: string }) {
@@ -213,15 +237,16 @@ export async function createExport(ctx: Ctx, opts: { format: ExportFormat; from:
   requirePermission(ctx, "billing.issue");
   validatePeriod(opts);
   const d = await collect(ctx, opts);
-  const total = d.invoices.length + d.receipts.length + d.bills.length;
+  const total = d.invoices.length + d.receipts.length + d.bills.length + d.credits.length;
   if (!total) throw new ValidationError(opts.onlyNew ? "nothing new in that period — untick “only new” to export it again" : "nothing in that period");
   const id = newId();
   const now = new Date();
   const fileName = `crossline-${opts.format}-${opts.from}-to-${opts.to}`;
   await db.transaction(async (tx) => {
-    await tx.insert(s.accountingExports).values({ id, tenantId: ctx.tenantId, format: opts.format, fromDate: opts.from, toDate: opts.to, onlyNew: opts.onlyNew, counts: { invoices: d.invoices.length, receipts: d.receipts.length, carrierBills: d.ids.bills.length, settlements: d.ids.settlements.length }, recordIds: d.ids, fileName, createdBy: ctx.userId });
+    await tx.insert(s.accountingExports).values({ id, tenantId: ctx.tenantId, format: opts.format, fromDate: opts.from, toDate: opts.to, onlyNew: opts.onlyNew, counts: { invoices: d.invoices.length, receipts: d.receipts.length, carrierBills: d.ids.bills.length, settlements: d.ids.settlements.length, credits: d.credits.length }, recordIds: d.ids, fileName, createdBy: ctx.userId });
     if (d.ids.invoices.length) await tx.update(s.invoices).set({ exportedAt: now }).where(inArray(s.invoices.id, d.ids.invoices));
     if (d.ids.receipts.length) await tx.update(s.receipts).set({ exportedAt: now }).where(inArray(s.receipts.id, d.ids.receipts));
+    if (d.ids.credits?.length) await tx.update(s.creditMemos).set({ exportedAt: now }).where(inArray(s.creditMemos.id, d.ids.credits));
     if (d.ids.bills.length) await tx.update(s.carrierBills).set({ exportedAt: now }).where(inArray(s.carrierBills.id, d.ids.bills));
     if (d.ids.settlements.length) await tx.update(s.settlements).set({ exportedAt: now }).where(inArray(s.settlements.id, d.ids.settlements));
     await writeAudit(tx, ctx, "accounting_export", id, "create", { format: { from: null, to: opts.format }, period: { from: null, to: `${opts.from}..${opts.to}` }, records: { from: null, to: total } });
@@ -256,6 +281,7 @@ export async function reopenExport(ctx: Ctx, runId: string) {
   await db.transaction(async (tx) => {
     if (c.invoices.length) await tx.update(s.invoices).set({ exportedAt: null }).where(inArray(s.invoices.id, c.invoices));
     if (c.receipts.length) await tx.update(s.receipts).set({ exportedAt: null }).where(inArray(s.receipts.id, c.receipts));
+    if (c.credits?.length) await tx.update(s.creditMemos).set({ exportedAt: null }).where(inArray(s.creditMemos.id, c.credits));
     if (c.bills.length) await tx.update(s.carrierBills).set({ exportedAt: null }).where(inArray(s.carrierBills.id, c.bills));
     if (c.settlements.length) await tx.update(s.settlements).set({ exportedAt: null }).where(inArray(s.settlements.id, c.settlements));
     await tx.update(s.accountingExports).set({ reopenedAt: new Date() }).where(eq(s.accountingExports.id, runId));

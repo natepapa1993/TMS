@@ -28,7 +28,7 @@ export async function uploadSubjectDocAction(kind: SubjectKind, subjectId: strin
 }
 
 export async function snoozeAction(kind: SubjectKind, subjectId: string, itemKey: string, until: string, reason: string) {
-  const r = await act((ctx) => C.snooze(ctx, kind, subjectId, itemKey, new Date(until), reason));
+  const r = await act((ctx) => C.snooze(ctx, kind, subjectId, itemKey, /^\d{4}-\d{2}-\d{2}$/.test(until) ? new Date(`${until}T12:00:00Z`) : new Date(until), reason));
   if (r.ok) touch(kind, subjectId);
   return r;
 }
@@ -36,6 +36,18 @@ export async function snoozeAction(kind: SubjectKind, subjectId: string, itemKey
 export async function overrideDispatchAction(kind: SubjectKind, subjectId: string, reason: string) {
   const r = await act((ctx) => C.overrideDispatch(ctx, kind, subjectId, reason));
   if (r.ok) touch(kind, subjectId);
+  return r;
+}
+
+export async function unsnoozeAction(kind: SubjectKind, subjectId: string, itemKey: string) {
+  const r = await act((ctx) => C.unsnooze(ctx, kind, subjectId, itemKey));
+  if (r.ok) touch(kind, subjectId);
+  return r;
+}
+
+export async function missingDatesBlockAction(on: boolean) {
+  const r = await act((ctx) => C.setMissingDatesBlock(ctx, on));
+  if (r.ok) touch();
   return r;
 }
 

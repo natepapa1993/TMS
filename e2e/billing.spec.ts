@@ -10,7 +10,7 @@ async function masterData(page: Page) {
   await quickAdd(page, "customers", "Add customer", { name: "RXO", kind: "broker", billingEmail: "ap@rxo.test", termsDays: "30" });
   await quickAdd(page, "trucks", "Add truck", { unitNumber: "2104", usPlate: "TX2104" });
   await quickAdd(page, "drivers", "Add driver", { name: "Daniel Reyes", driverType: "CDL", phone: "+1 956 000 0003" });
-  await quickAdd(page, "carriers", "Add carrier", { name: "Lone Star Freight", country: "US", kind: "us", dispatchEmail: "dispatch@lonestar.test" });
+  await quickAdd(page, "carriers", "Add carrier", { name: "Lone Star Freight", country: "US", kind: "us", dispatchEmail: "dispatch@lonestar.test", mcNumber: "700100" });
   // driver: paperwork, on the truck, paid per mile
   await page.goto("/settings/drivers");
   await page.click("table a:has-text('Daniel')");

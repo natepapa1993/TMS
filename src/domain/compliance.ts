@@ -40,6 +40,9 @@ export const FIELD_ITEMS: Record<SubjectKind, { key: string; label: string; bloc
     { key: "caatExpires", label: "CAAT", blocks: true, appliesWhen: (c) => c.country === "MX" },
     { key: "sctPermitExpires", label: "SCT permit", blocks: false, appliesWhen: (c) => c.country === "MX" },
     { key: "ctpatExpires", label: "C-TPAT", blocks: false, appliesWhen: (c) => !!c.ctpat },
+    // US / Canadian for-hire authority carries insurance on file with FMCSA; Mexican carriers' póliza is a document rule of your own
+    { key: "autoLiabilityExpires", label: "Auto liability insurance", blocks: true, appliesWhen: (c) => c.country !== "MX" },
+    { key: "cargoInsuranceExpires", label: "Cargo insurance", blocks: false, appliesWhen: (c) => c.country !== "MX" },
   ],
 };
 
@@ -66,11 +69,15 @@ export function scopeMatches(scope: string | null | undefined, leg: LegZone | st
 
 /** The lists and the dispatchable flag from a set of items (the whole subject, or the items that apply to one leg). */
 export function rollup(items: ComplianceItem[]) {
-  const expired = items.filter((i) => i.status === "expired").map((i) => i.label);
+  // a snoozed item still names itself when it blocks (the snooze only quiets the reminder)
+  const real = (i: ComplianceItem) => (i.status === "snoozed" ? (i.underlying ?? "ok") : i.status);
+  const expired = items.filter((i) => real(i) === "expired").map((i) => i.label);
   const expiring = items.filter((i) => i.status === "expiring").map((i) => i.label);
-  const missing = items.filter((i) => i.status === "missing").map((i) => i.label);
-  // a missing built-in date is not a block by itself (the owner may not track it); expired ones and missing required documents are
-  const dispatchable = !items.some((i) => i.blocksDispatch && (i.status === "expired" || (i.status === "missing" && !i.key.startsWith("field:"))));
+  const missing = items.filter((i) => i.status === "missing" || (i.status === "snoozed" && i.underlying === "missing" && i.blocksDispatch)).map((i) => i.label);
+  // A snooze hides the reminder, never the block: a snoozed item counts as what it really is.
+  // A missing built-in date blocks only when the company says so ("missing dates block dispatch");
+  // expired ones and missing required documents always do.
+  const dispatchable = !items.some((i) => i.blocksDispatch && (real(i) === "expired" || (real(i) === "missing" && (!i.key.startsWith("field:") || !!i.blocksWhenMissing))));
   return { expired, expiring, missing, dispatchable };
 }
 
@@ -91,6 +98,8 @@ export async function evaluateSubject(ctx: Ctx, kind: SubjectKind, subjectId: st
   const docs = await db.select().from(s.documents).where(and(eq(s.documents.tenantId, ctx.tenantId), eq(s.documents.subjectKind, kind), eq(s.documents.subjectId, subjectId), inArray(s.documents.status, ["present", "verified"])));
   const snoozes = await db.select().from(s.complianceSnoozes).where(and(eq(s.complianceSnoozes.tenantId, ctx.tenantId), eq(s.complianceSnoozes.subjectKind, kind), eq(s.complianceSnoozes.subjectId, subjectId), gt(s.complianceSnoozes.until, now)));
   const items: ComplianceItem[] = [];
+  const [tenant] = await db.select({ settings: s.tenants.settings }).from(s.tenants).where(eq(s.tenants.id, ctx.tenantId)).limit(1);
+  const strictMissing = !!(tenant?.settings as Record<string, unknown> | null)?.missingDatesBlock;
 
   for (const t of types) {
     const doc = docs.filter((d) => d.documentTypeId === t.id).sort((p, q) => (q.expiresAt?.getTime() ?? 0) - (p.expiresAt?.getTime() ?? 0))[0];
@@ -98,16 +107,19 @@ export async function evaluateSubject(ctx: Ctx, kind: SubjectKind, subjectId: st
     const graceOpen = !!t.graceUntil && t.graceUntil.getTime() > now.getTime();
     let status: ComplianceItem["status"] = doc ? statusOf(doc.expiresAt, alertDays, now, t.tracksExpiry) : t.required ? "missing" : "ok";
     const snooze = snoozes.find((z) => z.itemKey === t.id);
+    const underlying = status === "ok" ? null : (status as "expiring" | "expired" | "missing");
     if (snooze && status !== "ok") status = "snoozed";
-    items.push({ key: t.id, label: t.name, status, expiresAt: doc?.expiresAt?.toISOString() ?? null, documentId: doc?.id ?? null, blocksDispatch: t.blocksDispatch && !graceOpen, required: t.required, alertDays, snoozedUntil: snooze?.until.toISOString() ?? null, snoozeReason: snooze?.reason ?? null, legScope: t.legScope ?? null });
+    items.push({ key: t.id, label: t.name, status, underlying: snooze ? underlying : null, expiresAt: doc?.expiresAt?.toISOString() ?? null, documentId: doc?.id ?? null, blocksDispatch: t.blocksDispatch && !graceOpen, required: t.required, alertDays, snoozedUntil: snooze?.until.toISOString() ?? null, snoozeReason: snooze?.reason ?? null, legScope: t.legScope ?? null });
   }
   for (const f of FIELD_ITEMS[kind]) {
     if (f.appliesWhen && !f.appliesWhen(r)) continue;
     const d = r[f.key] as Date | null;
-    let status: ComplianceItem["status"] = d ? statusOf(d, 30, now, true) : f.blocks ? "missing" : "ok"; // an optional date left blank is not an alert
+    // an optional date left blank is "not on file", never a green "ok"
+    let status: ComplianceItem["status"] = d ? statusOf(d, 30, now, true) : f.blocks ? "missing" : "na";
     const snooze = snoozes.find((z) => z.itemKey === `field:${f.key}`);
-    if (snooze && status !== "ok") status = "snoozed";
-    items.push({ key: `field:${f.key}`, label: f.label, status, expiresAt: d?.toISOString() ?? null, documentId: null, blocksDispatch: f.blocks, required: true, alertDays: 30, snoozedUntil: snooze?.until.toISOString() ?? null, snoozeReason: snooze?.reason ?? null });
+    const underlying = status === "ok" || status === "na" ? null : (status as "expiring" | "expired" | "missing");
+    if (snooze && underlying) status = "snoozed";
+    items.push({ key: `field:${f.key}`, label: f.label, status, underlying: snooze ? underlying : null, blocksWhenMissing: f.blocks && strictMissing, expiresAt: d?.toISOString() ?? null, documentId: null, blocksDispatch: f.blocks, required: true, alertDays: 30, snoozedUntil: snooze?.until.toISOString() ?? null, snoozeReason: snooze?.reason ?? null });
   }
   const { expired, expiring, missing, dispatchable } = rollup(items);
   const [existing] = await db.select({ id: s.complianceStatus.id }).from(s.complianceStatus).where(and(eq(s.complianceStatus.tenantId, ctx.tenantId), eq(s.complianceStatus.subjectKind, kind), eq(s.complianceStatus.subjectId, subjectId))).limit(1);
@@ -263,10 +275,43 @@ export async function snooze(ctx: Ctx, kind: SubjectKind, subjectId: string, ite
   return evaluateSubject(ctx, kind, subjectId);
 }
 
-/** Owner override: dispatch a blocked subject today. Logged, gone in 24 h. */
+/**
+ * The company's policy for built-in dates (licence, medical card, annual inspection, I-94…) left blank:
+ * off = shown as missing but dispatchable (while the dates are being entered), on = a blank date on a
+ * blocking item stops dispatch like an expired one. Safety or the owner decides; everything re-evaluates.
+ */
+export async function setMissingDatesBlock(ctx: Ctx, on: boolean) {
+  assertCtx(ctx);
+  requirePermission(ctx, "compliance.override");
+  const [t] = await db.select({ settings: s.tenants.settings }).from(s.tenants).where(eq(s.tenants.id, ctx.tenantId)).limit(1);
+  await db.update(s.tenants).set({ settings: { ...((t?.settings as Record<string, unknown>) ?? {}), missingDatesBlock: on } }).where(eq(s.tenants.id, ctx.tenantId));
+  await writeAudit(db, ctx, "tenant", ctx.tenantId, "update", { missingDatesBlock: { from: !on, to: on } });
+  return evaluateAll(ctx);
+}
+
+/** Built-in blocking dates left blank, by subject kind: what would block if "missing dates block" were on. */
+export async function blankBlockingDates(ctx: Ctx) {
+  assertCtx(ctx);
+  const rows = await db.select({ kind: s.complianceStatus.subjectKind, items: s.complianceStatus.items }).from(s.complianceStatus).where(eq(s.complianceStatus.tenantId, ctx.tenantId));
+  const out: Record<string, number> = {};
+  for (const r of rows) if (r.items.some((i) => i.key.startsWith("field:") && i.blocksDispatch && (i.status === "missing" || (i.status === "snoozed" && i.underlying === "missing")))) out[r.kind] = (out[r.kind] ?? 0) + 1;
+  const [t] = await db.select({ settings: s.tenants.settings }).from(s.tenants).where(eq(s.tenants.id, ctx.tenantId)).limit(1);
+  return { on: !!(t?.settings as Record<string, unknown> | null)?.missingDatesBlock, counts: out };
+}
+
+/** End a snooze early: the reminder comes back now. */
+export async function unsnooze(ctx: Ctx, kind: SubjectKind, subjectId: string, itemKey: string) {
+  assertCtx(ctx);
+  requirePermission(ctx, "compliance.edit");
+  await db.update(s.complianceSnoozes).set({ until: new Date() }).where(and(eq(s.complianceSnoozes.tenantId, ctx.tenantId), eq(s.complianceSnoozes.subjectKind, kind), eq(s.complianceSnoozes.subjectId, subjectId), eq(s.complianceSnoozes.itemKey, itemKey), gt(s.complianceSnoozes.until, new Date())));
+  await writeAudit(db, ctx, kind, subjectId, "update", { snooze: { from: itemKey, to: null } }, "snooze ended");
+  return evaluateSubject(ctx, kind, subjectId);
+}
+
+/** Safety (or owner) override: dispatch a blocked subject today. Logged, gone in 24 h. */
 export async function overrideDispatch(ctx: Ctx, kind: SubjectKind, subjectId: string, reason: string) {
   assertCtx(ctx);
-  if (ctx.role !== "owner" && ctx.role !== "system") requirePermission(ctx, "dispatch.override");
+  if (ctx.role !== "system") requirePermission(ctx, "compliance.override");
   if (!reason?.trim()) throw new ValidationError("a reason is required", "reason");
   const st = await statusFor(ctx, kind, subjectId);
   if (st.expired.some((l) => /licen|medical|I-94|plate/i.test(l))) throw new ValidationError(`cannot override an expired legal document (${st.expired.join(", ")})`);
@@ -409,12 +454,13 @@ export async function listIncidents(ctx: Ctx) {
   return db.select().from(s.incidents).where(and(eq(s.incidents.tenantId, ctx.tenantId), sql`${s.incidents.archivedAt} is null`)).orderBy(desc(s.incidents.occurredAt)).limit(500);
 }
 
+/** An accident with an injury treated away from the scene or a tow-away is DOT-recordable (49 CFR 390.5); the box can also be ticked by hand. */
 export async function saveIncident(ctx: Ctx, id: string | null, v: Partial<typeof s.incidents.$inferInsert>) {
   assertCtx(ctx);
   requirePermission(ctx, "compliance.edit");
   if (!v.description?.trim()) throw new ValidationError("describe what happened", "description");
   if (!v.occurredAt) throw new ValidationError("when did it happen?", "occurredAt");
-  const safe = { occurredAt: v.occurredAt, kind: v.kind ?? "accident", driverId: v.driverId ?? null, truckId: v.truckId ?? null, trailerId: v.trailerId ?? null, orderId: v.orderId ?? null, location: v.location ?? null, description: v.description.trim(), dotRecordable: !!v.dotRecordable, injuries: !!v.injuries, towAway: !!v.towAway, policeReport: v.policeReport ?? null, claimNumber: v.claimNumber ?? null, status: v.status ?? "open" };
+  const safe = { occurredAt: v.occurredAt, kind: v.kind ?? "accident", driverId: v.driverId ?? null, truckId: v.truckId ?? null, trailerId: v.trailerId ?? null, orderId: v.orderId ?? null, location: v.location ?? null, description: v.description.trim(), dotRecordable: !!v.dotRecordable || ((v.kind ?? "accident") === "accident" && (!!v.injuries || !!v.towAway)), injuries: !!v.injuries, towAway: !!v.towAway, policeReport: v.policeReport ?? null, claimNumber: v.claimNumber ?? null, status: v.status ?? "open" };
   if (id) {
     const [row] = await db.update(s.incidents).set({ ...safe, updatedAt: new Date(), updatedBy: ctx.userId }).where(and(eq(s.incidents.tenantId, ctx.tenantId), eq(s.incidents.id, id))).returning();
     if (!row) throw new NotFoundError("incident", id);

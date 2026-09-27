@@ -46,7 +46,7 @@ function CarrierPortalBody({ token, data }: { token: string; data: Data }) {
     setMsg({ text, err });
     router.refresh();
   };
-  const counts = { offers: data.offers.length, loads: data.active.length, pay: data.completed.filter((l) => l.bill && l.bill.state !== "paid").length, docs: data.compliance ? data.compliance.items.filter((i) => i.status !== "ok").length : 0 };
+  const counts = { offers: data.offers.length, loads: data.active.length, pay: data.completed.filter((l) => l.bill && l.bill.state !== "paid").length, docs: data.compliance ? data.compliance.items.filter((i) => i.status !== "ok" && i.status !== "na").length : 0 };
   return (
     <div>
       <div className="flex items-start justify-between gap-3">
@@ -397,7 +397,7 @@ function DocsPanel({ token, data, onDone }: { token: string; data: Data; onDone:
             {data.compliance.items.map((i) => (
               <li key={i.key} className="flex justify-between gap-2">
                 <span>{i.label}</span>
-                <span className={i.status === "ok" ? "text-green font-semibold" : i.status === "expiring" ? "text-amber font-semibold" : "text-red font-bold"}>{i.status === "ok" ? "OK" : i.status === "expiring" ? `expiring ${i.expiresAt ? new Date(i.expiresAt).toLocaleDateString() : ""}` : i.status === "expired" ? "EXPIRED · VENCIDO" : "missing · falta"}</span>
+                <span className={i.status === "ok" || i.status === "na" ? "text-green font-semibold" : i.status === "expiring" ? "text-amber font-semibold" : "text-red font-bold"}>{i.status === "ok" ? "OK" : i.status === "na" ? "—" : i.status === "expiring" ? `expiring ${i.expiresAt ? new Date(i.expiresAt).toLocaleDateString() : ""}` : i.status === "expired" ? "EXPIRED · VENCIDO" : "missing · falta"}</span>
               </li>
             ))}
             {data.compliance.items.length === 0 && <li className="text-muted">Nothing required right now.</li>}

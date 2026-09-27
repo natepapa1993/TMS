@@ -1,0 +1,1 @@
+ALTER TABLE "credit_memos" ADD COLUMN "exported_at" timestamp with time zone;

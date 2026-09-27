@@ -25,7 +25,12 @@ export async function act<T>(fn: (ctx: Ctx & { name: string }) => Promise<T>): P
 export function toError(e: unknown): ActionResult<never> {
   const err = e as Error & { name?: string; field?: string; findings?: Finding[]; hardBlocked?: boolean; blockers?: { label: string }[]; permission?: string };
   const name = err?.name ?? "Error";
-  if (name === "PermissionError") return { ok: false, error: "Your role can't do that.", code: "forbidden" };
+  if (name === "PermissionError") {
+    const custom = err.message && !/^role \S+ lacks permission/.test(err.message) ? err.message : null;
+    const perm = err.permission ?? /lacks permission (\S+)/.exec(err.message ?? "")?.[1];
+    const why = custom ?? (perm === "compliance.override" ? "Only Safety or the owner can override a paperwork block." : perm === "compliance.edit" ? "Only Safety or the owner can change that." : perm === "billing.void" ? "Credit memos and voids need the owner." : "Your role can't do that.");
+    return { ok: false, error: why, code: "forbidden" };
+  }
   if (name === "NotFoundError") return { ok: false, error: "That record no longer exists.", code: "not_found" };
   if (name === "ConflictError") return { ok: false, error: "Someone else saved this record after you opened it. Reload to see their change.", code: "conflict" };
   if (name === "ArchiveBlockedError") return { ok: false, error: `Still in use: ${(err.blockers ?? []).map((b) => b.label).join(", ")}`, code: "blocked" };

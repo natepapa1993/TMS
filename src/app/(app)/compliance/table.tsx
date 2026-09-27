@@ -6,11 +6,11 @@ import { useRouter } from "next/navigation";
 import { Confirm, Modal, Toast, useToast } from "@/components/ui";
 import type { ComplianceItem } from "@/db/schema";
 import type { SubjectKind } from "@/domain/compliance";
-import { snoozeAction, overrideDispatchAction } from "./actions";
+import { snoozeAction, overrideDispatchAction, unsnoozeAction, missingDatesBlockAction } from "./actions";
 
 type Row = { id: string; label: string; sub: string; st: { dispatchable: boolean; expired: string[]; expiring: string[]; missing: string[]; items: ComplianceItem[]; ranAt: string } | null; override: { reason: string; expiresAt: string } | null };
 
-const tone: Record<string, string> = { ok: "pill-green", expiring: "pill-amber", expired: "pill-red", missing: "pill-amber", snoozed: "pill-slate" };
+const tone: Record<string, string> = { ok: "pill-green", expiring: "pill-amber", expired: "pill-red", missing: "pill-amber", snoozed: "pill-slate", na: "pill-slate" };
 
 export function ComplianceTable({ kind, path, columns, rows, role }: { kind: SubjectKind; path: string; columns: { key: string; label: string; blocks: boolean; sub?: string }[]; rows: Row[]; role: string }) {
   const router = useRouter();
@@ -77,9 +77,14 @@ export function ComplianceTable({ kind, path, columns, rows, role }: { kind: Sub
                     {it ? (
                       <div className="flex items-center gap-1">
                         <Link href={`/settings/${path}/${r.id}#documents`} className={`pill ${tone[it.status]}`} title={it.snoozeReason ?? undefined}>
-                          {it.expiresAt ? new Date(it.expiresAt).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "2-digit" }) : it.status}
+                          {it.expiresAt ? new Date(it.expiresAt).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }) : it.status === "na" ? "not on file" : it.status}
                         </Link>
-                        {canEdit && (it.status === "expiring" || it.status === "missing") && (
+                        {canEdit && it.status === "snoozed" && (
+                          <button className="btn btn-ghost btn-sm text-[11px] px-1" title={`Snoozed until ${it.snoozedUntil?.slice(0, 10)} (${it.snoozeReason ?? ""}) — end the snooze`} onClick={async () => { const res = await unsnoozeAction(kind, r.id, it.key); if (res.ok) { t.ok("Snooze ended"); router.refresh(); } else t.err(res.error); }}>
+                            wake
+                          </button>
+                        )}
+                        {canEdit && (it.status === "expiring" || it.status === "missing" || it.status === "expired") && (
                           <button className="btn btn-ghost btn-sm text-[11px] px-1" title="Snooze this alert" onClick={() => setSnoozeFor({ id: r.id, key: it.key, label: `${r.label} · ${it.label}` })}>
                             zz
                           </button>
@@ -109,11 +114,12 @@ export function ComplianceTable({ kind, path, columns, rows, role }: { kind: Sub
               disabled={!until || !reason.trim()}
               onClick={async () => {
                 const r = await snoozeAction(kind, snoozeFor!.id, snoozeFor!.key, until, reason);
+                if (!r.ok) return t.err(r.error); // keep the dialog and what was typed
                 setSnoozeFor(null);
-                if (r.ok) {
-                  t.ok("Snoozed");
-                  router.refresh();
-                } else t.err(r.error);
+                setUntil("");
+                setReason("");
+                t.ok("Snoozed — the reminder is quiet; a block stays");
+                router.refresh();
               }}
             >
               Snooze
@@ -127,14 +133,40 @@ export function ComplianceTable({ kind, path, columns, rows, role }: { kind: Sub
             <input type="date" className="input" value={until} onChange={(e) => setUntil(e.target.value)} />
           </div>
           <div>
-            <label className="label">Reason</label>
+            <label className="label">Reason (required)</label>
             <input className="input" value={reason} onChange={(e) => setReason(e.target.value)} placeholder="renewal in progress" />
           </div>
         </div>
-        <div className="help mt-2">The alert hides until then; the record still shows the real date. Up to 90 days.</div>
+        <div className="help mt-2">The reminder goes quiet until then — it does not make anyone dispatchable: an expired or missing item that blocks still blocks. To let a blocked driver or unit run, use a 24-hour override. Up to 90 days.</div>
       </Modal>
       <Confirm open={!!overrideFor} onClose={() => setOverrideFor(null)} title={`Dispatch override · ${overrideFor?.label ?? ""}`} body={<span>Blocked by: {[...(overrideFor?.st?.expired.map((x) => `${x} expired`) ?? []), ...(overrideFor?.st?.missing.map((x) => `${x} missing`) ?? [])].join(", ")}. The override lasts 24 hours and is logged with your name. Expired legal documents cannot be overridden.</span>} needReason="Reason" confirmLabel="Override for 24 h" danger onConfirm={async (reason) => { const row = overrideFor!; setOverrideFor(null); const r = await overrideDispatchAction(kind, row.id, reason); if (r.ok) { t.ok("Override active for 24 h"); router.refresh(); } else t.err(r.error); }} />
       <Toast message={t.toast?.message ?? null} tone={t.toast?.tone} onDone={t.clear} />
     </div>
+  );
+}
+
+/** Safety's switch: blank required dates block dispatch, or not yet. */
+export function MissingDatesToggle({ on }: { on: boolean }) {
+  const router = useRouter();
+  const t = useToast();
+  const [busy, setBusy] = useState(false);
+  return (
+    <>
+      <button
+        className={`btn btn-sm ${on ? "" : "btn-primary"}`}
+        disabled={busy}
+        onClick={async () => {
+          setBusy(true);
+          const r = await missingDatesBlockAction(!on);
+          setBusy(false);
+          if (!r.ok) return t.err(r.error);
+          t.ok(on ? "Blank dates no longer block" : `Blank dates now block dispatch — ${r.data.blocked} blocked`);
+          router.refresh();
+        }}
+      >
+        {on ? "Stop blocking blank dates" : "Block dispatch on blank dates"}
+      </button>
+      <Toast message={t.toast?.message ?? null} tone={t.toast?.tone} onDone={t.clear} />
+    </>
   );
 }

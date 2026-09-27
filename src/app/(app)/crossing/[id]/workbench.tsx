@@ -237,7 +237,7 @@ export function CrossingWorkbench({ data }: { data: Data }) {
           <div className="card">
             <div className="px-4 pt-3 pb-2 border-b border-line flex items-center justify-between">
               <div className="h2">Cross-checks</div>
-              <span className={`text-[12px] font-bold ${failing.length ? "text-red" : "text-green"}`}>{failing.length ? `${failing.length} failing` : "all clear"}</span>
+              <span className={`text-[12px] font-bold ${failing.length ? "text-red" : data.checks.some((k) => k.state === "pass") ? "text-green" : "text-muted"}`}>{failing.length ? `${failing.length} failing` : data.checks.some((k) => k.state === "pass") ? "all clear" : "not checked yet"}</span>
             </div>
             <ul className="divide-y divide-line max-h-[360px] overflow-auto">
               {data.checks

@@ -129,7 +129,7 @@ export function RecordForm({
 
 export function FieldInput({ f, value, onChange, error, refs, span, autoFocus }: { f: Field; value: string; onChange: (v: string) => void; error?: string; refs: RefOptions; span?: boolean; autoFocus?: boolean }) {
   const id = `f-${f.name}`;
-  const common = { id, "aria-invalid": !!error, autoFocus };
+  const common = { id, "aria-invalid": !!error, autoFocus, disabled: f.readOnly };
   let input: React.ReactNode;
   switch (f.type) {
     case "select":

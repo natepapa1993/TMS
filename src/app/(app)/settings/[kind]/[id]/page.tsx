@@ -2,7 +2,8 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { requireCtx } from "@/lib/auth";
 import { get, history, archiveBlockers } from "@/data/records";
-import { FIELDS, KIND_META, kindByPath } from "@/data/fields";
+import { FIELDS, KIND_META, kindByPath, fieldsFor } from "@/data/fields";
+import { can } from "@/lib/context";
 import { loadRefs } from "@/data/refs";
 import { PageHeader } from "@/components/page-header";
 import { RecordEditor } from "./editor";
@@ -70,7 +71,7 @@ export default async function RecordPage({ params }: PageProps<"/settings/[kind]
           <RecordEditor
             kind={kind}
             id={id}
-            fields={FIELDS[kind]}
+            fields={fieldsFor(kind, can(ctx, "compliance.edit"))}
             refs={options}
             initial={JSON.parse(JSON.stringify(row))}
             archived={!!row.archivedAt}

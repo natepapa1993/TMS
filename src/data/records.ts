@@ -3,7 +3,7 @@ import type { PgTable } from "drizzle-orm/pg-core";
 import { db } from "@/db/client";
 import * as s from "@/db/schema";
 import { newId } from "@/lib/ids";
-import { assertCtx, requirePermission, type Ctx } from "@/lib/context";
+import { assertCtx, requirePermission, can, PermissionError, type Ctx } from "@/lib/context";
 import { writeAudit, diff } from "@/lib/audit";
 
 /**
@@ -132,9 +132,29 @@ export async function get(ctx: Ctx, kind: RecordKind, id: string): Promise<Row> 
   return strip(row as Record<string, unknown>) as Row;
 }
 
+/**
+ * Guarded fields (licence and medical dates, inspections, permits) and the document rules are Safety's:
+ * someone without compliance.edit can't set or change them — a dispatcher can't make a driver
+ * dispatchable by typing a new expiry date.
+ */
+async function assertGuarded(ctx: Ctx, kind: RecordKind, values: Record<string, unknown>, before?: Record<string, unknown>) {
+  if (can(ctx, "compliance.edit")) return;
+  if (kind === "documentType") throw new PermissionError("compliance.edit", ctx.role);
+  const { GUARDED, FIELDS } = await import("./fields");
+  const same = (a: unknown, b: unknown) => (a instanceof Date || b instanceof Date ? new Date(a as Date).getTime() === new Date(b as Date).getTime() : (a ?? null) === (b ?? null) || String(a ?? "") === String(b ?? ""));
+  for (const k of GUARDED[kind] ?? []) {
+    if (!(k in values)) continue;
+    const v = values[k];
+    if (before ? same(v, before[k]) : v == null || v === "" || v === false) continue;
+    const label = FIELDS[kind].find((f) => f.name === k)?.label ?? k;
+    throw Object.assign(new PermissionError("compliance.edit", ctx.role), { message: `${label} is kept by Safety — ask Safety or the owner to change it` });
+  }
+}
+
 export async function create(ctx: Ctx, kind: RecordKind, values: Record<string, unknown>): Promise<Row> {
   assertCtx(ctx);
   requirePermission(ctx, "records.create");
+  await assertGuarded(ctx, kind, values);
   const { table } = REGISTRY[kind];
   const id = (values.id as string) ?? newId();
   const row = { ...values, id, tenantId: ctx.tenantId, createdBy: ctx.userId, updatedBy: ctx.userId };
@@ -156,6 +176,7 @@ export async function update(ctx: Ctx, kind: RecordKind, id: string, values: Rec
     const b = before as Row;
     if (expectedUpdatedAt && b.updatedAt.getTime() !== expectedUpdatedAt.getTime()) throw new ConflictError();
     if (b.archivedAt) throw new Error("archived records are read-only; restore first");
+    await assertGuarded(ctx, kind, values, b as Record<string, unknown>);
     const { id: _id, tenantId: _t, createdAt: _c, createdBy: _cb, ...safe } = values as Record<string, unknown>;
     void _id; void _t; void _c; void _cb;
     const [after] = await tx

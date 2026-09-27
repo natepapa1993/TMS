@@ -2,7 +2,8 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { requireCtx } from "@/lib/auth";
 import { list } from "@/data/records";
-import { FIELDS, KIND_META, kindByPath, fieldDisplay } from "@/data/fields";
+import { FIELDS, KIND_META, kindByPath, fieldDisplay, fieldsFor } from "@/data/fields";
+import { can } from "@/lib/context";
 import { loadRefs } from "@/data/refs";
 import { PageHeader } from "@/components/page-header";
 import { QuickAdd } from "./quick-add";
@@ -32,7 +33,7 @@ export default async function KindListPage({ params, searchParams }: PageProps<"
             <Link href={`/settings/${path}/import`} className="btn">
               Import CSV
             </Link>
-            <QuickAdd kind={kind} fields={FIELDS[kind]} refs={options} label={`Add ${meta.singular.toLowerCase()}`} openInitially={sp.add === "1"} />
+            <QuickAdd kind={kind} fields={fieldsFor(kind, can(ctx, "compliance.edit"))} refs={options} label={`Add ${meta.singular.toLowerCase()}`} openInitially={sp.add === "1"} />
           </>
         }
       >

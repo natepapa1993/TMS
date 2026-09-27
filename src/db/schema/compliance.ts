@@ -6,7 +6,11 @@ import { id, tenantId, audit } from "./core";
 export type ComplianceItem = {
   key: string; // documentTypeId or a built-in field key like field:licenseExpires
   label: string;
-  status: "ok" | "expiring" | "expired" | "missing" | "snoozed";
+  status: "ok" | "expiring" | "expired" | "missing" | "snoozed" | "na";
+  /** for a snoozed item: what it really is (a snooze hides the reminder; an expired or missing item still blocks) */
+  underlying?: "expiring" | "expired" | "missing" | null;
+  /** a built-in date that blocks dispatch when it's blank (the company's "missing dates block" setting) */
+  blocksWhenMissing?: boolean;
   expiresAt: string | null;
   documentId: string | null;
   blocksDispatch: boolean;

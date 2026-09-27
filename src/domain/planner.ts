@@ -231,3 +231,44 @@ export async function listEvents(ctx: Ctx, from: Date, to: Date) {
   return eventsBetween(db, ctx.tenantId, from, to);
 }
 
+
+// ---------- schedule conflicts ----------
+
+const BUSY_LEG = ["planned", "dispatched", "accepted", "en_route_to_pickup", "at_pickup", "loaded", "en_route", "at_delivery"];
+const fmtShort = (d: Date) => d.toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit", timeZone: "America/Chicago", timeZoneName: "short" });
+
+/**
+ * Other loads the truck or drivers are already on whose times overlap this leg's window: a double
+ * booking. Only legs with real times count (a leg with no stop times and no plan can't be said to
+ * overlap anything). A dispatcher can still confirm it (a relay, a load that will finish early).
+ */
+export async function scheduleConflicts(tx: Tx | typeof db, tenantId: string, excludeLegId: string | null, win: { start: Date; end: Date }, who: { truckId?: string | null; driverIds?: (string | null | undefined)[] }): Promise<Finding[]> {
+  const drivers = (who.driverIds ?? []).filter((x): x is string => !!x);
+  if (!who.truckId && !drivers.length) return [];
+  const cond = [who.truckId ? eq(s.legs.truckId, who.truckId) : null, drivers.length ? inArray(s.legs.driverId, drivers) : null, drivers.length ? inArray(s.legs.coDriverId, drivers) : null].filter((x): x is NonNullable<typeof x> => !!x);
+  const { or } = await import("drizzle-orm");
+  const legs = await tx
+    .select({ leg: s.legs, orderNumber: s.orders.orderNumber })
+    .from(s.legs)
+    .innerJoin(s.orders, eq(s.orders.id, s.legs.orderId))
+    .where(and(eq(s.legs.tenantId, tenantId), inArray(s.legs.state, BUSY_LEG as never), or(...cond)));
+  const out: Finding[] = [];
+  const names = drivers.length ? await tx.select({ id: s.drivers.id, name: s.drivers.name }).from(s.drivers).where(inArray(s.drivers.id, drivers)) : [];
+  const [truck] = who.truckId ? await tx.select({ unit: s.trucks.unitNumber }).from(s.trucks).where(eq(s.trucks.id, who.truckId)).limit(1) : [];
+  for (const { leg, orderNumber } of legs) {
+    if (leg.id === excludeLegId) continue;
+    const ids = [leg.fromStopId, leg.toStopId].filter((x): x is string => !!x);
+    const st = ids.length ? await tx.select().from(s.stops).where(inArray(s.stops.id, ids)) : [];
+    const a = st.find((x) => x.id === leg.fromStopId);
+    const b = st.find((x) => x.id === leg.toStopId);
+    const start = leg.plannedStart ?? a?.windowStart ?? null;
+    const end = leg.plannedEnd ?? b?.windowEnd ?? b?.windowStart ?? null;
+    if (!start && !end) continue;
+    const s0 = start ?? new Date(end!.getTime() - 12 * 3600_000);
+    const e0 = end ?? new Date(s0.getTime() + 12 * 3600_000);
+    if (!(s0 < win.end && win.start < e0)) continue;
+    const whoLabel = who.truckId && leg.truckId === who.truckId ? `unit ${truck?.unit ?? ""}` : names.find((n) => n.id === leg.driverId || n.id === leg.coDriverId)?.name ?? "driver";
+    out.push({ level: "red", code: "schedule_conflict", message: `${whoLabel} is on ${orderNumber} until ${fmtShort(e0)}${b?.name ? ` at ${b.name}` : ""}`, overridable: true });
+  }
+  return out;
+}

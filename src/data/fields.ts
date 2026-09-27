@@ -23,7 +23,25 @@ export type Field = {
   placeholder?: string;
   unique?: boolean;
   listOf?: "text" | "number" | "code"; // for type=list: comma-separated values; "none" saves an empty list; code = upper-cased identifiers (POD, RATE_CON); text = as typed
+  /** only Safety (compliance.edit) may set or change it: licence and medical dates, inspections, permits */
+  guard?: "compliance";
+  /** shown but not editable (set per viewer: a guarded field for someone without the permission) */
+  readOnly?: boolean;
 };
+
+/** Guarded fields per kind: dates and credentials that decide whether someone may be dispatched. */
+export const GUARDED: Partial<Record<RecordKind, string[]>> = {
+  driver: ["licenseNumber", "licenseState", "licenseClass", "licenseExpires", "medicalExpires", "nonDomiciledCdl", "mxLicenseNumber", "mxLicenseExpires", "fastNumber", "fastExpires", "visaType", "i94Until", "commercialZoneOnly", "elpAttestedAt"],
+  truck: ["usPlateExpires", "mxPlateExpires", "caPlateExpires", "dotInspectionExpires"],
+  trailer: ["inspectionExpires"],
+  carrier: ["caatExpires", "sctPermitExpires", "ctpatExpires", "autoLiabilityCents", "autoLiabilityExpires", "cargoCoverageCents", "cargoInsuranceExpires", "insurer"],
+};
+
+/** The fields of a kind as one viewer sees them: guarded ones read-only without compliance.edit. */
+export function fieldsFor(kind: RecordKind, canEditCompliance: boolean): Field[] {
+  const g = new Set(GUARDED[kind] ?? []);
+  return FIELDS[kind].map((f) => (g.has(f.name) ? { ...f, guard: "compliance" as const, readOnly: !canEditCompliance, help: !canEditCompliance ? `${f.help ? `${f.help} · ` : ""}Safety keeps this` : f.help } : f));
+}
 
 const COUNTRY = [
   { value: "US", label: "United States" },
@@ -228,7 +246,7 @@ export const FIELDS: Record<RecordKind, Field[]> = {
         { value: "ca", label: "Canada legs" },
       ],
     },
-    { name: "mcNumber", label: "MC #", type: "text", group: "Authority", unique: true },
+    { name: "mcNumber", label: "MC #", type: "text", quick: true, group: "Authority", unique: true, help: "US and Canadian carriers: required to tender (or Safety signs off)" },
     { name: "dotNumber", label: "DOT #", type: "text", group: "Authority" },
     { name: "scac", label: "SCAC", type: "text", group: "Authority" },
     { name: "rfc", label: "RFC", type: "text", group: "Authority", unique: true },
@@ -238,6 +256,11 @@ export const FIELDS: Record<RecordKind, Field[]> = {
     { name: "sctPermitExpires", label: "SCT expires", type: "date", group: "Authority" },
     { name: "ctpat", label: "C-TPAT", type: "boolean", group: "Authority" },
     { name: "ctpatExpires", label: "C-TPAT expires", type: "date", group: "Authority" },
+    { name: "insurer", label: "Insurer", type: "text", group: "Insurance", help: "from the certificate of insurance (COI)" },
+    { name: "autoLiabilityCents", label: "Auto liability limit", type: "cents", group: "Insurance", help: "US for-hire: at least $750,000 (most brokers require $1,000,000)" },
+    { name: "autoLiabilityExpires", label: "Auto liability expires", type: "date", group: "Insurance" },
+    { name: "cargoCoverageCents", label: "Cargo coverage", type: "cents", group: "Insurance" },
+    { name: "cargoInsuranceExpires", label: "Cargo insurance expires", type: "date", group: "Insurance" },
     {
       name: "tenderChannel",
       label: "Tender by",

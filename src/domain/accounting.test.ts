@@ -20,7 +20,7 @@ beforeEach(async () => {
   a = await makeTenant("24:7");
   await create(a, "billingEntity", { legalName: "24/7 Expedite LLC", country: "US", invoicePrefix: "247", nextInvoiceNumber: 1, isDefault: true });
   const rxo = await create(a, "customer", { name: "RXO", kind: "broker", termsDays: 30, billingEmail: "ap@rxo.test", requiredDocs: [], qbName: "RXO Logistics LLC" });
-  const garza = await create(a, "carrier", { name: "Lone Star Freight", country: "US", kind: "us", dispatchEmail: "d@ls.test" });
+  const garza = await create(a, "carrier", { name: "Lone Star Freight", country: "US", kind: "us", dispatchEmail: "d@ls.test", mcNumber: "123456" });
   const t2104 = await create(a, "truck", { unitNumber: "2104", usPlate: "TX2104", usPlateExpires: future });
   const reyes = await create(a, "driver", { name: "Daniel Reyes", driverType: "CDL", licenseExpires: future, medicalExpires: future, payType: "per_mile", payRateCents: 62, currentTruckId: t2104.id, qbName: "Reyes, Daniel" });
   f = { rxo: rxo.id, garza: garza.id, t2104: t2104.id, reyes: reyes.id };
@@ -111,7 +111,7 @@ describe("QuickBooks export", () => {
     await B.recordReceipt(a, inv.id, { amountCents: 100000, method: "check", reference: "1234", receivedAt: new Date() });
     const run = await A.createExport(a, { format: "qbo", ...period(), onlyNew: true });
     const { files } = await A.exportFiles(a, run.id);
-    expect(files.map((x) => x.name.replace(/^.*-/, ""))).toEqual(["invoices.csv", "bills.csv", "payments.csv"]);
+    expect(files.map((x) => x.name.replace(/^.*-/, ""))).toEqual(["invoices.csv", "bills.csv", "payments.csv", "credits.csv"]);
     const invCsv = files[0].body.split("\r\n");
     expect(invCsv[0]).toBe("InvoiceNo,Customer,InvoiceDate,DueDate,Terms,Memo,Item(Product/Service),ItemDescription,ItemQuantity,ItemRate,ItemAmount,Currency");
     expect(invCsv[1]).toMatch(/^247-000001,RXO,\d{2}\/\d{2}\/\d{4},\d{2}\/\d{2}\/\d{4},Net 30,26-00001,Line haul,Line haul,1,1000\.00,1000\.00,USD$/);
@@ -120,5 +120,25 @@ describe("QuickBooks export", () => {
     expect(files[1].body.split("\r\n").filter(Boolean)).toHaveLength(1); // header only: no bills
     await expect(A.createExport(a, { format: "qbo", from: "2026-13-01", to: today(), onlyNew: true })).rejects.toBeInstanceOf(ValidationError);
     await expect(A.createExport(a, { format: "qbo", from: today(), to: "2020-01-01", onlyNew: true })).rejects.toThrow(/after/);
+  });
+
+  it("credit memos go out as credit memos (IIF and CSV), once; a credit can't exceed what's still open; a receipt keeps its calendar day", async () => {
+    const o = await delivered(175000, "truck");
+    const inv = await B.issueInvoice(a, (await B.createInvoice(a, [o.order.id])).id);
+    await B.recordReceipt(a, inv.id, { amountCents: 170000, method: "ach", reference: "ACH-1", receivedAt: new Date("2026-09-27T12:00:00Z") });
+    await expect(B.creditMemo(a, inv.id, { amountCents: 170000, reason: "wrong" })).rejects.toThrow(/can't be more than the \$50\.00 still open/);
+    const cm = await B.creditMemo(a, inv.id, { amountCents: 5000, reason: "late delivery discount" });
+    const run = await A.createExport(a, { format: "iif", ...period(), onlyNew: true });
+    const { files } = await A.exportFiles(a, run.id);
+    const iif = files[0].body;
+    expect(iif).toContain(`CREDIT MEMO`);
+    const cmLine = iif.split("\r\n").find((l) => l.startsWith("TRNS\t\tCREDIT MEMO"))!;
+    expect(cmLine.split("\t").slice(7, 9)).toEqual(["-50.00", cm.number]);
+    expect(iif).toMatch(/TRNS\t\tPAYMENT\t09\/27\/2026/);
+    expect((await A.previewExport(a, { ...period(), onlyNew: true })).credits).toBe(0);
+    const q = await A.createExport(a, { format: "qbo", ...period(), onlyNew: false });
+    const credits = (await A.exportFiles(a, q.id)).files.find((x) => x.name.endsWith("credits.csv"))!;
+    expect(credits.body).toContain(`${cm.number},`);
+    expect(credits.body).toContain(",late delivery discount,50.00,USD");
   });
 });

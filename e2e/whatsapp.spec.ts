@@ -9,7 +9,7 @@ test("WhatsApp day: connect the number, a tender goes by WhatsApp, Meta verifies
   await quickAdd(page, "customers", "Add customer", { name: "RXO", kind: "broker" });
   await quickAdd(page, "trucks", "Add truck", { unitNumber: "2104", usPlate: "TX2104" });
   await quickAdd(page, "drivers", "Add driver", { name: "Daniel Reyes", driverType: "CDL", phone: "+1 956 000 0003" });
-  await quickAdd(page, "carriers", "Add carrier", { name: "Lone Star Freight", country: "US", kind: "us", dispatchEmail: "d@ls.test" });
+  await quickAdd(page, "carriers", "Add carrier", { name: "Lone Star Freight", country: "US", kind: "us", dispatchEmail: "d@ls.test", mcNumber: "700101" });
   await page.goto("/settings/drivers");
   await page.click("table a:has-text('Daniel')");
   await page.locator("#f-licenseExpires").fill(future(400));

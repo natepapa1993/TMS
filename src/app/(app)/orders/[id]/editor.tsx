@@ -221,6 +221,8 @@ export function StopEditor({ orderId, index, count, stop, readOnly, restructure 
                     const r = await updateStopAction(orderId, stop.id, { ...f, windowStart: f.windowStart ? new Date(f.windowStart).toISOString() : "", windowEnd: f.windowEnd ? new Date(f.windowEnd).toISOString() : "" });
                     if (r.ok) {
                       setOpen(false);
+                      setErr(null);
+                      t.ok(`Stop ${index + 1} saved`);
                       router.refresh();
                     } else setErr(r.error);
                   })

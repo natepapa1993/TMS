@@ -16,6 +16,8 @@ export function Charges({ orderId, charges, docs, requiredDocs, requiredRefs = [
   const router = useRouter();
   const t = useToast();
   const [pending, start] = useTransition();
+  // each charge type starts with its usual unit: detention and layover by the hour, extra stops per stop, the rest flat
+  const DEFAULT_UNIT: Partial<Record<ChargeKind, string>> = { detention: "h", layover: "flat", extra_stop: "stop" };
   const [f, setF] = useState({ kind: "accessorial" as ChargeKind, description: "", qty: "1", unit: "flat", rate: "" });
   const [uploadFor, setUploadFor] = useState<string | null>(null);
   const can = ["owner", "billing", "dispatcher"].includes(role) && !locked;
@@ -85,7 +87,7 @@ export function Charges({ orderId, charges, docs, requiredDocs, requiredRefs = [
         <div className="mt-3 grid grid-cols-2 md:grid-cols-[140px_1fr_70px_80px_110px_auto_auto] gap-2 items-end">
           <div>
             <label className="label">Add</label>
-            <select className="select" value={f.kind} onChange={(e) => setF({ ...f, kind: e.target.value as ChargeKind })}>
+            <select className="select" value={f.kind} onChange={(e) => { const kind = e.target.value as ChargeKind; setF({ ...f, kind, unit: DEFAULT_UNIT[kind] ?? "flat", qty: "1" }); }} aria-label="Charge type">
               {KINDS.map(([v, l]) => (
                 <option key={v} value={v}>
                   {l}
@@ -114,7 +116,7 @@ export function Charges({ orderId, charges, docs, requiredDocs, requiredRefs = [
             <label className="label">Rate</label>
             <input className="input" inputMode="decimal" value={f.rate} onChange={(e) => setF({ ...f, rate: e.target.value })} />
           </div>
-          <button className="btn btn-primary" disabled={pending || !f.rate} onClick={() => run("Charge added", async () => { const r = await addChargeAction(orderId, f); if (r.ok) setF({ ...f, description: "", rate: "" }); return r; })}>
+          <button className="btn btn-primary" disabled={pending || !f.rate} onClick={() => run("Charge added", async () => { const r = await addChargeAction(orderId, f); if (r.ok) setF({ ...f, description: "", rate: "", qty: "1" }); return r; })}>
             Add
           </button>
           <button className="btn" disabled={pending} title="From the arrival/departure clocks on the stops, with the customer's free time" onClick={() => run("Detention computed from the stop clocks", () => computeDetentionAction(orderId))}>

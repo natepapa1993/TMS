@@ -46,7 +46,7 @@ export type InvoiceSnapshot = {
   /** a summary invoice: one row per load */
   loads?: { orderNumber: string; refs: string; from: string; to: string; pickedUp: string | null; delivered: string | null; amountCents: number }[];
   /** notice of assignment when the invoice is factored */
-  factor?: { name: string; notice: string } | null;
+  factor?: { name: string; notice: string; remitTo?: Record<string, string | undefined> | null } | null;
 };
 
 export type InvoiceDelivery = { at: string; method: string; to: string | null; reference: string | null; by: string | null; batchId?: string | null };
@@ -121,6 +121,7 @@ export const creditMemos = pgTable(
     reason: text("reason").notNull(),
     lines: jsonb("lines").$type<{ description: string; amountCents: number }[]>().notNull().default(sql`'[]'::jsonb`),
     issuedAt: timestamp("issued_at", { withTimezone: true }).notNull().defaultNow(),
+    exportedAt: timestamp("exported_at", { withTimezone: true }), // last accounting export that carried it
     createdBy: text("created_by"),
   },
   (t) => [index("credit_memos_invoice").on(t.invoiceId)],
@@ -222,7 +223,7 @@ export const accountingExports = pgTable(
     toDate: text("to_date").notNull(),
     onlyNew: boolean("only_new").notNull().default(true),
     counts: jsonb("counts").$type<Record<string, number>>().notNull().default(sql`'{}'::jsonb`),
-    recordIds: jsonb("record_ids").$type<{ invoices: string[]; receipts: string[]; bills: string[]; settlements: string[] }>().notNull().default(sql`'{"invoices":[],"receipts":[],"bills":[],"settlements":[]}'::jsonb`),
+    recordIds: jsonb("record_ids").$type<{ invoices: string[]; receipts: string[]; bills: string[]; settlements: string[]; credits?: string[] }>().notNull().default(sql`'{"invoices":[],"receipts":[],"bills":[],"settlements":[]}'::jsonb`),
     reopenedAt: timestamp("reopened_at", { withTimezone: true }),
     fileName: text("file_name").notNull(),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),

@@ -13,7 +13,14 @@ export function InvoiceActions({ inv, role }: { inv: Inv; role: string }) {
   const t = useToast();
   const [pending, start] = useTransition();
   const [popup, setPopup] = useState<null | "receipt" | "credit" | "void" | "dispute" | "send" | "issue">(null);
-  const [f, setF] = useState({ amount: "", receivedAt: new Date().toISOString().slice(0, 10), method: "ach", reference: "", note: "", to: inv.billingEmail ?? "", rate: "", dmethod: inv.method, ptp: inv.promiseToPayAt?.slice(0, 10) ?? "" });
+  const fresh = () => ({ amount: "", receivedAt: new Date().toISOString().slice(0, 10), method: "ach", reference: "", note: "", to: inv.billingEmail ?? "", rate: "", dmethod: inv.method, ptp: inv.promiseToPayAt?.slice(0, 10) ?? "" });
+  const [f, setF] = useState(fresh);
+  // every dialog starts clean: nothing typed in one carries into another
+  const openPopup = (p: NonNullable<typeof popup>) => {
+    setF(fresh());
+    setPopup(p);
+  };
+  const canVoid = role === "owner";
   const can = ["owner", "billing"].includes(role);
   const run = (label: string, fn: () => Promise<{ ok: boolean; error?: string }>) =>
     start(async () => {
@@ -32,32 +39,33 @@ export function InvoiceActions({ inv, role }: { inv: Inv; role: string }) {
       {s === "paid" && <div className="text-[13px] text-muted">Paid in full. Nothing left to do here.</div>}
       {s === "void" && <div className="text-[13px] text-muted">Voided. It stays for the record; nothing can be done to it.</div>}
       {s === "draft" && (
-        <button className="btn btn-primary w-full justify-center" disabled={pending} onClick={() => (inv.currency === "MXN" ? setPopup("issue") : run("Issued", () => issueInvoiceAction(inv.id)))}>
+        <button className="btn btn-primary w-full justify-center" disabled={pending} onClick={() => (inv.currency === "MXN" ? openPopup("issue") : run("Issued", () => issueInvoiceAction(inv.id)))}>
           Issue invoice
         </button>
       )}
       {["issued", "sent", "partially_paid"].includes(s) && (
-        <button className="btn btn-primary w-full justify-center" onClick={() => setPopup("send")}>
+        <button className="btn btn-primary w-full justify-center" onClick={() => openPopup("send")}>
           {s === "issued" ? "Send invoice" : "Send again"}
         </button>
       )}
       {["issued", "sent", "partially_paid", "disputed"].includes(s) && (
-        <button className="btn w-full justify-center" onClick={() => setPopup("receipt")}>
+        <button className="btn w-full justify-center" onClick={() => openPopup("receipt")}>
           Record receipt
         </button>
       )}
-      {["issued", "sent", "partially_paid", "disputed"].includes(s) && (
-        <button className="btn w-full justify-center" onClick={() => setPopup("credit")}>
+      {canVoid && ["issued", "sent", "partially_paid", "disputed"].includes(s) && (
+        <button className="btn w-full justify-center" onClick={() => openPopup("credit")}>
           Credit memo
         </button>
       )}
       {["issued", "sent", "partially_paid"].includes(s) && (
-        <button className="btn w-full justify-center" onClick={() => setPopup("dispute")}>
+        <button className="btn w-full justify-center" onClick={() => openPopup("dispute")}>
           Mark disputed
         </button>
       )}
-      {["issued", "sent", "draft", "disputed"].includes(s) && (
-        <button className="btn btn-danger w-full justify-center" onClick={() => setPopup("void")}>
+      {!canVoid && ["issued", "sent", "partially_paid", "disputed"].includes(s) && <div className="text-[12px] text-muted pt-1">Credit memos and voids need the owner.</div>}
+      {canVoid && ["issued", "sent", "draft", "disputed"].includes(s) && (
+        <button className="btn btn-danger w-full justify-center" onClick={() => openPopup("void")}>
           Void
         </button>
       )}

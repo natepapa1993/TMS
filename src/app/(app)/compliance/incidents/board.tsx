@@ -8,7 +8,12 @@ import { saveIncidentAction } from "../actions";
 type Inc = { id: string; occurredAt: string; kind: string; driverId: string | null; truckId: string | null; trailerId: string | null; location: string | null; description: string; dotRecordable: boolean; injuries: boolean; towAway: boolean; policeReport: string | null; claimNumber: string | null; status: string };
 type Opt = { id: string; name: string };
 const KINDS = [["accident", "Accident"], ["injury", "Injury"], ["cargo", "Cargo claim"], ["roadside_inspection", "Roadside inspection"], ["citation", "Citation"], ["near_miss", "Near miss"], ["other", "Other"]];
-const blank = () => ({ occurredAt: new Date().toISOString().slice(0, 16), kind: "accident", driverId: "", truckId: "", trailerId: "", location: "", description: "", dotRecordable: false, injuries: false, towAway: false, policeReport: "", claimNumber: "", status: "open" });
+/** An instant as the value of a datetime-local input, in the viewer's own clock (the input has no zone). */
+const toLocalInput = (iso: string | Date) => {
+  const d = new Date(iso);
+  return new Date(d.getTime() - d.getTimezoneOffset() * 60_000).toISOString().slice(0, 16);
+};
+const blank = () => ({ occurredAt: toLocalInput(new Date()), kind: "accident", driverId: "", truckId: "", trailerId: "", location: "", description: "", dotRecordable: false, injuries: false, towAway: false, policeReport: "", claimNumber: "", status: "open" });
 
 export function IncidentsBoard({ rows, drivers, trucks, trailers, role }: { rows: Inc[]; drivers: Opt[]; trucks: Opt[]; trailers: Opt[]; role: string }) {
   const router = useRouter();
@@ -46,7 +51,7 @@ export function IncidentsBoard({ rows, drivers, trucks, trailers, role }: { rows
             </thead>
             <tbody>
               {rows.map((r) => (
-                <tr key={r.id} className="cursor-pointer" onClick={() => canEdit && setEdit({ id: r.id, f: { ...blank(), ...r, occurredAt: new Date(r.occurredAt).toISOString().slice(0, 16), driverId: r.driverId ?? "", truckId: r.truckId ?? "", trailerId: r.trailerId ?? "", location: r.location ?? "", policeReport: r.policeReport ?? "", claimNumber: r.claimNumber ?? "" } })}>
+                <tr key={r.id} className="cursor-pointer" onClick={() => canEdit && setEdit({ id: r.id, f: { ...blank(), ...r, occurredAt: toLocalInput(r.occurredAt), driverId: r.driverId ?? "", truckId: r.truckId ?? "", trailerId: r.trailerId ?? "", location: r.location ?? "", policeReport: r.policeReport ?? "", claimNumber: r.claimNumber ?? "" } })}>
                   <td className="whitespace-nowrap">{new Date(r.occurredAt).toLocaleString("en-US", { month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit" })}</td>
                   <td className="capitalize">{r.kind.replace("_", " ")}</td>
                   <td>
@@ -86,7 +91,7 @@ export function IncidentsBoard({ rows, drivers, trucks, trailers, role }: { rows
                 disabled={pending}
                 onClick={() =>
                   start(async () => {
-                    const r = await saveIncidentAction(edit.id, edit.f);
+                    const r = await saveIncidentAction(edit.id, { ...edit.f, occurredAt: new Date(edit.f.occurredAt).toISOString() });
                     if (r.ok) {
                       setEdit(null);
                       t.ok("Saved");

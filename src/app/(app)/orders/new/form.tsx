@@ -5,7 +5,7 @@ import { useEffect, useMemo, useRef, useState, useTransition, type ReactNode } f
 import { createLoadAction, readRateConAction, templateDraftAction, saveBuilderTemplateAction, suggestRateAction } from "../actions";
 import type { RateSuggestion } from "@/domain/rates";
 import { StopFields, blankStop, stopPayload, placeLine, timeLine, STOP_LABEL, STOP_TONE, type Loc, type StopDraft } from "@/components/stop-fields";
-import { legsFromStops, LEG_TYPE_LABEL } from "@/domain/zones";
+import { legsFromStops, LEG_TYPE_LABEL, stopTimeProblems } from "@/domain/zones";
 
 /**
  * The load builder: who pays and what for, the stops — as many as the load has, in order, each with
@@ -177,16 +177,18 @@ export function OrderForm({ customers, entities, locations, templates = [] }: { 
   const customer = customers.find((c) => c.id === f.customerId);
   const rateText = f.rateTbd || !f.rate.trim() ? "To be confirmed" : `${f.currency} ${Number(f.rate.replace(/[$,\s]/g, "")).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
+  const timing = stopTimeProblems(stops.map((st) => ({ windowStart: st.windowStart || null, windowEnd: st.windowEnd || null })));
   const checks = [
     { ok: !!f.customerId, label: "Bill-to customer" },
     { ok: f.rateTbd || !!f.rate.trim(), label: "Rate (or to be confirmed)" },
     { ok: stops.some((s) => s.type === "pickup"), label: "A pickup" },
     { ok: stops.some((s) => s.type === "delivery"), label: "A delivery" },
     { ok: stops.every((s) => s.name.trim()), label: "Every stop has a location" },
+    { ok: !timing.length, label: timing.length ? `Stop times: ${timing[0]}` : "Stop times in order" },
   ];
   const done: Record<string, boolean> = {
     "sec-customer": checks[0].ok && checks[1].ok,
-    "sec-stops": checks[2].ok && checks[3].ok && checks[4].ok,
+    "sec-stops": checks[2].ok && checks[3].ok && checks[4].ok && checks[5].ok,
     "sec-freight": freight.some((l) => l.commodity.trim() || l.pieces.trim() || l.weightLb.trim()),
     "sec-refs": Object.values(refs).some((v) => v?.trim()),
   };

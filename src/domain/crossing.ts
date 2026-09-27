@@ -196,7 +196,7 @@ async function load(ctx: Ctx, crossingId: string, tx: Tx | typeof db = db): Prom
 }
 
 async function event(tx: Tx | typeof db, ctx: Ctx, crossingId: string, e: { kind: string; fromState?: string | null; toState?: string | null; source?: string; verified?: boolean; note?: string | null; data?: Record<string, unknown>; at?: Date }) {
-  await tx.insert(s.crossingEvents).values({ id: newId(), tenantId: ctx.tenantId, crossingId, at: e.at ?? new Date(), kind: e.kind, fromState: e.fromState ?? null, toState: e.toState ?? null, source: e.source ?? (ctx.role === "system" ? "system" : "dispatcher"), verified: e.verified ?? false, userId: ctx.userId, note: e.note ?? null, data: e.data });
+  await tx.insert(s.crossingEvents).values({ id: newId(), tenantId: ctx.tenantId, crossingId, at: e.at ?? new Date(), kind: e.kind, fromState: e.fromState ?? null, toState: e.toState ?? null, source: e.source ?? (ctx.role === "system" ? "system" : "dispatcher"), verified: e.verified ?? false, userId: e.source === "system" ? null : ctx.userId, note: e.note ?? null, data: e.data });
 }
 
 /** Create the crossing for a crossing leg if it does not exist. Called when orders are created and on first open. */
@@ -643,7 +643,7 @@ export async function runChecks(ctx: Ctx, crossingId: string) {
 
 export async function overrideCheck(ctx: Ctx, crossingId: string, code: string, reason: string) {
   assertCtx(ctx);
-  if (!(ctx.role === "owner" || ctx.role === "mx_office" || ctx.role === "system")) requirePermission(ctx, "dispatch.override");
+  if (!(ctx.role === "owner" || ctx.role === "mx_office" || ctx.role === "system")) requirePermission(ctx, "compliance.override");
   if (!reason?.trim()) throw new ValidationError("a reason is required", "reason");
   const [chk] = await db.select().from(s.crossingChecks).where(and(eq(s.crossingChecks.tenantId, ctx.tenantId), eq(s.crossingChecks.crossingId, crossingId), eq(s.crossingChecks.code, code))).limit(1);
   if (!chk) throw new NotFoundError("check", code);
@@ -697,13 +697,24 @@ async function setState(tx: Tx | typeof db, ctx: Ctx, c: Crossing, to: CrossingS
 export async function recompute(ctx: Ctx, crossingId: string) {
   assertCtx(ctx);
   let c = await load(ctx, crossingId);
+  // what the system works out is the system's doing, not the person who happened to open the page
+  const sys: Ctx = { tenantId: ctx.tenantId, userId: null, role: "system" };
+  // the crossing leg moved on the board (driver app, dispatcher): the crossing follows it
+  const [xleg] = await db.select({ state: s.legs.state, completedAt: s.legs.completedAt, updatedAt: s.legs.updatedAt }).from(s.legs).where(eq(s.legs.id, c.legId)).limit(1);
+  if (xleg && !["cleared", "cancelled"].includes(c.state)) {
+    const follow: CrossingState | null = xleg.state === "completed" ? "cleared" : xleg.state === "cancelled" ? "cancelled" : ["en_route", "at_delivery"].includes(xleg.state) && !PHYSICAL.includes(c.state) ? "departed_yard" : null;
+    if (follow && follow !== c.state) {
+      await setState(db, sys, c, follow, { source: "system", note: `the crossing leg is ${xleg.state.replace(/_/g, " ")}`, at: xleg.completedAt ?? xleg.updatedAt ?? undefined }, follow === "cleared" ? { departedYardAt: c.departedYardAt ?? xleg.completedAt ?? new Date() } : follow === "departed_yard" ? { departedYardAt: c.departedYardAt ?? new Date() } : {});
+      c = await load(ctx, crossingId);
+    }
+  }
   if (!c.arrivedYardAt) {
     // the dwell clock starts when the trailer is at the border yard: the crossing leg's pickup stop was reached
     const [leg] = await db.select({ fromStopId: s.legs.fromStopId }).from(s.legs).where(eq(s.legs.id, c.legId)).limit(1);
     const st = leg?.fromStopId ? (await db.select({ arrivedAt: s.stops.arrivedAt }).from(s.stops).where(eq(s.stops.id, leg.fromStopId)).limit(1))[0] : null;
     if (st?.arrivedAt) {
       await db.update(s.crossings).set({ arrivedYardAt: st.arrivedAt }).where(eq(s.crossings.id, crossingId));
-      await event(db, ctx, crossingId, { kind: "note", note: "trailer at the border yard — dwell clock started", source: "system", at: st.arrivedAt });
+      await event(db, sys, crossingId, { kind: "note", note: "trailer at the border yard — dwell clock started", source: "system", at: st.arrivedAt });
       c = { ...c, arrivedYardAt: st.arrivedAt };
     }
   }
@@ -737,13 +748,13 @@ export async function recompute(ctx: Ctx, crossingId: string) {
     const [before] = mine?.fromStopId ? await db.select({ state: s.legs.state }).from(s.legs).where(and(eq(s.legs.orderId, c.orderId), eq(s.legs.toStopId, mine.fromStopId))).limit(1) : [];
     to = before && ["loaded", "en_route", "at_delivery", "completed"].includes(before.state) ? "awaiting_mx_arrival" : "created";
   }
-  if (to !== c.state) await setState(db, ctx, c, to, { source: "system" });
+  if (to !== c.state) await setState(db, sys, c, to, { source: "system" });
   return load(ctx, crossingId);
 }
 
 export async function overrideEligibility(ctx: Ctx, crossingId: string, reason: string) {
   assertCtx(ctx);
-  requirePermission(ctx, "dispatch.override");
+  requirePermission(ctx, "compliance.override");
   if (!reason?.trim()) throw new ValidationError("a reason is required", "reason");
   const c = await load(ctx, crossingId);
   if (c.eligibility?.hardBlocked) throw new ValidationError("a hard block cannot be overridden: fix the truck or driver");
@@ -945,7 +956,16 @@ export async function packetByToken(token: string) {
 
 // ---------- board / page loaders ----------
 
-export async function crossingBoard(ctx: Ctx) {
+export async function crossingBoard(ctx: Ctx, synced = false): Promise<Awaited<ReturnType<typeof boardRows>>> {
+  const rows = await boardRows(ctx);
+  // a crossing whose leg has moved on (crossed, or cancelled) is brought up to date before it is shown
+  const stale = rows.filter((r) => !["cleared", "cancelled"].includes(r.c.state) && (r.legState === "completed" || r.legState === "cancelled" || (["en_route", "at_delivery"].includes(r.legState) && !PHYSICAL.includes(r.c.state))));
+  if (!stale.length || synced) return rows;
+  for (const r of stale) await recompute(ctx, r.c.id);
+  return crossingBoard(ctx, true);
+}
+
+async function boardRows(ctx: Ctx) {
   assertCtx(ctx);
   requirePermission(ctx, "orders.view");
   const rows = await db

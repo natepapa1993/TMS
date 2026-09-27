@@ -40,6 +40,7 @@ export type Permission =
   | "billing.view"
   | "billing.issue"
   | "billing.void"
+  | "compliance.override"
   | "compliance.view"
   | "compliance.edit"
   | "settings.edit";
@@ -62,15 +63,17 @@ const ALL: Permission[] = [
   "billing.void",
   "compliance.view",
   "compliance.edit",
+  "compliance.override",
   "settings.edit",
 ];
 
 export const ROLE_PERMISSIONS: Record<Role | "system", Permission[]> = {
   system: ALL,
   owner: ALL,
-  dispatcher: ["records.view", "records.create", "records.edit", "orders.view", "orders.create", "orders.edit", "orders.cancel", "dispatch.plan", "dispatch.dispatch", "compliance.view", "billing.view"],
+  // dispatch.override: schedule calls (a double booking, time off). Paperwork blocks need compliance.override (Safety / owner).
+  dispatcher: ["records.view", "records.create", "records.edit", "orders.view", "orders.create", "orders.edit", "orders.cancel", "dispatch.plan", "dispatch.dispatch", "dispatch.override", "compliance.view", "billing.view"],
   billing: ["records.view", "records.create", "records.edit", "orders.view", "orders.edit", "billing.view", "billing.issue", "compliance.view"],
-  compliance: ["records.view", "records.create", "records.edit", "records.archive", "orders.view", "compliance.view", "compliance.edit"],
+  compliance: ["records.view", "records.create", "records.edit", "records.archive", "orders.view", "compliance.view", "compliance.edit", "compliance.override"],
   mx_office: ["records.view", "records.create", "records.edit", "orders.view", "orders.edit", "compliance.view"],
   driver: [],
   carrier: [],

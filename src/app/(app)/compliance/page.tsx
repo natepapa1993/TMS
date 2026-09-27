@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { requireCtx } from "@/lib/auth";
-import { dashboard, evaluateAll, pendingUploads, FIELD_ITEMS, type SubjectKind } from "@/domain/compliance";
+import { dashboard, evaluateAll, pendingUploads, blankBlockingDates, FIELD_ITEMS, type SubjectKind } from "@/domain/compliance";
+import { MissingDatesToggle } from "./table";
 import { PageHeader } from "@/components/page-header";
 import { Pill } from "@/components/ui";
 import { ComplianceTable } from "./table";
@@ -30,7 +31,8 @@ export default async function CompliancePage({ searchParams }: PageProps<"/compl
     await evaluateAll(ctx).catch(() => null);
     d = await dashboard(ctx);
   }
-  const pending = await pendingUploads(ctx);
+  const [pending, blanks] = await Promise.all([pendingUploads(ctx), blankBlockingDates(ctx)]);
+  const blankText = Object.entries(blanks.counts).map(([k, n]) => `${n} ${k}${n === 1 ? "" : "s"}`).join(", ");
   const types = d.types.filter((t) => t.appliesTo === kind);
   const fields = FIELD_ITEMS[kind];
   // a document type and a built-in expiry field can share a name ("FAST card" scan on file vs the FAST expiry date): say which is which
@@ -83,6 +85,22 @@ export default async function CompliancePage({ searchParams }: PageProps<"/compl
             ))}
           </div>
         )}
+        {(blankText || blanks.on) && (
+          <div className={`rounded-lg border px-4 py-3 mb-4 text-[13px] flex items-center gap-3 ${blanks.on ? "border-line bg-surface" : "border-amber/50 bg-amber-soft/40"}`} data-testid="missing-dates">
+            <div className="flex-1">
+              {blanks.on ? (
+                <>
+                  <b>Missing dates block dispatch.</b> A blank licence, medical card, annual inspection or I-94 date stops a driver or unit like an expired one{blankText ? ` (blocked now: ${blankText})` : ""}.
+                </>
+              ) : (
+                <>
+                  <b>{blankText} with a required date left blank</b> (licence, medical card, annual inspection, I-94…) — shown as missing but still dispatchable. Enter the dates, then turn on blocking.
+                </>
+              )}
+            </div>
+            {["owner", "compliance"].includes(ctx.role) && <MissingDatesToggle on={blanks.on} />}
+          </div>
+        )}
         <div className="flex gap-3 mb-4">
           {tile("blocked", "Blocked from dispatch", d.tiles.blocked, "text-red")}
           {tile("expired", "Expired", d.tiles.expired, "text-red")}
@@ -117,7 +135,7 @@ export default async function CompliancePage({ searchParams }: PageProps<"/compl
           </div>
         )}
         <div className="mt-3 text-[12px] text-faint flex gap-3">
-          <Pill tone="green">ok</Pill> <Pill tone="amber">expiring</Pill> <Pill tone="red">expired</Pill> <Pill tone="amber">missing</Pill> <Pill tone="slate">snoozed</Pill> · a red item on a rule that blocks dispatch makes the subject unassignable
+          <Pill tone="green">ok</Pill> <Pill tone="amber">expiring</Pill> <Pill tone="red">expired</Pill> <Pill tone="amber">missing</Pill> <Pill tone="slate">snoozed</Pill> <Pill tone="slate">not on file</Pill> · ● = the rule blocks dispatch: an expired (or missing) item on it makes the subject unassignable · a snooze quiets the reminder, it never lifts a block
         </div>
       </div>
     </div>

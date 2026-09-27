@@ -9,7 +9,7 @@ import { writeAudit, diff } from "@/lib/audit";
 import { assertLegTransition, assertOrderTransition, canOrderTransition, LEG_FORWARD, STAGE_OF_LEG, TransitionError } from "./states";
 import { LEG_TEMPLATES, templateByKey } from "./templates";
 import { checkDriver, checkTruck, checkCarrierZone, summarize, type Finding } from "./eligibility";
-import { legZone, legsFromStops, HANDOFF, type LegZone } from "./zones";
+import { legZone, legsFromStops, HANDOFF, stopTimeProblems, type LegZone } from "./zones";
 import { complianceFindings, statusMap, forLeg } from "./compliance";
 
 /**
@@ -25,7 +25,10 @@ export class ValidationError extends Error {
 }
 export class EligibilityError extends Error {
   constructor(public findings: Finding[], public hardBlocked: boolean) {
-    super(findings.map((f) => f.message).join("; "));
+    // red first; the same message from two rules (the driver check and the compliance board) once
+    const seen = new Set<string>();
+    const msgs = [...findings].sort((p, q) => (p.level === q.level ? 0 : p.level === "red" ? -1 : 1)).map((f) => f.message).filter((m) => !seen.has(m.toLowerCase()) && !!seen.add(m.toLowerCase()));
+    super(msgs.join("; "));
     this.name = "EligibilityError";
   }
 }
@@ -427,6 +430,13 @@ export async function updateStop(ctx: Ctx, stopId: string, values: Partial<StopI
     for (const k of allowed) if (k in values) safe[k] = values[k];
     if (typeof safe.name === "string") safe.name = safe.name.trim();
     for (const k of ["sealIn", "sealOut"] as const) if (k in safe) safe[k] = typeof safe[k] === "string" && (safe[k] as string).trim() ? (safe[k] as string).trim() : null;
+    if ("windowStart" in safe || "windowEnd" in safe) {
+      // the new times must still fit between the stops around this one
+      const all = await tx.select().from(s.stops).where(and(eq(s.stops.tenantId, ctx.tenantId), eq(s.stops.orderId, before.orderId))).orderBy(s.stops.seq);
+      const next = all.map((x) => (x.id === stopId ? { ...x, ...(safe as Partial<typeof x>) } : x));
+      const bad = stopTimeProblems(next);
+      if (bad.length) throw new ValidationError(`check the times: ${bad.join("; ")}`, "windowStart");
+    }
     const [after] = await tx
       .update(s.stops)
       .set({ ...safe, updatedAt: new Date(), updatedBy: ctx.userId })
@@ -800,7 +810,7 @@ export type Assignment =
 export type PlanOptions = { override?: boolean; reason?: string; plannedStart?: Date | null; plannedEnd?: Date | null; plannedMiles?: number | null };
 
 /** Run the eligibility engine for a proposed assignment. Pure read; used by planLeg and the picker. */
-export async function eligibilityFor(ctx: Ctx, legType: LegType | LegZone, a: Assignment, now = new Date(), window?: { start: Date; end: Date }) {
+export async function eligibilityFor(ctx: Ctx, legType: LegType | LegZone, a: Assignment, now = new Date(), window?: { start: Date; end: Date }, excludeLegId?: string | null) {
   assertCtx(ctx);
   const findings: Finding[] = [];
   if (a.kind === "truck") {
@@ -830,8 +840,16 @@ export async function eligibilityFor(ctx: Ctx, legType: LegType | LegZone, a: As
     if (c.doNotUse) findings.push({ level: "red", code: "carrier_do_not_use", message: `${c.name} is marked do-not-use`, overridable: false });
     if (c.country === "MX" && c.caatExpires && c.caatExpires.getTime() < now.getTime()) findings.push({ level: "red", code: "caat_expired", message: `${c.name}: CAAT expired`, overridable: false });
     if (c.country === "US" && c.fmcsaStatus?.authority && c.fmcsaStatus.authority.toLowerCase() !== "active") findings.push({ level: "red", code: "fmcsa_not_authorized", message: `${c.name}: FMCSA authority ${c.fmcsaStatus.authority}`, overridable: false });
+    // a US or Canadian carrier with no authority on file: Safety has to vouch for it (negligent selection)
+    if (c.country !== "MX" && !c.mcNumber?.trim() && !c.dotNumber?.trim()) findings.push({ level: "red", code: "carrier_no_authority", message: `${c.name}: no MC# or DOT# on file`, overridable: true });
+    if (c.country === "US" && c.autoLiabilityCents != null && c.autoLiabilityCents < 75_000_000) findings.push({ level: "red", code: "carrier_low_liability", message: `${c.name}: auto liability ${(c.autoLiabilityCents / 100).toLocaleString("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 })} is under the $750,000 minimum`, overridable: true });
     findings.push(...checkCarrierZone(c, legType));
     findings.push(...(await complianceFindings(ctx, "carrier", c.id, c.name, legType)));
+  }
+  // double booking: the truck or a driver already on another load in this window
+  if (window && a.kind === "truck") {
+    const { scheduleConflicts } = await import("./planner");
+    findings.push(...(await scheduleConflicts(db, ctx.tenantId, excludeLegId ?? null, window, { truckId: a.truckId, driverIds: [a.driverId, a.coDriverId] })));
   }
   // time off and repairs in the leg's window
   if (window && a.kind === "truck") {
@@ -858,11 +876,12 @@ export async function planLeg(ctx: Ctx, legId: string, a: Assignment, opts: Plan
     if (!["unassigned", "declined", "planned", "dispatched", "accepted"].includes(leg.state)) throw new TransitionError("leg", leg.state, from, "leg already moving");
 
     const { legWindow } = await import("./planner");
-    const elig = await eligibilityFor(ctx, await zoneForLeg(tx, leg), a, new Date(), await legWindow(tx, leg));
+    const elig = await eligibilityFor(ctx, await zoneForLeg(tx, leg), a, new Date(), await legWindow(tx, leg), leg.id);
     if (elig.hardBlocked) throw new EligibilityError(elig.findings, true);
     if (!elig.ok) {
       if (!opts.override) throw new EligibilityError(elig.findings, false);
-      requirePermission(ctx, "dispatch.override");
+      // a schedule call (a double booking, time off) is dispatch's to make; anything about paperwork is Safety's
+      requirePermission(ctx, elig.findings.some((f) => f.level === "red" && needsSafety(f)) ? "compliance.override" : "dispatch.override");
       if (!opts.reason?.trim()) throw new ValidationError("an override needs a reason", "reason");
       await writeAudit(tx, ctx, "leg", leg.id, "override", { findings: { from: null, to: elig.findings.map((f) => f.code) } }, opts.reason);
     }
@@ -1214,11 +1233,12 @@ export async function setLegDrivers(ctx: Ctx, legId: string, drivers: { driverId
     if (leg.assigneeKind !== "truck" || !leg.truckId) throw new ValidationError("leg is not assigned to a truck");
     if (leg.state === "completed" || leg.state === "cancelled") throw new TransitionError("leg", leg.state, "drivers", "leg is closed");
     const next = { driverId: drivers.driverId === undefined ? leg.driverId : drivers.driverId, coDriverId: drivers.coDriverId === undefined ? leg.coDriverId : drivers.coDriverId };
-    const elig = await eligibilityFor(ctx, await zoneForLeg(db, leg), { kind: "truck", truckId: leg.truckId, ...next, trailerId: leg.trailerId });
+    const { legWindow } = await import("./planner");
+    const elig = await eligibilityFor(ctx, await zoneForLeg(db, leg), { kind: "truck", truckId: leg.truckId, ...next, trailerId: leg.trailerId }, new Date(), await legWindow(db, leg), leg.id);
     if (elig.hardBlocked) throw new EligibilityError(elig.findings, true);
     if (!elig.ok) {
       if (!opts.override) throw new EligibilityError(elig.findings, false);
-      requirePermission(ctx, "dispatch.override");
+      requirePermission(ctx, elig.findings.some((f) => f.level === "red" && needsSafety(f)) ? "compliance.override" : "dispatch.override");
       if (!opts.reason?.trim()) throw new ValidationError("an override needs a reason", "reason");
       await writeAudit(tx, ctx, "leg", leg.id, "override", { findings: { from: null, to: elig.findings.map((f) => f.code) } }, opts.reason);
     }
@@ -1241,6 +1261,8 @@ export type Candidate = {
   findings: Finding[];
   reason: string;
   score: number;
+  /** a red finding about paperwork: only Safety or the owner can override it */
+  safetySignoff?: boolean;
 };
 
 /** Trucks ranked for a leg: green & free first, then green & busy, then yellow, red last with reasons. */
@@ -1274,11 +1296,20 @@ export async function candidatesForLeg(ctx: Ctx, legId: string, now = new Date()
     return out;
   };
 
+  const { scheduleConflicts } = await import("./planner");
+  const conflicts = new Map<string, Finding[]>();
+  for (const t of trucks) {
+    if (!busyBy.get(t.id)?.length && !drivers.some((d) => d.currentTruckId === t.id)) continue;
+    const drv = drivers.find((d) => d.currentTruckId === t.id);
+    const c = await scheduleConflicts(db, ctx.tenantId, legId, win, { truckId: t.id, driverIds: [drv?.id] });
+    if (c.length) conflicts.set(t.id, c);
+  }
   const out: Candidate[] = trucks.map((t) => {
     const drv = drivers.find((d) => d.currentTruckId === t.id) ?? null;
     const findings = [...checkTruck(t, zone, now), ...compFindings("truck", t.id, `unit ${t.unitNumber}`), ...(drv ? [...checkDriver(drv, zone, now), ...compFindings("driver", drv.id, drv.name)] : [])];
     if (!drv) findings.push({ level: "yellow", code: "no_driver", message: `${t.unitNumber} has no driver assigned`, overridable: true });
     findings.push(...eventFindings(events, [{ kind: "truck", id: t.id, label: `unit ${t.unitNumber}` }, ...(drv ? [{ kind: "driver", id: drv.id, label: drv.name }] : [])]));
+    findings.push(...(conflicts.get(t.id) ?? []));
     const sum = summarize(findings);
     const busy = busyBy.get(t.id) ?? [];
     let score = 0;
@@ -1295,9 +1326,14 @@ export async function candidatesForLeg(ctx: Ctx, legId: string, now = new Date()
           : findings.length
             ? findings[0].message
             : `free${drv ? `, ${drv.name}` : ""}`;
-    return { truckId: t.id, unitNumber: t.unitNumber, driverId: drv?.id ?? null, driverName: drv?.name ?? null, ok: sum.ok, hardBlocked: sum.hardBlocked, busy, findings, reason, score };
+    return { truckId: t.id, unitNumber: t.unitNumber, driverId: drv?.id ?? null, driverName: drv?.name ?? null, ok: sum.ok, hardBlocked: sum.hardBlocked, busy, findings, reason, score, safetySignoff: findings.some((f) => f.level === "red" && needsSafety(f)) };
   });
   return out.sort((p, q) => p.score - q.score || p.unitNumber.localeCompare(q.unitNumber, undefined, { numeric: true }));
+}
+
+/** Whether a finding is about paperwork (Safety's call to override) rather than the schedule (dispatch's). */
+export function needsSafety(f: Finding) {
+  return !(f.code === "schedule_conflict" || f.code.startsWith("event_") || f.code === "no_driver");
 }
 
 // ---------- board query ----------

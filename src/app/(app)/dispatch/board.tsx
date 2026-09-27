@@ -585,7 +585,13 @@ function AssignModal({ leg, order, data, onClose, onDone }: { leg: Leg; order: O
   const [lane, setLane] = useState<{ lane: string; rateCents: number; fuelRule: string; fuelValue: number | null; validTo: string | null } | null>(null);
   const [miles, setMiles] = useState(leg.plannedMiles != null ? String(leg.plannedMiles) : "");
   const [override, setOverride] = useState("");
-  const [needsOverride, setNeedsOverride] = useState<{ message: string; hard: boolean } | null>(null);
+  const [needsOverride, setNeedsOverride] = useState<{ message: string; hard: boolean; safety?: boolean } | null>(null);
+  // paperwork blocks are Safety's to override; schedule calls (double booking, time off) are dispatch's
+  const canSafetyOverride = ["owner", "compliance"].includes(data.role);
+  const eligibilityFail = (r: { error: string; hardBlocked?: boolean; findings?: { level: string; code: string }[] }) => {
+    const safety = (r.findings ?? []).some((f) => f.level === "red" && !(f.code === "schedule_conflict" || f.code.startsWith("event_") || f.code === "no_driver"));
+    setNeedsOverride({ message: r.error, hard: !!r.hardBlocked || (safety && !canSafetyOverride), safety });
+  };
   const [err, setErr] = useState<string | null>(null);
   const [pending, start] = useTransition();
   const [sendNow, setSendNow] = useState(true);
@@ -607,7 +613,7 @@ function AssignModal({ leg, order, data, onClose, onDone }: { leg: Leg; order: O
         if (sendNow && (tender.channel === "email" || tender.channel === "whatsapp")) {
           const r = await A.tenderAction(leg.id, { carrierId, rateCents, channel: tender.channel, expiresInMinutes: Number(tender.expires), message: tender.message.trim() || null, ...opts });
           if (r.ok) onDone(`Tender ${tender.channel === "whatsapp" ? "sent on WhatsApp" : "emailed"} to ${r.data.to} — expires in ${tender.expires} min`);
-          else if (r.code === "eligibility") setNeedsOverride({ message: r.error, hard: !!r.hardBlocked });
+          else if (r.code === "eligibility") eligibilityFail(r);
           else setErr(r.error);
           return;
         }
@@ -616,7 +622,7 @@ function AssignModal({ leg, order, data, onClose, onDone }: { leg: Leg; order: O
       if (!a) return setErr("Pick a unit");
       const r = sendNow && (leg.state === "unassigned" || leg.state === "declined" || leg.state === "planned") ? await A.planAndDispatchAction(leg.id, a, opts) : await A.planAction(leg.id, a, opts);
       if (r.ok) onDone(sendNow ? (tab === "carrier" ? "Marked sent — confirm by phone, then press Accepted" : "Assigned and sent") : "Assigned — in Planned");
-      else if (r.code === "eligibility") setNeedsOverride({ message: r.error, hard: !!r.hardBlocked });
+      else if (r.code === "eligibility") eligibilityFail(r);
       else setErr(r.error);
     });
 
@@ -641,7 +647,7 @@ function AssignModal({ leg, order, data, onClose, onDone }: { leg: Leg; order: O
             Cancel
           </button>
           <button className="btn btn-primary" onClick={go} disabled={pending || (needsOverride?.hard ?? false)}>
-            {pending ? "Working…" : needsOverride && !needsOverride.hard ? "Override & assign" : sendNow ? (tab === "carrier" && tender.channel !== "phone" ? "Send tender" : "Assign & send") : "Assign"}
+            {pending ? "Working…" : needsOverride && !needsOverride.hard ? (needsOverride.safety ? "Override & assign" : "Assign anyway") : sendNow ? (tab === "carrier" && tender.channel !== "phone" ? "Send tender" : "Assign & send") : "Assign"}
           </button>
         </>
       }
@@ -676,7 +682,9 @@ function AssignModal({ leg, order, data, onClose, onDone }: { leg: Leg; order: O
                   <div className="w-16 font-extrabold mono">{c.unitNumber}</div>
                   <div className="flex-1 min-w-0">
                     <div className="text-[13px] truncate">{c.driverName ?? <span className="text-faint">no driver</span>}</div>
-                    <div className={`text-[12px] truncate ${c.hardBlocked ? "text-red" : c.ok ? "text-muted" : "text-amber"}`}>{c.reason}</div>
+                    <div className={`text-[12px] truncate ${c.hardBlocked || (c.safetySignoff && !canSafetyOverride) ? "text-red" : c.ok ? "text-muted" : "text-amber"}`} title={c.findings.map((f) => f.message).join("\n")}>
+                      {c.safetySignoff && !canSafetyOverride && !c.hardBlocked ? `needs Safety: ${c.reason.replace(/^needs override: /, "")}` : c.reason}
+                    </div>
                   </div>
                   {c.hardBlocked && <Pill tone="red">Blocked</Pill>}
                   {!c.hardBlocked && !c.ok && <Pill tone="amber">Override</Pill>}
@@ -800,9 +808,9 @@ function AssignModal({ leg, order, data, onClose, onDone }: { leg: Leg; order: O
       )}
       {needsOverride && (
         <div className={`mt-3 px-3 py-2 rounded-lg text-[13px] ${needsOverride.hard ? "bg-red-soft text-red" : "bg-amber-soft text-amber"}`}>
-          <div className="font-bold">{needsOverride.hard ? "Blocked — no override exists for this." : "Needs an override"}</div>
+          <div className="font-bold">{needsOverride.hard ? (needsOverride.safety && !canSafetyOverride ? "Blocked — needs Safety's sign-off (Safety or the owner can override it)." : "Blocked — no override exists for this.") : needsOverride.safety ? "Needs a safety override" : "Schedule conflict — confirm with a reason"}</div>
           <div>{needsOverride.message}</div>
-          {!needsOverride.hard && <input className="input mt-2" placeholder="Reason for the override (goes on the record)" value={override} onChange={(e) => setOverride(e.target.value)} />}
+          {!needsOverride.hard && <input className="input mt-2" placeholder={needsOverride.safety ? "Reason for the override (goes on the driver's and the load's record)" : "Why it still works (e.g. finishes early, relay)"} value={override} onChange={(e) => setOverride(e.target.value)} />}
         </div>
       )}
       {err && <div className="error mt-2">{err}</div>}

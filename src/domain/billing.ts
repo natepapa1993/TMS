@@ -335,7 +335,7 @@ export async function issueInvoice(ctx: Ctx, invoiceId: string, opts: { issuedAt
   // factored: the factor's remit-to and the notice of assignment go on the invoice
   const { deliveryForInvoice } = await import("./invoicing");
   const factored = entity.factorName ? (await deliveryForInvoice(ctx, inv.customerId, entity.id)).method === "factor" : false;
-  const remitTo = factored && entity.factorRemitTo ? (entity.factorRemitTo as Record<string, string | undefined>) : ((entity.remitTo as Record<string, string | undefined>) ?? null);
+  const remitTo = (entity.remitTo as Record<string, string | undefined>) ?? null;
   const snapshot: InvoiceSnapshot = {
     entity: { legalName: entity.legalName, dba: entity.dba, taxId: entity.taxId, remitTo, mc: entity.mcNumber, dot: entity.dotNumber },
     billTo: { name: customer.name, email: customer.billingEmail, kind: customer.kind },
@@ -346,7 +346,7 @@ export async function issueInvoice(ctx: Ctx, invoiceId: string, opts: { issuedAt
     currency: inv.currency,
     exchangeRate: opts.exchangeRate ?? null,
     ...(loads ? { loads } : {}),
-    factor: factored ? { name: entity.factorName!, notice: entity.factorNotice?.trim() || `This invoice has been assigned to and must be paid only to ${entity.factorName}. Payment to anyone else does not discharge the debt.` } : null,
+    factor: factored ? { name: entity.factorName!, remitTo: (entity.factorRemitTo as Record<string, string | undefined>) ?? null, notice: entity.factorNotice?.trim() || `This invoice has been assigned to and must be paid only to ${entity.factorName}. Payment to anyone else does not discharge the debt.` } : null,
   };
   const subtotal = lines.reduce((a, l) => a + l.amountCents, 0);
   const dueAt = new Date(issuedAt.getTime() + inv.termsDays * 86400_000);
@@ -436,7 +436,9 @@ export async function creditMemo(ctx: Ctx, invoiceId: string, m: { amountCents: 
   if (!Number.isFinite(m.amountCents) || m.amountCents <= 0) throw new ValidationError("amount must be positive", "amountCents");
   const { invoice: inv, entity } = await invoiceById(ctx, invoiceId);
   if (inv.state === "draft" || inv.state === "void") throw new TransitionError("order", inv.state, "credit", "issue the invoice first");
-  if (m.amountCents > inv.totalCents - inv.creditedCents) throw new ValidationError("credit exceeds what is left on the invoice", "amountCents");
+  // a credit can only reduce what is still owed: money already received is refunded, not credited
+  const open = inv.totalCents - inv.creditedCents - inv.paidCents;
+  if (m.amountCents > open) throw new ValidationError(`the credit can't be more than the ${(open / 100).toLocaleString("en-US", { style: "currency", currency: inv.currency })} still open`, "amountCents");
   await assertOpenPeriod(ctx, new Date());
   return db.transaction(async (tx) => {
     const [ent] = await tx.execute(sql`select next_invoice_number as n, invoice_prefix as p from billing_entities where id = ${entity!.id} for update`) as unknown as { n: number; p: string }[];
@@ -699,10 +701,13 @@ export async function buildSettlement(ctx: Ctx, driverId: string, periodStart: D
     }
   }
   }
-  const items = await db.select().from(s.payItems).where(and(eq(s.payItems.tenantId, ctx.tenantId), eq(s.payItems.driverId, driverId), eq(s.payItems.active, true), lte(s.payItems.startsAt, periodEnd)));
+  // A pay item lands on the next statement built: a one-off (or an advance) until a paid statement carries
+  // it, a recurring one on every statement from the week it was added (the Monday run for last week
+  // included). A statement from before that week doesn't pick it up.
+  const items = await db.select().from(s.payItems).where(and(eq(s.payItems.tenantId, ctx.tenantId), eq(s.payItems.driverId, driverId), eq(s.payItems.active, true)));
   for (const it of items) {
     if (it.endsAt && it.endsAt.getTime() < periodStart.getTime()) continue;
-    if (!it.recurring && it.startsAt.getTime() < periodStart.getTime()) continue;
+    if (it.recurring && it.startsAt.getTime() > periodEnd.getTime() + 7 * 86400_000) continue;
     let amt = it.amountCents;
     if (it.remainingCents != null) amt = Math.min(amt, it.remainingCents);
     // escrow: collect until the balance reaches the target
@@ -737,6 +742,9 @@ export async function settlementTransition(ctx: Ctx, id: string, to: "reviewed" 
     const items = await db.select().from(s.payItems).where(and(eq(s.payItems.tenantId, ctx.tenantId), eq(s.payItems.driverId, st.driverId)));
     for (const it of items) {
       const line = st.lines.find((l) => l.kind === "deduction" && (l.payItemId ? l.payItemId === it.id : l.description === it.description));
+      const credit = st.lines.find((l) => l.kind === "reimbursement" && l.payItemId === it.id);
+      // a one-off (not an advance) is done once a paid statement carries it
+      if (!it.recurring && it.remainingCents == null && (line || credit)) await db.update(s.payItems).set({ active: false }).where(eq(s.payItems.id, it.id));
       if (!line) continue;
       if (it.remainingCents != null) await db.update(s.payItems).set({ remainingCents: Math.max(0, (it.remainingCents ?? 0) + line.amountCents), active: (it.remainingCents ?? 0) + line.amountCents > 0 }).where(eq(s.payItems.id, it.id));
       // escrow: what was held this week is now in the driver's escrow balance

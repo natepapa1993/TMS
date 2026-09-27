@@ -118,7 +118,8 @@ describe("factoring", () => {
     const [acmeInv] = await db.select().from(invoices).where(eq(invoices.customerId, f.acme));
     const [rxoInv] = await db.select().from(invoices).where(eq(invoices.customerId, f.rxo));
     expect(acmeInv.factored).toBe(true);
-    expect(acmeInv.snapshot!.entity.remitTo).toMatchObject({ line1: "PO Box 9", city: "Dallas" });
+    expect(acmeInv.snapshot!.entity.remitTo).toMatchObject({ line1: "1 Main St" }); // our own address stays in the header
+    expect(acmeInv.snapshot!.factor!.remitTo).toMatchObject({ line1: "PO Box 9", city: "Dallas" });
     expect(acmeInv.snapshot!.factor!.notice).toContain("Prime Factoring");
     expect(rxoInv.factored).toBe(false);
     expect(rxoInv.snapshot!.entity.remitTo).toMatchObject({ line1: "1 Main St" });

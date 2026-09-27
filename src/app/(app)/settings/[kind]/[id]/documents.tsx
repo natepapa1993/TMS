@@ -10,7 +10,7 @@ import { uploadSubjectDocAction, readSubjectDocAction, reviewSubjectDocAction } 
 
 type Doc = { id: string; documentTypeId: string | null; fileName: string; status: string; version: number; expiresAt: string | null; issuedAt: string | null; number: string | null; source: string; createdAt: string };
 type DocType = { id: string; name: string; tracksExpiry: boolean; required: boolean; blocksDispatch: boolean };
-const tone: Record<string, "green" | "amber" | "red" | "slate"> = { ok: "green", expiring: "amber", expired: "red", missing: "amber", snoozed: "slate" };
+const tone: Record<string, "green" | "amber" | "red" | "slate"> = { ok: "green", expiring: "amber", expired: "red", missing: "amber", snoozed: "slate", na: "slate" };
 
 /** Documents + compliance on a driver / truck / trailer / carrier record (spec §6.2 "cell click opens the subject's Documents tab"). */
 export function SubjectDocuments({ kind, subjectId, docs, types, status, canEdit }: { kind: SubjectKind; subjectId: string; docs: Doc[]; types: DocType[]; status: { dispatchable: boolean; items: ComplianceItem[]; override: { reason: string; expiresAt: string } | null } | null; canEdit: boolean }) {
@@ -57,7 +57,7 @@ export function SubjectDocuments({ kind, subjectId, docs, types, status, canEdit
                 {i.blocksDispatch ? " •" : ""}
               </span>
               <span className="flex items-center gap-1">
-                <Pill tone={tone[i.status]}>{i.expiresAt ? new Date(i.expiresAt).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "2-digit" }) : i.status}</Pill>
+                <Pill tone={tone[i.status]}>{i.expiresAt ? new Date(i.expiresAt).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }) : i.status === "na" ? "not on file" : i.status}</Pill>
                 {canEdit && !i.key.startsWith("field:") && (
                   <button className="btn btn-ghost btn-sm text-[11px] px-1 text-teal" onClick={() => setOpen(i.key)}>
                     {i.documentId ? "renew" : "upload"}

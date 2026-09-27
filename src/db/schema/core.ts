@@ -242,6 +242,12 @@ export const carriers = pgTable(
     plateClasses: jsonb("plate_classes").$type<string[]>().notNull().default(sql`'[]'::jsonb`),
     portIds: jsonb("port_ids").$type<string[]>().notNull().default(sql`'[]'::jsonb`),
     fmcsaStatus: jsonb("fmcsa_status").$type<{ authority?: string; insurance?: string; rating?: string; checkedAt?: string }>(),
+    // insurance on file (certificate of insurance): what a broker-carrier agreement and a crossing need
+    autoLiabilityCents: integer("auto_liability_cents"),
+    autoLiabilityExpires: timestamp("auto_liability_expires", { withTimezone: true }),
+    cargoCoverageCents: integer("cargo_coverage_cents"),
+    cargoInsuranceExpires: timestamp("cargo_insurance_expires", { withTimezone: true }),
+    insurer: text("insurer"),
     doNotUse: boolean("do_not_use").notNull().default(false),
     doNotUseReason: text("do_not_use_reason"),
     contacts: jsonb("contacts").$type<Contact[]>().notNull().default(sql`'[]'::jsonb`),

@@ -5,6 +5,9 @@ import { act } from "@/lib/action";
 import * as B from "@/domain/billing";
 import type { ChargeKind } from "@/db/schema";
 
+/** A date picked on a form (YYYY-MM-DD) is that calendar day everywhere in the Americas: noon UTC, never midnight (which is the day before in Chicago). */
+const dayOf = (v: string) => (/^\d{4}-\d{2}-\d{2}$/.test(v) ? new Date(`${v}T12:00:00Z`) : new Date(v));
+
 const touch = (id?: string) => {
   revalidatePath("/billing");
   revalidatePath("/billing/invoices");
@@ -78,7 +81,7 @@ export async function sendInvoiceAction(id: string, to?: string) {
   return r;
 }
 export async function receiptAction(id: string, v: { amount: string; receivedAt: string; method: string; reference: string; note: string }) {
-  const r = await act((ctx) => B.recordReceipt(ctx, id, { amountCents: Math.round(Number(v.amount.replace(/[$,]/g, "")) * 100), receivedAt: v.receivedAt ? new Date(v.receivedAt) : undefined, method: v.method, reference: v.reference || null, note: v.note || null }));
+  const r = await act((ctx) => B.recordReceipt(ctx, id, { amountCents: Math.round(Number(v.amount.replace(/[$,]/g, "")) * 100), receivedAt: v.receivedAt ? dayOf(v.receivedAt) : undefined, method: v.method, reference: v.reference || null, note: v.note || null }));
   if (r.ok) touch(id);
   return r;
 }
@@ -93,12 +96,12 @@ export async function creditMemoAction(id: string, amount: string, reason: strin
   return r;
 }
 export async function disputeInvoiceAction(id: string, reason: string, expectedAt?: string) {
-  const r = await act((ctx) => B.disputeInvoice(ctx, id, reason, expectedAt ? new Date(expectedAt) : null));
+  const r = await act((ctx) => B.disputeInvoice(ctx, id, reason, expectedAt ? dayOf(expectedAt) : null));
   if (r.ok) touch(id);
   return r;
 }
 export async function promiseToPayAction(id: string, at: string) {
-  const r = await act((ctx) => B.setPromiseToPay(ctx, id, at ? new Date(at) : null));
+  const r = await act((ctx) => B.setPromiseToPay(ctx, id, at ? dayOf(at) : null));
   if (r.ok) touch(id);
   return r;
 }
@@ -113,7 +116,7 @@ export async function receiveBillAction(id: string, v: { amount: string; number:
   return r;
 }
 export async function approveBillAction(id: string, v: { approved: string; note: string; shortPayNote: string; payDate: string; allowNoPod: boolean }) {
-  const r = await act((ctx) => B.approveCarrierBill(ctx, id, { approvedCents: v.approved ? Math.round(Number(v.approved.replace(/[$,]/g, "")) * 100) : undefined, note: v.note || null, shortPayNote: v.shortPayNote || null, payDate: v.payDate ? new Date(v.payDate) : null, allowNoPod: v.allowNoPod }));
+  const r = await act((ctx) => B.approveCarrierBill(ctx, id, { approvedCents: v.approved ? Math.round(Number(v.approved.replace(/[$,]/g, "")) * 100) : undefined, note: v.note || null, shortPayNote: v.shortPayNote || null, payDate: v.payDate ? dayOf(v.payDate) : null, allowNoPod: v.allowNoPod }));
   if (r.ok) touch();
   return r;
 }
