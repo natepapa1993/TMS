@@ -4,6 +4,10 @@ import path from "node:path";
 import { signupFresh, quickAdd, future } from "./helpers";
 
 async function fleet(page: Page) {
+  await page.goto("/settings/company");
+  await page.locator("#c-dispatch").fill("+1 313 555 0100");
+  await page.click("button:has-text('Save changes')");
+  await expect(page.getByRole("status")).toContainText("Saved");
   await quickAdd(page, "customers", "Add customer", { name: "RXO", kind: "broker", billingEmail: "ap@rxo.test", termsDays: "30" });
   await quickAdd(page, "carriers", "Add carrier", { name: "Transportes Garza", country: "MX", kind: "mx", dispatchEmail: "despacho@garza.test" });
   await quickAdd(page, "trucks", "Add truck", { unitNumber: "2117", usPlate: "RC59022", mxPlate: "35ES3A", mxPlateClass: "brown" });
@@ -111,6 +115,7 @@ test("driver app: link from Fleet, one button per step with GPS, customer tracki
   await expect(phone.locator("body")).toContainText("Border yard (MX)");
   await expect(phone.locator("body")).toContainText("Unit 2117");
   await expect(phone.locator("span.pill", { hasText: "GPS on" })).toBeVisible({ timeout: 10000 });
+  await expect(phone.getByTestId("dispatch-links").locator("a[href='tel:+13135550100']")).toBeVisible(); // the company's dispatch number, one tap
   const big = phone.locator("button.btn-primary").first();
   const bol = path.join(__dirname, "fixtures", "bol.pdf");
   for (const label of ["Accept this load", "Rolling to pickup", "Arrived at pickup"]) {

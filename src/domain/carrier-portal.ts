@@ -235,8 +235,10 @@ export async function carrierDriverView(tenantId: string, legId: string) {
     const x = stops.find((st) => st.id === id);
     return x ? { id: x.id, name: x.name, type: x.type, country: x.country, address: x.address, windowStart: x.windowStart, windowEnd: x.windowEnd, contact: x.contact, notes: x.notes, arrivedAt: x.arrivedAt, departedAt: x.departedAt } : null;
   };
+  const { tenantContact } = await import("./company");
   return {
     company: tenant?.name ?? "",
+    dispatchPhone: (await tenantContact(tenantId)).dispatchPhone,
     carrier: carrier.name,
     driverName: at?.driverName ?? null,
     leg: { id: l.id, state: l.state, stateLabel: LEG_LABEL[l.state], type: LEG_TYPE_LABEL[l.type] ?? l.type, done: l.state === "completed" || l.state === "cancelled" },

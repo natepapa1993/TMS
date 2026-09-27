@@ -5,11 +5,12 @@ import { useRouter } from "next/navigation";
 import { carrierDriverStepAction, carrierDriverPingAction, carrierDriverPodAction } from "../../actions";
 import { call } from "@/lib/client-call";
 import { useWhen } from "@/components/zone";
+import { DispatchLinks } from "../../d/[token]/app";
 
 /** The partner carrier's driver: one load, one big button, Spanish under English, GPS with every press and every 2 minutes. */
 
 type Stop = { id: string; name: string; type: string; country: string; address: { line1?: string; city?: string; state?: string } | null; windowStart: string | null; windowEnd: string | null; contact: string | null; notes: string | null; arrivedAt: string | null; departedAt: string | null };
-type Data = { company: string; carrier: string; driverName: string | null; leg: { id: string; state: string; stateLabel: string; type: string; done: boolean }; order: { orderNumber: string; equipment: string | null; cargoNote: string | null }; from: Stop | null; to: Stop | null; mids: Stop[]; next: { to: string; en: string; es: string } | null; podOnFile: boolean };
+type Data = { company: string; dispatchPhone: string | null; carrier: string; driverName: string | null; leg: { id: string; state: string; stateLabel: string; type: string; done: boolean }; order: { orderNumber: string; equipment: string | null; cargoNote: string | null }; from: Stop | null; to: Stop | null; mids: Stop[]; next: { to: string; en: string; es: string } | null; podOnFile: boolean };
 type Fix = { lat: number; lng: number; accuracyM: number | null; speedMph: number | null; heading: number | null };
 
 function getFix(timeout = 8000): Promise<Fix | null> {
@@ -113,6 +114,15 @@ export function CarrierDriverApp({ token, data }: { token: string; data: Data })
           )}
         </div>
       </div>
+      {data.dispatchPhone && (
+        <div className="card mt-4 p-4 flex items-center justify-between gap-2">
+          <div>
+            <div className="eyebrow">{data.company} dispatch · Despacho</div>
+            <div className="text-[12.5px] text-muted">Problem at the dock, a hold, anything: one tap. · Cualquier problema, un toque.</div>
+          </div>
+          <DispatchLinks phone={data.dispatchPhone} />
+        </div>
+      )}
       {live && <div className="mt-5 text-center text-[12px] text-faint">Keep this page open while driving so {data.company} can see you. · Deja esta página abierta.</div>}
     </div>
   );

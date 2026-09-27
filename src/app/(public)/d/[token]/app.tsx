@@ -19,7 +19,7 @@ const XSTEP: Record<string, { en: string; es: string }> = { departed_yard: { en:
 const XLABEL: Record<string, string> = { packet_sent: "Packet sent · Paquete enviado", departed_yard: "Departed yard · Salió del patio", at_mx_customs: "MX customs · Aduana MX", in_us_customs: "US customs · Aduana US", cleared: "Cleared · Liberado", held: "Held · Detenido", returned: "Returned · Regresado" };
 type OwnItem = { key: string; label: string; status: string; expiresAt: string | null; documentTypeId: string | null; tracksExpiry: boolean; pending: { fileName: string; at: string } | null; rejected: { reason: string; at: string } | null };
 type Msg = { id: string; who: "driver" | "dispatch"; body: string; at: string; seen: boolean };
-type Data = { driver: { name: string; driverType: string }; current: Item | null; items: Item[]; own: OwnItem[]; pay: PayStub[]; thread: Msg[] };
+type Data = { driver: { name: string; driverType: string }; current: Item | null; items: Item[]; own: OwnItem[]; pay: PayStub[]; thread: Msg[]; company: { name: string; dispatchPhone: string | null } };
 type PayLine = { id: string; kind: string; orderNumber?: string | null; description: string; amountCents: number; disputed?: string | null; response?: string | null };
 type PayStub = { id: string; periodStart: string; periodEnd: string; state: string; currency: string; lines: PayLine[]; grossCents: number; deductionsCents: number; netCents: number; paidAt: string | null };
 const money = (c: number, cur = "USD") => `${cur === "MXN" ? "MX$" : "$"}${(c / 100).toLocaleString("en-US", { minimumFractionDigits: 2 })}`;
@@ -252,7 +252,7 @@ export function DriverApp({ token, data }: { token: string; data: Data }) {
           <div className="help mt-2">Take a photo of the renewal here; the office checks it and it goes on file. · Toma foto de la renovación aquí; la oficina la revisa.</div>
         </div>
       )}
-      <Chat token={token} legId={cur?.leg.id ?? null} thread={data.thread} onDone={() => router.refresh()} />
+      <Chat token={token} legId={cur?.leg.id ?? null} thread={data.thread} dispatchPhone={data.company.dispatchPhone} onDone={() => router.refresh()} />
       {data.pay.length > 0 && (
         <div className="card mt-5 p-4">
           <div className="eyebrow mb-1">Your pay · Tu pago</div>
@@ -489,7 +489,7 @@ function OwnDoc({ token, item, onDone }: { token: string; item: OwnItem; onDone:
 }
 
 /** A line to dispatch: what the driver wrote and what the office answered. */
-function Chat({ token, legId, thread, onDone }: { token: string; legId: string | null; thread: Msg[]; onDone: () => void }) {
+function Chat({ token, legId, thread, dispatchPhone, onDone }: { token: string; legId: string | null; thread: Msg[]; dispatchPhone: string | null; onDone: () => void }) {
   const [text, setText] = useState("");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -507,7 +507,10 @@ function Chat({ token, legId, thread, onDone }: { token: string; legId: string |
   };
   return (
     <div className="card mt-5 p-4" data-testid="chat">
-      <div className="eyebrow mb-1">Dispatch · Despacho</div>
+      <div className="flex items-center justify-between mb-1">
+        <div className="eyebrow">Dispatch · Despacho</div>
+        {dispatchPhone && <DispatchLinks phone={dispatchPhone} />}
+      </div>
       {thread.length > 0 && (
         <div className="space-y-1.5 max-h-64 overflow-y-auto mb-2">
           {thread.map((m) => (
@@ -528,5 +531,20 @@ function Chat({ token, legId, thread, onDone }: { token: string; legId: string |
       </div>
       {err && <div className="error mt-1">{err}</div>}
     </div>
+  );
+}
+
+/** The fallback when the app is not enough: the company's dispatch number, one tap to call or WhatsApp. */
+export function DispatchLinks({ phone }: { phone: string }) {
+  const digits = phone.replace(/\D/g, "");
+  return (
+    <span className="flex gap-1.5" data-testid="dispatch-links">
+      <a className="btn btn-sm" href={`tel:+${digits}`}>
+        ☎ Call · Llamar
+      </a>
+      <a className="btn btn-sm" href={`https://wa.me/${digits}`} target="_blank" rel="noreferrer">
+        WhatsApp
+      </a>
+    </span>
   );
 }

@@ -12,7 +12,7 @@ const SECTIONS: { id: string; title: string; href: string; body: (string | { rul
     href: "/settings",
     body: [
       "Nothing is hard-coded. Billing entities (who invoices), users and roles, locations, ports, trucks, trailers, drivers, customers and brokers, partner carriers, carrier lane rates, customs brokers, document rules and EDI partners are all records you add, edit and archive. Every record has a quick-add popup with the essentials and a full screen with everything, a history of every change, and CSV import with a preview.",
-      "Company settings hold the time zone (every public page and email uses it), fuel cost per mile for the P&L, the month-end close date, and the QuickBooks account names the export uses.",
+      "Company settings hold the time zone (every public page and email uses it), the dispatch phone (a Call / WhatsApp button in every driver's app), fuel cost per mile for the P&L, the month-end close date, and the QuickBooks account names the export uses.",
       { rule: "A record in use cannot be archived; the screen says what is still pointing at it." },
     ],
   },

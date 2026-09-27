@@ -444,12 +444,13 @@
     },
     {
       "id": "F-1.7",
-      "name": "Contacts on customers, carriers, customs brokers; port bridges; alert days on rules; tracking link on dispatch for customers who require it",
+      "name": "Contacts on customers, carriers, customs brokers; port bridges; alert days on rules; tracking link on dispatch for customers who require it; company dispatch phone (Call / WhatsApp in the driver apps)",
       "milestone": "M0",
       "status": "done",
       "tests": [
         "src/data/fields.test.ts",
-        "src/domain/tracking.test.ts"
+        "src/domain/tracking.test.ts",
+        "src/domain/company.test.ts"
       ]
     }
   ]

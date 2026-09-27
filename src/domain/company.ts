@@ -7,7 +7,7 @@ import { ValidationError } from "./orders";
 
 /** Company-wide settings (spec §1.1 "everything is master data"): the numbers the P&L, digests and close use. */
 export type QbAccounts = { arAccount: string; apAccount: string; bankAccount: string; incomeAccount: string; fuelIncomeAccount: string; accessorialIncomeAccount: string; carrierExpenseAccount: string; driverPayAccount: string; deductionAccount: string };
-export type CompanySettings = { fuelCostCentsPerMile: number; closedThrough: string | null; qb: QbAccounts };
+export type CompanySettings = { fuelCostCentsPerMile: number; closedThrough: string | null; qb: QbAccounts; dispatchPhone: string | null };
 
 export const DEFAULT_FUEL_CPM = 65;
 export const DEFAULT_QB: QbAccounts = { arAccount: "Accounts Receivable", apAccount: "Accounts Payable", bankAccount: "Checking", incomeAccount: "Freight Income", fuelIncomeAccount: "Fuel Surcharge Income", accessorialIncomeAccount: "Accessorial Income", carrierExpenseAccount: "Purchased Transportation", driverPayAccount: "Driver Pay", deductionAccount: "Driver Deductions" };
@@ -17,10 +17,10 @@ export async function getCompany(ctx: Ctx) {
   const [t] = await db.select().from(s.tenants).where(eq(s.tenants.id, ctx.tenantId)).limit(1);
   if (!t) throw new ValidationError("company not found");
   const settings = (t.settings ?? {}) as Record<string, unknown>;
-  return { id: t.id, name: t.name, timeZone: t.timeZone, country: t.country, settings: { fuelCostCentsPerMile: Number(settings.fuelCostCentsPerMile ?? DEFAULT_FUEL_CPM), closedThrough: settings.closedThrough ? String(settings.closedThrough) : null, qb: { ...DEFAULT_QB, ...((settings.qb as Partial<QbAccounts> | undefined) ?? {}) } } as CompanySettings };
+  return { id: t.id, name: t.name, timeZone: t.timeZone, country: t.country, settings: { fuelCostCentsPerMile: Number(settings.fuelCostCentsPerMile ?? DEFAULT_FUEL_CPM), closedThrough: settings.closedThrough ? String(settings.closedThrough) : null, qb: { ...DEFAULT_QB, ...((settings.qb as Partial<QbAccounts> | undefined) ?? {}) }, dispatchPhone: settings.dispatchPhone ? String(settings.dispatchPhone) : null } as CompanySettings };
 }
 
-export async function updateCompany(ctx: Ctx, values: { name?: string; timeZone?: string; fuelCostCentsPerMile?: number | null; qb?: Partial<QbAccounts> }) {
+export async function updateCompany(ctx: Ctx, values: { name?: string; timeZone?: string; fuelCostCentsPerMile?: number | null; qb?: Partial<QbAccounts>; dispatchPhone?: string | null }) {
   assertCtx(ctx);
   requirePermission(ctx, "settings.edit");
   const before = await getCompany(ctx);
@@ -49,10 +49,24 @@ export async function updateCompany(ctx: Ctx, values: { name?: string; timeZone?
     const cur = (patch.settings ?? t?.settings ?? {}) as Record<string, unknown>;
     patch.settings = { ...cur, qb: { ...DEFAULT_QB, ...((cur.qb as Partial<QbAccounts> | undefined) ?? {}), ...Object.fromEntries(Object.entries(values.qb).map(([k, v]) => [k, String(v).trim()])) } };
   }
+  if (values.dispatchPhone !== undefined) {
+    const raw = (values.dispatchPhone ?? "").trim();
+    if (raw && raw.replace(/\D/g, "").length < 8) throw new ValidationError("dispatch phone: the full number with country code, e.g. +1 313 555 0100", "dispatchPhone");
+    const [t] = await db.select({ settings: s.tenants.settings }).from(s.tenants).where(eq(s.tenants.id, ctx.tenantId)).limit(1);
+    const cur = (patch.settings ?? t?.settings ?? {}) as Record<string, unknown>;
+    patch.settings = { ...cur, dispatchPhone: raw || null };
+  }
   await db.update(s.tenants).set(patch).where(eq(s.tenants.id, ctx.tenantId));
   const after = await getCompany(ctx);
   await writeAudit(db, ctx, "tenant", ctx.tenantId, "update", diff(before as unknown as Record<string, unknown>, after as unknown as Record<string, unknown>));
   return after;
+}
+
+/** What a driver or a partner's driver may need with no one signed in: the company's name and its dispatch number. */
+export async function tenantContact(tenantId: string): Promise<{ name: string; dispatchPhone: string | null }> {
+  const [t] = await db.select({ name: s.tenants.name, settings: s.tenants.settings }).from(s.tenants).where(eq(s.tenants.id, tenantId)).limit(1);
+  const dp = (t?.settings as Record<string, unknown> | undefined)?.dispatchPhone;
+  return { name: t?.name ?? "", dispatchPhone: dp ? String(dp) : null };
 }
 
 /** The company's time zone by tenant id, for public pages and outbound messages that have no signed-in user. */

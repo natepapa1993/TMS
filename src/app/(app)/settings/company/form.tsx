@@ -19,10 +19,10 @@ const QB_FIELDS: [string, string, string][] = [
   ["deductionAccount", "Driver deductions", "advances, insurance, escrow taken off the statement"],
 ];
 
-export function CompanyForm({ initial, canEdit }: { initial: { name: string; timeZone: string; fuelCostPerMile: string; closedThrough: string | null; qb: Record<string, string> }; canEdit: boolean }) {
+export function CompanyForm({ initial, canEdit }: { initial: { name: string; timeZone: string; fuelCostPerMile: string; closedThrough: string | null; qb: Record<string, string>; dispatchPhone: string }; canEdit: boolean }) {
   const router = useRouter();
   const t = useToast();
-  const [f, setF] = useState({ name: initial.name, timeZone: initial.timeZone, fuelCostPerMile: initial.fuelCostPerMile, qb: { ...initial.qb } });
+  const [f, setF] = useState({ name: initial.name, timeZone: initial.timeZone, fuelCostPerMile: initial.fuelCostPerMile, qb: { ...initial.qb }, dispatchPhone: initial.dispatchPhone });
   const [err, setErr] = useState<{ message: string; field?: string } | null>(null);
   const [pending, start] = useTransition();
   return (
@@ -55,6 +55,13 @@ export function CompanyForm({ initial, canEdit }: { initial: { name: string; tim
             <input id="c-fuel" className="input pl-7" inputMode="decimal" value={f.fuelCostPerMile} onChange={(e) => setF({ ...f, fuelCostPerMile: e.target.value })} aria-invalid={err?.field === "fuelCostPerMile"} />
           </div>
           <div className="help">Estimated fuel in the order P&amp;L for legs on our trucks · blank = $0.65</div>
+        </div>
+        <div className="col-span-2">
+          <label className="label" htmlFor="c-dispatch">
+            Dispatch phone / WhatsApp
+          </label>
+          <input id="c-dispatch" className="input" placeholder="+1 313 555 0100" value={f.dispatchPhone} onChange={(e) => setF({ ...f, dispatchPhone: e.target.value })} aria-invalid={err?.field === "dispatchPhone"} />
+          <div className="help">Drivers and partner carriers&apos; drivers get a Call / WhatsApp button to this number in their app.</div>
         </div>
         <div className="col-span-2 text-[13px] text-muted">
           Books closed through: <b className="text-ink">{initial.closedThrough ?? "not closed yet"}</b> — set from Billing → Invoices → Close period.
