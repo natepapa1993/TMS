@@ -1,107 +1,51 @@
 import Link from "next/link";
 import { requireCtx } from "@/lib/auth";
-import { listOrders } from "@/domain/orders";
-import { list } from "@/data/records";
-import { ORDER_STATES, type OrderState } from "@/db/schema";
-import { PageHeader } from "@/components/page-header";
-import { Pill } from "@/components/ui";
-import { formatCents } from "@/data/fields";
+import { loadGrid, listViews } from "@/domain/load-grid";
+import { LoadBoard } from "./load-board";
 
-export const metadata = { title: "Orders" };
+export const metadata = { title: "Loads" };
 export const dynamic = "force-dynamic";
 
-const TONE: Record<OrderState, "slate" | "teal" | "amber" | "red" | "green" | "blue"> = { draft: "slate", booked: "blue", dispatched: "amber", in_transit: "teal", exception: "red", delivered: "green", ready_to_bill: "green", invoiced: "green", paid: "green", cancelled: "slate" };
-const LABEL: Record<OrderState, string> = { draft: "Draft", booked: "Booked", dispatched: "Dispatched", in_transit: "In transit", exception: "On hold", delivered: "Delivered", ready_to_bill: "Ready to bill", invoiced: "Invoiced", paid: "Paid", cancelled: "Cancelled" };
+const RANGES: [number, string][] = [
+  [30, "30 days"],
+  [60, "60 days"],
+  [90, "90 days"],
+  [365, "12 months"],
+  [0, "All time"],
+];
 
 export default async function OrdersPage({ searchParams }: PageProps<"/orders">) {
   const ctx = await requireCtx();
   const sp = await searchParams;
-  const state = typeof sp.state === "string" && (ORDER_STATES as readonly string[]).includes(sp.state) ? (sp.state as OrderState) : null;
-  const [orders, customers] = await Promise.all([listOrders(ctx, { states: state ? [state] : undefined, limit: 500 }), list(ctx, "customer", { limit: 2000 })]);
-  const cname = new Map(customers.map((c) => [c.id, String(c.name)]));
-  const q = typeof sp.q === "string" ? sp.q.toLowerCase() : "";
-  const rows = q ? orders.filter((o) => [o.orderNumber, cname.get(o.customerId ?? "") ?? "", ...Object.values(o.refs)].some((x) => x.toLowerCase().includes(q))) : orders;
+  const days = RANGES.some(([d]) => String(d) === sp.days) ? Number(sp.days) : 60;
+  const [rows, views] = await Promise.all([loadGrid(ctx, { days }), listViews(ctx, "loads")]);
   return (
-    <div>
-      <PageHeader
-        eyebrow="Orders"
-        title="All orders"
-        actions={
-          <>
-            <Link href="/trips" className="btn">
-              Tailgate trips
-            </Link>
-            <Link href="/orders/new" className="btn btn-primary">
-              + Full order form
-            </Link>
-          </>
-        }
-      >
-        Every order, any state. For today&apos;s work use Dispatch.
-      </PageHeader>
-      <div className="px-7 pb-10">
-        <div className="flex items-center gap-2 mb-3 flex-wrap">
-          <form className="flex gap-2">
-            <input name="q" defaultValue={q} className="input w-64" placeholder="Search order #, customer, reference…" />
-            {state && <input type="hidden" name="state" value={state} />}
-          </form>
-          <div className="flex gap-1 ml-2 flex-wrap">
-            <Link href="/orders" className="stage-tab h-8 text-[12.5px]" data-active={!state}>
-              All
-            </Link>
-            {(["draft", "booked", "dispatched", "in_transit", "exception", "delivered", "cancelled"] as OrderState[]).map((s) => (
-              <Link key={s} href={`/orders?state=${s}`} className="stage-tab h-8 text-[12.5px]" data-active={state === s}>
-                {LABEL[s]}
-              </Link>
-            ))}
+    <div className="px-5 md:px-8 pt-6 pb-10">
+      <div className="flex items-end justify-between gap-4 flex-wrap mb-5">
+        <div>
+          <div className="eyebrow mb-1">Orders</div>
+          <h1 className="text-[24px] font-extrabold tracking-tight">Loads</h1>
+          <div className="text-muted text-[13px] mt-0.5">
+            Every open load, plus everything created in the last{" "}
+            <span className="inline-flex gap-1 align-middle">
+              {RANGES.map(([d, l]) => (
+                <Link key={d} href={`/orders?days=${d}`} className={`px-1.5 rounded ${d === days ? "bg-white border border-line text-ink font-semibold" : "hover:text-ink"}`}>
+                  {l}
+                </Link>
+              ))}
+            </span>
           </div>
         </div>
-        <div className="card overflow-hidden">
-          {rows.length === 0 ? (
-            <div className="py-14 text-center">
-              <div className="font-bold">No orders</div>
-              <div className="text-muted text-[13px] mt-1">Create one from Dispatch (press n) or with the full form.</div>
-            </div>
-          ) : (
-            <table className="table">
-              <thead>
-                <tr>
-                  <th>Order</th>
-                  <th>Customer</th>
-                  <th>References</th>
-                  <th>Rate</th>
-                  <th>State</th>
-                  <th>Created</th>
-                </tr>
-              </thead>
-              <tbody>
-                {rows.map((o) => (
-                  <tr key={o.id}>
-                    <td className="font-extrabold mono">
-                      <Link href={o.kind === "trip" ? `/trips/${o.id}` : `/orders/${o.id}`} className="hover:text-teal">
-                        {o.orderNumber}
-                      </Link>
-                      {o.kind === "trip" && <Pill tone="navy">trip</Pill>}
-                      {o.kind === "shipment" && (
-                        <Link href={`/trips/${o.tripId}`} className="ml-1">
-                          <Pill tone="teal">on a trip</Pill>
-                        </Link>
-                      )}
-                    </td>
-                    <td>{o.kind === "trip" ? <span className="text-muted">tailgate</span> : (cname.get(o.customerId ?? "") ?? cname.get(o.brokerId ?? "") ?? <span className="text-faint">—</span>)}</td>
-                    <td className="text-muted text-[12.5px]">{Object.values(o.refs).join(" · ") || "—"}</td>
-                    <td className="mono">{o.rateTbd || o.rateCents == null ? <span className="text-faint">TBD</span> : formatCents(o.rateCents, o.currency)}</td>
-                    <td>
-                      <Pill tone={TONE[o.state]}>{LABEL[o.state]}</Pill>
-                    </td>
-                    <td className="text-muted text-[12.5px]">{new Date(o.createdAt).toLocaleDateString("en-US", { month: "short", day: "numeric" })}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          )}
+        <div className="flex items-center gap-2">
+          <Link href="/trips" className="btn">
+            Tailgate trips
+          </Link>
+          <Link href="/orders/new" className="btn btn-primary">
+            + New load
+          </Link>
         </div>
       </div>
+      <LoadBoard rows={rows} views={views} role={ctx.role} />
     </div>
   );
 }

@@ -432,3 +432,19 @@ export const importJobs = pgTable(
   },
   (t) => [index("import_jobs_tenant").on(t.tenantId)],
 );
+
+/** A saved grid view: columns, order, widths, filters, sort. Personal, or shared with the company. */
+export const savedViews = pgTable(
+  "saved_views",
+  {
+    id: id(),
+    tenantId: tenantId(),
+    userId: text("user_id").notNull(),
+    page: text("page").notNull(), // loads | …
+    name: text("name").notNull(),
+    shared: boolean("shared").notNull().default(false),
+    config: jsonb("config").$type<Record<string, unknown>>().notNull().default(sql`'{}'::jsonb`),
+    ...audit(),
+  },
+  (t) => [index("saved_views_tenant_page").on(t.tenantId, t.page)],
+);

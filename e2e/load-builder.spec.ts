@@ -9,8 +9,10 @@ test("load builder: several pickups, a hand-off yard and a Canada delivery; the 
 
   // nothing is pre-filled: a blank pickup and a blank delivery
   await page.goto("/dispatch");
-  await page.keyboard.press("n");
-  await page.waitForURL("**/orders/new", { waitUntil: "commit" });
+  await expect(async () => {
+    if (!page.url().includes("/orders/new")) await page.keyboard.press("n");
+    await page.waitForURL("**/orders/new", { waitUntil: "commit", timeout: 3000 });
+  }).toPass({ timeout: 20_000 });
   const stops = page.getByTestId("stop");
   await expect(stops).toHaveCount(2);
   await expect(page.getByLabel("Stop 1 location")).toHaveValue("");

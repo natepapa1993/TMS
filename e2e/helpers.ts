@@ -59,8 +59,11 @@ export const mxToUs = (pickup: string, delivery: string): LoadStop[] => [
  */
 export async function buildLoad(page: Page, o: { customer: string; rate?: string; stops: LoadStop[] }) {
   await page.goto("/dispatch");
-  await page.keyboard.press("n");
-  await page.waitForURL("**/orders/new", { waitUntil: "commit" });
+  // n opens the builder once the board has hydrated; press again if the first one landed too early
+  await expect(async () => {
+    if (!page.url().includes("/orders/new")) await page.keyboard.press("n");
+    await page.waitForURL("**/orders/new", { waitUntil: "commit", timeout: 3000 });
+  }).toPass({ timeout: 20_000 });
   await page.locator("#l-customer").selectOption({ label: o.customer });
   if (o.rate) await page.locator("#l-rate").fill(o.rate);
   for (let i = 2; i < o.stops.length; i++) await page.click("button:has-text('+ Add stop')");

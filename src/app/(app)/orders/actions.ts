@@ -169,3 +169,38 @@ export async function updateStopAction(orderId: string, stopId: string, st: Part
   if (r.ok) touch(orderId);
   return r;
 }
+
+// ---------- load board ----------
+
+export async function saveLoadViewAction(v: { id?: string | null; name: string; shared: boolean; config: import("@/domain/load-grid").ViewConfig }) {
+  const { saveView } = await import("@/domain/load-grid");
+  const r = await act((ctx) => saveView(ctx, "loads", v));
+  if (r.ok) revalidatePath("/orders");
+  return r.ok ? { ok: true as const, id: r.data.id } : { ok: false as const, error: r.error };
+}
+
+export async function deleteLoadViewAction(id: string) {
+  const { deleteView } = await import("@/domain/load-grid");
+  const r = await act((ctx) => deleteView(ctx, id));
+  if (r.ok) revalidatePath("/orders");
+  return r.ok ? { ok: true as const } : { ok: false as const, error: r.error };
+}
+
+/** Book every draft in the selection; says which could not be booked and why. */
+export async function bulkBookAction(orderIds: string[]) {
+  const r = await act(async (ctx) => {
+    const failed: string[] = [];
+    let booked = 0;
+    for (const id of orderIds.slice(0, 500)) {
+      try {
+        await O.bookOrder(ctx, id);
+        booked++;
+      } catch (e) {
+        failed.push(e instanceof Error ? e.message : String(e));
+      }
+    }
+    return { booked, failed };
+  });
+  if (r.ok) touch();
+  return r;
+}

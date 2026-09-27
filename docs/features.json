@@ -514,6 +514,191 @@
         "src/domain/crossing.test.ts",
         "e2e/load-builder.spec.ts"
       ]
+    },
+    {
+      "id": "F-20.1",
+      "name": "Load board grid: configurable/pinned columns, column filters, sort, saved views, totals bar (miles, revenue, cost, margin, RPM), CSV export, bulk actions",
+      "milestone": "M20",
+      "status": "done",
+      "tests": [
+        "src/domain/load-grid.test.ts",
+        "e2e/load-board.spec.ts"
+      ]
+    },
+    {
+      "id": "F-20.2",
+      "name": "Load page with tabs; money box (flat / per mile / per weight linehaul, accessorials, FSC); typed notes; roles on the load (sales agent, CSR, dispatcher); priority; TONU; lock",
+      "milestone": "M20",
+      "status": "planned",
+      "tests": []
+    },
+    {
+      "id": "F-20.3",
+      "name": "Rate con upload in the load builder fills the load (AI); load templates with bulk create; Excel load import",
+      "milestone": "M20",
+      "status": "planned",
+      "tests": []
+    },
+    {
+      "id": "F-20.4",
+      "name": "Dispatch planner: trips beside drivers with availability (available at / in, next planned), HOS remaining, bulk assign & dispatch",
+      "milestone": "M20",
+      "status": "planned",
+      "tests": []
+    },
+    {
+      "id": "F-20.5",
+      "name": "Driver and asset events (vacation, home time, repair) that block assignment; driver–truck–dispatcher assignment preferences",
+      "milestone": "M20",
+      "status": "planned",
+      "tests": []
+    },
+    {
+      "id": "F-20.6",
+      "name": "Asset map: live trucks and trailers, status filters",
+      "milestone": "M20",
+      "status": "planned",
+      "tests": []
+    },
+    {
+      "id": "F-20.7",
+      "name": "Professional visual pass across the app: density, typography, grids",
+      "milestone": "M20",
+      "status": "planned",
+      "tests": []
+    },
+    {
+      "id": "F-21.1",
+      "name": "Driver pay rules engine: per mile / % / per stop / hourly / per diem / minimum, conditions, plans; team split",
+      "milestone": "M21",
+      "status": "planned",
+      "tests": []
+    },
+    {
+      "id": "F-21.2",
+      "name": "Deductions (one-time, recurring, balance), escrow accounts, advances with limits",
+      "milestone": "M21",
+      "status": "planned",
+      "tests": []
+    },
+    {
+      "id": "F-21.3",
+      "name": "Contracted lane rates and fuel surcharge tables applied automatically",
+      "milestone": "M21",
+      "status": "planned",
+      "tests": []
+    },
+    {
+      "id": "F-21.4",
+      "name": "Batch and summary invoicing; invoice delivery by email / factor / EDI / portal",
+      "milestone": "M21",
+      "status": "planned",
+      "tests": []
+    },
+    {
+      "id": "F-21.5",
+      "name": "IFTA quarterly report from ELD miles and fuel purchases",
+      "milestone": "M21",
+      "status": "planned",
+      "tests": []
+    },
+    {
+      "id": "F-22.1",
+      "name": "ELDs: Samsara, Geotab (plus Motive): positions, HOS, IFTA miles",
+      "milestone": "M22",
+      "status": "planned",
+      "tests": []
+    },
+    {
+      "id": "F-22.2",
+      "name": "Fuel cards (EFS, Comdata, Love's, Relay, Pilot, TCS) and tolls (BestPass, PrePass, iPass) import, matched to driver/truck, deduct or discount",
+      "milestone": "M22",
+      "status": "planned",
+      "tests": []
+    },
+    {
+      "id": "F-22.3",
+      "name": "Load boards: post to DAT and Truckstop",
+      "milestone": "M22",
+      "status": "planned",
+      "tests": []
+    },
+    {
+      "id": "F-22.4",
+      "name": "Carrier vetting: FMCSA lookup, Highway, MyCarrierPackets, RMIS, SaferWatch; block unvetted carriers",
+      "milestone": "M22",
+      "status": "planned",
+      "tests": []
+    },
+    {
+      "id": "F-22.5",
+      "name": "Visibility networks: MacroPoint, FourKites, project44, Trucker Tools",
+      "milestone": "M22",
+      "status": "planned",
+      "tests": []
+    },
+    {
+      "id": "F-22.6",
+      "name": "Expedite tender networks: AOD, XPO-NLM, Expeditors ECCO, Load One",
+      "milestone": "M22",
+      "status": "planned",
+      "tests": []
+    },
+    {
+      "id": "F-22.7",
+      "name": "QuickBooks Online two-way sync; factoring companies (TAFS, RTS, Triumph, OTR…)",
+      "milestone": "M22",
+      "status": "planned",
+      "tests": []
+    },
+    {
+      "id": "F-23.1",
+      "name": "Safety: accidents, claims, roadside inspections, MVR, Clearinghouse, drug and alcohol tests",
+      "milestone": "M23",
+      "status": "planned",
+      "tests": []
+    },
+    {
+      "id": "F-23.2",
+      "name": "Maintenance records and PM alerts (or CircleLogix link)",
+      "milestone": "M23",
+      "status": "planned",
+      "tests": []
+    },
+    {
+      "id": "F-23.3",
+      "name": "Granular roles and permissions, offices, fleets, MFA",
+      "milestone": "M23",
+      "status": "planned",
+      "tests": []
+    },
+    {
+      "id": "F-23.4",
+      "name": "Public REST API and webhooks",
+      "milestone": "M23",
+      "status": "planned",
+      "tests": []
+    },
+    {
+      "id": "F-23.5",
+      "name": "Dashboards (operations, financial) and a report builder; scheduled reports",
+      "milestone": "M23",
+      "status": "planned",
+      "tests": []
+    },
+    {
+      "id": "F-23.6",
+      "name": "Ask-a-question AI over the company's data",
+      "milestone": "M23",
+      "status": "planned",
+      "tests": []
+    },
+    {
+      "id": "F-23.7",
+      "name": "Private load and bid board with partner carriers (exchange)",
+      "milestone": "M23",
+      "status": "planned",
+      "tests": []
     }
   ]
 }
