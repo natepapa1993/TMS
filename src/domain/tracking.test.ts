@@ -1,4 +1,4 @@
-// Features: F-4 tendering, F-5 tracking (positions, driver app, tracking link, no-position watchdog)
+// Features: F-4 tendering, F-5 tracking (positions, driver app, tracking link, no-position watchdog, appointment-window flags) F-5.9
 import { describe, it, expect, beforeEach } from "vitest";
 import { truncateAll, makeTenant } from "@/test/helpers";
 import { create } from "@/data/records";
@@ -7,7 +7,7 @@ import { outbox, tenders as tendersTable, flags, legEvents, positions } from "@/
 import { and, eq } from "drizzle-orm";
 import { createOrder, planLeg, dispatchLeg, acceptLeg, advanceLeg, getOrder, ValidationError } from "./orders";
 import { sendTender, tenderByToken, respondToTender, expireTenders, closeOpenTenderForLeg } from "./tenders";
-import { recordPosition, driverToday, driverStep, trackingView, flagStaleTracking, latestTruckPositions } from "./tracking";
+import { recordPosition, driverToday, driverStep, trackingView, flagStaleTracking, flagWindows, latestTruckPositions } from "./tracking";
 import { issueToken, resolveToken, revokeToken } from "@/lib/tokens";
 import { TransitionError } from "./states";
 
@@ -209,5 +209,57 @@ describe("tracking (F-5)", () => {
     await flagStaleTracking(new Date());
     fl = await db.select().from(flags).where(and(eq(flags.legId, o.legs[1].id), eq(flags.code, "no_position")));
     expect(fl[0].clearedAt).not.toBeNull();
+  });
+});
+
+describe("appointment windows (F-5)", () => {
+  it("a pickup opening soon with nobody accepted is at risk; a closed window with no arrival is missed; both clear themselves", async () => {
+    const now = new Date("2026-09-27T12:00:00Z");
+    const o = await createOrder(a, {
+      customerId: f.rxo,
+      rateCents: 100000,
+      stops: [
+        { type: "pickup", name: "Laredo Yard", country: "US", windowStart: new Date("2026-09-27T13:00:00Z"), windowEnd: new Date("2026-09-27T14:00:00Z") },
+        { type: "delivery", name: "Toyota", country: "US", windowStart: new Date("2026-09-27T18:00:00Z"), windowEnd: new Date("2026-09-27T19:00:00Z") },
+      ],
+      template: "domestic",
+      book: true,
+    });
+    const leg = o.legs[0].id;
+    // unassigned: nothing to flag yet (there is nobody to be late); planned and unsent: at risk
+    expect(await flagWindows(now)).toMatchObject({ missed: 0, atRisk: 0 });
+    const t2104 = await create(a, "truck", { unitNumber: "2104", usPlate: "TX2104", usPlateExpires: future });
+    const reyes = await create(a, "driver", { name: "Daniel Reyes", driverType: "CDL", licenseExpires: future, medicalExpires: future, currentTruckId: t2104.id });
+    await planLeg(a, leg, { kind: "truck", truckId: t2104.id, driverId: reyes.id });
+    expect(await flagWindows(now)).toMatchObject({ atRisk: 1 });
+    const open = await db.select().from(flags).where(and(eq(flags.orderId, o.order.id), eq(flags.code, "window_risk")));
+    expect(open[0].title).toMatch(/opens in 60 min and nobody has accepted/);
+    expect(open[0].level).toBe("yellow");
+    expect(await flagWindows(now)).toMatchObject({ atRisk: 0 }); // once
+    // accepted → the risk clears
+    await dispatchLeg(a, leg);
+    await acceptLeg(a, leg);
+    expect(await flagWindows(new Date("2026-09-27T12:30:00Z"))).toMatchObject({ cleared: 1 });
+    // the pickup window closes with no arrival → missed (red); arriving clears it
+    expect(await flagWindows(new Date("2026-09-27T14:01:00Z"))).toMatchObject({ missed: 1 });
+    const all = await db.select().from(flags).where(and(eq(flags.orderId, o.order.id), eq(flags.code, "window_missed")));
+    expect(all).toHaveLength(1);
+    expect(all[0].title).toBe("Missed the pickup window at Laredo Yard");
+    expect(all[0].level).toBe("red");
+    await advanceLeg(a, leg, "en_route_to_pickup", { at: new Date("2026-09-27T14:05:00Z") });
+    await advanceLeg(a, leg, "at_pickup", { at: new Date("2026-09-27T14:30:00Z") });
+    expect(await flagWindows(new Date("2026-09-27T14:31:00Z"))).toMatchObject({ cleared: 1, missed: 0 });
+    // the delivery window is not judged until the pickup is done; it is, and the delivery is late
+    await advanceLeg(a, leg, "loaded", { at: new Date("2026-09-27T15:00:00Z") });
+    await advanceLeg(a, leg, "en_route", { at: new Date("2026-09-27T15:01:00Z") });
+    expect(await flagWindows(new Date("2026-09-27T18:30:00Z"))).toMatchObject({ missed: 0 });
+    expect(await flagWindows(new Date("2026-09-27T19:30:00Z"))).toMatchObject({ missed: 1 });
+    const del = await db.select().from(flags).where(and(eq(flags.orderId, o.order.id), eq(flags.code, "window_missed")));
+    expect(del.map((x) => x.title)).toContain("Missed the delivery window at Toyota");
+    // delivered → the leg leaves the open set and takes its flag with it
+    await advanceLeg(a, leg, "at_delivery", { at: new Date("2026-09-27T19:40:00Z") });
+    await advanceLeg(a, leg, "completed", { at: new Date("2026-09-27T20:00:00Z") });
+    expect(await flagWindows(new Date("2026-09-27T20:01:00Z"))).toMatchObject({ cleared: 1 });
+    expect((await db.select().from(flags).where(eq(flags.orderId, o.order.id))).every((x) => x.clearedAt)).toBe(true);
   });
 });

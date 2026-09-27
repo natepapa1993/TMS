@@ -203,3 +203,66 @@ export async function flagStaleTracking(now = new Date(), hours = 2) {
 }
 
 export { LEG_FORWARD };
+
+// ---------- appointment windows ----------
+
+const OPEN_STOP_STATES: LegState[] = ["planned", "dispatched", "accepted", "en_route_to_pickup", "at_pickup", "loaded", "en_route"];
+
+/**
+ * Job: appointment windows against the clock, no map needed.
+ * - window_missed (red): the truck has not arrived at a stop whose window has closed.
+ * - window_risk (yellow): the pickup window opens within `riskHours` and nobody has accepted the leg yet.
+ * Both clear themselves: arriving clears the first; accepting clears the second.
+ */
+export async function flagWindows(now = new Date(), riskHours = 2) {
+  const legs = await db.select().from(s.legs).where(inArray(s.legs.state, OPEN_STOP_STATES));
+  const stopIds = [...new Set(legs.flatMap((l) => [l.fromStopId, l.toStopId]).filter((x): x is string => !!x))];
+  const stops = stopIds.length ? await db.select().from(s.stops).where(inArray(s.stops.id, stopIds)) : [];
+  const byId = new Map(stops.map((st) => [st.id, st]));
+  const open = await db.select().from(s.flags).where(and(inArray(s.flags.code, ["window_missed", "window_risk"]), sql`${s.flags.clearedAt} is null`));
+  const openFor = (legId: string, code: string, stopId: string) => open.find((f) => f.legId === legId && f.code === code && f.data?.stopId === stopId);
+  let missed = 0;
+  let atRisk = 0;
+  let cleared = 0;
+  const soon = new Date(now.getTime() + riskHours * 3600_000);
+  for (const leg of legs) {
+    const from = leg.fromStopId ? byId.get(leg.fromStopId) : undefined;
+    const to = leg.toStopId ? byId.get(leg.toStopId) : undefined;
+    // the stop the truck is heading for: pickup until it has been reached, then the delivery
+    const target = from && !from.arrivedAt ? from : to && !to.arrivedAt ? to : null;
+    // missed windows
+    for (const st of [from, to]) {
+      if (!st) continue;
+      const flag = openFor(leg.id, "window_missed", st.id);
+      const missedNow = !st.arrivedAt && !!st.windowEnd && st.windowEnd.getTime() < now.getTime() && st === target;
+      if (missedNow && !flag) {
+        await db.insert(s.flags).values({ id: newId(), tenantId: leg.tenantId, orderId: leg.orderId, legId: leg.id, code: "window_missed", level: "red", title: `Missed the ${st.type === "pickup" ? "pickup" : st.type === "delivery" ? "delivery" : "stop"} window at ${st.name}`, detail: `Window closed ${st.windowEnd!.toISOString()} and the truck has not arrived. Call the ${st.type === "pickup" ? "shipper" : "receiver"} and the driver.`, owner: "dispatch", data: { stopId: st.id } });
+        missed++;
+      } else if (!missedNow && flag) {
+        await db.update(s.flags).set({ clearedAt: now, clearedBy: "system" }).where(eq(s.flags.id, flag.id));
+        cleared++;
+      }
+    }
+    // at risk: pickup opens soon and the leg is not accepted
+    if (from) {
+      const flag = openFor(leg.id, "window_risk", from.id);
+      const riskNow = !from.arrivedAt && !!from.windowStart && from.windowStart.getTime() < soon.getTime() && ["planned", "dispatched"].includes(leg.state);
+      if (riskNow && !flag) {
+        const mins = Math.max(0, Math.round((from.windowStart!.getTime() - now.getTime()) / 60_000));
+        await db.insert(s.flags).values({ id: newId(), tenantId: leg.tenantId, orderId: leg.orderId, legId: leg.id, code: "window_risk", level: "yellow", title: mins > 0 ? `Pickup at ${from.name} opens in ${mins} min and nobody has accepted` : `Pickup window at ${from.name} is open and nobody has accepted`, detail: leg.state === "planned" ? "The leg is planned but was never sent." : "Sent, no answer yet. Call them or reassign.", owner: "dispatch", data: { stopId: from.id } });
+        atRisk++;
+      } else if (!riskNow && flag) {
+        await db.update(s.flags).set({ clearedAt: now, clearedBy: "system" }).where(eq(s.flags.id, flag.id));
+        cleared++;
+      }
+    }
+  }
+  // legs that left the open set (completed, cancelled, declined…) take their window flags with them
+  for (const f of open) {
+    if (!legs.some((l) => l.id === f.legId)) {
+      await db.update(s.flags).set({ clearedAt: now, clearedBy: "system" }).where(eq(s.flags.id, f.id));
+      cleared++;
+    }
+  }
+  return { missed, atRisk, cleared };
+}

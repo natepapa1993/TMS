@@ -352,6 +352,15 @@
         "src/lib/throttle.test.ts",
         "e2e/dispatch.spec.ts"
       ]
+    },
+    {
+      "id": "F-5.9",
+      "name": "Appointment windows against the clock: missed-window (red) and nobody-accepted-yet (yellow) flags that clear themselves",
+      "milestone": "M1",
+      "status": "done",
+      "tests": [
+        "src/domain/tracking.test.ts"
+      ]
     }
   ]
 }
