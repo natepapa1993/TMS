@@ -2,7 +2,7 @@
   "$schema": "https://railway.com/railway.schema.json",
   "build": { "builder": "RAILPACK", "buildCommand": "pnpm build" },
   "deploy": {
-    "preDeployCommand": ["pnpm db:migrate"],
+    "preDeployCommand": ["pnpm db:migrate && pnpm db:seed"],
     "startCommand": "pnpm start",
     "healthcheckPath": "/api/health",
     "healthcheckTimeout": 120,
