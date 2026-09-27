@@ -9,7 +9,7 @@ import { LEG_LABEL } from "@/domain/states";
 import { formatCents } from "@/data/fields";
 import { OrderEditor, StopEditor, OrderActions, LegMiles } from "./editor";
 import { Charges } from "./charges";
-import { chargesFor, orderPnl } from "@/domain/billing";
+import { chargesFor, orderPnl, requiredRefsFor } from "@/domain/billing";
 import { documents } from "@/db/schema";
 import { and, inArray } from "drizzle-orm";
 import { db } from "@/db/client";
@@ -92,7 +92,7 @@ export default async function OrderPage({ params }: PageProps<"/orders/[id]">) {
               ))}
             </div>
           </div>
-          {billingView && <Charges orderId={id} charges={JSON.parse(JSON.stringify(chargeRows))} docs={orderDocs} requiredDocs={(cust?.requiredDocs as string[] | undefined) ?? ["POD", "BOL", "RATE_CON"]} pnl={pnl} locked={["invoiced", "paid"].includes(order.state)} role={ctx.role} currency={order.currency} />}
+          {billingView && <Charges orderId={id} charges={JSON.parse(JSON.stringify(chargeRows))} docs={orderDocs} requiredDocs={(cust?.requiredDocs as string[] | undefined) ?? ["POD", "BOL", "RATE_CON"]} requiredRefs={requiredRefsFor(cust as { requiredRefs?: string[] | null } | undefined, order.refs ?? {})} pnl={pnl} locked={["invoiced", "paid"].includes(order.state)} role={ctx.role} currency={order.currency} />}
           <div className="card p-5">
             <div className="h2 mb-3">Legs</div>
             <div className="-mx-5 overflow-x-auto">

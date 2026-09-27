@@ -170,6 +170,7 @@ export const customers = pgTable(
     payWhenPaid: boolean("pay_when_paid").notNull().default(false),
     trackingRequirement: text("tracking_requirement").notNull().default("link"), // none | link | edi214 | portal
     requiredDocs: jsonb("required_docs").$type<string[]>(), // blank = POD, BOL, RATE_CON; [] = nothing required
+    requiredRefs: jsonb("required_refs").$type<string[]>(), // reference keys the invoice needs on the order (po, asn, shipment, reference, rate_con); blank = none
     detentionFreeMinutes: integer("detention_free_minutes"), // blank = 120
     detentionRateCents: integer("detention_rate_cents"), // per hour; blank = 75.00
     reminderDays: jsonb("reminder_days").$type<number[]>(), // days past due; blank = [3,10,20]; [] = opted out

@@ -107,7 +107,16 @@ export async function chargesFor(ctx: Ctx, orderId: string) {
 
 // ---------- billing queue (7.2) ----------
 
-export type QueueRow = { order: Order; customerName: string | null; entityName: string | null; chargesCents: number; rateConCents: number | null; mismatch: boolean; requiredDocs: { code: string; present: boolean }[]; docsComplete: boolean; ageDays: number; invoiceId: string | null; paperSays: string | null };
+export type QueueRow = { order: Order; customerName: string | null; entityName: string | null; chargesCents: number; rateConCents: number | null; mismatch: boolean; requiredDocs: { code: string; present: boolean }[]; requiredRefs: { key: string; present: boolean }[]; docsComplete: boolean; ageDays: number; invoiceId: string | null; paperSays: string | null };
+
+/** The reference keys a customer may require on the order before it invoices, as the customer record spells them. */
+export const REF_KEYS: Record<string, string> = { PO: "po", ASN: "asn", SHIPMENT: "shipment", REFERENCE: "reference", RATE_CON: "rate_con" };
+export function requiredRefsFor(cust: { requiredRefs?: string[] | null } | undefined, refs: Record<string, string | null | undefined>) {
+  return (cust?.requiredRefs ?? []).map((code) => {
+    const key = REF_KEYS[code.toUpperCase()] ?? code.toLowerCase();
+    return { key, present: !!refs[key]?.toString().trim() };
+  });
+}
 
 export async function billingQueue(ctx: Ctx): Promise<QueueRow[]> {
   assertCtx(ctx);
@@ -131,8 +140,9 @@ export async function billingQueue(ctx: Ctx): Promise<QueueRow[]> {
     const cust = customers.find((c) => c.id === (o.customerId ?? o.brokerId));
     const entity = entities.find((e) => e.id === (o.billingEntityId ?? cust?.billingEntityId)) ?? entities.find((e) => e.isDefault) ?? entities[0];
     const required = (cust?.requiredDocs ?? ["POD", "BOL", "RATE_CON"]).map((code) => ({ code, present: docs.some((d) => d.subjectId === o.id && d.code === code) }));
+    const requiredRefs = requiredRefsFor(cust, o.refs ?? {});
     const chargesCents = cs.filter((c) => c.billable).reduce((a, c) => a + c.amountCents, 0);
-    out.push({ order: o, customerName: cust?.name ?? null, entityName: entity?.legalName ?? null, chargesCents, rateConCents: o.rateCents, mismatch: o.rateCents != null && chargesCents !== o.rateCents && !((o.custom as Record<string, unknown>)?.rateConMismatchAccepted), requiredDocs: required, docsComplete: required.every((r) => r.present), ageDays: o.deliveredAt ? Math.floor((Date.now() - o.deliveredAt.getTime()) / 86400_000) : 0, invoiceId: drafts.find((d) => d.orderIds.includes(o.id))?.id ?? null, paperSays: paperFlags.find((x) => x.orderId === o.id)?.title ?? null });
+    out.push({ order: o, customerName: cust?.name ?? null, entityName: entity?.legalName ?? null, chargesCents, rateConCents: o.rateCents, mismatch: o.rateCents != null && chargesCents !== o.rateCents && !((o.custom as Record<string, unknown>)?.rateConMismatchAccepted), requiredDocs: required, requiredRefs, docsComplete: required.every((r) => r.present) && requiredRefs.every((r) => r.present), ageDays: o.deliveredAt ? Math.floor((Date.now() - o.deliveredAt.getTime()) / 86400_000) : 0, invoiceId: drafts.find((d) => d.orderIds.includes(o.id))?.id ?? null, paperSays: paperFlags.find((x) => x.orderId === o.id)?.title ?? null });
   }
   return out;
 }
@@ -246,7 +256,7 @@ export async function createInvoice(ctx: Ctx, orderIds: string[], opts: { entity
   const customerId = [...custIds][0];
   if (!customerId) throw new ValidationError("the order has no customer");
   const bad = queue.filter((q) => !q.docsComplete || q.mismatch);
-  if (bad.length) throw new ValidationError(bad.map((q) => `${q.order.orderNumber}: ${!q.docsComplete ? `missing ${q.requiredDocs.filter((d) => !d.present).map((d) => d.code).join(", ")}` : "charges differ from the rate con"}`).join("; "));
+  if (bad.length) throw new ValidationError(bad.map((q) => `${q.order.orderNumber}: ${!q.docsComplete ? `missing ${[...q.requiredDocs.filter((d) => !d.present).map((d) => d.code), ...q.requiredRefs.filter((r) => !r.present).map((r) => `${r.key.toUpperCase()} reference`)].join(", ")}` : "charges differ from the rate con"}`).join("; "));
   const [cust] = await db.select().from(s.customers).where(eq(s.customers.id, customerId)).limit(1);
   const entities = await db.select().from(s.billingEntities).where(and(eq(s.billingEntities.tenantId, ctx.tenantId), isNull(s.billingEntities.archivedAt)));
   const entity = entities.find((e) => e.id === (opts.entityId ?? queue[0].order.billingEntityId ?? cust.billingEntityId)) ?? entities.find((e) => e.isDefault) ?? entities[0];
@@ -293,7 +303,7 @@ export async function issueInvoice(ctx: Ctx, invoiceId: string, opts: { issuedAt
   // rate-con hard stop and required docs re-checked at issue (persona: head of billing)
   const queue = (await billingQueue(ctx)).filter((q) => inv.orderIds.includes(q.order.id));
   const bad = queue.filter((q) => !q.docsComplete || q.mismatch);
-  if (bad.length) throw new ValidationError(bad.map((q) => `${q.order.orderNumber}: ${!q.docsComplete ? `missing ${q.requiredDocs.filter((d) => !d.present).map((d) => d.code).join(", ")}` : "charges differ from the rate con"}`).join("; "));
+  if (bad.length) throw new ValidationError(bad.map((q) => `${q.order.orderNumber}: ${!q.docsComplete ? `missing ${[...q.requiredDocs.filter((d) => !d.present).map((d) => d.code), ...q.requiredRefs.filter((r) => !r.present).map((r) => `${r.key.toUpperCase()} reference`)].join(", ")}` : "charges differ from the rate con"}`).join("; "));
   if (inv.currency === "MXN" && !opts.exchangeRate) throw new ValidationError("an exchange rate is required for a MXN invoice", "exchangeRate");
   const stops = inv.orderIds.length === 1 ? await db.select().from(s.stops).where(eq(s.stops.orderId, inv.orderIds[0])).orderBy(s.stops.seq) : [];
   const refs: Record<string, string> = {};

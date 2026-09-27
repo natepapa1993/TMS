@@ -146,6 +146,7 @@ export const FIELDS: Record<RecordKind, Field[]> = {
     { name: "payWhenPaid", label: "Pay-when-paid", type: "boolean", group: "Billing" },
     { name: "billingEntityId", label: "Bill from entity", type: "ref", ref: "billingEntity", group: "Billing" },
     { name: "requiredDocs", label: "Docs before invoicing", type: "list", listOf: "code", group: "Billing", help: "Codes the invoice needs on file · blank = POD, BOL, RATE_CON · type none if nothing is required", placeholder: "POD, BOL, RATE_CON" },
+    { name: "requiredRefs", label: "References before invoicing", type: "list", listOf: "code", group: "Billing", help: "Reference fields the order must carry before it invoices: PO, ASN, SHIPMENT, REFERENCE, RATE_CON · blank = none", placeholder: "PO, ASN" },
     { name: "detentionFreeMinutes", label: "Detention free time (min)", type: "number", group: "Billing", help: "blank = 120" },
     { name: "detentionRateCents", label: "Detention rate / hour", type: "cents", group: "Billing", help: "blank = 75.00" },
     { name: "reminderDays", label: "Reminder days past due", type: "list", listOf: "number", group: "Billing", help: "blank = 3, 10, 20 · type none to opt out", placeholder: "3, 10, 20" },

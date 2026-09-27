@@ -58,10 +58,10 @@ const SECTIONS: { id: string; title: string; href: string; body: (string | { rul
     title: "Billing: the ledger",
     href: "/billing",
     body: [
-      "Delivered orders wait in the queue until the documents the customer requires (POD, BOL, rate con…) are on file and the charges match the rate con. Then one click makes a draft invoice per billing entity; issue it for a number, send it, record receipts and credits, mark disputes, watch AR aging, and close the month so nothing dated before it can change.",
+      "Delivered orders wait in the queue until the documents the customer requires (POD, BOL, rate con…) are on file, the references they require (PO, ASN…) are on the order, and the charges match the rate con. Then one click makes a draft invoice per billing entity; issue it for a number, send it, record receipts and credits, mark disputes, watch AR aging, and close the month so nothing dated before it can change.",
       "Carrier bills expect the accepted tender rate and pass a three-way check (tender = invoice, POD on file) before approval; quick-pay discounts are per carrier and pay-when-paid is per customer. Drivers get weekly settlements from their pay rule with deductions and reimbursements, and see them in their app, where they can dispute a line.",
       "QuickBooks gets files: IIF for Desktop, CSV lists for Online; the account names live under Settings → Company and every record can carry its QuickBooks name.",
-      { rule: "Nothing invoices without the required documents; a credit memo, not an edit, changes an issued invoice." },
+      { rule: "Nothing invoices without the required documents and references; a credit memo, not an edit, changes an issued invoice." },
     ],
   },
   {

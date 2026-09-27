@@ -25,6 +25,7 @@ async function masterData(page: Page) {
   await page.goto("/settings/customers");
   await page.click("table a:has-text('RXO')");
   await page.locator("#f-requiredDocs").fill("POD, RATE_CON");
+  await page.locator("#f-requiredRefs").fill("PO");
   await page.locator("#f-detentionFreeMinutes").fill("60");
   await page.click("button:has-text('Save changes')");
   await expect(page.getByRole("status")).toContainText("Saved");
@@ -135,6 +136,17 @@ test("billing day: charges, docs gate, invoice to paid, AR, carrier three-way wi
     await expect(up).toBeHidden();
   }
   await expect(page.locator("tr", { hasText: o1 }).locator("button.pill-red")).toHaveCount(0);
+  // RXO also requires its PO on the order: the red reference pill opens the order to add it
+  await expect(page.locator("tr", { hasText: o1 }).locator("button:has-text('Create invoice')")).toBeDisabled();
+  await page.locator("tr", { hasText: o1 }).locator("a.pill-red:has-text('po #')").click();
+  await page.waitForURL("**/orders/**", { waitUntil: "commit" });
+  await expect(page.locator("#charges")).toContainText("po # missing");
+  await page.getByLabel("PO reference").fill("5700489439");
+  await page.click("button:has-text('Save order')");
+  await expect(page.getByRole("status")).toContainText("Saved");
+  await expect(page.locator("#charges")).toContainText("po # ✓");
+  await page.goto("/billing");
+  await expect(page.locator("tr", { hasText: o1 }).locator(".pill-red")).toHaveCount(0);
   await page.locator("tr", { hasText: o1 }).locator("button:has-text('Create invoice')").click();
   await expect(page.getByRole("status")).toContainText("Draft invoice created");
 

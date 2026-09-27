@@ -12,7 +12,7 @@ type Charge = { id: string; kind: string; description: string; qty: number; unit
 type Doc = { code: string | null; fileName: string; id: string };
 const KINDS: [ChargeKind, string][] = [["accessorial", "Accessorial"], ["detention", "Detention"], ["layover", "Layover"], ["tonu", "TONU"], ["lumper", "Lumper"], ["border_fee", "Border fee"], ["crossing_fee", "Crossing fee"], ["storage", "Storage"], ["extra_stop", "Extra stop"], ["fuel", "Fuel"], ["other", "Other"]];
 
-export function Charges({ orderId, charges, docs, requiredDocs, pnl, locked, role, currency }: { orderId: string; charges: Charge[]; docs: Doc[]; requiredDocs: string[]; pnl: { revenue: number; carrierCost: number; driverPay: number; fuel: number; miles: number; extra: number; cost: number; margin: number; marginPct: number } | null; locked: boolean; role: string; currency: string }) {
+export function Charges({ orderId, charges, docs, requiredDocs, requiredRefs = [], pnl, locked, role, currency }: { orderId: string; charges: Charge[]; docs: Doc[]; requiredDocs: string[]; requiredRefs?: { key: string; present: boolean }[]; pnl: { revenue: number; carrierCost: number; driverPay: number; fuel: number; miles: number; extra: number; cost: number; margin: number; marginPct: number } | null; locked: boolean; role: string; currency: string }) {
   const router = useRouter();
   const t = useToast();
   const [pending, start] = useTransition();
@@ -45,6 +45,11 @@ export function Charges({ orderId, charges, docs, requiredDocs, pnl, locked, rol
               </button>
             );
           })}
+          {requiredRefs.map((r) => (
+            <span key={r.key} className={`pill ${r.present ? "pill-green" : "pill-red"}`} title={r.present ? "reference on the order" : "the customer requires this reference before invoicing — add it under References"}>
+              {r.key.replace("_", " ")} # {r.present ? "✓" : "missing"}
+            </span>
+          ))}
         </div>
       </div>
       {charges.length === 0 ? (

@@ -108,7 +108,7 @@ export function OrderEditor({ order, customers, entities, readOnly }: { order: O
         {Object.keys(refs).map((k) => (
           <div key={k}>
             <label className="label">{REF_LABEL[k] ?? k.replace(/_/g, " ")}</label>
-            <input className="input" value={refs[k]} onChange={(e) => setRefs({ ...refs, [k]: e.target.value })} />
+            <input className="input" value={refs[k]} onChange={(e) => setRefs({ ...refs, [k]: e.target.value })} aria-label={`${REF_LABEL[k] ?? k} reference`} />
           </div>
         ))}
       </div>

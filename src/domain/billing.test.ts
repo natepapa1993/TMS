@@ -72,6 +72,15 @@ describe("charges & queue (7.2, 7.3)", () => {
     await expect(B.createInvoice(a, [o.order.id])).rejects.toThrow(/differ from the rate con/);
     await expect(B.acceptRateConMismatch(a, o.order.id, "")).rejects.toBeInstanceOf(ValidationError);
     await B.acceptRateConMismatch(a, o.order.id, "detention approved by RXO email 9/26");
+    // the customer also requires their PO and ASN on the order before it invoices (spec §7.2 "every customer-required reference")
+    await update(a, "customer", f.rxo, { requiredRefs: ["PO", "ASN"] });
+    let q = (await B.billingQueue(a)).find((x) => x.order.id === o.order.id)!;
+    expect(q.requiredRefs).toEqual([{ key: "po", present: false }, { key: "asn", present: false }]);
+    expect(q.docsComplete).toBe(false);
+    await expect(B.createInvoice(a, [o.order.id])).rejects.toThrow(/missing PO reference, ASN reference/);
+    await updateOrder(a, o.order.id, { refs: { ...o.order.refs, po: "5700489439", asn: "6933176" } });
+    q = (await B.billingQueue(a)).find((x) => x.order.id === o.order.id)!;
+    expect(q.requiredRefs.every((r) => r.present)).toBe(true);
     const inv = await B.createInvoice(a, [o.order.id]);
     expect(inv.state).toBe("draft");
     expect(inv.subtotalCents).toBe(191250);

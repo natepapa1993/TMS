@@ -8,7 +8,7 @@ import { Confirm, Modal, Pill, Toast, useToast } from "@/components/ui";
 import { formatCents } from "@/data/fields";
 import { createInvoiceAction, acceptMismatchAction, uploadOrderDocAction } from "./actions";
 
-type Row = { order: { id: string; orderNumber: string; state: string; currency: string; deliveredAt: string | null }; customerName: string | null; entityName: string | null; chargesCents: number; rateConCents: number | null; mismatch: boolean; requiredDocs: { code: string; present: boolean }[]; docsComplete: boolean; ageDays: number; invoiceId: string | null; paperSays: string | null };
+type Row = { order: { id: string; orderNumber: string; state: string; currency: string; deliveredAt: string | null }; customerName: string | null; entityName: string | null; chargesCents: number; rateConCents: number | null; mismatch: boolean; requiredDocs: { code: string; present: boolean }[]; requiredRefs: { key: string; present: boolean }[]; docsComplete: boolean; ageDays: number; invoiceId: string | null; paperSays: string | null };
 
 export function Queue({ rows, role }: { rows: Row[]; role: string }) {
   const router = useRouter();
@@ -95,6 +95,11 @@ export function Queue({ rows, role }: { rows: Row[]; role: string }) {
                         <button key={d.code} className={`pill ${d.present ? "pill-green" : "pill-red"}`} onClick={() => !d.present && setUploadFor({ orderId: r.order.id, code: d.code })} title={d.present ? "on file" : "missing — click to upload"}>
                           {d.code.replace("_", " ")}
                         </button>
+                      ))}
+                      {r.requiredRefs.map((x) => (
+                        <Link key={x.key} href={`/orders/${r.order.id}`} className={`pill ${x.present ? "pill-green" : "pill-red"}`} title={x.present ? "on the order" : "the customer requires this reference — click to add it on the order"}>
+                          {x.key.replace("_", " ")} #
+                        </Link>
                       ))}
                     </td>
                     <td className={r.ageDays > 7 ? "text-red font-semibold" : "text-muted"}>{r.ageDays} d</td>
