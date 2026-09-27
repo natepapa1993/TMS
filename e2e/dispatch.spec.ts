@@ -232,3 +232,32 @@ test("signed-out visitor is sent to login; wrong password is refused without say
   await page.click("button:has-text('Sign in')");
   await expect(page.locator(".error[role=alert]")).toContainText("don't match");
 });
+
+test("book it again: a copy of an order is a new draft with the same shape and nothing from the old load", async ({ page }) => {
+  await signupFresh(page);
+  await quickAdd(page, "customers", "Add customer", { name: "RXO", kind: "broker" });
+  await page.goto("/dispatch");
+  await page.keyboard.press("n");
+  const d = page.getByRole("dialog");
+  await expect(d).toBeVisible();
+  await d.locator("select").first().selectOption({ label: "RXO (broker)" });
+  await d.getByPlaceholder("Planta Monterrey").fill("Planta Monterrey");
+  await d.getByPlaceholder("GM Arlington").fill("GM Arlington");
+  await d.getByPlaceholder("blank = TBD").fill("2850");
+  await d.locator("button:has-text('Create & book')").click();
+  await expect(page.getByRole("status")).toContainText("Order created");
+  const panel = page.locator("aside").last();
+  await panel.locator("summary:has-text('Details')").click();
+  await panel.locator("a:has-text('Open order')").click();
+  await page.waitForURL("**/orders/**", { waitUntil: "commit" });
+  const first = page.url();
+  await page.click("button:has-text('Book again')");
+  await page.waitForURL((u) => u.toString().includes("/orders/") && u.toString() !== first, { waitUntil: "commit" });
+  await expect(page.locator("main")).toContainText("26-00002");
+  await expect(page.locator("main")).toContainText("Draft");
+  await expect(page.locator("main")).toContainText("Planta Monterrey");
+  await expect(page.locator("main")).toContainText("GM Arlington");
+  await expect(page.locator("input[aria-label='Rate']")).toHaveValue("2850.00");
+  await page.click("button:has-text('Book')");
+  await expect(page.getByRole("status").filter({ hasText: "Booked" })).toBeVisible();
+});

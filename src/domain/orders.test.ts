@@ -415,3 +415,24 @@ describe("board & isolation (F-2.3, T20)", () => {
     expect(st.length).toBe(4);
   });
 });
+
+describe("book it again", () => {
+  it("copies customer, rate, equipment, stops and legs into a new draft; windows, load references and assignments start over", async () => {
+    const { copyOrder, cancelOrder } = await import("./orders");
+    const o = await createOrder(a, { customerId: fleet.rxo, rateCents: 285000, refs: { rate_con: "RC-1", po: "PO-1", reference: "lane-A" }, cargoNote: "26 pallets", stops: [{ type: "pickup", name: "Planta Monterrey", country: "MX", address: { city: "Monterrey", state: "NL" }, windowStart: new Date(), contact: "Ana", notes: "gate 3" }, { type: "border_yard", name: "Santa Fe", country: "MX" }, { type: "yard", name: "Laredo", country: "US" }, { type: "delivery", name: "GM Arlington", country: "US", windowEnd: new Date() }], book: true });
+    const c = await copyOrder(a, o.order.id);
+    expect(c.order.id).not.toBe(o.order.id);
+    expect(c.order.state).toBe("draft");
+    expect(c.order.source).toBe("copy");
+    expect(c.order.sourceRef).toBe(o.order.orderNumber);
+    expect(c.order).toMatchObject({ customerId: fleet.rxo, rateCents: 285000, equipment: o.order.equipment, cargoNote: "26 pallets" });
+    expect(c.order.refs).toEqual({ reference: "lane-A" }); // the rate con and PO belonged to the old load
+    expect(c.stops.map((st) => [st.type, st.name, st.contact, st.notes])).toEqual(o.stops.map((st) => [st.type, st.name, st.contact, st.notes]));
+    expect(c.stops.every((st) => !st.windowStart && !st.windowEnd && !st.arrivedAt)).toBe(true);
+    expect(c.legs.map((l) => l.type)).toEqual(o.legs.map((l) => l.type));
+    expect(c.legs.every((l) => l.state === "unassigned")).toBe(true);
+    // a cancelled original can still be copied; a trip cannot
+    await cancelOrder(a, o.order.id, "customer pulled it");
+    expect((await copyOrder(a, o.order.id)).order.state).toBe("draft");
+  });
+});

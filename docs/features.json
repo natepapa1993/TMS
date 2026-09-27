@@ -332,6 +332,16 @@
         "src/integrations/edi/mailbox.test.ts",
         "e2e/edi-mailbox.spec.ts"
       ]
+    },
+    {
+      "id": "F-2.9",
+      "name": "Book it again: copy an order into a new draft (same shape, nothing from the old load)",
+      "milestone": "M1",
+      "status": "done",
+      "tests": [
+        "src/domain/orders.test.ts",
+        "e2e/dispatch.spec.ts"
+      ]
     }
   ]
 }

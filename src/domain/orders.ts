@@ -262,6 +262,44 @@ async function bookIn(tx: Tx, ctx: Ctx, order: Order, stops: Stop[]) {
   return setOrderState(tx, ctx, order, "booked");
 }
 
+/**
+ * "Book it again": a new draft with the same customer, rate, equipment, stops and notes. Windows, references
+ * that belong to the old load (rate con, PO, shipment), the crossing paperwork and every leg assignment start
+ * over — a recurring lane is the same shape, never the same load.
+ */
+export async function copyOrder(ctx: Ctx, orderId: string) {
+  assertCtx(ctx);
+  requirePermission(ctx, "orders.create");
+  const { order, stops, legs } = await getOrder(ctx, orderId);
+  if (order.kind !== "order") throw new ValidationError("only a plain order can be copied; build a new trip from its stops instead");
+  const legPlan = legs
+    .filter((l) => l.state !== "cancelled")
+    .map((l) => ({ type: l.type, from: stops.findIndex((st) => st.id === l.fromStopId), to: stops.findIndex((st) => st.id === l.toStopId) }))
+    .filter((l) => l.from >= 0 && l.to > l.from);
+  const refs: Record<string, string> = {};
+  if (order.refs.reference) refs.reference = order.refs.reference;
+  return createOrder(ctx, {
+    customerId: order.customerId,
+    brokerId: order.brokerId,
+    billingEntityId: order.billingEntityId,
+    portId: order.portId,
+    equipment: order.equipment,
+    refs,
+    rateCents: order.rateCents,
+    rateTbd: order.rateTbd,
+    currency: order.currency,
+    fuelRule: order.fuelRule,
+    freight: order.freight ?? [],
+    cargoNote: order.cargoNote,
+    legPlan: legPlan.length ? legPlan : null,
+    template: legPlan.length ? null : order.legTemplate,
+    source: "copy",
+    sourceRef: order.orderNumber,
+    stops: stops.map((st) => ({ type: st.type, name: st.name, locationId: st.locationId, address: st.address, country: st.country, appointment: st.appointment, contact: st.contact, notes: st.notes })),
+    book: false,
+  });
+}
+
 export async function bookOrder(ctx: Ctx, orderId: string) {
   assertCtx(ctx);
   requirePermission(ctx, "orders.edit");

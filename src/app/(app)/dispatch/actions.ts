@@ -107,6 +107,15 @@ export async function cancelAction(orderId: string, reason: string) {
   return r;
 }
 
+export async function copyOrderAction(orderId: string) {
+  const r = await act(async (ctx) => {
+    const c = await O.copyOrder(ctx, orderId);
+    return { id: c.order.id, orderNumber: c.order.orderNumber };
+  });
+  if (r.ok) touch();
+  return r;
+}
+
 export async function bookAction(orderId: string) {
   const r = await act((ctx) => O.bookOrder(ctx, orderId));
   if (r.ok) touch();

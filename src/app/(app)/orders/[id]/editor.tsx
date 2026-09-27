@@ -3,11 +3,11 @@
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { updateOrderAction, updateStopAction } from "../actions";
-import { bookAction, cancelAction, holdAction, releaseAction, setLegMilesAction } from "../../dispatch/actions";
+import { bookAction, cancelAction, holdAction, releaseAction, setLegMilesAction, copyOrderAction } from "../../dispatch/actions";
 import { Confirm, Toast, useToast } from "@/components/ui";
 
 const REF_LABEL: Record<string, string> = { rate_con: "Rate con", po: "PO", asn: "ASN", shipment: "Shipment", reference: "Reference" };
-type Order = { id: string; state: string; customerId: string | null; brokerId: string | null; billingEntityId: string | null; equipment: string; rateCents: number | null; rateTbd: boolean; currency: string; fuelRule: string; fuelPct: number | null; tollsFeesCents: number | null; refs: Record<string, string>; cargoNote: string | null; updatedAt: string };
+type Order = { id: string; state: string; kind?: string; customerId: string | null; brokerId: string | null; billingEntityId: string | null; equipment: string; rateCents: number | null; rateTbd: boolean; currency: string; fuelRule: string; fuelPct: number | null; tollsFeesCents: number | null; refs: Record<string, string>; cargoNote: string | null; updatedAt: string };
 type Stop = { id: string; type: string; name: string; country: string; address: { line1?: string; city?: string; state?: string; postalCode?: string; country?: string } | null; windowStart: string | null; windowEnd: string | null; appointment: boolean; contact: string | null; notes: string | null; arrivedAt: string | null; departedAt: string | null };
 
 const toLocal = (s: string | null) => (s ? new Date(new Date(s).getTime() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 16) : "");
@@ -238,6 +238,22 @@ export function OrderActions({ order }: { order: Order }) {
       {order.state === "draft" && (
         <button className="btn btn-primary" disabled={pending} onClick={() => run("Booked — it's in Pending on Dispatch", () => bookAction(order.id))}>
           Book
+        </button>
+      )}
+      {(order.kind ?? "order") === "order" && (
+        <button
+          className="btn"
+          disabled={pending}
+          title="A new draft with the same customer, rate, equipment and stops; windows, references and assignments start over"
+          onClick={() =>
+            start(async () => {
+              const r = await copyOrderAction(order.id);
+              if (r.ok) router.push(`/orders/${r.data.id}`);
+              else t.err(r.error);
+            })
+          }
+        >
+          Book again
         </button>
       )}
       {["dispatched", "in_transit"].includes(order.state) && (
