@@ -51,6 +51,30 @@ function statusOf(expiresAt: Date | null, alertDays: number, now: Date, tracksEx
   return "ok";
 }
 
+/** Does a document type scoped to some legs apply to this leg? "mx" covers the crossing too (it is driven on the Mexican side); "us" covers domestic. */
+export function scopeMatches(scope: string | null | undefined, legType: string) {
+  if (!scope) return true;
+  if (scope === "mx") return legType === "mx" || legType === "crossing";
+  if (scope === "us") return legType === "us" || legType === "domestic";
+  return scope === legType;
+}
+
+/** The lists and the dispatchable flag from a set of items (the whole subject, or the items that apply to one leg). */
+export function rollup(items: ComplianceItem[]) {
+  const expired = items.filter((i) => i.status === "expired").map((i) => i.label);
+  const expiring = items.filter((i) => i.status === "expiring").map((i) => i.label);
+  const missing = items.filter((i) => i.status === "missing").map((i) => i.label);
+  // a missing built-in date is not a block by itself (the owner may not track it); expired ones and missing required documents are
+  const dispatchable = !items.some((i) => i.blocksDispatch && (i.status === "expired" || (i.status === "missing" && !i.key.startsWith("field:"))));
+  return { expired, expiring, missing, dispatchable };
+}
+
+/** A subject's status as it applies to one leg type: a FAST card scoped to the crossing does not block a US run. */
+export function forLeg<T extends { items: ComplianceItem[] }>(st: T, legType: string | null | undefined): T & ReturnType<typeof rollup> {
+  if (!legType) return { ...st, ...rollup(st.items) };
+  return { ...st, ...rollup(st.items.filter((i) => scopeMatches(i.legScope, legType))) };
+}
+
 /** Evaluate one subject and store the result. */
 export async function evaluateSubject(ctx: Ctx, kind: SubjectKind, subjectId: string, now = new Date()) {
   assertCtx(ctx);
@@ -70,7 +94,7 @@ export async function evaluateSubject(ctx: Ctx, kind: SubjectKind, subjectId: st
     let status: ComplianceItem["status"] = doc ? statusOf(doc.expiresAt, alertDays, now, t.tracksExpiry) : t.required ? "missing" : "ok";
     const snooze = snoozes.find((z) => z.itemKey === t.id);
     if (snooze && status !== "ok") status = "snoozed";
-    items.push({ key: t.id, label: t.name, status, expiresAt: doc?.expiresAt?.toISOString() ?? null, documentId: doc?.id ?? null, blocksDispatch: t.blocksDispatch && !graceOpen, required: t.required, alertDays, snoozedUntil: snooze?.until.toISOString() ?? null, snoozeReason: snooze?.reason ?? null });
+    items.push({ key: t.id, label: t.name, status, expiresAt: doc?.expiresAt?.toISOString() ?? null, documentId: doc?.id ?? null, blocksDispatch: t.blocksDispatch && !graceOpen, required: t.required, alertDays, snoozedUntil: snooze?.until.toISOString() ?? null, snoozeReason: snooze?.reason ?? null, legScope: t.legScope ?? null });
   }
   for (const f of FIELD_ITEMS[kind]) {
     if (f.appliesWhen && !f.appliesWhen(r)) continue;
@@ -80,11 +104,7 @@ export async function evaluateSubject(ctx: Ctx, kind: SubjectKind, subjectId: st
     if (snooze && status !== "ok") status = "snoozed";
     items.push({ key: `field:${f.key}`, label: f.label, status, expiresAt: d?.toISOString() ?? null, documentId: null, blocksDispatch: f.blocks, required: true, alertDays: 30, snoozedUntil: snooze?.until.toISOString() ?? null, snoozeReason: snooze?.reason ?? null });
   }
-  const expired = items.filter((i) => i.status === "expired").map((i) => i.label);
-  const expiring = items.filter((i) => i.status === "expiring").map((i) => i.label);
-  const missing = items.filter((i) => i.status === "missing").map((i) => i.label);
-  // a missing built-in date is not a block by itself (the owner may not track it); expired ones and missing required documents are
-  const dispatchable = !items.some((i) => i.blocksDispatch && (i.status === "expired" || (i.status === "missing" && !i.key.startsWith("field:"))));
+  const { expired, expiring, missing, dispatchable } = rollup(items);
   const [existing] = await db.select({ id: s.complianceStatus.id }).from(s.complianceStatus).where(and(eq(s.complianceStatus.tenantId, ctx.tenantId), eq(s.complianceStatus.subjectKind, kind), eq(s.complianceStatus.subjectId, subjectId))).limit(1);
   const row = { dispatchable, expired, expiring, missing, items, ranAt: now };
   if (existing) await db.update(s.complianceStatus).set(row).where(eq(s.complianceStatus.id, existing.id));
@@ -204,9 +224,10 @@ export async function overrideDispatch(ctx: Ctx, kind: SubjectKind, subjectId: s
 // ---------- where it bites (spec §6.3) ----------
 
 /** Findings for the eligibility engine: a blocked subject is red; expiring is yellow. */
-export async function complianceFindings(ctx: Ctx, kind: SubjectKind, subjectId: string, label: string) {
-  const st = await statusFor(ctx, kind, subjectId).catch(() => null);
-  if (!st) return [];
+export async function complianceFindings(ctx: Ctx, kind: SubjectKind, subjectId: string, label: string, legType?: string | null) {
+  const raw = await statusFor(ctx, kind, subjectId).catch(() => null);
+  if (!raw) return [];
+  const st = forLeg(raw, legType);
   const out: { level: "red" | "yellow"; code: string; message: string; overridable: boolean }[] = [];
   if (!st.dispatchable && !st.override) {
     const why = [...st.expired.map((x) => `${x} expired`), ...st.missing.map((x) => `${x} missing`)].join(", ");

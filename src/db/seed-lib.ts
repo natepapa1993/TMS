@@ -50,8 +50,8 @@ export async function seedDemo(): Promise<"created" | "exists"> {
   await create(ctx, "carrierRate", { carrierId: garza.id, originZone: "Monterrey, NL", destinationZone: "Santa Fe Yard, Nuevo Laredo", equipment: "53_dry", rateCents: 45000, currency: "USD", fuelRule: "included" });
   await create(ctx, "customsBroker", { name: "Agencia Aduanal Demo", country: "MX", patente: "0000" });
   await create(ctx, "customsBroker", { name: "Demo US Brokerage", country: "US", filerCode: "ABC" });
-  for (const [name, appliesTo, blocks] of [["Licencia federal", "driver", true], ["FAST card", "driver", true], ["Medical card", "driver", true], ["Annual inspection", "truck", false], ["Insurance certificate", "carrier", true]] as const)
-    await create(ctx, "documentType", { name, appliesTo, tracksExpiry: true, alertDays: [30, 7], required: true, blocksDispatch: blocks });
+  for (const [name, appliesTo, blocks, legScope] of [["Licencia federal", "driver", true, "mx"], ["FAST card", "driver", true, "crossing"], ["Medical card", "driver", true, null], ["Annual inspection", "truck", false, null], ["Insurance certificate", "carrier", true, null]] as const)
+    await create(ctx, "documentType", { name, appliesTo, tracksExpiry: true, alertDays: [30, 7], required: true, blocksDispatch: blocks, legScope });
 
   const stops = (pickup: string, delivery: string, offset: number) => [
     { type: "pickup" as const, name: pickup, country: "MX", address: { city: "Apodaca", state: "NL", country: "MX" }, windowStart: days(offset), windowEnd: days(offset + 0.2) },

@@ -14,6 +14,7 @@ export type ComplianceItem = {
   alertDays: number;
   snoozedUntil?: string | null;
   snoozeReason?: string | null;
+  legScope?: string | null; // a document type "only for legs": crossing | mx (Mexico + crossing) | us (US + domestic); null = every leg
 };
 
 export const complianceStatus = pgTable(

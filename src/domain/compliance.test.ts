@@ -91,6 +91,32 @@ describe("engine (spec §6.1)", () => {
     expect(r.leg.state).toBe("planned");
   });
 
+  it("a rule scoped to some legs (FAST card: crossing only) blocks the crossing but not a US run; the safety board still lists it", async () => {
+    await C.uploadSubjectDocument(a, "driver", ids.benja, { documentTypeId: ids.medical, fileName: "med.pdf", mimeType: "application/pdf", bytes: pdf, expiresAt: days(300) });
+    await create(a, "documentType", { name: "FAST card", appliesTo: "driver", tracksExpiry: true, alertDays: [30], required: true, blocksDispatch: true, legScope: "crossing" });
+    const t2104 = await create(a, "truck", { unitNumber: "2104", usPlate: "TX2104", usPlateExpires: days(200), dotInspectionExpires: days(200) });
+    const reyes = await create(a, "driver", { name: "Daniel Reyes", driverType: "CDL", licenseExpires: days(400), medicalExpires: days(300), currentTruckId: t2104.id });
+    await C.uploadSubjectDocument(a, "driver", reyes.id, { documentTypeId: ids.medical, fileName: "med.pdf", mimeType: "application/pdf", bytes: pdf, expiresAt: days(300) });
+    const st = await C.evaluateSubject(a, "driver", reyes.id);
+    expect(st.missing).toEqual(["FAST card"]);
+    expect(st.dispatchable).toBe(false); // the safety board: he has no FAST card on file
+    expect(C.forLeg(st, "us").dispatchable).toBe(true);
+    expect(C.forLeg(st, "domestic").missing).toEqual([]);
+    expect(C.forLeg(st, "crossing").dispatchable).toBe(false);
+    expect(C.scopeMatches("mx", "crossing")).toBe(true);
+    expect(C.scopeMatches("us", "domestic")).toBe(true);
+    expect(C.scopeMatches("crossing", "us")).toBe(false);
+    const us = await createOrder(a, { customerId: ids.rxo, rateTbd: true, stops: [{ type: "pickup", name: "Laredo", country: "US" }, { type: "delivery", name: "Dallas", country: "US" }], book: true });
+    const c = await candidatesForLeg(a, us.legs[0].id);
+    const reyesRow = c.find((x) => x.driverId === reyes.id)!;
+    expect(reyesRow.ok).toBe(true);
+    expect(reyesRow.reason).not.toMatch(/FAST/);
+    const r = await planLeg(a, us.legs[0].id, { kind: "truck", truckId: t2104.id, driverId: reyes.id });
+    expect(r.leg.state).toBe("planned");
+    const x = await createOrder(a, { customerId: ids.rxo, rateTbd: true, stops: [{ type: "border_yard", name: "Santa Fe", country: "MX" }, { type: "yard", name: "Laredo", country: "US" }], template: "crossing_only", book: true });
+    await expect(planLeg(a, x.legs[0].id, { kind: "truck", truckId: t2104.id, driverId: reyes.id })).rejects.toThrow(/FAST card missing/);
+  });
+
   it("carrier without an insurance certificate cannot be tendered; with one it can", async () => {
     const o = await createOrder(a, { customerId: ids.rxo, rateTbd: true, stops: [{ type: "pickup", name: "MTY", country: "MX" }, { type: "border_yard", name: "Santa Fe", country: "MX" }], template: "mx_crossing", book: true }).catch(() => null);
     const o2 = o ?? (await createOrder(a, { customerId: ids.rxo, rateTbd: true, stops: [{ type: "pickup", name: "MTY", country: "MX" }, { type: "border_yard", name: "Santa Fe", country: "MX" }, { type: "yard", name: "Laredo", country: "US" }], template: "mx_crossing", book: true }));

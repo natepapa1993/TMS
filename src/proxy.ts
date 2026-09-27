@@ -6,7 +6,9 @@ export function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
   const isAuthPage = pathname === "/login" || pathname === "/signup";
   const isPublic = /^\/(t|d|p|i|c|track)\//.test(pathname) || pathname.startsWith("/api/");
-  if (!has && !isAuthPage && !isPublic && pathname !== "/") {
+  // a server action from a page whose session expired: let it reach act(), which answers "You are signed out" in the form instead of a crashed page
+  const isAction = request.method === "POST" && request.headers.has("next-action");
+  if (!has && !isAuthPage && !isPublic && !isAction && pathname !== "/") {
     const url = new URL("/login", request.url);
     url.searchParams.set("next", pathname);
     return NextResponse.redirect(url);

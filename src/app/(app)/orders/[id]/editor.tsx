@@ -233,7 +233,6 @@ export function OrderActions({ order }: { order: Order }) {
         router.refresh();
       } else t.err(r.error ?? "Could not do that");
     });
-  const closed = ["cancelled", "paid"].includes(order.state);
   return (
     <>
       {order.state === "draft" && (
@@ -251,7 +250,7 @@ export function OrderActions({ order }: { order: Order }) {
           Release hold
         </button>
       )}
-      {!closed && (
+      {["draft", "booked", "dispatched", "in_transit", "exception"].includes(order.state) && (
         <button className="btn btn-danger" onClick={() => setCancel(true)}>
           Cancel order
         </button>
