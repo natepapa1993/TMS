@@ -23,6 +23,7 @@ const SECTIONS: { id: string; title: string; href: string; body: (string | { rul
     body: [
       "Press n for a new order in four fields. An order is cut into legs by its stops: a Mexican leg, the crossing (Mexican border yard to the US yard, or the reverse), a US leg; or one domestic leg. Each leg is assigned on its own: our truck and driver, or a partner carrier by tender (email, WhatsApp, or by phone).",
       "The panel shows one primary action for where the order is: assign, send, mark accepted, then each milestone until delivered. Drivers press the same milestones in their app with GPS; carriers in their portal. A leg can be split, pulled back, held, or the unit put out of service, from the same panel.",
+      "Flags watch the clock for you: a pickup opening soon with nobody accepted, a window that closed with no arrival, a truck sitting past the customer's free time, a truck gone quiet, a declined tender, a crossing held. Red ones are emailed to the owner and dispatchers the minute they open; all of them clear themselves when the situation does.",
       { rule: "A B-1 driver never runs a US leg. There is no override." },
       { rule: "A brown-plated unit never runs beyond the border zone (no interior Mexico)." },
       { rule: "A CDL-only driver never runs interior Mexico; a Mexican carrier never runs a US leg." },
@@ -74,7 +75,7 @@ const SECTIONS: { id: string; title: string; href: string; body: (string | { rul
     id: "reports",
     title: "Reports: the owner's six numbers",
     href: "/reports",
-    body: ["Revenue per truck, empty miles, margin after carriers, driver pay, fuel and tolls, loads at risk, crossings pending, expiring documents — for this week, month to date, last month or a custom range; broken down by truck, driver, customer, lane, carrier or week, with a drill-down to the loads behind any number and CSV export. Trip costs on tailgate loads reach each shipment by its share."],
+    body: ["Revenue per truck, empty miles, margin after carriers, driver pay, fuel and tolls, loads at risk, crossings pending, expiring documents — for this week, month to date, last month or a custom range; broken down by truck, driver, customer, lane, carrier or week, with a drill-down to the loads behind any number and CSV export. Trip costs on tailgate loads reach each shipment by its share.", "Every Monday after 7, the owner gets last week's numbers by email, when an email sender is connected under Settings → Integrations."],
   },
   {
     id: "tailgate",
