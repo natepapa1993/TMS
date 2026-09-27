@@ -48,6 +48,11 @@ export async function recordPosition(ctx: Ctx, p: PositionInput) {
     .insert(s.positions)
     .values({ id: newId(), tenantId: ctx.tenantId, at: p.at ?? new Date(), source: p.source, truckId: p.truckId ?? null, driverId: p.driverId ?? null, legId, orderId, lat: lat.toFixed(6), lng: lng.toFixed(6), speedMph: p.speedMph ?? null, heading: p.heading ?? null, accuracyM: p.accuracyM ?? null, place: p.place ?? null, externalId: p.externalId ?? null })
     .returning();
+  if (legId && orderId) {
+    // a load that came through the carrier exchange: the tendering company sees the position too
+    const [o] = await db.select({ source: s.orders.source }).from(s.orders).where(eq(s.orders.id, orderId)).limit(1);
+    if (o?.source === "exchange") await (await import("./exchange")).pushPosition(ctx.tenantId, legId, { at: row.at, lat: row.lat, lng: row.lng, speedMph: row.speedMph, heading: row.heading, place: row.place }).catch(() => null);
+  }
   return { id: row.id, duplicate: false, legId, orderId };
 }
 

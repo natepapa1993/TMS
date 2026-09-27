@@ -173,6 +173,10 @@ export async function uploadOrderDocument(ctx: Ctx, orderId: string, input: { co
     return row;
   });
   if (input.code === "RATE_CON") await readRateCon(ctx, row.id, input).catch(() => null); // never blocks the upload
+  if (input.source !== "exchange") {
+    const [o] = await db.select({ source: s.orders.source }).from(s.orders).where(eq(s.orders.id, orderId)).limit(1);
+    if (o?.source === "exchange") await (await import("./exchange")).pushDocument(ctx.tenantId, orderId, { code: input.code, fileName: input.fileName, mimeType: input.mimeType, bytes: input.bytes }).catch(() => null);
+  }
   return row;
 }
 
@@ -345,6 +349,8 @@ export async function issueInvoice(ctx: Ctx, invoiceId: string, opts: { issuedAt
   } catch (e) {
     console.error(`[edi] 210 for ${invoiceId} failed: ${String(e)}`);
   }
+  // loads tendered to us through the carrier exchange: our invoice is their carrier bill, received
+  await (await import("./exchange")).pushInvoice(ctx.tenantId, invoiceId).catch(() => null);
   return issued;
 }
 

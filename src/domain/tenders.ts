@@ -45,16 +45,23 @@ export async function sendTender(ctx: Ctx, legId: string, input: SendTenderInput
 
   const [carrier] = await db.select().from(s.carriers).where(and(eq(s.carriers.tenantId, ctx.tenantId), eq(s.carriers.id, input.carrierId))).limit(1);
   if (!carrier) throw new NotFoundError("carrier", input.carrierId);
-  const channel: TenderChannel = input.channel ?? ((carrier.tenderChannel as TenderChannel) || "email");
-  const to = input.to ?? (channel === "whatsapp" ? carrier.whatsapp : carrier.dispatchEmail) ?? null;
+  const exchange = !!carrier.exchangeTenantId; // they are on Crossline: the load lands on their board, whatever else we send
+  let channel: TenderChannel = input.channel ?? ((carrier.tenderChannel as TenderChannel) || "email");
+  let to = input.to ?? (channel === "whatsapp" ? carrier.whatsapp : carrier.dispatchEmail) ?? null;
+  if (exchange && !to && (channel === "email" || channel === "whatsapp")) {
+    channel = "portal";
+    to = null;
+  }
   if (channel === "email" && !to) throw new ValidationError(`${carrier.name} has no dispatch email; add one or tender by another channel`, "to");
   if (channel === "whatsapp" && !to) throw new ValidationError(`${carrier.name} has no WhatsApp number; add one on the carrier record or tender by another channel`, "to");
 
   // 2. one open tender per leg
-  await db
+  const replaced = await db
     .update(s.tenders)
     .set({ state: "withdrawn", respondedAt: new Date(), respondedBy: "dispatcher", responseNote: "replaced by a new tender", updatedAt: new Date(), updatedBy: ctx.userId })
-    .where(and(eq(s.tenders.tenantId, ctx.tenantId), eq(s.tenders.legId, legId), eq(s.tenders.state, "sent")));
+    .where(and(eq(s.tenders.tenantId, ctx.tenantId), eq(s.tenders.legId, legId), eq(s.tenders.state, "sent")))
+    .returning({ id: s.tenders.id });
+  for (const r of replaced) await (await import("./exchange")).withdrawMirror(ctx.tenantId, r.id, "the offer was replaced").catch(() => null);
 
   // 3. the leg goes to "sent"
   const leg = await dispatchLeg(ctx, legId);
@@ -119,6 +126,7 @@ export async function sendTender(ctx: Ctx, legId: string, input: SendTenderInput
     return row;
   });
   await deliverQueued().catch(() => null);
+  if (exchange) await (await import("./exchange")).mirrorTender(ctx, tender, leg, order, from, toStop, carrier.exchangeTenantId!);
   return { tender, leg, link, subject, body, to };
 }
 
@@ -140,13 +148,13 @@ export async function tenderByToken(token: string) {
 export type TenderResponse = { accept: boolean; name: string; note?: string | null; driverName?: string | null; driverPhone?: string | null; unitNumber?: string | null; trailerNumber?: string | null };
 
 /** The carrier's answer from the public page. No login: the token is the authorization. */
-export async function respondToTender(token: string, r: TenderResponse) {
+export async function respondToTender(token: string, r: TenderResponse, opts: { viaExchange?: boolean } = {}) {
   const found = await tenderByToken(token);
   if (!found) throw new NotFoundError("tender", token.slice(0, 8));
   const { ctx, tender } = found;
   if (!r.name?.trim()) throw new ValidationError("please type your name", "name");
   if (tender.state !== "sent") throw new TransitionError("leg", tender.state, r.accept ? "accepted" : "declined", tender.state === "expired" ? "this offer has expired" : `this offer was already ${tender.state}`);
-  if (r.accept && !r.driverName?.trim()) throw new ValidationError("driver name is required to accept", "driverName");
+  if (r.accept && !r.driverName?.trim() && !opts.viaExchange) throw new ValidationError("driver name is required to accept", "driverName");
   if (!r.accept && !r.note?.trim()) throw new ValidationError("tell us why, in a few words", "note");
 
   await db
@@ -167,20 +175,24 @@ export async function respondToTender(token: string, r: TenderResponse) {
 
   if (r.accept) {
     const leg = await acceptLeg(ctx, tender.legId, "carrier");
-    await db.insert(s.legEvents).values({ id: newId(), tenantId: ctx.tenantId, legId: leg.id, orderId: leg.orderId, kind: "note", source: "carrier", note: `Carrier accepted. Driver ${r.driverName}${r.driverPhone ? ` ${r.driverPhone}` : ""}${r.unitNumber ? `, unit ${r.unitNumber}` : ""}${r.trailerNumber ? `, trailer ${r.trailerNumber}` : ""}` });
+    await db.insert(s.legEvents).values({ id: newId(), tenantId: ctx.tenantId, legId: leg.id, orderId: leg.orderId, kind: "note", source: "carrier", note: `Carrier accepted${opts.viaExchange ? " on Crossline" : ""}. Driver ${r.driverName ?? "to be assigned"}${r.driverPhone ? ` ${r.driverPhone}` : ""}${r.unitNumber ? `, unit ${r.unitNumber}` : ""}${r.trailerNumber ? `, trailer ${r.trailerNumber}` : ""}` });
+    if (!opts.viaExchange) await (await import("./exchange")).syncMirrorAfterAnswer(ctx.tenantId, tender.id, true, null).catch(() => null);
     return { state: "accepted" as const, leg };
   }
   const leg = await declineLeg(ctx, tender.legId, `${found.carrier?.name ?? "carrier"} declined: ${r.note?.trim()}`, "carrier");
+  if (!opts.viaExchange) await (await import("./exchange")).syncMirrorAfterAnswer(ctx.tenantId, tender.id, false, r.note?.trim() ?? null).catch(() => null);
   return { state: "declined" as const, leg };
 }
 
 /** Dispatcher heard back by phone: close the open tender to match the leg. */
 export async function closeOpenTenderForLeg(ctx: Ctx, legId: string, state: "accepted" | "declined" | "withdrawn", note?: string) {
   assertCtx(ctx);
-  await db
+  const closed = await db
     .update(s.tenders)
     .set({ state, respondedAt: new Date(), respondedBy: "dispatcher", responseNote: note ?? null, updatedAt: new Date(), updatedBy: ctx.userId })
-    .where(and(eq(s.tenders.tenantId, ctx.tenantId), eq(s.tenders.legId, legId), eq(s.tenders.state, "sent")));
+    .where(and(eq(s.tenders.tenantId, ctx.tenantId), eq(s.tenders.legId, legId), eq(s.tenders.state, "sent")))
+    .returning({ id: s.tenders.id });
+  for (const c of closed) await (await import("./exchange")).syncMirrorAfterAnswer(ctx.tenantId, c.id, state === "accepted", note ?? (state === "withdrawn" ? "withdrawn by the tendering company" : null)).catch(() => null);
 }
 
 export async function openTendersForOrders(ctx: Ctx, orderIds: string[]) {
@@ -204,6 +216,7 @@ export async function expireTenders(now = new Date()) {
     const ctx = systemCtx(t.tenantId);
     await db.update(s.tenders).set({ state: "expired", respondedAt: now, respondedBy: "system", updatedAt: now }).where(and(eq(s.tenders.id, t.id), eq(s.tenders.state, "sent")));
     await writeAudit(db, ctx, "tender", t.id, "transition", { state: { from: "sent", to: "expired" } }, "no answer before the deadline");
+    await (await import("./exchange")).withdrawMirror(t.tenantId, t.id, "the offer expired unanswered").catch(() => null);
     const [leg] = await db.select().from(s.legs).where(eq(s.legs.id, t.legId)).limit(1);
     if (leg && leg.state === "dispatched") {
       const [carrier] = await db.select({ name: s.carriers.name }).from(s.carriers).where(eq(s.carriers.id, t.carrierId)).limit(1);

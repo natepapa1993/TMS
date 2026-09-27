@@ -175,6 +175,7 @@ export const customers = pgTable(
     detentionRateCents: integer("detention_rate_cents"), // per hour; blank = 75.00
     reminderDays: jsonb("reminder_days").$type<number[]>(), // days past due; blank = [3,10,20]; [] = opted out
     qbName: text("qb_name"), // QuickBooks customer name; blank = name
+    exchangeTenantId: text("exchange_tenant_id"), // this customer is another company on Crossline that tenders us loads (carrier-to-carrier exchange)
     mxBrokerId: text("mx_broker_id"),
     usBrokerId: text("us_broker_id"),
     knowledgeMd: text("knowledge_md"),
@@ -231,6 +232,7 @@ export const carriers = pgTable(
     portIds: jsonb("port_ids").$type<string[]>().notNull().default(sql`'[]'::jsonb`),
     fmcsaStatus: jsonb("fmcsa_status").$type<{ authority?: string; insurance?: string; rating?: string; checkedAt?: string }>(),
     doNotUse: boolean("do_not_use").notNull().default(false),
+    exchangeTenantId: text("exchange_tenant_id"), // this carrier is another company on Crossline: tenders appear on their board, their progress comes back
     doNotUseReason: text("do_not_use_reason"),
     contacts: jsonb("contacts").$type<Contact[]>().notNull().default(sql`'[]'::jsonb`),
     custom: jsonb("custom").$type<Record<string, unknown>>().notNull().default(sql`'{}'::jsonb`),

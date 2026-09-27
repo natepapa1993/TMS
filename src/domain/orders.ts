@@ -577,6 +577,12 @@ export async function eligibilityFor(ctx: Ctx, legType: LegType, a: Assignment, 
 export async function planLeg(ctx: Ctx, legId: string, a: Assignment, opts: PlanOptions = {}) {
   assertCtx(ctx);
   requirePermission(ctx, "dispatch.plan");
+  const planned = await planLegTx(ctx, legId, a, opts);
+  await exchangeAfter(ctx, planned.leg.orderId, planned.leg.id);
+  return planned;
+}
+
+async function planLegTx(ctx: Ctx, legId: string, a: Assignment, opts: PlanOptions = {}) {
   return db.transaction(async (tx) => {
     const leg = await loadLeg(tx, ctx, legId);
     const order = await loadOrder(tx, ctx, leg.orderId);
@@ -674,12 +680,14 @@ export async function dispatchLeg(ctx: Ctx, legId: string) {
 
 export async function acceptLeg(ctx: Ctx, legId: string, source: EventSource = "driver_app") {
   assertCtx(ctx);
-  return db.transaction(async (tx) => {
+  const after = await db.transaction(async (tx) => {
     const leg = await loadLeg(tx, ctx, legId);
     const after = await setLegState(tx, ctx, leg, "accepted", { source }, { acceptedAt: new Date() });
     await recomputeOrder(tx, ctx, leg.orderId);
     return after;
   });
+  await exchangeAfter(ctx, after.orderId);
+  return after;
 }
 
 export async function declineLeg(ctx: Ctx, legId: string, reason: string, source: EventSource = "driver_app") {
@@ -721,6 +729,12 @@ export function pendingMidStop<T extends StopLike>(leg: Pick<Leg, "fromStopId" |
 /** Clock an intermediate stop (arrived / departed). The leg stays en route; shipments that ride the trip follow the clocks. */
 export async function stampStop(ctx: Ctx, legId: string, stopId: string, which: "arrived" | "departed", ev: AdvanceEvent = {}) {
   assertCtx(ctx);
+  const leg = await stampStopTx(ctx, legId, stopId, which, ev);
+  await exchangeAfter(ctx, leg.orderId);
+  return leg;
+}
+
+async function stampStopTx(ctx: Ctx, legId: string, stopId: string, which: "arrived" | "departed", ev: AdvanceEvent = {}) {
   return db.transaction(async (tx) => {
     const leg = await loadLeg(tx, ctx, legId);
     const stops = await tx.select().from(s.stops).where(and(eq(s.stops.tenantId, ctx.tenantId), eq(s.stops.orderId, leg.orderId)));
@@ -757,7 +771,7 @@ export async function advanceLeg(ctx: Ctx, legId: string, to: LegState | "next",
       if (mid) return stampStop(ctx, legId, mid.stop.id, mid.which, ev);
     }
   }
-  return db.transaction(async (tx) => {
+  const after = await db.transaction(async (tx) => {
     const leg = await loadLeg(tx, ctx, legId);
     let target: LegState;
     if (to === "next") {
@@ -786,6 +800,17 @@ export async function advanceLeg(ctx: Ctx, legId: string, to: LegState | "next",
     await recomputeOrder(tx, ctx, leg.orderId, target === "completed" ? at : undefined);
     return after;
   });
+  await exchangeAfter(ctx, after.orderId);
+  return after;
+}
+
+/** After a leg changed hands or state: a load that came through the carrier exchange reports back to the company that tendered it. */
+async function exchangeAfter(ctx: Ctx, orderId: string, legId?: string) {
+  const [o] = await db.select({ source: s.orders.source }).from(s.orders).where(and(eq(s.orders.tenantId, ctx.tenantId), eq(s.orders.id, orderId))).limit(1);
+  if (o?.source !== "exchange") return;
+  const X = await import("./exchange");
+  if (legId) await X.pushAssignment(ctx.tenantId, legId).catch(() => null);
+  await X.pushProgress(ctx.tenantId, orderId).catch(() => null);
 }
 
 // ---------- order state derivation ----------
