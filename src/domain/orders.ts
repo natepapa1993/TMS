@@ -251,7 +251,39 @@ async function setOrderState(tx: Tx, ctx: Ctx, order: Order, to: OrderState, ext
     .where(and(eq(s.orders.tenantId, ctx.tenantId), eq(s.orders.id, order.id)))
     .returning();
   await writeAudit(tx, ctx, "order", order.id, "transition", { state: { from: order.state, to } }, note);
+  if (to === "dispatched") await sendTrackingIfRequired(tx, ctx, after);
   return after;
+}
+
+/**
+ * A customer whose tracking requirement is "link" gets the tracking link by email the moment the order is
+ * dispatched, once per order, to the first contact with an email (never the billing mailbox). EDI-214
+ * customers get their 214s; portal customers have the portal.
+ */
+async function sendTrackingIfRequired(tx: Tx, ctx: Ctx, order: Order) {
+  const custId = order.customerId ?? order.brokerId;
+  if (!custId) return;
+  const [cust] = await tx.select().from(s.customers).where(and(eq(s.customers.tenantId, ctx.tenantId), eq(s.customers.id, custId))).limit(1);
+  if (!cust || cust.trackingRequirement !== "link") return;
+  const to = cust.contacts.find((c) => c.email)?.email; // an operations contact, never the AP mailbox
+  if (!to) return;
+  const [already] = await tx.select({ id: s.outbox.id }).from(s.outbox).where(and(eq(s.outbox.tenantId, ctx.tenantId), eq(s.outbox.subjectKind, "tracking_link"), eq(s.outbox.subjectId, order.id), eq(s.outbox.channel, "email"))).limit(1);
+  if (already) return;
+  const { issueToken, publicUrl } = await import("@/lib/tokens");
+  const { enqueue } = await import("@/lib/outbox");
+  const [tenant] = await tx.select({ name: s.tenants.name }).from(s.tenants).where(eq(s.tenants.id, ctx.tenantId)).limit(1);
+  const stops = await tx.select().from(s.stops).where(eq(s.stops.orderId, order.id)).orderBy(asc(s.stops.seq));
+  const tok = await issueToken(ctx, "tracking_link", order.id, { label: "customer" }, tx);
+  const url = publicUrl(`/track/${tok.token}`);
+  const route = stops.length ? `${stops[0].name} → ${stops[stops.length - 1].name}` : order.orderNumber;
+  const ref = order.refs.po ? ` · PO ${order.refs.po}` : order.refs.shipment ? ` · shipment ${order.refs.shipment}` : "";
+  await enqueue(ctx, { channel: "email", to, subject: `Tracking for ${order.orderNumber}${ref}: ${route}`, body: `${cust.name},
+
+Your load ${order.orderNumber}${ref} (${route}) is dispatched with ${tenant?.name ?? "us"}. Follow it here, live, until it delivers:
+
+${url}
+
+This link is for this load only.`, subjectKind: "tracking_link", subjectId: order.id, meta: { kind: "tracking" } }, tx);
 }
 
 async function bookIn(tx: Tx, ctx: Ctx, order: Order, stops: Stop[]) {

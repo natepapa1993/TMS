@@ -263,3 +263,30 @@ describe("appointment windows (F-5)", () => {
     expect((await db.select().from(flags).where(eq(flags.orderId, o.order.id))).every((x) => x.clearedAt)).toBe(true);
   });
 });
+
+describe("tracking requirement (F-5)", () => {
+  it("a customer who requires a tracking link gets it by email once the order is dispatched, once; others get nothing", async () => {
+    const magna = await create(a, "customer", { name: "Magna", kind: "customer", trackingRequirement: "link", billingEmail: "ap@magna.test", contacts: [{ name: "Ana", email: "ana@magna.test" }] });
+    const o = await createOrder(a, { customerId: magna.id, rateCents: 100000, refs: { po: "PO-7" }, stops: [{ type: "pickup", name: "Laredo Yard", country: "US" }, { type: "delivery", name: "Toyota", country: "US" }], template: "domestic", book: true });
+    const t2104 = await create(a, "truck", { unitNumber: "2104", usPlate: "TX2104", usPlateExpires: future });
+    const reyes = await create(a, "driver", { name: "Daniel Reyes", driverType: "CDL", licenseExpires: future, medicalExpires: future, currentTruckId: t2104.id });
+    await planLeg(a, o.legs[0].id, { kind: "truck", truckId: t2104.id, driverId: reyes.id });
+    expect(await db.select().from(outbox)).toHaveLength(0);
+    await dispatchLeg(a, o.legs[0].id);
+    const mails = await db.select().from(outbox).where(eq(outbox.subjectKind, "tracking_link"));
+    expect(mails).toHaveLength(1);
+    expect(mails[0].to).toBe("ana@magna.test"); // a contact with an email; never the AP mailbox
+    expect(mails[0].subject).toContain("PO-7");
+    expect(mails[0].body).toMatch(/\/track\/[A-Za-z0-9_-]{20,}/);
+    const token = mails[0].body.match(/\/track\/([A-Za-z0-9_-]+)/)![1];
+    expect((await resolveToken(token, "tracking_link"))?.subjectId).toBe(o.order.id);
+    // a pull-back and re-send does not mail twice
+    await acceptLeg(a, o.legs[0].id);
+    expect(await db.select().from(outbox).where(eq(outbox.subjectKind, "tracking_link"))).toHaveLength(1);
+    // RXO has no contact with an email: nothing goes out (dispatch can still send the link by hand)
+    const r = await createOrder(a, { customerId: f.rxo, rateCents: 100000, stops: [{ type: "pickup", name: "Laredo Yard", country: "US" }, { type: "delivery", name: "Toyota", country: "US" }], template: "domestic", book: true });
+    await planLeg(a, r.legs[0].id, { kind: "truck", truckId: t2104.id, driverId: reyes.id });
+    await dispatchLeg(a, r.legs[0].id);
+    expect(await db.select().from(outbox).where(eq(outbox.subjectKind, "tracking_link"))).toHaveLength(1);
+  });
+});

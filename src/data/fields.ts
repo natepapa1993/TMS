@@ -155,7 +155,7 @@ export const FIELDS: Record<RecordKind, Field[]> = {
       group: "Requirements",
       options: [
         { value: "none", label: "None" },
-        { value: "link", label: "Tracking link" },
+        { value: "link", label: "Tracking link — emailed to their first contact with an email when the order is dispatched" },
         { value: "edi214", label: "EDI 214" },
         { value: "portal", label: "Portal updates" },
       ],
