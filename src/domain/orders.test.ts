@@ -1,4 +1,4 @@
-// Features: F-1.5 F-2.1 F-2.2 F-2.3 F-3.1 F-3.2 F-11.1 F-11.2 F-11.3 F-11.4 F-11.5 F-15 F-16 F-2.9
+// Features: F-1.5 F-2.1 F-2.2 F-2.3 F-3.1 F-3.2 F-11.1 F-11.2 F-11.3 F-11.4 F-11.5 F-15 F-16 F-2.9 F-2.10
 import { describe, it, expect, beforeEach } from "vitest";
 import { truncateAll, makeTenant } from "@/test/helpers";
 import { create } from "@/data/records";
@@ -434,5 +434,24 @@ describe("book it again", () => {
     // a cancelled original can still be copied; a trip cannot
     await cancelOrder(a, o.order.id, "customer pulled it");
     expect((await copyOrder(a, o.order.id)).order.state).toBe("draft");
+  });
+});
+
+describe("carrier lane rates", () => {
+  it("the rate on file for the carrier and lane prefills the tender; the newest wins; expired and other-equipment ones are skipped", async () => {
+    const { suggestCarrierRate, zoneMatches } = await import("./orders");
+    expect(zoneMatches("Monterrey, NL", { name: "Planta Monterrey", address: { city: "Apodaca", state: "NL" } })).toBe(true);
+    expect(zoneMatches("Santa Fe Yard, Nuevo Laredo", { name: "Santa Fe Yard", address: { city: "Nuevo Laredo", state: "TAMPS" } })).toBe(true);
+    expect(zoneMatches("Saltillo", { name: "Planta Monterrey", address: { city: "Apodaca", state: "NL" } })).toBe(false);
+    const o = await createOrder(a, { customerId: fleet.rxo, rateCents: 285000, stops: [{ type: "pickup", name: "Planta Monterrey", country: "MX", address: { city: "Apodaca", state: "NL" } }, { type: "border_yard", name: "Santa Fe Yard", country: "MX", address: { city: "Nuevo Laredo", state: "TAMPS" } }, { type: "yard", name: "Laredo Yard", country: "US" }, { type: "delivery", name: "GM Arlington", country: "US" }], book: true });
+    expect(await suggestCarrierRate(a, o.legs[0].id, fleet.garza)).toBeNull();
+    await create(a, "carrierRate", { carrierId: fleet.garza, originZone: "Monterrey, NL", destinationZone: "Santa Fe Yard", rateCents: 45000, currency: "USD", fuelRule: "included" });
+    await create(a, "carrierRate", { carrierId: fleet.garza, originZone: "Monterrey", destinationZone: "Nuevo Laredo", equipment: "53_dry", rateCents: 47000, currency: "USD", fuelRule: "pct", fuelValue: 12 });
+    await create(a, "carrierRate", { carrierId: fleet.garza, originZone: "Monterrey", destinationZone: "Nuevo Laredo", rateCents: 99000, validTo: new Date(Date.now() - 86400_000) });
+    await create(a, "carrierRate", { carrierId: fleet.garza, originZone: "Monterrey", destinationZone: "Nuevo Laredo", equipment: "53_reefer", rateCents: 88000 });
+    const r = await suggestCarrierRate(a, o.legs[0].id, fleet.garza);
+    expect(r).toMatchObject({ rateCents: 47000, fuelRule: "pct", fuelValue: 12, lane: "Monterrey → Nuevo Laredo" });
+    // the US leg has no lane on file for a Mexican carrier
+    expect(await suggestCarrierRate(a, o.legs[2].id, fleet.garza)).toBeNull();
   });
 });

@@ -979,3 +979,37 @@ export function stageOfOrder(order: Pick<Order, "state">, legs: Pick<Leg, "state
 }
 
 export { LEG_TEMPLATES };
+
+// ---------- carrier lane rates ----------
+
+/** Loose lane match: the zone text is found in the stop's "name, city, state", or the other way round. */
+export function zoneMatches(zone: string | null | undefined, stop: { name: string; address?: { city?: string | null; state?: string | null } | null } | null | undefined) {
+  if (!zone || !stop) return false;
+  const z = zone.trim().toLowerCase();
+  if (!z) return false;
+  const hay = [stop.name, stop.address?.city, stop.address?.state].filter(Boolean).join(", ").toLowerCase();
+  if (hay.includes(z) || z.includes(hay)) return true;
+  // every word of the zone appears somewhere (Monterrey NL vs "Planta Monterrey, Apodaca, NL")
+  const words = z.split(/[\s,]+/).filter((w) => w.length > 1);
+  return words.length > 0 && words.every((w) => hay.includes(w));
+}
+
+/**
+ * The rate on file for this carrier on this leg's lane (Settings → Carrier rates), valid today, with
+ * equipment matching or unspecified. The assign popup prefills it; the dispatcher can still type another.
+ */
+export async function suggestCarrierRate(ctx: Ctx, legId: string, carrierId: string, now = new Date()) {
+  assertCtx(ctx);
+  const leg = await getLeg(ctx, legId);
+  const [order] = await db.select({ equipment: s.orders.equipment }).from(s.orders).where(eq(s.orders.id, leg.orderId)).limit(1);
+  const stops = await db.select().from(s.stops).where(and(eq(s.stops.tenantId, ctx.tenantId), eq(s.stops.orderId, leg.orderId)));
+  const from = stops.find((x) => x.id === leg.fromStopId);
+  const to = stops.find((x) => x.id === leg.toStopId);
+  const rates = await db.select().from(s.carrierRates).where(and(eq(s.carrierRates.tenantId, ctx.tenantId), eq(s.carrierRates.carrierId, carrierId), sql`${s.carrierRates.archivedAt} is null`));
+  const live = rates.filter((r) => (!r.validFrom || r.validFrom.getTime() <= now.getTime()) && (!r.validTo || r.validTo.getTime() >= now.getTime()));
+  const hits = live.filter((r) => zoneMatches(r.originZone, from) && zoneMatches(r.destinationZone, to) && (!r.equipment || r.equipment === order?.equipment));
+  if (!hits.length) return null;
+  // the newest rate on file wins (a re-negotiated lane is entered as a new row or an edit)
+  const best = hits.sort((p, q) => q.updatedAt.getTime() - p.updatedAt.getTime())[0];
+  return { id: best.id, rateCents: best.rateCents, currency: best.currency, fuelRule: best.fuelRule, fuelValue: best.fuelValue, lane: `${best.originZone} → ${best.destinationZone}`, validTo: best.validTo, notes: best.notes ?? null };
+}

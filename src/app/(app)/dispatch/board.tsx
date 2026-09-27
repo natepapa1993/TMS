@@ -695,6 +695,7 @@ function AssignModal({ leg, order, data, onClose, onDone }: { leg: Leg; order: O
   const [pick, setPick] = useState<{ truckId: string; driverId: string | null; coDriverId: string | null } | null>(null);
   const [carrierId, setCarrierId] = useState(leg.carrierId ?? "");
   const [carrierRate, setCarrierRate] = useState(leg.carrierRateCents != null ? (leg.carrierRateCents / 100).toFixed(2) : "");
+  const [lane, setLane] = useState<{ lane: string; rateCents: number; fuelRule: string; fuelValue: number | null; validTo: string | null } | null>(null);
   const [miles, setMiles] = useState(leg.plannedMiles != null ? String(leg.plannedMiles) : "");
   const [override, setOverride] = useState("");
   const [needsOverride, setNeedsOverride] = useState<{ message: string; hard: boolean } | null>(null);
@@ -808,7 +809,23 @@ function AssignModal({ leg, order, data, onClose, onDone }: { leg: Leg; order: O
         <div className="space-y-3">
           <div>
             <label className="label">Carrier</label>
-            <select className="select" value={carrierId} onChange={(e) => setCarrierId(e.target.value)}>
+            <select
+              className="select"
+              value={carrierId}
+              onChange={(e) => {
+                const id = e.target.value;
+                setCarrierId(id);
+                setLane(null);
+                if (!id) return;
+                // the lane rate on file prefills what we pay; the dispatcher can still type another number
+                A.laneRateAction(leg.id, id).then((r) => {
+                  if (r.ok && r.data) {
+                    setLane({ ...r.data, validTo: r.data.validTo ? String(r.data.validTo) : null });
+                    setCarrierRate((r.data.rateCents / 100).toFixed(2));
+                  }
+                });
+              }}
+            >
               <option value="">—</option>
               {data.carriers.map((c) => (
                 <option key={c.id} value={c.id} disabled={c.doNotUse}>
@@ -821,6 +838,12 @@ function AssignModal({ leg, order, data, onClose, onDone }: { leg: Leg; order: O
             <div>
               <label className="label">Carrier rate (USD)</label>
               <input className="input" inputMode="decimal" value={carrierRate} onChange={(e) => setCarrierRate(e.target.value)} placeholder="what you pay them" />
+              {lane && (
+                <div className="help" data-testid="lane-rate">
+                  Lane rate on file: {lane.lane} · fuel {lane.fuelRule === "included" ? "included" : lane.fuelRule === "pct" ? `${lane.fuelValue ?? 0}% extra` : `${((lane.fuelValue ?? 0) / 100).toFixed(2)}/mi extra`}
+                  {lane.validTo ? ` · valid to ${new Date(lane.validTo).toLocaleDateString("en-US", { month: "short", day: "numeric" })}` : ""}
+                </div>
+              )}
             </div>
             <div>
               <label className="label">Tender by</label>

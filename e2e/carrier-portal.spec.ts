@@ -1,4 +1,4 @@
-// Features: F-10 carrier portal through the browser — link from the carrier record, offer accepted with a driver, load walked to delivered, rate con, invoice against the leg, COI upload lands in compliance, scorecard
+// Features: F-10 carrier portal through the browser — link from the carrier record, offer accepted with a driver, load walked to delivered, rate con, invoice against the leg, COI upload lands in compliance, scorecard F-2.10
 import { test, expect } from "@playwright/test";
 import path from "node:path";
 import { signupFresh, quickAdd, future } from "./helpers";
@@ -9,6 +9,7 @@ test("carrier's day: one link, accept the offer, run the load, get paid, keep do
   await quickAdd(page, "billing-entities", "Add billing entity", { legalName: "24/7 Expedite LLC", country: "US", invoicePrefix: "247", taxId: "12-3456789" });
   await quickAdd(page, "customers", "Add customer", { name: "RXO", kind: "broker" });
   await quickAdd(page, "carriers", "Add carrier", { name: "Transportes Garza", country: "MX", kind: "mx", dispatchEmail: "despacho@garza.test" });
+  await quickAdd(page, "carrier-rates", "Add carrier rate", { carrierId: "Transportes Garza", originZone: "Monterrey", destinationZone: "Border yard", rateCents: "450" });
   await quickAdd(page, "document-types", "Add document type", { name: "Certificate of insurance", appliesTo: "carrier", tracksExpiry: "true" });
   await page.goto("/settings/document-types");
   await page.click("table a:has-text('Certificate')");
@@ -38,7 +39,8 @@ test("carrier's day: one link, accept the offer, run the load, get paid, keep do
   const dlg = page.getByRole("dialog");
   await dlg.locator("button:has-text('Partner carrier')").click();
   await dlg.locator("select").first().selectOption({ label: "Transportes Garza (MX)" });
-  await dlg.locator("input[placeholder='what you pay them']").fill("450");
+  await expect(dlg.getByTestId("lane-rate")).toContainText("Monterrey → Border yard"); // the rate on file prefills
+  await expect(dlg.locator("input[placeholder='what you pay them']")).toHaveValue("450.00");
   await dlg.locator("button:has-text('Send tender')").click();
   await expect(page.getByRole("status")).toContainText("Tender emailed");
 

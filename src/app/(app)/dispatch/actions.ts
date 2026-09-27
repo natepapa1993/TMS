@@ -25,6 +25,10 @@ export async function carrierEligibilityAction(legId: string, carrierId: string)
   });
 }
 
+export async function laneRateAction(legId: string, carrierId: string) {
+  return act((ctx) => O.suggestCarrierRate(ctx, legId, carrierId));
+}
+
 export type PlanOpts = { override?: boolean; reason?: string; plannedMiles?: number | null };
 
 export async function planAction(legId: string, a: O.Assignment, opts: PlanOpts = {}) {

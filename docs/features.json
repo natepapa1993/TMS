@@ -371,6 +371,16 @@
         "src/domain/fleet.test.ts",
         "e2e/compliance.spec.ts"
       ]
+    },
+    {
+      "id": "F-2.10",
+      "name": "Carrier lane rates prefill the tender: newest valid rate for the carrier, lane and equipment, with its fuel rule",
+      "milestone": "M1",
+      "status": "done",
+      "tests": [
+        "src/domain/orders.test.ts",
+        "e2e/carrier-portal.spec.ts"
+      ]
     }
   ]
 }
