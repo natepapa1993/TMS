@@ -342,6 +342,16 @@
         "src/domain/orders.test.ts",
         "e2e/dispatch.spec.ts"
       ]
+    },
+    {
+      "id": "F-1.6",
+      "name": "Sign-in hardening: throttled attempts, no open redirect, security headers, uploads to 25 MB with a plain message when too big",
+      "milestone": "M0",
+      "status": "done",
+      "tests": [
+        "src/lib/throttle.test.ts",
+        "e2e/dispatch.spec.ts"
+      ]
     }
   ]
 }

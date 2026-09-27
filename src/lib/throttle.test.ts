@@ -1,4 +1,4 @@
-// Features: F-1.5 sign-in: eight wrong passwords lock the email for fifteen minutes; a right one clears it
+// Features: F-1.6 sign-in: eight wrong passwords lock the email for fifteen minutes; a right one clears it
 import { describe, it, expect, beforeEach } from "vitest";
 import { throttled, failed, succeeded, resetThrottle, safeNext, LIMIT, LOCK_MS, WINDOW_MS } from "./throttle";
 
