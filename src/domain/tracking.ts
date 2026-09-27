@@ -84,12 +84,18 @@ export async function driverToday(tenantId: string, driverId: string) {
     orderIds.length ? db.select().from(s.stops).where(inArray(s.stops.orderId, orderIds)).orderBy(s.stops.seq) : Promise.resolve([]),
     db.select({ id: s.trucks.id, unitNumber: s.trucks.unitNumber }).from(s.trucks).where(eq(s.trucks.tenantId, tenantId)),
   ]);
+  const crossingLegIds = legs.filter((l) => l.type === "crossing").map((l) => l.id);
+  const xs = crossingLegIds.length ? await db.select().from(s.crossings).where(inArray(s.crossings.legId, crossingLegIds)) : [];
   const items = legs.map((leg) => {
     const order = orders.find((o) => o.id === leg.orderId)!;
     const from = stops.find((x) => x.id === leg.fromStopId) ?? null;
     const to = stops.find((x) => x.id === leg.toStopId) ?? null;
     const truck = trucks.find((t) => t.id === leg.truckId) ?? null;
-    return { leg, order: { id: order.id, orderNumber: order.orderNumber, equipment: order.equipment, cargoNote: order.cargoNote, refs: order.refs, state: order.state }, from, to, truck, next: nextStep(leg.state) };
+    const x = xs.find((c) => c.legId === leg.id);
+    const crossing = x
+      ? { id: x.id, state: x.state, trailerNumber: x.trailerNumber, packetToken: x.packetSentAt ? x.packetToken : null, packetSentAt: x.packetSentAt, nextStep: ({ packet_sent: "departed_yard", departed_yard: "at_mx_customs", at_mx_customs: "in_us_customs", in_us_customs: "cleared" } as Record<string, string>)[x.state] ?? null }
+      : null;
+    return { leg, order: { id: order.id, orderNumber: order.orderNumber, equipment: order.equipment, cargoNote: order.cargoNote, refs: order.refs, state: order.state }, from, to, truck, next: nextStep(leg.state), crossing };
   });
   // the leg the driver is on = first non-dispatched active leg, else the first offered one
   const current = items.find((i) => i.leg.state !== "dispatched") ?? items[0] ?? null;
@@ -109,7 +115,7 @@ export function nextStep(state: LegState): { to: LegState; label: string; es: st
   return map[state] ?? null;
 }
 
-export type DriverStepInput = { lat?: number | string | null; lng?: number | string | null; accuracyM?: number | null; note?: string | null; decline?: boolean; declineReason?: string | null };
+export type DriverStepInput = { lat?: number | string | null; lng?: number | string | null; accuracyM?: number | null; note?: string | null; decline?: boolean; declineReason?: string | null; crossingStep?: string | null; crossingHold?: string | null };
 
 /** The driver pressed the button. Verified when the phone gave us a position. */
 export async function driverStep(tenantId: string, driverId: string, legId: string, input: DriverStepInput) {
@@ -122,6 +128,14 @@ export async function driverStep(tenantId: string, driverId: string, legId: stri
   if (input.decline) {
     if (!input.declineReason?.trim()) throw new ValidationError("say why", "declineReason");
     return declineLeg(ctx, leg.id, input.declineReason.trim(), "driver_app");
+  }
+  if (input.crossingStep || input.crossingHold) {
+    const X = await import("./crossing");
+    const [x] = await db.select().from(s.crossings).where(eq(s.crossings.legId, leg.id)).limit(1);
+    if (!x) throw new NotFoundError("crossing", leg.id);
+    if (input.crossingHold) await X.hold(ctx, x.id, input.crossingHold, "driver_app");
+    else await X.step(ctx, x.id, input.crossingStep as import("@/db/schema").CrossingState, { source: "driver_app", verified: hasPos });
+    return leg;
   }
   if (leg.state === "dispatched") return acceptLeg(ctx, leg.id, "driver_app");
   const step = nextStep(leg.state);

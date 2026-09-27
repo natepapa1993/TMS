@@ -203,8 +203,25 @@
     },
     {
       "id": "F-3",
-      "name": "Crossing: 16-state machine, 14 cross-checks, NAD/Viatpro connectors, Solicitud de Retiro",
+      "name": "Crossing: rules \u2192 checklist, documents with versions, 14 cross-checks with audited overrides, eligibility, packet PDF, generated Solicitud de Retiro, 16-state machine, driver border steps, dwell + packet watchdogs",
       "milestone": "M2",
+      "status": "done",
+      "tests": [
+        "src/domain/crossing.test.ts",
+        "e2e/crossing.spec.ts"
+      ]
+    },
+    {
+      "id": "F-3.6",
+      "name": "NAD / Viatpro portal connectors (pull crossing documents into the checklist)",
+      "milestone": "M2.5",
+      "status": "planned",
+      "tests": []
+    },
+    {
+      "id": "F-3.4",
+      "name": "AI document extractor (fields read from the PDF with confidence, human confirms)",
+      "milestone": "M2.5",
       "status": "planned",
       "tests": []
     },

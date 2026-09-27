@@ -9,7 +9,7 @@ const NAV = [
   { href: "/dispatch", label: "Dispatch", icon: "◫" },
   { href: "/orders", label: "Orders", icon: "☰" },
   { href: "/fleet", label: "Fleet", icon: "⛟" },
-  { href: "/crossing", label: "Crossing", icon: "⇄", soon: true },
+  { href: "/crossing", label: "Crossing", icon: "⇄" },
   { href: "/compliance", label: "Compliance", icon: "✓", soon: true },
   { href: "/billing", label: "Billing", icon: "$", soon: true },
   { href: "/settings", label: "Settings", icon: "⚙" },
@@ -36,7 +36,7 @@ export function Shell({ user, children }: { user: { name: string; role: string; 
               <Link key={n.href} href={n.soon ? "#" : n.href} className={`rail-link ${n.soon ? "opacity-40 cursor-default" : ""}`} aria-current={active ? "page" : undefined} aria-disabled={n.soon} title={n.soon ? "Coming in a later milestone" : undefined}>
                 <span className="w-5 text-center text-[15px] opacity-90">{n.icon}</span>
                 {n.label}
-                {n.soon && <span className="ml-auto text-[10px] font-bold tracking-wider text-slate-400">M{n.label === "Crossing" ? 2 : n.label === "Compliance" ? 3 : 4}</span>}
+                {n.soon && <span className="ml-auto text-[10px] font-bold tracking-wider text-slate-400">M{n.label === "Compliance" ? 3 : 4}</span>}
               </Link>
             );
           })}

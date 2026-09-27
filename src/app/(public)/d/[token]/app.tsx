@@ -12,7 +12,9 @@ import type { LegState } from "@/db/schema";
  */
 
 type Stop = { id: string; name: string; type: string; country: string; address: { line1?: string; city?: string; state?: string } | null; windowStart: string | null; windowEnd: string | null; contact: string | null; notes: string | null };
-type Item = { leg: { id: string; seq: number; type: string; state: LegState }; order: { orderNumber: string; equipment: string; cargoNote: string | null; refs: Record<string, string> }; from: Stop | null; to: Stop | null; truck: { unitNumber: string } | null; next: { to: LegState; label: string; es: string } | null };
+type Item = { leg: { id: string; seq: number; type: string; state: LegState }; order: { orderNumber: string; equipment: string; cargoNote: string | null; refs: Record<string, string> }; from: Stop | null; to: Stop | null; truck: { unitNumber: string } | null; next: { to: LegState; label: string; es: string } | null; crossing: { id: string; state: string; trailerNumber: string | null; packetToken: string | null; nextStep: string | null } | null };
+const XSTEP: Record<string, { en: string; es: string }> = { departed_yard: { en: "Departed the yard", es: "Salí del patio" }, at_mx_customs: { en: "At Mexican customs", es: "En aduana mexicana" }, in_us_customs: { en: "At US customs", es: "En aduana americana" }, cleared: { en: "Cleared — US side", es: "Liberado — lado americano" } };
+const XLABEL: Record<string, string> = { packet_sent: "Packet sent · Paquete enviado", departed_yard: "Departed yard · Salió del patio", at_mx_customs: "MX customs · Aduana MX", in_us_customs: "US customs · Aduana US", cleared: "Cleared · Liberado", held: "Held · Detenido", returned: "Returned · Regresado" };
 type Data = { driver: { name: string; driverType: string }; current: Item | null; items: Item[] };
 
 type Fix = { lat: number; lng: number; accuracyM: number | null; speedMph: number | null; heading: number | null };
@@ -39,6 +41,8 @@ export function DriverApp({ token, data }: { token: string; data: Data }) {
   const [gps, setGps] = useState<"unknown" | "on" | "off">("unknown");
   const [declining, setDeclining] = useState(false);
   const [reason, setReason] = useState("");
+  const [holding, setHolding] = useState(false);
+  const [holdReason, setHoldReason] = useState("");
   const [sel, setSel] = useState<string | null>(null);
   const cur = data.items.find((i) => i.leg.id === sel) ?? data.current;
   const lastPing = useRef(0);
@@ -76,6 +80,22 @@ export function DriverApp({ token, data }: { token: string; data: Data }) {
         router.refresh();
       } else setErr(r.error);
     });
+
+  const xstep = (to: string | null, holdWhy?: string) =>
+    start(async () => {
+      setErr(null);
+      if (!cur) return;
+      const fix = await getFix(6000);
+      setGps(fix ? "on" : "off");
+      const r = await driverStepAction(token, cur.leg.id, { lat: fix?.lat ?? null, lng: fix?.lng ?? null, accuracyM: fix?.accuracyM ?? null, crossingStep: holdWhy ? null : to, crossingHold: holdWhy ?? null });
+      if (r.ok) {
+        setHolding(false);
+        setHoldReason("");
+        router.refresh();
+      } else setErr(r.error);
+    });
+  const x = cur?.crossing;
+  const xActive = x && ["packet_sent", "departed_yard", "at_mx_customs", "in_us_customs", "held"].includes(x.state);
 
   return (
     <div>
@@ -141,6 +161,50 @@ export function DriverApp({ token, data }: { token: string; data: Data }) {
                 {err}
               </div>
             )}
+          </div>
+        </div>
+      )}
+
+      {cur && xActive && (
+        <div className="card mt-4 overflow-hidden">
+          <div className="px-5 pt-4 pb-3 border-b border-line flex items-center justify-between">
+            <div>
+              <div className="font-extrabold text-[15px]">Border · Frontera</div>
+              <div className="text-muted text-[12.5px]">{x!.trailerNumber ? `Caja ${x!.trailerNumber}` : ""}</div>
+            </div>
+            <span className={`pill ${x!.state === "held" ? "pill-red" : "pill-amber"}`}>{XLABEL[x!.state] ?? x!.state}</span>
+          </div>
+          <div className="px-5 py-4 space-y-3">
+            {x!.packetToken && (
+              <a className="btn btn-lg w-full justify-center" href={`/p/${x!.packetToken}`} target="_blank" rel="noreferrer">
+                📄 Open packet · Abrir paquete
+              </a>
+            )}
+            {x!.state !== "held" && x!.nextStep && (
+              <button className="btn btn-primary w-full justify-center flex-col gap-0" style={{ height: 64, fontSize: 17 }} onClick={() => xstep(x!.nextStep)} disabled={pending || holding}>
+                {XSTEP[x!.nextStep]?.en}
+                <span className="text-[12.5px] font-semibold opacity-80">{XSTEP[x!.nextStep]?.es}</span>
+              </button>
+            )}
+            {x!.state !== "held" &&
+              (holding ? (
+                <div className="space-y-2">
+                  <input className="input" placeholder="What's wrong? / ¿Qué pasa?" value={holdReason} onChange={(e) => setHoldReason(e.target.value)} autoFocus />
+                  <div className="flex gap-2">
+                    <button className="btn flex-1 justify-center" onClick={() => setHolding(false)}>
+                      Back
+                    </button>
+                    <button className="btn btn-danger flex-1 justify-center" onClick={() => xstep(null, holdReason)} disabled={pending || !holdReason.trim()}>
+                      Report hold
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <button className="btn btn-ghost w-full justify-center text-red" onClick={() => setHolding(true)}>
+                  Stopped / secondary · Detenido
+                </button>
+              ))}
+            {x!.state === "held" && <div className="text-[13px] text-red text-center">Dispatch knows. Wait for instructions. · Despacho ya sabe. Espera instrucciones.</div>}
           </div>
         </div>
       )}

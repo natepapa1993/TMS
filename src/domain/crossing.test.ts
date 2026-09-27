@@ -207,7 +207,7 @@ describe("crossing lifecycle (spec §3.1)", () => {
     expect(cur.clearedAt).not.toBeNull();
     expect(X.bucketOf(cur.state)).toBe("cleared");
     // a document arriving now does not yank the state back
-    await up("packing_list", { pieces: 26 });
+    await X.uploadDocument(a, c.id, { code: "packing_list", fileName: "pl.pdf", mimeType: "application/pdf", bytes: await pdf("pl"), fields: { pieces: 26 } });
     expect((await X.recompute(a, c.id)).state).toBe("cleared");
   });
 

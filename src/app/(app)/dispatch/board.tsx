@@ -466,6 +466,11 @@ function SidePanel({ r, data, busy, canDispatch, onClose, onPopup, run }: { r: R
                           Drivers
                         </button>
                       )}
+                      {l.type === "crossing" && (
+                        <Link href={`/crossing?leg=${l.id}`} className="btn btn-sm btn-ghost text-teal">
+                          Crossing →
+                        </Link>
+                      )}
                     </div>
                   )}
                 </div>
