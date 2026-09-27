@@ -173,6 +173,7 @@ export const customers = pgTable(
     detentionFreeMinutes: integer("detention_free_minutes"), // blank = 120
     detentionRateCents: integer("detention_rate_cents"), // per hour; blank = 75.00
     reminderDays: jsonb("reminder_days").$type<number[]>(), // days past due; blank = [3,10,20]; [] = opted out
+    qbName: text("qb_name"), // QuickBooks customer name; blank = name
     mxBrokerId: text("mx_broker_id"),
     usBrokerId: text("us_broker_id"),
     knowledgeMd: text("knowledge_md"),
@@ -222,6 +223,7 @@ export const carriers = pgTable(
     tenderChannel: text("tender_channel").notNull().default("email"), // email | portal | edi | sylectus | whatsapp
     dispatchEmail: text("dispatch_email"),
     quickPayPct: integer("quick_pay_pct"), // whole percent discount when we pay within 7 days of approval
+    qbName: text("qb_name"), // QuickBooks vendor name; blank = name
     dispatchPhone: text("dispatch_phone"),
     whatsapp: text("whatsapp"),
     plateClasses: jsonb("plate_classes").$type<string[]>().notNull().default(sql`'[]'::jsonb`),
@@ -344,6 +346,7 @@ export const drivers = pgTable(
     payType: text("pay_type").notNull().default("per_mile"), // per_mile | pct | flat | hourly
     payRateCents: integer("pay_rate_cents"),
     crossingPayCents: integer("crossing_pay_cents"), // flat per crossing leg on top of the pay type
+    qbName: text("qb_name"), // QuickBooks vendor name for settlements; blank = name
     homeTerminalId: text("home_terminal_id"),
     eldDriverId: text("eld_driver_id"),
     currentTruckId: text("current_truck_id"),

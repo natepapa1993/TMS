@@ -7,10 +7,22 @@ import { Toast, useToast } from "@/components/ui";
 
 const ZONES = ["America/Detroit", "America/New_York", "America/Chicago", "America/Denver", "America/Phoenix", "America/Los_Angeles", "America/Monterrey", "America/Mexico_City", "America/Matamoros", "America/Ciudad_Juarez", "America/Tijuana"];
 
-export function CompanyForm({ initial, canEdit }: { initial: { name: string; timeZone: string; fuelCostPerMile: string; closedThrough: string | null }; canEdit: boolean }) {
+const QB_FIELDS: [string, string, string][] = [
+  ["arAccount", "Accounts receivable", "invoices post here"],
+  ["apAccount", "Accounts payable", "carrier bills and driver settlements post here"],
+  ["bankAccount", "Bank account", "receipts and payments"],
+  ["incomeAccount", "Line-haul income", ""],
+  ["fuelIncomeAccount", "Fuel surcharge income", ""],
+  ["accessorialIncomeAccount", "Accessorial income", "detention, lumper, everything else billed"],
+  ["carrierExpenseAccount", "Purchased transportation", "partner carrier bills"],
+  ["driverPayAccount", "Driver pay expense", "settlement gross lines"],
+  ["deductionAccount", "Driver deductions", "advances, insurance, escrow taken off the statement"],
+];
+
+export function CompanyForm({ initial, canEdit }: { initial: { name: string; timeZone: string; fuelCostPerMile: string; closedThrough: string | null; qb: Record<string, string> }; canEdit: boolean }) {
   const router = useRouter();
   const t = useToast();
-  const [f, setF] = useState({ name: initial.name, timeZone: initial.timeZone, fuelCostPerMile: initial.fuelCostPerMile });
+  const [f, setF] = useState({ name: initial.name, timeZone: initial.timeZone, fuelCostPerMile: initial.fuelCostPerMile, qb: { ...initial.qb } });
   const [err, setErr] = useState<{ message: string; field?: string } | null>(null);
   const [pending, start] = useTransition();
   return (
@@ -47,6 +59,17 @@ export function CompanyForm({ initial, canEdit }: { initial: { name: string; tim
         <div className="col-span-2 text-[13px] text-muted">
           Books closed through: <b className="text-ink">{initial.closedThrough ?? "not closed yet"}</b> — set from Billing → Invoices → Close period.
         </div>
+        <div className="col-span-2 eyebrow mt-3">QuickBooks account names</div>
+        <div className="col-span-2 help -mt-1">Exactly as they read in your chart of accounts; the export files post to these. Customer and vendor names live on each customer, carrier and driver record.</div>
+        {QB_FIELDS.map(([key, label, help]) => (
+          <div key={key}>
+            <label className="label" htmlFor={`qb-${key}`}>
+              {label}
+            </label>
+            <input id={`qb-${key}`} className="input" value={f.qb[key] ?? ""} onChange={(e) => setF({ ...f, qb: { ...f.qb, [key]: e.target.value } })} aria-invalid={err?.field === key} />
+            {help && <div className="help">{help}</div>}
+          </div>
+        ))}
       </fieldset>
       {canEdit && (
         <div className="flex items-center justify-end gap-3 mt-4">

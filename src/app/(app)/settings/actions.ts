@@ -78,12 +78,12 @@ export async function truckActiveAction(truckId: string) {
   return r;
 }
 
-export async function saveCompanyAction(values: { name: string; timeZone: string; fuelCostPerMile: string }) {
+export async function saveCompanyAction(values: { name: string; timeZone: string; fuelCostPerMile: string; qb?: Record<string, string> }) {
   const r = await act(async (ctx) => {
     const { updateCompany } = await import("@/domain/company");
     const cpm = values.fuelCostPerMile.trim() ? Math.round(Number(values.fuelCostPerMile.replace(/[$,\s]/g, "")) * 100) : null;
     if (values.fuelCostPerMile.trim() && !Number.isFinite(cpm)) throw Object.assign(new Error("Fuel cost must be an amount per mile"), { name: "ValidationError", field: "fuelCostPerMile" });
-    return updateCompany(ctx, { name: values.name, timeZone: values.timeZone, fuelCostCentsPerMile: cpm });
+    return updateCompany(ctx, { name: values.name, timeZone: values.timeZone, fuelCostCentsPerMile: cpm, qb: values.qb });
   });
   if (r.ok) revalidatePath("/", "layout");
   return r;

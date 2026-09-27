@@ -77,6 +77,7 @@ export const invoices = pgTable(
     promiseToPayAt: timestamp("promise_to_pay_at", { withTimezone: true }),
     payWhenPaid: boolean("pay_when_paid").notNull().default(false),
     notes: text("notes"),
+    exportedAt: timestamp("exported_at", { withTimezone: true }), // last accounting export that carried it
     ...audit(),
   },
   (t) => [index("invoices_tenant_state").on(t.tenantId, t.state), index("invoices_tenant_customer").on(t.tenantId, t.customerId), uniqueIndex("invoices_tenant_number").on(t.tenantId, t.number)],
@@ -93,6 +94,7 @@ export const receipts = pgTable(
     method: text("method").notNull().default("ach"), // ach | check | card | wire | factoring | other
     reference: text("reference"),
     note: text("note"),
+    exportedAt: timestamp("exported_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     createdBy: text("created_by"),
   },
@@ -144,6 +146,7 @@ export const carrierBills = pgTable(
     method: text("method"),
     reference: text("reference"),
     quickPayPct: integer("quick_pay_pct"), // basis points
+    exportedAt: timestamp("exported_at", { withTimezone: true }),
     ...audit(),
   },
   (t) => [uniqueIndex("carrier_bills_leg").on(t.legId), index("carrier_bills_tenant_state").on(t.tenantId, t.state), index("carrier_bills_tenant_carrier").on(t.tenantId, t.carrierId)],
@@ -171,6 +174,7 @@ export const settlements = pgTable(
     paidAt: timestamp("paid_at", { withTimezone: true }),
     method: text("method"),
     reference: text("reference"),
+    exportedAt: timestamp("exported_at", { withTimezone: true }),
     ...audit(),
   },
   (t) => [uniqueIndex("settlements_driver_period").on(t.tenantId, t.driverId, t.periodStart), index("settlements_tenant_state").on(t.tenantId, t.state)],
@@ -194,4 +198,24 @@ export const payItems = pgTable(
     ...audit(),
   },
   (t) => [index("pay_items_driver").on(t.tenantId, t.driverId, t.active)],
+);
+
+/** Every accounting export is logged: what went out, in which format, for which period. */
+export const accountingExports = pgTable(
+  "accounting_exports",
+  {
+    id: id(),
+    tenantId: tenantId(),
+    format: text("format").notNull(), // iif | qbo
+    fromDate: text("from_date").notNull(), // YYYY-MM-DD in the company zone
+    toDate: text("to_date").notNull(),
+    onlyNew: boolean("only_new").notNull().default(true),
+    counts: jsonb("counts").$type<Record<string, number>>().notNull().default(sql`'{}'::jsonb`),
+    recordIds: jsonb("record_ids").$type<{ invoices: string[]; receipts: string[]; bills: string[]; settlements: string[] }>().notNull().default(sql`'{"invoices":[],"receipts":[],"bills":[],"settlements":[]}'::jsonb`),
+    reopenedAt: timestamp("reopened_at", { withTimezone: true }),
+    fileName: text("file_name").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    createdBy: text("created_by"),
+  },
+  (t) => [index("accounting_exports_tenant").on(t.tenantId, t.createdAt)],
 );

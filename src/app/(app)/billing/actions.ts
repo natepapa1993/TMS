@@ -150,3 +150,21 @@ export async function addPayItemAction(driverId: string, v: { kind: "deduction" 
   if (r.ok) touch();
   return r;
 }
+
+// ---------- QuickBooks export ----------
+export async function previewExportAction(v: { from: string; to: string; onlyNew: boolean }) {
+  const { previewExport } = await import("@/domain/accounting");
+  return act((ctx) => previewExport(ctx, v));
+}
+export async function createExportAction(v: { format: "iif" | "qbo"; from: string; to: string; onlyNew: boolean }) {
+  const { createExport } = await import("@/domain/accounting");
+  const r = await act((ctx) => createExport(ctx, v));
+  if (r.ok) revalidatePath("/billing/exports");
+  return r;
+}
+export async function reopenExportAction(id: string) {
+  const { reopenExport } = await import("@/domain/accounting");
+  const r = await act((ctx) => reopenExport(ctx, id));
+  if (r.ok) revalidatePath("/billing/exports");
+  return r;
+}

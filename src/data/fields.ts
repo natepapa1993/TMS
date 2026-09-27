@@ -146,6 +146,7 @@ export const FIELDS: Record<RecordKind, Field[]> = {
     { name: "detentionFreeMinutes", label: "Detention free time (min)", type: "number", group: "Billing", help: "blank = 120" },
     { name: "detentionRateCents", label: "Detention rate / hour", type: "cents", group: "Billing", help: "blank = 75.00" },
     { name: "reminderDays", label: "Reminder days past due", type: "list", listOf: "number", group: "Billing", help: "blank = 3, 10, 20 · type none to opt out", placeholder: "3, 10, 20" },
+    { name: "qbName", label: "QuickBooks customer", type: "text", group: "Billing", help: "name as it appears in QuickBooks · blank = same as here" },
     {
       name: "trackingRequirement",
       label: "Tracking requirement",
@@ -213,6 +214,7 @@ export const FIELDS: Record<RecordKind, Field[]> = {
     { name: "dispatchPhone", label: "Dispatch phone", type: "phone", group: "Dispatch" },
     { name: "whatsapp", label: "WhatsApp", type: "phone", group: "Dispatch" },
     { name: "quickPayPct", label: "Quick-pay discount %", type: "number", group: "Payables", help: "taken off when we pay within 7 days of approval · blank = none" },
+    { name: "qbName", label: "QuickBooks vendor", type: "text", group: "Payables", help: "blank = same as here" },
     { name: "doNotUse", label: "Do not use", type: "boolean", column: true, group: "Status" },
     { name: "doNotUseReason", label: "Reason", type: "text", group: "Status" },
   ],
@@ -378,6 +380,7 @@ export const FIELDS: Record<RecordKind, Field[]> = {
     },
     { name: "payRateCents", label: "Pay rate", type: "cents", group: "Pay", help: "per mile, per leg, per hour, or percent (62 = 62%) by pay type" },
     { name: "crossingPayCents", label: "Crossing pay", type: "cents", group: "Pay", help: "flat, on top, for every crossing leg" },
+    { name: "qbName", label: "QuickBooks vendor", type: "text", group: "Pay", help: "settlements export as bills to this vendor · blank = driver name" },
     { name: "eldDriverId", label: "ELD driver id", type: "text", group: "Pay" },
   ],
   documentType: [

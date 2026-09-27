@@ -259,10 +259,13 @@
     },
     {
       "id": "F-7.2",
-      "name": "QuickBooks export (IIF for Desktop, CSV for Online)",
+      "name": "QuickBooks export: IIF for Desktop, CSV lists for Online; invoices, receipts, carrier bills + payments, driver settlements; runs stamp what went out; reopen",
       "milestone": "M5",
-      "status": "planned",
-      "tests": []
+      "status": "done",
+      "tests": [
+        "src/domain/accounting.test.ts",
+        "e2e/billing.spec.ts"
+      ]
     },
     {
       "id": "F-11.18",

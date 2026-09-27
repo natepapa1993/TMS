@@ -9,6 +9,7 @@ const TABS = [
   ["/billing/ar", "Receivables"],
   ["/billing/carriers", "Carrier bills"],
   ["/billing/settlements", "Driver pay"],
+  ["/billing/exports", "QuickBooks"],
 ];
 
 export function BillingNav({ counts }: { counts?: Record<string, number> }) {

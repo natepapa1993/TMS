@@ -56,7 +56,8 @@ export async function addCharge(ctx: Ctx, orderId: string, input: ChargeInput) {
   if (!Number.isFinite(input.rateCents)) throw new ValidationError("rate must be a number", "rateCents");
   const qty = input.qty ?? 1;
   const unit = input.unit ?? "flat";
-  const amount = unit === "h" || unit === "pct" ? Math.round((input.rateCents * qty) / 100) : Math.round(input.rateCents * qty);
+  // qty is in hundredths for hours (150 = 1.50 h) and hundredths of a percent for pct (2000 = 20.00 % of the rate)
+  const amount = unit === "h" ? Math.round((input.rateCents * qty) / 100) : unit === "pct" ? Math.round((input.rateCents * qty) / 10000) : Math.round(input.rateCents * qty);
   const [row] = await db
     .insert(s.charges)
     .values({ id: newId(), tenantId: ctx.tenantId, orderId, legId: input.legId ?? null, kind: input.kind, description: input.description?.trim() || CHARGE_LABEL[input.kind], qty, unit, rateCents: input.rateCents, amountCents: amount, currency: input.currency ?? order.currency, billable: input.billable ?? true, source: input.data ? "computed" : "manual", data: input.data, createdBy: ctx.userId, updatedBy: ctx.userId })

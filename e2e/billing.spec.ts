@@ -1,4 +1,4 @@
-// Features: F-7 billing & settlements through the browser — charges, docs gate, invoice issue/send/receipt, AR, carrier bill three-way, driver statement, driver app pay, company settings
+// Features: F-7 F-7.2 billing & settlements through the browser — charges, docs gate, invoice issue/send/receipt, AR, carrier bill three-way, driver statement, driver app pay, company settings
 import { test, expect, type Page } from "@playwright/test";
 import path from "node:path";
 import { signupFresh, quickAdd, future } from "./helpers";
@@ -272,4 +272,20 @@ test("billing day: charges, docs gate, invoice to paid, AR, carrier three-way wi
   await page.locator("a", { hasText: o1 }).first().click();
   await page.waitForURL("**/orders/**", { waitUntil: "commit" });
   await expect(page.locator("#charges")).toContainText("$336.00"); // 420 × 0.80
+
+  // ---- QuickBooks: preview counts the month, the IIF balances, the second run finds nothing new
+  await page.goto("/billing/exports");
+  await expect(page.getByTestId("export-preview")).toContainText("1 invoices ($1,850.00) · 2 receipts ($1,850.00) · 1 carrier bills · 1 driver settlements");
+  await page.click("button:has-text('Create export')");
+  await expect(page.getByRole("status")).toContainText("Export ready — 1 invoices, 2 receipts, 1 carrier bills, 1 settlements");
+  const iifHref = await page.locator("a:has-text('.iif')").first().getAttribute("href");
+  const iif = await (await page.request.get(iifHref!)).text();
+  expect(iif).toContain("CUST\tRXO");
+  expect(iif).toContain("VEND\tLone Star Freight");
+  expect(iif).toMatch(/TRNS\t\tINVOICE\t.*\tAccounts Receivable\tRXO\t\t1850\.00\t247-000001/);
+  expect(iif).toMatch(/TRNS\t\tBILLPMT\t.*\t-441\.00\t/);
+  await expect(page.getByTestId("export-preview")).toContainText("Nothing in that period that has not been exported");
+  await expect(page.locator("button:has-text('Create export')")).toBeDisabled();
+  await page.locator("label:has-text('Only what has not been exported yet') input").uncheck();
+  await expect(page.getByTestId("export-preview")).toContainText("1 invoices");
 });

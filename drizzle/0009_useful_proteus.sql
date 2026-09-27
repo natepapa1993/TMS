@@ -1,0 +1,2 @@
+ALTER TABLE "accounting_exports" ADD COLUMN "record_ids" jsonb DEFAULT '{"invoices":[],"receipts":[],"bills":[],"settlements":[]}'::jsonb NOT NULL;--> statement-breakpoint
+ALTER TABLE "accounting_exports" ADD COLUMN "reopened_at" timestamp with time zone;
