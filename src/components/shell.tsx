@@ -6,6 +6,7 @@ import { useEffect, useState } from "react";
 import { Mark } from "./mark";
 import { ArrowLeftRight, BarChart3, Building2, Cable, CalendarRange, FileText, HandCoins, Handshake, Landmark, LayoutGrid, Map as MapIcon, MapPin, MessageSquare, Package, Plug, Receipt, Route, Settings, ShieldCheck, SlidersHorizontal, Fuel, Scale, TriangleAlert, Truck, Users, Wallet, type LucideIcon } from "lucide-react";
 import { logoutAction } from "@/app/(auth)/actions";
+import { GlobalSearch } from "./global-search";
 
 type NavItem = { href: string; label: string; icon: LucideIcon; roles?: string[] };
 const NAV: { section: string; items: NavItem[] }[] = [
@@ -99,6 +100,9 @@ export function Shell({ user, children }: { user: { name: string; role: string; 
           <button className="lg:hidden ml-auto w-8 h-8 rounded-md hover:bg-white/10" onClick={() => setOpen(false)} aria-label="Close menu">
             ×
           </button>
+        </div>
+        <div className="px-3 pb-2">
+          <GlobalSearch />
         </div>
         <nav className="px-2 pb-3 flex-1 overflow-y-auto">
           {NAV.map((g) => {

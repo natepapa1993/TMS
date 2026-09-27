@@ -11,6 +11,8 @@ import { formatCents } from "@/data/fields";
 import { OrderEditor, StopEditor, OrderActions, LegMiles, AddStop } from "./editor";
 import { Charges } from "./charges";
 import { LoadTabs, MoneyBox, PeopleCard, NotesPanel, DocumentsPanel, NOTE_LABEL } from "./load-page";
+import { CheckCallBox } from "../../dispatch/check-call";
+import { fmtIn, stopZone } from "@/lib/time";
 import type { Loc } from "@/components/stop-fields";
 import { chargesFor, orderPnl, requiredRefsFor } from "@/domain/billing";
 import { db } from "@/db/client";
@@ -28,6 +30,7 @@ const J = (v: unknown) => JSON.parse(JSON.stringify(v));
 export default async function OrderPage({ params }: PageProps<"/orders/[id]">) {
   const { id } = await params;
   const ctx = await requireCtx();
+  const { timeZone: companyZone } = await (await import("@/domain/company")).getCompany(ctx);
   const data = await getOrder(ctx, id).catch(() => null);
   if (!data) notFound();
   const { order, stops, legs } = data;
@@ -72,16 +75,28 @@ export default async function OrderPage({ params }: PageProps<"/orders/[id]">) {
   const carrierCost = legs.reduce((a, l) => a + (l.carrierRateCents ?? 0), 0) + (order.tollsFeesCents ?? 0);
   const covered = legs.every((l) => !["unassigned", "declined"].includes(l.state));
   const rate = order.rateTbd ? null : order.rateCents;
-  const margin = rate != null && covered ? rate - carrierCost : null;
+  // one margin everywhere: the same P&L as the Money tab (carriers, driver pay — estimated until a statement pays it — fuel, tolls)
+  const headPnl = rate != null && covered && ["owner", "dispatcher", "billing"].includes(ctx.role) ? await orderPnl(ctx, id).catch(() => null) : null;
+  const margin = headPnl ? headPnl.margin : rate != null && covered ? rate - carrierCost : null;
   const weightLb = (order.freight ?? []).reduce((a, f) => a + (f.weightLb ?? 0), 0) || order.weightLbs || null;
   const facts: [string, string, string?][] = [
     ["Pickup", when(pickup?.windowStart), place(pickup)],
     ["Delivery", when(delivery?.windowStart), place(delivery)],
     ["Rate", rate == null ? "TBD" : formatCents(rate, order.currency), order.rateType !== "flat" && order.rateUnitCents != null ? `${formatCents(order.rateUnitCents, order.currency)} × ${order.rateQty ?? "?"}` : undefined],
     ["Carrier cost", carrierCost ? formatCents(carrierCost, order.currency) : "—"],
-    ["Margin", margin == null ? "—" : formatCents(margin, order.currency), margin != null && rate ? `${((margin / rate) * 100).toFixed(1)}%` : covered ? undefined : "legs not covered yet"],
+    ["Margin", margin == null ? "—" : formatCents(margin, order.currency), margin != null && headPnl ? `${headPnl.marginPct}% after carriers, driver pay${headPnl.driverPayEstimated ? " (est.)" : ""}, fuel` : margin != null && rate ? `${((margin / rate) * 100).toFixed(1)}%` : covered ? undefined : "legs not covered yet"],
     ["Miles", miles == null ? "—" : miles.toLocaleString("en-US"), miles && rate ? `$${(rate / miles / 100).toFixed(2)} / mile` : undefined],
   ];
+  // where it is: the leg on the road, its last position and ETA, and the check calls
+  const liveLeg = legs.find((l) => ["dispatched", "accepted", "en_route_to_pickup", "at_pickup", "loaded", "en_route", "at_delivery"].includes(l.state)) ?? null;
+  const tracking = liveLeg
+    ? await (async () => {
+        const [{ lastSeen }, { boardEtas }] = await Promise.all([import("@/domain/check-calls"), import("@/domain/tracking")]);
+        const [seen, etas] = await Promise.all([lastSeen(ctx, liveLeg), boardEtas(ctx)]);
+        return { seen, seenMin: seen?.ageMin ?? null, eta: etas[liveLeg.id] ?? null };
+      })()
+    : null;
+  const destZone = delivery ? stopZone({ country: delivery.country, address: delivery.address }, companyZone) : companyZone;
   const pinned = notes.filter((n) => n.pinned);
   const flagsOpen = tl.flags.filter((f) => !f.clearedAt);
 
@@ -256,6 +271,34 @@ export default async function OrderPage({ params }: PageProps<"/orders/[id]">) {
                   </div>
                 </div>
                 <aside className="space-y-4 min-w-0">
+                  {liveLeg && tracking && (
+                    <div className="card p-5" data-testid="tracking-card">
+                      <div className="flex items-center justify-between mb-2">
+                        <div className="text-[15px] font-extrabold">Where it is</div>
+                        <Link href="/fleet/map" className="text-[12.5px] text-teal font-semibold">
+                          Map →
+                        </Link>
+                      </div>
+                      <div className="text-[13px] space-y-1 mb-3">
+                        <div>
+                          <span className="text-muted">Last position </span>
+                          {tracking.seen ? (
+                            <b>
+                              {tracking.seen.place} · {tracking.seenMin} min ago
+                            </b>
+                          ) : (
+                            <b className="text-amber">none in 12 h — ask the driver or send the tracking link</b>
+                          )}
+                        </div>
+                        {tracking.eta && (
+                          <div className={tracking.eta.late ? "text-red font-semibold" : "text-teal font-semibold"}>
+                            ETA {fmtIn(tracking.eta.at, destZone)} at {tracking.eta.stopName} · {tracking.eta.miles} mi{tracking.eta.late ? " — past the window" : ""}
+                          </div>
+                        )}
+                      </div>
+                      {!readOnly && <CheckCallBox orderId={order.id} legId={liveLeg.id} zone={destZone} reefer={order.equipment.includes("reefer")} onDone={undefined} />}
+                    </div>
+                  )}
                   <PeopleCard order={J({ id: order.id, salesAgentId: order.salesAgentId, csrId: order.csrId, dispatcherId: order.dispatcherId, priority: order.priority, updatedAt: order.updatedAt })} people={people.filter((p) => !p.archivedAt || [order.salesAgentId, order.csrId, order.dispatcherId].includes(p.id)).map((p) => ({ id: p.id, name: p.name }))} readOnly={readOnly} />
                   {flagsOpen.length > 0 && (
                     <div className="card p-5">
@@ -295,11 +338,11 @@ export default async function OrderPage({ params }: PageProps<"/orders/[id]">) {
               <div className="max-w-5xl">
                 <div className="flex items-center justify-between mb-4">
                   <div className="text-muted text-[13.5px]">{restructure ? "Add, move or remove stops; the legs are re-cut from them." : order.lockedAt ? "Unlock the load to change its stops." : "The stops of a delivered or closed load are final."}</div>
-                  {restructure && <AddStop orderId={order.id} stops={stops.map((s) => ({ id: s.id, name: s.name }))} firstOpen={lastReached + 1} locations={locations.map((l) => ({ id: l.id, name: String(l.name), country: String(l.country), kind: String(l.kind), address: (l.address ?? null) as Loc["address"] }))} />}
+                  {restructure && <AddStop orderId={order.id} stops={stops.map((s) => ({ id: s.id, name: s.name }))} firstOpen={lastReached + 1} zone={companyZone} locations={locations.map((l) => ({ id: l.id, name: String(l.name), country: String(l.country), kind: String(l.kind), address: (l.address ?? null) as Loc["address"] }))} />}
                 </div>
                 <div className="space-y-2 card p-4" data-testid="stops-card">
                   {stops.map((s, i) => (
-                    <StopEditor key={s.id} orderId={order.id} index={i} count={stops.length} stop={J(s)} readOnly={readOnly} restructure={restructure} />
+                    <StopEditor key={s.id} orderId={order.id} index={i} count={stops.length} stop={J(s)} readOnly={readOnly} restructure={restructure} zone={companyZone} />
                   ))}
                 </div>
               </div>

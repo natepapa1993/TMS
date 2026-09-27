@@ -1,6 +1,6 @@
 // Features: F-2.1 F-2.3 F-3.1 F-3.2 F-11.1 F-11.2 F-11.3 F-11.4 F-11.5 F-15 (through the real UI) F-2.9 F-1.6
 import { test, expect, type Page } from "@playwright/test";
-import { signupFresh, quickAdd, future, login, buildLoad, mxToUs } from "./helpers";
+import { signupFresh, quickAdd, future, login, buildLoad, mxToUs, step, confirmStamp } from "./helpers";
 
 // T1 through the real UI: order → assign (eligibility enforced) → send → drive → delivered.
 // Plus the ease rules the owner asked for: OOS, split, add a driver to a unit, hold.
@@ -49,22 +49,23 @@ test("dispatcher day: build a load stop by stop, B-1 blocked on the US leg, carr
   await dlg.locator("select").nth(1).selectOption("phone"); // tendered by phone: dispatcher confirms
   await dlg.locator("button:has-text('Assign & send')").click();
   await expect(page.getByRole("status")).toContainText("Marked sent");
-  await expect(page.locator(".stage-tab:has-text('Dispatched') .count")).toHaveText("1");
+  await expect(page.locator(".stage-tab:has-text('Sent') .count")).toHaveText("1"); // sent to the carrier by phone, not rolling yet
 
   // walk the MX leg to completed with the per-leg buttons
-  await page.click(".stage-tab:has-text('Dispatched')");
+  await page.click(".stage-tab:has-text('All')");
   await page.click(".row[role=button]");
   for (const label of ["Accepted", "Rolling to pickup", "Arrived at pickup", "Loaded", "En route", "Arrived at delivery", "Delivered"]) {
     await panel.locator(`.rounded-lg.border >> nth=0 >> button:has-text('${label}')`).click();
+    await confirmStamp(panel);
     await expect(page.getByRole("status")).toBeVisible();
     await page.waitForTimeout(150);
   }
   await expect(panel.locator(".rounded-lg.border").first()).toContainText("Delivered");
-  // the crossing is next, so the order is back in Pending for the dispatcher
-  await expect(page.locator(".stage-tab:has-text('Pending') .count")).toHaveText("1");
+  // the crossing is next: the load needs a truck again
+  await expect(page.locator(".stage-tab:has-text('Needs truck') .count")).toHaveText("1");
 
   // crossing: our brown-plate 2117 with the B-1 driver — ranked first and green
-  await page.click(".stage-tab:has-text('Pending')");
+  await page.click(".stage-tab:has-text('All')");
   await page.click(".row[role=button]");
   await panel.locator("button:has-text('Assign Crossing leg')").click();
   dlg = page.getByRole("dialog");
@@ -82,10 +83,10 @@ test("dispatcher day: build a load stop by stop, B-1 blocked on the US leg, carr
   await page.click(".row[role=button]");
   await panel.locator("button:has-text('Send to driver')").click();
   await expect(page.getByRole("status")).toContainText("Sent");
-  await page.click(".stage-tab:has-text('Dispatched')");
+  await page.click(".stage-tab:has-text('All')");
   await page.click(".row[role=button]");
   for (const label of ["Mark accepted", "Rolling to pickup", "Arrived at pickup", "Loaded", "En route", "Arrived at delivery", "Delivered"]) {
-    await panel.locator("button.btn-primary.btn-lg").click();
+    await step(panel);
     await page.waitForTimeout(200);
     void label;
   }
@@ -100,10 +101,10 @@ test("dispatcher day: build a load stop by stop, B-1 blocked on the US leg, carr
   await ok.click();
   await dlg.locator("button:has-text('Assign & send')").click();
   await expect(page.getByRole("status")).toContainText("Assigned and sent");
-  await page.click(".stage-tab:has-text('Dispatched')");
+  await page.click(".stage-tab:has-text('All')");
   await page.click(".row[role=button]");
   for (let i = 0; i < 7; i++) {
-    await panel.locator("button.btn-primary.btn-lg").click();
+    await step(panel);
     await page.waitForTimeout(200);
   }
   await expect(page.locator(".stage-tab:has-text('Delivered') .count")).toHaveText("1");
@@ -157,7 +158,7 @@ test("unit OOS from Fleet pulls the planned leg back to Pending; split makes a s
 
   // Dispatch: crossing is Pending again; split the US leg
   await page.goto("/dispatch");
-  await expect(page.locator(".stage-tab:has-text('Pending') .count")).toHaveText("1");
+  await expect(page.locator(".stage-tab:has-text('Needs truck') .count")).toHaveText("1");
   await page.click(".row[role=button]");
   await expect(panel.locator(".rounded-lg.border").nth(1)).toContainText("Pending");
   await panel.locator("button:has-text('Split')").click();
@@ -176,7 +177,7 @@ test("unit OOS from Fleet pulls the planned leg back to Pending; split makes a s
   await page.getByRole("dialog").locator("select").nth(1).selectOption("phone");
   await page.getByRole("dialog").locator("button:has-text('Assign & send')").click();
   await expect(page.getByRole("status")).toContainText("Marked sent");
-  await page.click(".stage-tab:has-text('Dispatched')");
+  await page.click(".stage-tab:has-text('All')");
   await page.click(".row[role=button]");
   await panel.locator("button:has-text('Hold')").click();
   await page.getByRole("dialog").locator("input").fill("rate con missing");
@@ -205,7 +206,7 @@ test("tenant isolation through the UI: a second company sees nothing of the firs
   await p2.goto(truckHref!);
   await expect(p2.locator("body")).toContainText(/not found|404/i);
   await p2.goto("/dispatch");
-  await expect(p2.locator(".stage-tab:has-text('Pending') .count")).toHaveText("0");
+  await expect(p2.locator(".stage-tab:has-text('All') .count")).toHaveText("0");
   await ctx2.close();
 
   // A still sees its own things after signing out and in again

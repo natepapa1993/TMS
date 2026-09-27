@@ -95,3 +95,26 @@ export function zoneAbbrev(zone: string, at = new Date()) {
     return zone;
   }
 }
+
+/** An instant as a datetime-local input value on a zone's wall clock ("2026-09-28T08:00"). */
+export function toZoneInput(d: Date | string | null | undefined, zone: string): string {
+  if (!d) return "";
+  const x = new Date(d);
+  if (Number.isNaN(x.getTime())) return "";
+  const p = zonedParts(x, zone);
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${p.y}-${pad(p.m)}-${pad(p.d)}T${pad(p.h)}:${pad(p.min)}`;
+}
+
+/** A datetime-local value read on a zone's wall clock ("8:00 at the stop") → the instant. */
+export function fromZoneInput(v: string | null | undefined, zone: string): Date | null {
+  if (!v) return null;
+  const m = /^(\d{4}-\d{2}-\d{2})T(\d{2}):(\d{2})/.exec(v);
+  if (!m) return null;
+  return localToInstant(m[1], `${m[2]}${m[3]}`, zone);
+}
+
+/** A stop's zone: its state or province, else its country, else the company's. */
+export function stopZone(st: { country?: string | null; address?: { state?: string | null } | null }, fallback: string) {
+  return zoneFor({ state: st.address?.state ?? null, country: st.country ?? null }, fallback);
+}

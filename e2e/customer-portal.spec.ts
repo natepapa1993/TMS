@@ -1,16 +1,16 @@
 // Features: F-13 customer portal through the browser — link from the customer record, their load with tracking, delivered with the POD, invoice with balance, a load request that lands on Dispatch and is booked
 import { test, expect, type Page } from "@playwright/test";
 import path from "node:path";
-import { signupFresh, quickAdd, future, buildLoad } from "./helpers";
+import { signupFresh, quickAdd, future, buildLoad, step } from "./helpers";
 
 const POD = path.join(__dirname, "fixtures", "bol.pdf");
 
 async function walkToDelivered(page: Page, orderNumber: string, steps = 7) {
-  await page.click(".stage-tab:has-text('Dispatched')");
+  await page.click(".stage-tab:has-text('All')");
   await page.locator(".row[role=button]", { hasText: orderNumber }).click();
   const panel = page.locator("aside").last();
   for (let i = 0; i < steps; i++) {
-    await panel.locator("button.btn-primary.btn-lg").click();
+    await step(panel);
     await page.waitForTimeout(200);
   }
 }
@@ -127,7 +127,8 @@ test("customer's day: one link, a load tracked to delivered, the POD and the inv
   await expect(phone.getByTestId("load-card").filter({ hasText: "PO-9001" })).toContainText("Requested");
 
   await page.goto("/dispatch");
-  await expect(page.locator("a:has-text('Requests · 1')")).toBeVisible();
+  await page.locator("button:has-text('Requests · 1')").click(); // opens the Drafts bucket
+  await expect(page.locator(".stage-tab[data-active=true]")).toContainText("Drafts");
   const req = page.locator(".row[role=button]", { hasText: "Magna Ramos Arizpe" });
   await expect(req).toHaveCount(1);
   await req.click();
@@ -144,7 +145,7 @@ test("customer's day: one link, a load tracked to delivered, the POD and the inv
   await page.click("button:has-text('Book')");
   await expect(page.getByRole("status").filter({ hasText: "Booked" })).toBeVisible();
   await page.goto("/dispatch");
-  await expect(page.locator("a:has-text('Requests')")).toHaveCount(0);
+  await expect(page.locator("button:has-text('Requests')")).toHaveCount(0);
   await phone.reload();
   await expect(phone.getByTestId("load-card").filter({ hasText: "PO-9001" })).toContainText("Booked");
   await ctx2.close();

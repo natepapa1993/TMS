@@ -1,7 +1,7 @@
 // Features: F-7 F-7.2 F-9 billing & settlements through the browser, ending with the QuickBooks export and the owner's reports — charges, docs gate, invoice issue/send/receipt, AR, carrier bill three-way, driver statement, driver app pay, company settings
 import { test, expect, type Page } from "@playwright/test";
 import path from "node:path";
-import { signupFresh, quickAdd, future, buildLoad } from "./helpers";
+import { signupFresh, quickAdd, future, buildLoad, step, confirmStamp } from "./helpers";
 
 const POD = path.join(__dirname, "fixtures", "bol.pdf");
 
@@ -46,11 +46,11 @@ async function newDomestic(page: Page, rate: string) {
 }
 
 async function walkToDelivered(page: Page, orderNumber: string, steps = 7) {
-  await page.click(".stage-tab:has-text('Dispatched')");
+  await page.click(".stage-tab:has-text('All')");
   await page.locator(".row[role=button]", { hasText: orderNumber }).click();
   const panel = page.locator("aside").last();
   for (let i = 0; i < steps; i++) {
-    await panel.locator("button.btn-primary.btn-lg").click();
+    await step(panel);
     await page.waitForTimeout(200);
   }
 }
@@ -82,10 +82,11 @@ test("billing day: charges, docs gate, invoice to paid, AR, carrier three-way wi
   await dlg.locator("select").nth(1).selectOption("phone");
   await dlg.locator("button:has-text('Assign & send')").click();
   await expect(page.getByRole("status")).toContainText("Marked sent");
-  await page.click(".stage-tab:has-text('Dispatched')");
+  await page.click(".stage-tab:has-text('All')");
   await page.locator(".row[role=button]", { hasText: o2 }).click();
   for (const label of ["Accepted", "Rolling to pickup", "Arrived at pickup", "Loaded", "En route", "Arrived at delivery", "Delivered"]) {
     await panel.locator(`.rounded-lg.border >> nth=0 >> button:has-text('${label}')`).click();
+    await confirmStamp(panel);
     await expect(page.getByRole("status")).toBeVisible();
     await page.waitForTimeout(150);
   }

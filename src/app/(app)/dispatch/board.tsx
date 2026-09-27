@@ -1,17 +1,23 @@
 "use client";
 
-import { useEffect, useMemo, useState, useTransition, useCallback } from "react";
+import { useEffect, useMemo, useRef, useState, useTransition, useCallback, useSyncExternalStore } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Modal, Pill, Confirm, Toast, useToast, KV, Spinner } from "@/components/ui";
-import { LEG_LABEL, STAGE_OF_LEG } from "@/domain/states";
+import { LEG_LABEL } from "@/domain/states";
 import type { LegState } from "@/db/schema";
 import type { Candidate } from "@/domain/orders";
 import * as A from "./actions";
+import { BUCKETS, ALERTS, bucketsOf, alertsOf, urgency, currentLeg, nextStop, type BucketKey, type AlertKey } from "@/domain/board-buckets";
+import { fmtIn, stopZone, zonedDate, toZoneInput, fromZoneInput, zoneAbbrev } from "@/lib/time";
+import { CheckCallBox } from "./check-call";
 
 /**
- * The dispatch board (Design: Dispatch-Clean). Five things per row, one primary action in the
- * panel, everything else behind a click. Stage tabs = Pending / Planned / Dispatched / Delivered.
+ * The trip board: every open load on one dense screen, most urgent first. Buckets (Needs truck,
+ * Tendered, Planned, Sent, In transit, Delivered) and alert chips (Late, At risk, No ping, No truck
+ * < 24h, Picks / Delivers today, Flagged) filter it; a row shows status, pickup and delivery at the
+ * stop's own time, the next stop with its ETA against the appointment, the power, the last GPS ping
+ * and the money. Click a row for the panel with the one next action and the check calls.
  */
 
 type Leg = {
@@ -29,6 +35,8 @@ type Leg = {
   fromStopId: string | null;
   toStopId: string | null;
   truckUnit: string | null;
+  trailerId: string | null;
+  trailerUnit: string | null;
   driverName: string | null;
   carrierName: string | null;
   declineReason: string | null;
@@ -52,18 +60,32 @@ export type BoardData = {
   ediInbox: number;
   messages: number;
   requests: number;
+  zone: string;
+  pings: { byTruck: Record<string, string>; byLeg: Record<string, string> };
+  lastCalls: Record<string, { at: string; status: string; location: string | null; note: string | null }>;
+  trailers: { id: string; unitNumber: string; status: string }[];
 };
 
-const STAGES = [
-  { key: "pending", label: "Pending", hint: "Built, nobody on it yet" },
-  { key: "planned", label: "Planned", hint: "Truck or carrier picked, not sent" },
-  { key: "dispatched", label: "Dispatched", hint: "Sent, accepted, or moving" },
-  { key: "delivered", label: "Delivered", hint: "Ready for billing" },
-] as const;
-
+const subscribeCompact = (cb: () => void) => {
+  window.addEventListener("board-compact", cb);
+  return () => window.removeEventListener("board-compact", cb);
+};
+const readCompact = () => {
+  try {
+    return localStorage.getItem("board.compact") === "1";
+  } catch {
+    return false;
+  }
+};
+const EQUIPMENT_LABEL: Record<string, string> = { "53_dry": "53' dry van", "53_reefer": "53' reefer", "48_dry": "48' dry van", flatbed: "Flatbed", sprinter: "Sprinter van", straight: "Straight truck", power_only: "Power only" };
+const STATUS_LABEL: Record<string, string> = { unassigned: "Needs truck", declined: "Declined", planned: "Planned", dispatched: "Sent", accepted: "Accepted", en_route_to_pickup: "To pickup", at_pickup: "At pickup", loaded: "Loaded", en_route: "En route", at_delivery: "At delivery", completed: "Delivered" };
+const ago = (iso: string | null, now: number) => {
+  if (!iso) return null;
+  const m = Math.max(0, Math.round((now - new Date(iso).getTime()) / 60000));
+  return m < 60 ? `${m}m` : m < 48 * 60 ? `${Math.round(m / 60)}h` : `${Math.round(m / 1440)}d`;
+};
 const LEG_TYPE_LABEL: Record<string, string> = { mx: "MX", ca: "CA", crossing: "Crossing", us: "US", domestic: "Domestic", equipment_move: "Equip." };
 const money = (c: number | null, cur = "USD") => (c == null ? "TBD" : new Intl.NumberFormat("en-US", { style: "currency", currency: cur, maximumFractionDigits: 0 }).format(c / 100));
-const when = (s: string | null) => (s ? new Date(s).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) : null);
 const place = (st: Stop) => st.name + (st.address?.city ? `, ${st.address.city}` : "") + (st.address?.state ? ` ${st.address.state}` : "");
 
 function nextLeg(r: Row): Leg | null {
@@ -93,7 +115,16 @@ export function DispatchBoard({ data, initialOrder }: { data: BoardData; initial
   const router = useRouter();
   const t = useToast();
   const initialRow = initialOrder ? data.rows.find((r) => r.order.id === initialOrder) : undefined;
-  const [stage, setStage] = useState<(typeof STAGES)[number]["key"]>(initialRow && initialRow.stage !== "closed" ? initialRow.stage : "pending");
+  const [bucket, setBucket] = useState<BucketKey>(initialRow ? (initialRow.order.state === "draft" ? "drafts" : initialRow.stage === "delivered" ? "delivered" : "all") : "all");
+  const [chips, setChips] = useState<Set<AlertKey>>(new Set());
+  // a per-viewer preference: read after hydration (the server can't know it), written on change
+  const compact = useSyncExternalStore(subscribeCompact, readCompact, () => false);
+  const setCompact = (on: boolean) => {
+    try {
+      localStorage.setItem("board.compact", on ? "1" : "0");
+    } catch {}
+    window.dispatchEvent(new Event("board-compact"));
+  };
   const [q, setQ] = useState("");
   const [selectedId, setSelectedIdRaw] = useState<string | null>(initialRow?.order.id ?? null);
   const [popup, setPopup] = useState<null | { kind: "assign" | "split" | "hold" | "cancel" | "oos" | "decline" | "drivers" | "track"; legId?: string }>(null);
@@ -103,16 +134,45 @@ export function DispatchBoard({ data, initialOrder }: { data: BoardData; initial
     setSelectedIdRaw(id);
   }, []);
   const [pending, start] = useTransition();
+  // the clock the row math uses; ticks every minute so "late" and ping ages stay true without a reload
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const i = setInterval(() => setNow(Date.now()), 60_000);
+    return () => clearInterval(i);
+  }, []);
 
-  const counts = useMemo(() => Object.fromEntries(STAGES.map((s) => [s.key, data.rows.filter((r) => r.stage === s.key).length])), [data.rows]);
-  const attention = data.rows.filter((r) => r.openFlags.length || r.order.state === "exception").length;
+  const scored = useMemo(() => {
+    const ctx = {
+      now,
+      etas: data.etas ?? {},
+      lastPing: (l: { id: string; truckId: string | null }) => data.pings.byLeg[l.id] ?? (l.truckId ? (data.pings.byTruck[l.truckId] ?? null) : null),
+      today: (st: { country: string; address: { state?: string } | null }) => zonedDate(new Date(now), stopZone(st, data.zone)),
+      dayOf: (iso: string, st: { country: string; address: { state?: string } | null }) => zonedDate(new Date(iso), stopZone(st, data.zone)),
+    };
+    return data.rows.map((r) => {
+      const b = bucketsOf(r);
+      const a = alertsOf(r, ctx as never);
+      return { r, b, a, u: urgency(r, a) };
+    });
+  }, [data, now]);
+  const counts = useMemo(() => Object.fromEntries(BUCKETS.map((s) => [s.key, scored.filter((x) => x.b.has(s.key)).length])), [scored]);
+  const alertCounts = useMemo(() => Object.fromEntries(ALERTS.map((s) => [s.key, scored.filter((x) => (bucket === "all" || x.b.has(bucket)) && x.a.has(s.key)).length])), [scored, bucket]);
   const rows = useMemo(() => {
-    const base = data.rows.filter((r) => r.stage === stage);
-    if (!q.trim()) return base;
-    const s = q.toLowerCase();
-    return base.filter((r) => [r.order.orderNumber, r.customerName, ...r.stops.map((x) => x.name), ...r.legs.map((l) => l.truckUnit ?? l.carrierName ?? ""), ...Object.values(r.order.refs)].some((x) => x?.toLowerCase().includes(s)));
-  }, [data.rows, stage, q]);
+    let base = scored.filter((x) => x.b.has(bucket));
+    if (chips.size) base = base.filter((x) => [...chips].every((c) => x.a.has(c)));
+    if (q.trim()) {
+      const s = q.toLowerCase();
+      base = base.filter(({ r }) => [r.order.orderNumber, r.customerName, ...r.stops.flatMap((x) => [x.name, x.address?.city ?? ""]), ...r.legs.flatMap((l) => [l.truckUnit ?? "", l.carrierName ?? "", l.driverName ?? "", l.trailerUnit ?? ""]), ...Object.values(r.order.refs)].some((x) => x?.toLowerCase().includes(s)));
+    }
+    return base.sort((p, q2) => (bucket === "delivered" ? 0 : p.u - q2.u));
+  }, [scored, bucket, chips, q]);
   const selected = data.rows.find((r) => r.order.id === selectedId) ?? null;
+  const rowsRef = useRef<string[]>([]);
+  const selectedRef = useRef<string | null>(null);
+  useEffect(() => {
+    rowsRef.current = rows.map((x) => x.r.order.id);
+    selectedRef.current = selectedId;
+  }, [rows, selectedId]);
   const popupLeg = (popup?.legId && selected?.legs.find((l) => l.id === popup.legId)) || null;
 
   const run = useCallback(
@@ -132,6 +192,14 @@ export function DispatchBoard({ data, initialOrder }: { data: BoardData; initial
     const onKey = (e: KeyboardEvent) => {
       if ((e.target as HTMLElement)?.tagName?.match(/INPUT|TEXTAREA|SELECT/)) return;
       if (e.key === "n") router.push("/orders/new");
+      if (e.key === "j" || e.key === "k") {
+        const ids = rowsRef.current;
+        if (!ids.length) return;
+        const i = selectedRef.current ? ids.indexOf(selectedRef.current) : -1;
+        const next = e.key === "j" ? Math.min(ids.length - 1, i + 1) : Math.max(0, i - 1);
+        setSelectedId(ids[next]);
+        document.querySelector(`[data-order="${ids[next]}"]`)?.scrollIntoView({ block: "nearest" });
+      }
       if (e.key === "/") {
         e.preventDefault();
         document.getElementById("board-search")?.focus();
@@ -146,8 +214,8 @@ export function DispatchBoard({ data, initialOrder }: { data: BoardData; initial
   const canDispatch = ["owner", "dispatcher"].includes(data.role);
 
   return (
-    <div className="flex min-h-screen">
-      <div className="flex-1 min-w-0">
+    <div className="min-h-screen">
+      <div className="min-w-0">
         <div className="px-7 pt-6 pb-3 flex items-end justify-between gap-4 flex-wrap">
           <div>
             <div className="eyebrow mb-1">{new Date().toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" })}</div>
@@ -159,9 +227,9 @@ export function DispatchBoard({ data, initialOrder }: { data: BoardData; initial
               Messages{data.messages ? ` · ${data.messages}` : ""}
             </Link>
             {data.requests > 0 && (
-              <Link href="/orders?state=draft" className="btn border-amber text-amber font-bold" title="Load requests from the customer portal: price, confirm, book">
+              <button className="btn border-amber text-amber font-bold" title="Load requests from the customer portal: price, confirm, book" onClick={() => setBucket("drafts")}>
                 Requests · {data.requests}
-              </Link>
+              </button>
             )}
             <Link href="/edi" className={`btn ${data.ediInbox ? "border-amber text-amber font-bold" : ""}`} title="EDI tenders, 214 status and 210 invoices">
               EDI{data.ediInbox ? ` · ${data.ediInbox} waiting` : ""}
@@ -179,52 +247,88 @@ export function DispatchBoard({ data, initialOrder }: { data: BoardData; initial
             )}
           </div>
         </div>
-        <div className="px-7 pb-3 flex items-center gap-1.5 flex-wrap">
-          {STAGES.map((s) => (
-            <button key={s.key} className="stage-tab" data-active={stage === s.key} onClick={() => setStage(s.key)} title={s.hint}>
+        <div className="px-7 pb-2 flex items-center gap-1.5 flex-wrap" role="tablist" aria-label="Board buckets">
+          {BUCKETS.map((s) => (
+            <button key={s.key} role="tab" aria-selected={bucket === s.key} className="stage-tab" data-active={bucket === s.key} onClick={() => setBucket(s.key)} title={s.hint}>
               {s.label} <span className="count">{counts[s.key]}</span>
             </button>
           ))}
-          {attention > 0 && (
-            <span className="ml-auto pill pill-red" title="Orders with an open flag or on hold">
-              ● {attention} need attention
-            </span>
+        </div>
+        <div className="px-7 pb-3 flex items-center gap-1.5 flex-wrap" data-testid="board-chips">
+          {ALERTS.map((c) => {
+            const on = chips.has(c.key);
+            const n = alertCounts[c.key];
+            const hot = c.key === "late" || c.key === "no_ping" || c.key === "uncovered_soon";
+            return (
+              <button
+                key={c.key}
+                className={`chip ${on ? "chip-on" : ""} ${n && hot ? "chip-hot" : ""}`}
+                aria-pressed={on}
+                title={c.hint}
+                disabled={!n && !on}
+                onClick={() => setChips((prev) => {
+                  const next = new Set(prev);
+                  if (next.has(c.key)) next.delete(c.key);
+                  else next.add(c.key);
+                  return next;
+                })}
+              >
+                {c.label} <b>{n}</b>
+              </button>
+            );
+          })}
+          {chips.size > 0 && (
+            <button className="btn btn-ghost btn-sm text-muted" onClick={() => setChips(new Set())}>
+              Clear
+            </button>
           )}
+          <label className="ml-auto flex items-center gap-1.5 text-[12.5px] text-muted cursor-pointer">
+            <input type="checkbox" className="accent-teal" checked={compact} onChange={(e) => setCompact(e.target.checked)} /> Compact
+          </label>
         </div>
         <div className="px-7 pb-10">
-          <div className="card overflow-hidden">
-            <div className="row text-[11px] font-bold tracking-wider uppercase text-faint border-t-0 cursor-default hover:bg-transparent" style={{ gridTemplateColumns: "150px 1.6fr 1fr 150px 130px" }}>
-              <div>Order</div>
-              <div>Route</div>
-              <div>Next leg</div>
-              <div>When</div>
+          <div className={`card overflow-x-auto trip-board ${compact ? "trip-compact" : ""}`} data-testid="trip-board">
+            <div className="row trip-row trip-head" role="row">
+              <div>Load</div>
               <div>Status</div>
+              <div>Pickup</div>
+              <div>Delivery</div>
+              <div>Next stop · ETA</div>
+              <div>Power</div>
+              <div title="Last GPS position">Ping</div>
+              <div className="text-right">Rate</div>
             </div>
             {rows.length === 0 ? (
-              <div className="py-16 text-center border-t border-line">
-                <div className="font-bold">{q ? "Nothing matches" : stage === "pending" ? "Nothing pending" : `Nothing ${stage}`}</div>
-                <div className="text-muted text-[13px] mt-1">{stage === "pending" && !q ? "New loads land here. Press n to build one." : " "}</div>
+              <div className="py-14 text-center border-t border-line">
+                <div className="font-bold">{q || chips.size ? "Nothing matches" : bucket === "needs" ? "Every leg is covered" : `Nothing in ${BUCKETS.find((b) => b.key === bucket)?.label}`}</div>
+                <div className="text-muted text-[13px] mt-1">{bucket === "all" && !q ? "New loads land here. Press n to build one." : " "}</div>
               </div>
             ) : (
-              rows.map((r) => <BoardRow key={r.order.id} r={r} selected={r.order.id === selectedId} onClick={() => setSelectedId(r.order.id)} />)
+              rows.map(({ r, a }) => <BoardRow key={r.order.id} r={r} alerts={a} data={data} now={now} selected={r.order.id === selectedId} onClick={() => setSelectedId(r.order.id)} />)
             )}
           </div>
-          <div className="mt-3 text-[12px] text-faint flex gap-4">
+          <div className="mt-3 text-[12px] text-faint flex gap-4 flex-wrap">
+            <span>{rows.length} load{rows.length === 1 ? "" : "s"} · most urgent first</span>
             <span>
-              <span className="kbd">n</span> new order
+              <span className="kbd">n</span> new load
             </span>
             <span>
               <span className="kbd">/</span> search
             </span>
             <span>
+              <span className="kbd">j</span> <span className="kbd">k</span> move
+            </span>
+            <span>
               <span className="kbd">esc</span> close panel
             </span>
+            <span>Times are local to each stop.</span>
           </div>
         </div>
       </div>
 
       {selected && (
         <SidePanel
+          key={selected.order.id}
           r={selected}
           data={data}
           busy={pending}
@@ -232,6 +336,10 @@ export function DispatchBoard({ data, initialOrder }: { data: BoardData; initial
           onClose={() => setSelectedId(null)}
           onPopup={setPopup}
           run={run}
+          onToast={(msg) => {
+            t.ok(msg);
+            router.refresh();
+          }}
         />
       )}
 
@@ -276,56 +384,119 @@ export function DispatchBoard({ data, initialOrder }: { data: BoardData; initial
   );
 }
 
-function BoardRow({ r, selected, onClick }: { r: Row; selected: boolean; onClick: () => void }) {
-  const first = r.stops[0];
-  const last = r.stops[r.stops.length - 1];
-  const nl = nextLeg(r);
+function BoardRow({ r, alerts, data, now, selected, onClick }: { r: Row; alerts: Set<AlertKey>; data: BoardData; now: number; selected: boolean; onClick: () => void }) {
+  const first = r.stops.find((s) => s.type === "pickup") ?? r.stops[0];
+  const last = [...r.stops].reverse().find((s) => s.type === "delivery") ?? r.stops[r.stops.length - 1];
+  const cur = currentLeg(r.legs);
+  const ns = nextStop(r);
   const hold = r.order.state === "exception";
   const red = r.openFlags.some((f) => f.level === "red");
+  const eta = cur ? data.etas?.[cur.id] : undefined;
+  const at = (iso: string | null, st: Stop | undefined) => (iso && st ? fmtIn(iso, stopZone(st, data.zone), { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) : null);
+  const apptOf = (st: Stop | null | undefined) => (st ? (st.windowEnd ?? st.windowStart) : null);
+  const nsAppt = apptOf(ns);
+  const etaTone = eta && nsAppt ? (new Date(eta.at).getTime() > new Date(nsAppt).getTime() ? "late" : new Date(eta.at).getTime() > new Date(nsAppt).getTime() - 3600_000 ? "risk" : "ok") : eta?.late ? "late" : eta ? "ok" : null;
+  const needing = r.legs.filter((l) => l.state === "unassigned" || l.state === "declined");
+  const tender = r.tenders.find((x) => x.state === "sent");
+  const ping = cur ? (data.pings.byLeg[cur.id] ?? (cur.truckId ? data.pings.byTruck[cur.truckId] : undefined) ?? null) : null;
+  const rolling = cur && ["en_route_to_pickup", "at_pickup", "loaded", "en_route", "at_delivery"].includes(cur.state);
+  const pingAge = rolling ? ago(ping, now) : null;
+  const pingTone = rolling ? (!ping || now - new Date(ping).getTime() > 2 * 3600_000 ? "text-red font-bold" : now - new Date(ping).getTime() > 3600_000 ? "text-amber font-semibold" : "text-muted") : "text-faint";
+  const miles = r.legs.reduce((a, l) => a + (l.plannedMiles ?? 0), 0);
+  const call = data.lastCalls[r.order.id];
+  const status = hold ? "On hold" : r.order.state === "draft" ? "Draft" : cur ? STATUS_LABEL[cur.state] ?? LEG_LABEL[cur.state] : "Delivered";
+  const statusTone = hold ? "amber" : r.order.state === "draft" ? "slate" : cur ? legTone(cur.state) : "green";
+  const place2 = (st: Stop | undefined) => (st ? [st.address?.city || st.name, st.address?.state].filter(Boolean).join(", ") : "—");
   return (
-    <div className="row" style={{ gridTemplateColumns: "150px 1.6fr 1fr 150px 130px" }} data-selected={selected} aria-pressed={selected} onClick={onClick} role="button" tabIndex={0} onKeyDown={(e) => e.key === "Enter" && onClick()}>
+    <div className={`row trip-row ${alerts.has("late") ? "trip-late" : ""}`} data-order={r.order.id} data-selected={selected} aria-pressed={selected} onClick={onClick} role="button" tabIndex={0} onKeyDown={(e) => e.key === "Enter" && onClick()}>
       <div className="min-w-0">
-        <div className="font-extrabold mono">{r.order.orderNumber}</div>
-        <div className="text-muted text-[12.5px] truncate">{r.order.kind === "trip" ? `Tailgate trip · ${r.shipments} shipment${r.shipments === 1 ? "" : "s"}` : (r.customerName ?? "No customer")}</div>
+        <div className="font-extrabold mono flex items-center gap-1.5">
+          {r.order.orderNumber}
+          {r.openFlags.length > 0 && <span className={`w-2 h-2 rounded-full ${red ? "bg-red" : "bg-amber"}`} title={r.openFlags.map((f) => f.title).join(", ")} />}
+        </div>
+        <div className="sub truncate">{r.order.kind === "trip" ? `Tailgate trip · ${r.shipments} shipment${r.shipments === 1 ? "" : "s"}` : (r.customerName ?? "No customer")}</div>
       </div>
       <div className="min-w-0">
-        <div className="truncate font-semibold">
-          {first ? place(first) : "—"} <span className="text-faint">→</span> {last ? place(last) : "—"}
+        <div className="flex items-center gap-1 flex-wrap">
+          <Pill tone={statusTone}>{status}</Pill>
+          {alerts.has("late") && <span className="pill pill-red">Late</span>}
+          {!alerts.has("late") && alerts.has("at_risk") && <span className="pill pill-amber">At risk</span>}
         </div>
-        <div className="flex gap-1 mt-1">
-          {r.legs.map((l) => (
-            <span key={l.id} className={`pill pill-${legTone(l.state)}`} style={{ height: 18, fontSize: 10.5 }} title={`${LEG_TYPE_LABEL[l.type]} · ${LEG_LABEL[l.state]}`}>
-              {LEG_TYPE_LABEL[l.type]}
-            </span>
-          ))}
+        <div className="sub truncate" title={r.legs.map((l) => `${LEG_TYPE_LABEL[l.type]}: ${LEG_LABEL[l.state]}`).join(" · ")}>
+          {r.legs.length > 1 ? r.legs.map((l) => `${LEG_TYPE_LABEL[l.type]}${l.state === "completed" ? " ✓" : l.state === "unassigned" || l.state === "declined" ? " ○" : " ●"}`).join(" · ") : cur ? `${LEG_TYPE_LABEL[cur.type]} leg` : ""}
         </div>
       </div>
       <div className="min-w-0">
-        {nl ? (
+        <div className="truncate font-semibold" title={first ? place(first) : ""}>{place2(first)}</div>
+        <div className={`sub truncate ${first && !first.arrivedAt && first.windowStart && new Date(first.windowStart).getTime() < now && cur && ["unassigned", "declined", "planned", "dispatched", "accepted", "en_route_to_pickup"].includes(cur.state) ? "text-red font-semibold" : ""}`}>
+          {first?.departedAt ? `out ${at(first.departedAt, first)}` : (at(first?.windowStart ?? null, first) ?? "no appointment")}
+        </div>
+      </div>
+      <div className="min-w-0">
+        <div className="truncate font-semibold" title={last ? place(last) : ""}>{place2(last)}</div>
+        <div className="sub truncate">{last?.arrivedAt ? `in ${at(last.arrivedAt, last)}` : (at(apptOf(last), last) ?? "no appointment")}</div>
+      </div>
+      <div className="min-w-0">
+        {ns && cur && r.stage !== "delivered" ? (
           <>
-            <div className="font-semibold truncate">
-              {LEG_TYPE_LABEL[nl.type]} leg · {nl.truckUnit ? `Unit ${nl.truckUnit}` : nl.carrierName ?? <span className="text-faint">nobody yet</span>}
+            <div className="truncate text-[12.5px]" title={place(ns)}>
+              {ns.id === first?.id ? "Pickup" : ns.id === last?.id ? "Delivery" : ns.name}
             </div>
-            <div className="text-muted text-[12.5px] truncate">{nl.driverName ?? (nl.assigneeKind === "carrier" ? "partner carrier" : nl.truckUnit ? "no driver" : "")}</div>
+            <div className={`sub truncate ${etaTone === "late" ? "text-red font-bold" : etaTone === "risk" ? "text-amber font-semibold" : etaTone === "ok" ? "text-teal font-semibold" : ""}`} data-testid={eta ? "row-eta" : undefined}>
+              {eta ? `ETA ${fmtIn(eta.at, stopZone(ns, data.zone), { hour: "numeric", minute: "2-digit", weekday: "short", month: undefined, day: undefined })} · ${eta.miles} mi` : call ? `${call.location ?? call.status.replace(/_/g, " ")} · ${ago(call.at, now)} ago` : at(nsAppt, ns) ? `appt ${at(nsAppt, ns)}` : "—"}
+            </div>
           </>
         ) : (
-          <div className="text-muted">All legs done</div>
+          <span className="text-faint">—</span>
         )}
       </div>
-      <div className="text-[12.5px]">
-        <div className="font-semibold">{when(first?.windowStart) ?? <span className="text-faint">no window</span>}</div>
-        <div className="text-muted">{last?.windowEnd ? `by ${when(last.windowEnd)}` : ""}</div>
+      <div className="min-w-0">
+        {cur?.assigneeKind === "truck" ? (
+          <>
+            <div className="truncate font-semibold">
+              Unit {cur.truckUnit}
+              {cur.trailerUnit ? <span className="text-muted font-normal"> · Tr {cur.trailerUnit}</span> : null}
+            </div>
+            <div className="sub truncate">{cur.driverName ?? "no driver"}{cur.coDriverId ? " + team" : ""}</div>
+          </>
+        ) : cur?.assigneeKind === "carrier" ? (
+          <>
+            <div className="truncate font-semibold">{cur.carrierName}</div>
+            <div className="sub truncate">{tender ? `tender out · ${Math.max(0, Math.round((new Date(tender.expiresAt).getTime() - now) / 60000))} min left` : "partner carrier"}</div>
+          </>
+        ) : tender ? (
+          <>
+            <div className="truncate font-semibold">{tender.carrierName}</div>
+            <div className="sub truncate text-amber">tendered · {Math.max(0, Math.round((new Date(tender.expiresAt).getTime() - now) / 60000))} min left</div>
+          </>
+        ) : cur ? (
+          <div className="text-red font-semibold truncate">Needs truck</div>
+        ) : (
+          <span className="text-faint">—</span>
+        )}
+        {needing.length > 0 && cur && !["unassigned", "declined"].includes(cur.state) && <div className="sub text-red truncate">{needing.map((l) => LEG_TYPE_LABEL[l.type]).join(", ")} leg needs truck</div>}
       </div>
-      <div className="flex items-center gap-1.5">
-        {hold ? <Pill tone="amber">On hold</Pill> : nl ? <Pill tone={legTone(nl.state)}>{LEG_LABEL[nl.state]}</Pill> : <Pill tone="green">Delivered</Pill>}
-        {r.openFlags.length > 0 && <span className={`w-2 h-2 rounded-full ${red ? "bg-red" : "bg-amber"}`} title={r.openFlags.map((f) => f.title).join(", ")} />}
+      <div className={`text-[12.5px] tabular-nums ${pingTone}`} title={ping ? `Last position ${new Date(ping).toLocaleString()}` : rolling ? "No GPS position" : ""}>
+        {rolling ? (pingAge ?? "none") : "—"}
+      </div>
+      <div className="text-right min-w-0">
+        <div className="font-semibold tabular-nums">{r.order.rateTbd ? "TBD" : money(r.order.rateCents, r.order.currency)}</div>
+        <div className="sub tabular-nums">{miles ? `${miles.toLocaleString()} mi${r.order.rateCents ? ` · $${(r.order.rateCents / 100 / miles).toFixed(2)}` : ""}` : ""}</div>
       </div>
     </div>
   );
 }
 
-function SidePanel({ r, data, busy, canDispatch, onClose, onPopup, run }: { r: Row; data: BoardData; busy: boolean; canDispatch: boolean; onClose: () => void; onPopup: (p: { kind: "assign" | "split" | "hold" | "cancel" | "oos" | "decline" | "drivers" | "track"; legId?: string }) => void; run: (label: string, fn: () => Promise<{ ok: boolean; error?: string }>) => void }) {
+const STAMPS: LegState[] = ["en_route_to_pickup", "at_pickup", "en_route", "at_delivery"];
+
+function SidePanel({ r, data, busy, canDispatch, onClose, onPopup, run, onToast }: { r: Row; data: BoardData; busy: boolean; canDispatch: boolean; onClose: () => void; onPopup: (p: { kind: "assign" | "split" | "hold" | "cancel" | "oos" | "decline" | "drivers" | "track"; legId?: string }) => void; run: (label: string, fn: () => Promise<{ ok: boolean; error?: string }>) => void; onToast: (msg: string) => void }) {
   const nl = nextLeg(r);
+  const [confirming, setConfirming] = useState<{ legId: string; label: string; when: string } | null>(null);
+  // the clock a step stamps is the clock of the stop it happens at
+  const zoneOfLeg = (l: Leg) => {
+    const st = r.stops.find((x) => x.id === (["en_route_to_pickup", "at_pickup"].includes(l.state) ? l.fromStopId : l.toStopId));
+    return st ? stopZone(st, data.zone) : data.zone;
+  };
   const hold = r.order.state === "exception";
   const closed = r.order.state === "cancelled";
   const customerNote = data.customers.find((c) => c.id === (r.order.customerId ?? r.order.brokerId))?.note?.trim() || null;
@@ -336,12 +507,19 @@ function SidePanel({ r, data, busy, canDispatch, onClose, onPopup, run }: { r: R
     if (hold) primary = { label: "Release hold", onClick: () => run("Released", () => A.releaseAction(r.order.id)) };
     else if (nl.state === "unassigned" || nl.state === "declined") primary = { label: `Assign ${LEG_TYPE_LABEL[nl.type]} leg`, onClick: () => onPopup({ kind: "assign", legId: nl.id }) };
     else if (nl.state === "planned") primary = { label: nl.assigneeKind === "carrier" ? "Send to carrier" : "Send to driver", onClick: () => run("Sent", () => A.dispatchAction(nl.id)) };
-    else if (forwardLabel(nl, r.stops)) primary = { label: forwardLabel(nl, r.stops)!, onClick: () => run(LEG_LABEL[STAGE_OF_LEG[nl.state] === "dispatched" ? nl.state : nl.state], () => A.advanceAction(nl.id, "next")) };
+    else if (forwardLabel(nl, r.stops)) {
+      const label = forwardLabel(nl, r.stops)!;
+      // steps that stamp a clock at a stop (arrived, loaded, delivered) ask for the time first: a stray click shouldn't deliver a load
+      primary = STAMPS.includes(nl.state) ? { label, onClick: () => setConfirming({ legId: nl.id, label, when: toZoneInput(new Date(), zoneOfLeg(nl)) }) } : { label, onClick: () => run(label, () => A.advanceAction(nl.id, "next")) };
+    }
   }
   const stopById = new Map(r.stops.map((s) => [s.id, s]));
+  const dest = [...r.stops].reverse().find((s) => s.type === "delivery") ?? r.stops[r.stops.length - 1];
+  const rolling = !!nl && ["accepted", "en_route_to_pickup", "at_pickup", "loaded", "en_route", "at_delivery"].includes(nl.state);
+  const stopAt = (iso: string | null, st: Stop) => (iso ? fmtIn(iso, stopZone(st, data.zone), { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) : null);
 
   return (
-    <aside className="w-[400px] flex-none border-l border-line bg-white sticky top-0 h-screen overflow-y-auto">
+    <aside className="fixed right-0 top-0 z-30 w-full sm:w-[420px] h-screen overflow-y-auto border-l border-line bg-white shadow-[0_0_40px_rgba(15,23,42,0.18)]" aria-label={`Load ${r.order.orderNumber}`}>
       <div className="px-5 pt-5 pb-4 border-b border-line">
         <div className="flex items-start justify-between gap-2">
           <div>
@@ -368,10 +546,36 @@ function SidePanel({ r, data, busy, canDispatch, onClose, onPopup, run }: { r: R
             {f.detail ? <span className="font-normal"> — {f.detail}</span> : null}
           </div>
         ))}
-        {primary && (
+        {primary && !confirming && (
           <button className="btn btn-primary btn-lg w-full justify-center mt-4" onClick={primary.onClick} disabled={busy}>
             {busy ? <Spinner /> : primary.label}
           </button>
+        )}
+        {confirming && nl && confirming.legId === nl.id && (
+          <div className="mt-4 rounded-lg border border-teal/40 bg-teal-soft/30 p-3 space-y-2" data-testid="stamp-confirm">
+            <label className="flex items-center gap-2 text-[13px] font-semibold">
+              {confirming.label} at
+              <input id="stamp-when" type="datetime-local" className="input h-9 flex-1" value={confirming.when} onChange={(e) => setConfirming({ ...confirming, when: e.target.value })} />
+              <span className="text-muted font-normal text-[12px]">{zoneAbbrev(zoneOfLeg(nl))}</span>
+            </label>
+            <div className="flex gap-2">
+              <button
+                className="btn btn-primary btn-lg flex-1 justify-center"
+                disabled={busy}
+                onClick={() => {
+                  const at = fromZoneInput(confirming.when, zoneOfLeg(nl));
+                  const label = confirming.label;
+                  setConfirming(null);
+                  run(label, () => A.advanceAction(nl.id, "next", { at: at?.toISOString() }));
+                }}
+              >
+                Confirm {confirming.label.toLowerCase()}
+              </button>
+              <button className="btn" onClick={() => setConfirming(null)}>
+                Cancel
+              </button>
+            </div>
+          </div>
         )}
         {!closed && canDispatch && (
           <div className="grid grid-cols-5 gap-1 mt-2">
@@ -495,7 +699,7 @@ function SidePanel({ r, data, busy, canDispatch, onClose, onPopup, run }: { r: R
                         </>
                       )}
                       {forwardLabel(l, r.stops) && l.state !== "dispatched" && (
-                        <button className="btn btn-sm" onClick={() => run("Updated", () => A.advanceAction(l.id, "next"))}>
+                        <button className="btn btn-sm" onClick={() => (STAMPS.includes(l.state) && l.id === nl?.id ? setConfirming({ legId: l.id, label: forwardLabel(l, r.stops)!, when: toZoneInput(new Date(), zoneOfLeg(l)) }) : run("Updated", () => A.advanceAction(l.id, "next")))}>
                           {forwardLabel(l, r.stops)}
                         </button>
                       )}
@@ -516,6 +720,16 @@ function SidePanel({ r, data, busy, canDispatch, onClose, onPopup, run }: { r: R
             })}
           </div>
         </details>
+        {r.order.state !== "draft" && !closed && canDispatch && (
+          <details className="accordion" open={rolling}>
+            <summary>
+              Check calls {data.lastCalls[r.order.id] && <span className="text-faint font-normal">· last {new Date(data.lastCalls[r.order.id].at).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })}</span>}
+            </summary>
+            <div className="pb-3">
+              <CheckCallBox orderId={r.order.id} legId={nl?.id ?? null} zone={dest ? stopZone(dest, data.zone) : data.zone} reefer={r.order.equipment.includes("reefer")} onDone={onToast} />
+            </div>
+          </details>
+        )}
         <details className="accordion" open>
           <summary>
             Stops <span className="text-faint font-normal">{r.stops.length}</span>
@@ -530,9 +744,9 @@ function SidePanel({ r, data, busy, canDispatch, onClose, onPopup, run }: { r: R
                   </div>
                   <div className="text-muted text-[12px]">
                     {s.type.replace("_", " ")}
-                    {s.windowStart ? ` · ${when(s.windowStart)}${s.windowEnd ? `–${when(s.windowEnd)}` : ""}` : ""}
-                    {s.arrivedAt ? ` · in ${when(s.arrivedAt)}` : ""}
-                    {s.departedAt ? ` · out ${when(s.departedAt)}` : ""}
+                    {s.windowStart ? ` · ${stopAt(s.windowStart, s)}${s.windowEnd ? `–${stopAt(s.windowEnd, s)}` : ""}` : ""}
+                    {s.arrivedAt ? ` · in ${stopAt(s.arrivedAt, s)}` : ""}
+                    {s.departedAt ? ` · out ${stopAt(s.departedAt, s)}` : ""}
                   </div>
                 </div>
               </li>
@@ -543,7 +757,7 @@ function SidePanel({ r, data, busy, canDispatch, onClose, onPopup, run }: { r: R
           <summary>Details</summary>
           <div className="pb-3">
             <KV k="Rate" v={r.order.rateTbd ? "TBD" : money(r.order.rateCents, r.order.currency)} />
-            <KV k="Equipment" v={r.order.equipment.replace("_", " ")} />
+            <KV k="Equipment" v={EQUIPMENT_LABEL[r.order.equipment] ?? r.order.equipment.replace(/_/g, " ")} />
             <KV k="Legs" v={`${r.legs.length} · cut from ${r.stops.length} stops`} />
             {Object.entries(r.order.refs).map(([k, v]) => (
               <KV key={k} k={k.replace(/_/g, " ")} v={v} />
@@ -579,7 +793,10 @@ function AssignModal({ leg, order, data, onClose, onDone }: { leg: Leg; order: O
   const [tab, setTab] = useState<"truck" | "carrier">(leg.type === "mx" ? "carrier" : "truck");
   const [cands, setCands] = useState<Candidate[] | null>(null);
   const [pick, setPick] = useState<{ truckId: string; driverId: string | null; coDriverId: string | null } | null>(null);
+  const [trailerId, setTrailerId] = useState(leg.trailerId ?? "");
+  const [openedAt] = useState(() => Date.now());
   const [carrierId, setCarrierId] = useState(leg.carrierId ?? "");
+  const [celig, setCelig] = useState<{ ok: boolean; hardBlocked: boolean; findings: { level: string; message: string }[] } | null>(null);
   const [cscore, setCscore] = useState<{ score: { days: number; loads: number; answered: number; acceptancePct: number | null; onTimePct: number | null; trackedPct: number | null; billed: number; billedOver: number; overCents: number }; dispatchable: boolean; problems: string[] } | null>(null);
   const [carrierRate, setCarrierRate] = useState(leg.carrierRateCents != null ? (leg.carrierRateCents / 100).toFixed(2) : "");
   const [lane, setLane] = useState<{ lane: string; rateCents: number; fuelRule: string; fuelValue: number | null; validTo: string | null } | null>(null);
@@ -618,7 +835,7 @@ function AssignModal({ leg, order, data, onClose, onDone }: { leg: Leg; order: O
           return;
         }
       }
-      const a = tab === "truck" ? (pick ? { kind: "truck" as const, ...pick } : null) : { kind: "carrier" as const, carrierId, carrierRateCents: rateCents };
+      const a = tab === "truck" ? (pick ? { kind: "truck" as const, ...pick, trailerId: trailerId || null } : null) : { kind: "carrier" as const, carrierId, carrierRateCents: rateCents };
       if (!a) return setErr("Pick a unit");
       const r = sendNow && (leg.state === "unassigned" || leg.state === "declined" || leg.state === "planned") ? await A.planAndDispatchAction(leg.id, a, opts) : await A.planAction(leg.id, a, opts);
       if (r.ok) onDone(sendNow ? (tab === "carrier" ? "Marked sent — confirm by phone, then press Accepted" : "Assigned and sent") : "Assigned — in Planned");
@@ -681,7 +898,14 @@ function AssignModal({ leg, order, data, onClose, onDone }: { leg: Leg; order: O
                   <span className={`w-2.5 h-2.5 rounded-full flex-none ${c.hardBlocked ? "bg-red" : c.ok ? (c.busy.length ? "bg-amber" : "bg-green") : "bg-amber"}`} />
                   <div className="w-16 font-extrabold mono">{c.unitNumber}</div>
                   <div className="flex-1 min-w-0">
-                    <div className="text-[13px] truncate">{c.driverName ?? <span className="text-faint">no driver</span>}</div>
+                    <div className="text-[13px] truncate">
+                      {c.driverName ?? <span className="text-faint">no driver</span>}
+                      <span className="text-muted text-[12px]">
+                        {c.freeAt && new Date(c.freeAt).getTime() > openedAt + 15 * 60_000 ? ` · free ${new Date(c.freeAt).toLocaleString("en-US", { weekday: "short", hour: "numeric", minute: "2-digit" })}` : " · free now"}
+                        {c.freeWhere ? ` at ${c.freeWhere}` : ""}
+                        {c.deadheadMi != null ? ` · ${c.deadheadMi} mi empty` : ""}
+                      </span>
+                    </div>
                     <div className={`text-[12px] truncate ${c.hardBlocked || (c.safetySignoff && !canSafetyOverride) ? "text-red" : c.ok ? "text-muted" : "text-amber"}`} title={c.findings.map((f) => f.message).join("\n")}>
                       {c.safetySignoff && !canSafetyOverride && !c.hardBlocked ? `needs Safety: ${c.reason.replace(/^needs override: /, "")}` : c.reason}
                     </div>
@@ -692,6 +916,20 @@ function AssignModal({ leg, order, data, onClose, onDone }: { leg: Leg; order: O
               );
             })}
             <div className="flex items-center gap-2 px-3 pt-3 mt-1 border-t border-line">
+              <label className="label m-0" htmlFor="plan-trailer">
+                Trailer
+              </label>
+              <select id="plan-trailer" className="select w-40" value={trailerId} onChange={(e) => setTrailerId(e.target.value)}>
+                <option value="">— none / customer&apos;s —</option>
+                {data.trailers.map((tr) => (
+                  <option key={tr.id} value={tr.id} disabled={tr.status === "oos"}>
+                    {tr.unitNumber}
+                    {tr.status === "oos" ? " (out of service)" : ""}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="flex items-center gap-2 px-3 pt-3">
               <label className="label m-0" htmlFor="plan-miles">
                 Planned miles
               </label>
@@ -712,7 +950,10 @@ function AssignModal({ leg, order, data, onClose, onDone }: { leg: Leg; order: O
                 setCarrierId(id);
                 setLane(null);
                 setCscore(null);
+                setCelig(null);
                 if (!id) return;
+                // say up front whether this carrier can run this leg (cabotage, authority, insurance), not only on send
+                A.carrierEligibilityAction(leg.id, id).then((r) => r.ok && setCelig(r.data as never));
                 A.carrierPickAction(id).then((r) => r.ok && setCscore(r.data));
                 // the lane rate on file prefills what we pay; the dispatcher can still type another number
                 A.laneRateAction(leg.id, id).then((r) => {
@@ -730,6 +971,12 @@ function AssignModal({ leg, order, data, onClose, onDone }: { leg: Leg; order: O
                 </option>
               ))}
             </select>
+            {celig && celig.findings.some((f) => f.level === "red") && (
+              <div className={`mt-1.5 text-[12.5px] rounded-lg px-3 py-2 font-semibold ${celig.hardBlocked ? "bg-red-soft text-red" : "bg-amber-soft text-amber"}`} data-testid="carrier-elig">
+                {celig.hardBlocked ? "Can't run this leg: " : "Needs Safety's sign-off: "}
+                {celig.findings.filter((f) => f.level === "red").map((f) => f.message).join("; ")}
+              </div>
+            )}
             {cscore && (
               <div className={`mt-1.5 text-[12.5px] rounded-lg border px-3 py-2 ${cscore.dispatchable ? "border-line bg-ground" : "border-red/40 bg-red-soft/40"}`} data-testid="carrier-pick">
                 <span className="font-semibold">Last {cscore.score.days} days:</span> {cscore.score.loads} load{cscore.score.loads === 1 ? "" : "s"}
@@ -745,6 +992,11 @@ function AssignModal({ leg, order, data, onClose, onDone }: { leg: Leg; order: O
             <div>
               <label className="label">Carrier rate (USD)</label>
               <input className="input" inputMode="decimal" value={carrierRate} onChange={(e) => setCarrierRate(e.target.value)} placeholder="what you pay them" />
+              {rateCents != null && order.rateCents != null && !order.rateTbd && (
+                <div className={`help font-semibold ${order.rateCents - rateCents < order.rateCents * 0.1 ? "text-red" : order.rateCents - rateCents < order.rateCents * 0.15 ? "text-amber" : "text-green"}`} data-testid="tender-margin">
+                  Margin {money(order.rateCents - rateCents, order.currency)} · {Math.round(((order.rateCents - rateCents) / order.rateCents) * 1000) / 10}% of the load
+                </div>
+              )}
               {lane && (
                 <div className="help" data-testid="lane-rate">
                   Lane rate on file: {lane.lane} · fuel {lane.fuelRule === "included" ? "included" : lane.fuelRule === "pct" ? `${lane.fuelValue ?? 0}% extra` : `${((lane.fuelValue ?? 0) / 100).toFixed(2)}/mi extra`}

@@ -205,3 +205,29 @@ export const mailMessages = pgTable(
   },
   (t) => [index("mail_messages_tenant").on(t.tenantId, t.receivedAt), uniqueIndex("mail_messages_message").on(t.tenantId, t.messageId), index("mail_messages_order").on(t.orderId)],
 );
+
+export const CHECK_CALL_STATUSES = ["on_time", "running_late", "at_shipper", "loading", "at_receiver", "unloading", "at_border", "breakdown", "weather", "traffic", "fuel_stop", "rest", "other"] as const;
+export type CheckCallStatus = (typeof CHECK_CALL_STATUSES)[number];
+
+/** A check call: where the load is, how it's doing and when it'll get there — logged by dispatch (or the driver / carrier), optionally sent to the customer. */
+export const checkCalls = pgTable(
+  "check_calls",
+  {
+    id: id(),
+    tenantId: tenantId(),
+    orderId: text("order_id").notNull(),
+    legId: text("leg_id"),
+    at: timestamp("at", { withTimezone: true }).notNull().defaultNow(),
+    location: text("location"),
+    lat: text("lat"),
+    lng: text("lng"),
+    status: text("status").$type<CheckCallStatus>().notNull().default("on_time"),
+    etaAt: timestamp("eta_at", { withTimezone: true }),
+    tempF: integer("temp_f"), // reefer set point reading
+    note: text("note"),
+    source: text("source").notNull().default("dispatcher"), // dispatcher | driver | carrier | system
+    sentTo: text("sent_to"), // the customer address it was emailed to
+    createdBy: text("created_by"),
+  },
+  (t) => [index("check_calls_tenant_order").on(t.tenantId, t.orderId, t.at)],
+);

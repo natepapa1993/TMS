@@ -648,3 +648,16 @@ export async function notifyRedFlags(now = new Date()) {
   }
   return { emails, flags: fresh.length };
 }
+
+
+/** The latest GPS position time per truck and per leg over the last three days (the board's "last ping"). */
+export async function lastPings(ctx: Ctx) {
+  assertCtx(ctx);
+  const since = new Date(Date.now() - 3 * 86400_000);
+  const [byTruck, byLeg] = await Promise.all([
+    db.select({ id: s.positions.truckId, at: sql<Date>`max(${s.positions.at})` }).from(s.positions).where(and(eq(s.positions.tenantId, ctx.tenantId), sql`${s.positions.truckId} is not null`, gt(s.positions.at, since))).groupBy(s.positions.truckId),
+    db.select({ id: s.positions.legId, at: sql<Date>`max(${s.positions.at})` }).from(s.positions).where(and(eq(s.positions.tenantId, ctx.tenantId), sql`${s.positions.legId} is not null`, gt(s.positions.at, since))).groupBy(s.positions.legId),
+  ]);
+  const iso = (d: Date | string) => new Date(d).toISOString();
+  return { byTruck: Object.fromEntries(byTruck.map((r) => [r.id!, iso(r.at)])), byLeg: Object.fromEntries(byLeg.map((r) => [r.id!, iso(r.at)])) };
+}

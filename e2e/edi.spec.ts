@@ -1,6 +1,6 @@
 // Features: F-8 EDI through the browser — partner setup, 204 by HTTP → draft order, inbox accept/decline, 214 in the log, .edi download
 import { test, expect } from "@playwright/test";
-import { signupFresh, quickAdd, future } from "./helpers";
+import { signupFresh, quickAdd, future, step } from "./helpers";
 
 const tender = (ref: string, isa: string) => `ISA*00*          *00*          *ZZ*RXO            *02*BSTW           *260926*1400*U*00401*${isa}*0*T*>~
 GS*SM*RXO*BSTW*20260926*1400*${Number(isa)}*X*004010~
@@ -115,10 +115,10 @@ test("EDI day: partner in four fields, a 204 arrives over HTTP and becomes a dra
   await dlg.locator(".cursor-pointer", { hasText: "2104" }).click();
   await dlg.locator("button:has-text('Assign & send')").click();
   await expect(page.getByRole("status")).toContainText("Assigned and sent");
-  await page.click(".stage-tab:has-text('Dispatched')");
+  await page.click(".stage-tab:has-text('All')");
   await page.locator(".row[role=button]").first().click();
   for (let i = 0; i < 3; i++) {
-    await panel.locator("button.btn-primary.btn-lg").click(); // accepted, rolling, arrived at pickup
+    await step(panel); // accepted, rolling, arrived at pickup
     await page.waitForTimeout(200);
   }
   await page.goto("/edi");

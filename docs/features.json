@@ -743,6 +743,36 @@
         "src/domain/load-import.test.ts",
         "e2e/templates.spec.ts"
       ]
+    },
+    {
+      "id": "F-24.1",
+      "name": "Trip board: dense rows most urgent first; buckets (Needs truck, Tendered, Planned, Sent, In transit, Delivered, Drafts) with multi-leg loads in every bucket they belong to; alert chips (Late, At risk, No ping 2h+, No truck < 24h, Picks/Delivers today, Flagged); stop-local times with zone; next stop ETA vs appointment; power with trailer; last GPS ping; rate, miles, RPM; j/k; compact mode; overlay panel",
+      "milestone": "M24",
+      "status": "done",
+      "tests": [
+        "src/domain/board.test.ts",
+        "e2e/board.spec.ts"
+      ]
+    },
+    {
+      "id": "F-24.2",
+      "name": "Check calls (status, where — last GPS when blank — ETA on the stop's clock, reefer temp, note, email to the customer's tracking contact; breakdown raises a flag) on the board panel and the load page's tracking card; a time confirmation before arrival, load and delivery stamps",
+      "milestone": "M24",
+      "status": "done",
+      "tests": [
+        "src/domain/board.test.ts",
+        "e2e/board.spec.ts"
+      ]
+    },
+    {
+      "id": "F-24.3",
+      "name": "Global search (⌘K) over load #, any reference, stop city, unit, trailer, driver, customer, carrier; stop times typed and shown on the stop's own clock; assign picker with trailer, free at/where and deadhead; carrier eligibility and tender margin up front; one margin (estimated driver pay and fuel) on the load, the Loads grid and the Money tab",
+      "milestone": "M24",
+      "status": "done",
+      "tests": [
+        "src/domain/board.test.ts",
+        "e2e/board.spec.ts"
+      ]
     }
   ]
 }

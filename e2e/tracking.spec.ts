@@ -45,7 +45,7 @@ test("tender by email: carrier opens the link, accepts with driver details; disp
   await dlg.getByPlaceholder(/Team drivers/).fill("Appointment is firm.");
   await dlg.locator("button:has-text('Send tender')").click();
   await expect(page.getByRole("status")).toContainText("Tender emailed to despacho@garza.test");
-  await page.click(".stage-tab:has-text('Dispatched')");
+  await page.click(".stage-tab:has-text('All')");
   await page.click(".row[role=button]");
   await expect(panel).toContainText("Tender out");
   await expect(panel).toContainText("min left");
@@ -75,7 +75,7 @@ test("tender by email: carrier opens the link, accepts with driver details; disp
   await ctx2.close();
 
   await page.reload();
-  await page.click(".stage-tab:has-text('Dispatched')");
+  await page.click(".stage-tab:has-text('All')");
   await page.click(".row[role=button]");
   await expect(panel.locator(".rounded-lg.border").first()).toContainText("Accepted");
   await expect(panel).toContainText("Luis accepted");
@@ -95,7 +95,7 @@ test("driver app: link from Fleet, one button per step with GPS, customer tracki
   await expect(page.getByRole("status")).toContainText("Assigned and sent");
 
   // Track popup gives both links (the order stays in Pending: its MX leg still needs a carrier — per-leg dispatch)
-  await expect(page.locator(".stage-tab:has-text('Pending') .count")).toHaveText("1");
+  await expect(page.locator(".stage-tab:has-text('Needs truck') .count")).toHaveText("1");
   await panel.locator("button:has-text('Track')").click();
   const track = page.getByRole("dialog");
   const trackUrl = await track.locator("input[readonly]").inputValue();
@@ -179,7 +179,7 @@ test("driver app: link from Fleet, one button per step with GPS, customer tracki
 
   // dispatcher sees verified events and the US leg is next
   await page.reload();
-  await page.click(".stage-tab:has-text('Pending')");
+  await page.click(".stage-tab:has-text('All')");
   await page.click(".row[role=button]");
   await expect(panel.locator(".rounded-lg.border").nth(1)).toContainText("Delivered");
   await expect(panel).toContainText("Assign MX leg"); // MX leg was never covered; it is first in line

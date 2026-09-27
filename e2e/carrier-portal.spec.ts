@@ -65,7 +65,7 @@ test("carrier's day: one link, accept the offer, run the load, get paid, keep do
   expect(rc.headers()["content-type"]).toContain("application/pdf");
   // the office sees the acceptance and the driver
   await page.reload();
-  await page.click(".stage-tab:has-text('Dispatched')");
+  await page.click(".stage-tab:has-text('All')");
   await page.locator(".row[role=button]").first().click();
   await expect(panel).toContainText("Luis accepted · driver Pedro Ruiz");
   // the carrier's dispatcher takes the first steps from the portal
@@ -108,7 +108,7 @@ test("carrier's day: one link, accept the offer, run the load, get paid, keep do
   await expect(phone.locator("body")).toContainText("Nothing assigned right now");
   // the office: verified steps and a last position on the customer's tracking page, from a partner carrier's leg
   await page.reload();
-  await page.click(".stage-tab:has-text('Pending')");
+  await page.click(".stage-tab:has-text('All')");
   await page.locator(".row[role=button]").first().click();
   await expect(panel.locator(".rounded-lg.border").first()).toContainText("Delivered");
   await panel.locator("button:has-text('Track')").click();

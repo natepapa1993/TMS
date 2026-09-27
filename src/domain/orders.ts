@@ -1263,6 +1263,10 @@ export type Candidate = {
   score: number;
   /** a red finding about paperwork: only Safety or the owner can override it */
   safetySignoff?: boolean;
+  /** when and where the unit comes free, and the empty miles from there to this pickup (the assign picker) */
+  freeAt?: string | null;
+  freeWhere?: string | null;
+  deadheadMi?: number | null;
 };
 
 /** Trucks ranked for a leg: green & free first, then green & busy, then yellow, red last with reasons. */
@@ -1341,7 +1345,7 @@ export function needsSafety(f: Finding) {
 export type BoardRow = {
   order: Order;
   stops: Stop[];
-  legs: (Leg & { truckUnit: string | null; driverName: string | null; carrierName: string | null })[];
+  legs: (Leg & { truckUnit: string | null; trailerUnit: string | null; driverName: string | null; carrierName: string | null })[];
   openFlags: (typeof s.flags.$inferSelect)[];
   stage: "pending" | "planned" | "dispatched" | "delivered" | "closed";
   shipments: number; // tailgate trips: how many ride on it
@@ -1365,19 +1369,21 @@ export async function board(ctx: Ctx, opts: { includeClosed?: boolean; delivered
   const ids = ords.map((o) => o.id);
   const tripIds = ords.filter((o) => o.kind === "trip").map((o) => o.id);
   const shipCounts = tripIds.length ? await db.select({ tripId: s.orders.tripId, n: sql<number>`count(*)` }).from(s.orders).where(and(inArray(s.orders.tripId, tripIds), sql`${s.orders.state} <> 'cancelled'`)).groupBy(s.orders.tripId) : [];
-  const [stopRows, legRows, flagRows, trucks, drivers, carriers] = await Promise.all([
+  const [stopRows, legRows, flagRows, trucks, drivers, carriers, trailers] = await Promise.all([
     db.select().from(s.stops).where(and(eq(s.stops.tenantId, ctx.tenantId), inArray(s.stops.orderId, ids))).orderBy(asc(s.stops.seq)),
     db.select().from(s.legs).where(and(eq(s.legs.tenantId, ctx.tenantId), inArray(s.legs.orderId, ids))).orderBy(asc(s.legs.seq)),
     db.select().from(s.flags).where(and(eq(s.flags.tenantId, ctx.tenantId), inArray(s.flags.orderId, ids), sql`${s.flags.clearedAt} is null`)),
     db.select({ id: s.trucks.id, unitNumber: s.trucks.unitNumber }).from(s.trucks).where(eq(s.trucks.tenantId, ctx.tenantId)),
     db.select({ id: s.drivers.id, name: s.drivers.name }).from(s.drivers).where(eq(s.drivers.tenantId, ctx.tenantId)),
     db.select({ id: s.carriers.id, name: s.carriers.name }).from(s.carriers).where(eq(s.carriers.tenantId, ctx.tenantId)),
+    db.select({ id: s.trailers.id, unitNumber: s.trailers.unitNumber }).from(s.trailers).where(eq(s.trailers.tenantId, ctx.tenantId)),
   ]);
+  const rName = new Map(trailers.map((t) => [t.id, t.unitNumber]));
   const tName = new Map(trucks.map((t) => [t.id, t.unitNumber]));
   const dName = new Map(drivers.map((d) => [d.id, d.name]));
   const cName = new Map(carriers.map((c) => [c.id, c.name]));
   return ords.map((order) => {
-    const legs = legRows.filter((l) => l.orderId === order.id).map((l) => ({ ...l, truckUnit: l.truckId ? (tName.get(l.truckId) ?? null) : null, driverName: l.driverId ? (dName.get(l.driverId) ?? null) : null, carrierName: l.carrierId ? (cName.get(l.carrierId) ?? null) : null }));
+    const legs = legRows.filter((l) => l.orderId === order.id).map((l) => ({ ...l, truckUnit: l.truckId ? (tName.get(l.truckId) ?? null) : null, trailerUnit: l.trailerId ? (rName.get(l.trailerId) ?? null) : null, driverName: l.driverId ? (dName.get(l.driverId) ?? null) : null, carrierName: l.carrierId ? (cName.get(l.carrierId) ?? null) : null }));
     return { order, stops: stopRows.filter((x) => x.orderId === order.id), legs, openFlags: flagRows.filter((f) => f.orderId === order.id), stage: stageOfOrder(order, legs), shipments: Number(shipCounts.find((c) => c.tripId === order.id)?.n ?? 0) };
   });
 }

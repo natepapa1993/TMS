@@ -6,12 +6,12 @@ import { updateOrderAction, updateStopAction, addStopAction, removeStopAction, m
 import { bookAction, cancelAction, holdAction, releaseAction, setLegMilesAction, copyOrderAction } from "../../dispatch/actions";
 import { Confirm, Modal, Toast, useToast } from "@/components/ui";
 import { StopFields, blankStop, stopPayload, STOP_LABEL, COUNTRIES, type Loc, type StopDraft } from "@/components/stop-fields";
+import { stopZone, toZoneInput, fromZoneInput, fmtIn } from "@/lib/time";
 
 const REF_LABEL: Record<string, string> = { rate_con: "Rate con", po: "PO", asn: "ASN", shipment: "Shipment", reference: "Reference" };
 type Order = { id: string; state: string; kind?: string; customerId: string | null; brokerId: string | null; billingEntityId: string | null; equipment: string; rateCents: number | null; rateTbd: boolean; currency: string; fuelRule: string; fuelPct: number | null; tollsFeesCents: number | null; refs: Record<string, string>; cargoNote: string | null; updatedAt: string; lockedAt?: string | null; tonu?: boolean };
 type Stop = { id: string; type: string; name: string; country: string; address: { line1?: string; city?: string; state?: string; postalCode?: string; country?: string } | null; windowStart: string | null; windowEnd: string | null; appointment: boolean; contact: string | null; notes: string | null; arrivedAt: string | null; departedAt: string | null; sealIn?: string | null; sealOut?: string | null };
 
-const toLocal = (s: string | null) => (s ? new Date(new Date(s).getTime() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 16) : "");
 const fmtAddr = (a: Stop["address"]) => (a ? [a.line1, a.city, [a.state, a.postalCode].filter(Boolean).join(" "), a.country].filter(Boolean).join(", ") : "");
 
 export function OrderEditor({ order, customers, entities, readOnly }: { order: Order; customers: { id: string; name: string; kind: string }[]; entities: { id: string; name: string }[]; readOnly: boolean }) {
@@ -118,10 +118,12 @@ export function OrderEditor({ order, customers, entities, readOnly }: { order: O
   );
 }
 
-export function StopEditor({ orderId, index, count, stop, readOnly, restructure }: { orderId: string; index: number; count: number; stop: Stop; readOnly: boolean; restructure: boolean }) {
+export function StopEditor({ orderId, index, count, stop, readOnly, restructure, zone: companyZone = "America/Chicago" }: { orderId: string; index: number; count: number; stop: Stop; readOnly: boolean; restructure: boolean; zone?: string }) {
+  // times are typed and shown on the stop's own clock
+  const zone = stopZone({ country: stop.country, address: stop.address as { state?: string } | null }, companyZone);
   const router = useRouter();
   const [open, setOpen] = useState(false);
-  const [f, setF] = useState({ name: stop.name, address: fmtAddr(stop.address), country: stop.country, windowStart: toLocal(stop.windowStart), windowEnd: toLocal(stop.windowEnd), appointment: stop.appointment, contact: stop.contact ?? "", notes: stop.notes ?? "", sealIn: stop.sealIn ?? "", sealOut: stop.sealOut ?? "" });
+  const [f, setF] = useState({ name: stop.name, address: fmtAddr(stop.address), country: stop.country, windowStart: toZoneInput(stop.windowStart, zone), windowEnd: toZoneInput(stop.windowEnd, zone), appointment: stop.appointment, contact: stop.contact ?? "", notes: stop.notes ?? "", sealIn: stop.sealIn ?? "", sealOut: stop.sealOut ?? "" });
   const [err, setErr] = useState<string | null>(null);
   const [pending, start] = useTransition();
   const done = !!stop.departedAt;
@@ -145,9 +147,9 @@ export function StopEditor({ orderId, index, count, stop, readOnly, restructure 
           </div>
           <div className="text-muted text-[12.5px] truncate">
             {fmtAddr(stop.address) || "no address"}
-            {stop.windowStart ? ` · ${new Date(stop.windowStart).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}` : ""}
-            {stop.arrivedAt ? ` · in ${new Date(stop.arrivedAt).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })}` : ""}
-            {stop.departedAt ? ` · out ${new Date(stop.departedAt).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })}` : ""}
+            {stop.windowStart ? ` · ${fmtIn(stop.windowStart, zone, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}` : ""}
+            {stop.arrivedAt ? ` · in ${fmtIn(stop.arrivedAt, zone, { hour: "numeric", minute: "2-digit", month: undefined, day: undefined })}` : ""}
+            {stop.departedAt ? ` · out ${fmtIn(stop.departedAt, zone, { hour: "numeric", minute: "2-digit", month: undefined, day: undefined })}` : ""}
             {stop.sealIn || stop.sealOut ? <span className="mono"> · seal {stop.sealIn ? `in ${stop.sealIn}` : ""}{stop.sealIn && stop.sealOut ? " / " : ""}{stop.sealOut ? `out ${stop.sealOut}` : ""}</span> : ""}
           </div>
         </div>
@@ -218,7 +220,7 @@ export function StopEditor({ orderId, index, count, stop, readOnly, restructure 
                 disabled={pending}
                 onClick={() =>
                   start(async () => {
-                    const r = await updateStopAction(orderId, stop.id, { ...f, windowStart: f.windowStart ? new Date(f.windowStart).toISOString() : "", windowEnd: f.windowEnd ? new Date(f.windowEnd).toISOString() : "" });
+                    const r = await updateStopAction(orderId, stop.id, { ...f, windowStart: f.windowStart ? (fromZoneInput(f.windowStart, zone)?.toISOString() ?? "") : "", windowEnd: f.windowEnd ? (fromZoneInput(f.windowEnd, zone)?.toISOString() ?? "") : "" });
                     if (r.ok) {
                       setOpen(false);
                       setErr(null);
@@ -396,7 +398,7 @@ export function LegMiles({ legId, miles, locked }: { legId: string; miles: numbe
 }
 
 /** "Add stop" on an existing load: a full stop, placed where it happens. Legs are re-cut on the server. */
-export function AddStop({ orderId, stops, locations, firstOpen }: { orderId: string; stops: { id: string; name: string }[]; locations: Loc[]; firstOpen: number }) {
+export function AddStop({ orderId, stops, locations, firstOpen, zone = "America/Chicago" }: { orderId: string; stops: { id: string; name: string }[]; locations: Loc[]; firstOpen: number; zone?: string }) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [draft, setDraft] = useState<StopDraft>(() => blankStop("delivery", "US"));
@@ -431,7 +433,7 @@ export function AddStop({ orderId, stops, locations, firstOpen }: { orderId: str
                 start(async () => {
                   setErr(null);
                   if (!draft.name.trim()) return setErr("Where is the stop?");
-                  const r = await addStopAction(orderId, position, stopPayload(draft));
+                  const r = await addStopAction(orderId, position, stopPayload(draft, zone));
                   if (r.ok) {
                     close();
                     router.refresh();
@@ -457,7 +459,7 @@ export function AddStop({ orderId, stops, locations, firstOpen }: { orderId: str
               ))}
             </select>
           </div>
-          <StopFields stop={draft} onChange={(p) => setDraft((d) => ({ ...d, ...p }))} locations={locations} index={99} invalid={!!err} />
+          <StopFields stop={draft} onChange={(p) => setDraft((d) => ({ ...d, ...p }))} locations={locations} index={99} invalid={!!err} companyZone={zone} />
           {err && (
             <div className="error" role="alert">
               {err}

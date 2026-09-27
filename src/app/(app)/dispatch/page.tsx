@@ -7,7 +7,11 @@ import { publicUrl } from "@/lib/tokens";
 import { ediInbox } from "@/domain/edi";
 import { openPortalRequests } from "@/domain/customer-portal";
 import { inbox as messageInbox } from "@/domain/messaging";
-import { boardEtas } from "@/domain/tracking";
+import { boardEtas, lastPings } from "@/domain/tracking";
+import { lastCheckCalls } from "@/domain/check-calls";
+import { db } from "@/db/client";
+import { tenants } from "@/db/schema";
+import { eq } from "drizzle-orm";
 import { mailInbox } from "@/domain/mail";
 
 export const metadata = { title: "Dispatch" };
@@ -17,15 +21,17 @@ export default async function DispatchPage({ searchParams }: PageProps<"/dispatc
   const sp = await searchParams;
   const initialOrder = typeof sp.order === "string" ? sp.order : undefined;
   const ctx = await requireCtx();
-  const [rows, customers, carriers, drivers, trucks] = await Promise.all([
+  const [rows, customers, carriers, drivers, trucks, trailers, [tenant]] = await Promise.all([
     board(ctx),
     list(ctx, "customer", { limit: 2000 }),
     list(ctx, "carrier", { limit: 2000 }),
     list(ctx, "driver", { limit: 2000 }),
     list(ctx, "truck", { limit: 2000 }),
+    list(ctx, "trailer", { limit: 2000 }),
+    db.select({ zone: tenants.timeZone }).from(tenants).where(eq(tenants.id, ctx.tenantId)).limit(1),
   ]);
   const custName = new Map(customers.map((c) => [c.id, String(c.name)]));
-  const [tenderRows, inbox, msgs, requests, etas, mail] = await Promise.all([openTendersForOrders(ctx, rows.map((r) => r.order.id)), ediInbox(ctx), messageInbox(ctx, { limit: 50 }), openPortalRequests(ctx), boardEtas(ctx), mailInbox(ctx, { limit: 50 })]);
+  const [tenderRows, inbox, msgs, requests, etas, mail, pings, calls] = await Promise.all([openTendersForOrders(ctx, rows.map((r) => r.order.id)), ediInbox(ctx), messageInbox(ctx, { limit: 50 }), openPortalRequests(ctx), boardEtas(ctx), mailInbox(ctx, { limit: 50 }), lastPings(ctx), lastCheckCalls(ctx, rows.map((r) => r.order.id))]);
   const carrierName = new Map(carriers.map((c) => [c.id, String(c.name)]));
   const data: BoardData = {
     rows: rows.map((r) => ({
@@ -44,6 +50,10 @@ export default async function DispatchPage({ searchParams }: PageProps<"/dispatc
     messages: msgs.filter((m) => !m.m.handledAt).length + mail.length,
     requests,
     etas,
+    zone: tenant?.zone ?? "America/Chicago",
+    pings,
+    lastCalls: Object.fromEntries([...calls].map(([k, c]) => [k, { at: c.at.toISOString(), status: c.status, location: c.location, note: c.note }])),
+    trailers: trailers.map((t) => ({ id: t.id, unitNumber: String(t.unitNumber), status: String(t.status ?? "active") })).sort((p, q) => p.unitNumber.localeCompare(q.unitNumber, undefined, { numeric: true })),
   };
   return <DispatchBoard data={data} initialOrder={initialOrder} />;
 }
@@ -55,7 +65,7 @@ function slim(r: BoardRow): Omit<Row, "customerName" | "tenders"> {
   return {
     order: { id: o.id, orderNumber: o.orderNumber, state: o.state, kind: o.kind, rateCents: o.rateCents, rateTbd: o.rateTbd, currency: o.currency, equipment: o.equipment, refs: o.refs ?? {}, holdReason: o.holdReason, legTemplate: o.legTemplate, customerId: o.customerId, brokerId: o.brokerId },
     stops: r.stops.map((st) => ({ id: st.id, seq: st.seq, type: st.type, name: st.name, country: st.country, windowStart: iso(st.windowStart), windowEnd: iso(st.windowEnd), arrivedAt: iso(st.arrivedAt), departedAt: iso(st.departedAt), address: st.address ? { city: st.address.city, state: st.address.state } : null })),
-    legs: r.legs.map((l) => ({ id: l.id, seq: l.seq, type: l.type, state: l.state, assigneeKind: l.assigneeKind, truckId: l.truckId, driverId: l.driverId, coDriverId: l.coDriverId, carrierId: l.carrierId, carrierRateCents: l.carrierRateCents, plannedMiles: l.plannedMiles, fromStopId: l.fromStopId, toStopId: l.toStopId, truckUnit: l.truckUnit, driverName: l.driverName, carrierName: l.carrierName, declineReason: l.declineReason, dispatchedAt: iso(l.dispatchedAt), completedAt: iso(l.completedAt) })),
+    legs: r.legs.map((l) => ({ id: l.id, seq: l.seq, type: l.type, state: l.state, assigneeKind: l.assigneeKind, truckId: l.truckId, trailerId: l.trailerId, trailerUnit: l.trailerUnit, driverId: l.driverId, coDriverId: l.coDriverId, carrierId: l.carrierId, carrierRateCents: l.carrierRateCents, plannedMiles: l.plannedMiles, fromStopId: l.fromStopId, toStopId: l.toStopId, truckUnit: l.truckUnit, driverName: l.driverName, carrierName: l.carrierName, declineReason: l.declineReason, dispatchedAt: iso(l.dispatchedAt), completedAt: iso(l.completedAt) })),
     openFlags: r.openFlags.map((f) => ({ id: f.id, code: f.code, level: f.level, title: f.title, detail: f.detail, legId: f.legId })),
     stage: r.stage,
     shipments: r.shipments,

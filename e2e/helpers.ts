@@ -78,3 +78,15 @@ export async function buildLoad(page: Page, o: { customer: string; rate?: string
   await expect(page.locator("aside .h2").first()).toContainText(/\d{2}-\d{5}/);
   return (await page.locator("aside .h2").first().textContent())!.match(/\d{2}-\d{5}/)![0];
 }
+
+/** The board asks for the time before it stamps an arrival, a load or a delivery: confirm it (now) when asked. */
+export async function confirmStamp(panel: import("@playwright/test").Locator) {
+  const c = panel.getByTestId("stamp-confirm");
+  if (await c.waitFor({ state: "visible", timeout: 700 }).then(() => true, () => false)) await c.locator("button.btn-primary").click();
+}
+
+/** One step of the load's next action from the board panel (confirming the time when it asks). */
+export async function step(panel: import("@playwright/test").Locator) {
+  await panel.locator("button.btn-primary.btn-lg").first().click();
+  await confirmStamp(panel);
+}

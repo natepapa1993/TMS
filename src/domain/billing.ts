@@ -831,10 +831,47 @@ export async function orderPnl(ctx: Ctx, orderId: string) {
     costOrderId === orderId ? Promise.resolve(order) : loadOrder(ctx, costOrderId),
   ]);
   const revenue = cs.reduce((a, c) => a + c.amountCents, 0);
-  const carrierCost = Math.round(bills.reduce((a, b) => a + (b.paidCents ?? b.approvedCents ?? b.invoicedCents ?? b.expectedCents + b.accessorialCents), 0) * share);
+  // carrier cost: the bill when there is one, else what the leg was tendered at
+  const billed = new Set(bills.map((b) => b.legId).filter(Boolean));
+  const carrierCost = Math.round((bills.reduce((a, b) => a + (b.paidCents ?? b.approvedCents ?? b.invoicedCents ?? b.expectedCents + b.accessorialCents), 0) + legs.filter((l) => l.assigneeKind === "carrier" && l.state !== "cancelled" && !billed.has(l.id)).reduce((a, l) => a + (l.carrierRateCents ?? 0), 0)) * share);
+  // driver pay: what a statement paid for the leg, else an estimate from the driver's pay rule (plan or pay type)
   const sts = await db.select().from(s.settlements).where(eq(s.settlements.tenantId, ctx.tenantId));
   let driverPay = 0;
-  for (const st of sts) for (const l of st.lines) if (l.legId && legs.some((g) => g.id === l.legId) && l.amountCents > 0) driverPay += l.amountCents;
+  const paidLegs = new Set<string>();
+  for (const st of sts)
+    for (const l of st.lines)
+      if (l.legId && legs.some((g) => g.id === l.legId) && l.amountCents > 0) {
+        driverPay += l.amountCents;
+        paidLegs.add(l.legId);
+      }
+  let driverPayEstimated = false;
+  const ownLegs = legs.filter((l) => l.assigneeKind === "truck" && l.driverId && l.state !== "cancelled" && !paidLegs.has(l.id));
+  if (ownLegs.length) {
+    const ids = [...new Set(ownLegs.flatMap((l) => [l.driverId!, l.coDriverId].filter((x): x is string => !!x)))];
+    const drivers = await db.select().from(s.drivers).where(inArray(s.drivers.id, ids));
+    for (const l of ownLegs) {
+      for (const did of [l.driverId, l.coDriverId].filter((x): x is string => !!x)) {
+        const d = drivers.find((x) => x.id === did);
+        if (!d) continue;
+        const team = !!l.coDriverId;
+        if (d.payPlanId) {
+          const [plan] = await db.select().from(s.payPlans).where(eq(s.payPlans.id, d.payPlanId)).limit(1);
+          if (plan) {
+            const { payInputs } = await import("./pay-inputs");
+            const { legPayLines } = await import("./pay-plans-pure");
+            const inputs = await payInputs(ctx, d.id, [l]);
+            driverPay += inputs.flatMap((inp) => legPayLines(plan, inp)).reduce((a, x) => a + x.amountCents, 0);
+            driverPayEstimated = true;
+            continue;
+          }
+        }
+        const rate = d.payRateCents ?? 0;
+        const sh = team ? 0.5 : 1;
+        driverPay += Math.round((d.payType === "per_mile" ? (l.plannedMiles ?? 0) * rate : d.payType === "pct" ? ((costOrder.rateCents ?? 0) * rate) / 10000 : rate) * sh);
+        driverPayEstimated = true;
+      }
+    }
+  }
   driverPay = Math.round(driverPay * share);
   const milesAll = legs.filter((l) => l.assigneeKind === "truck").reduce((a, l) => a + (l.plannedMiles ?? 0), 0);
   const miles = Math.round(milesAll * share);
@@ -842,7 +879,7 @@ export async function orderPnl(ctx: Ctx, orderId: string) {
   const fuel = Math.round(milesAll * fuelCpm * share);
   const extra = costOrderId === orderId ? (order.tollsFeesCents ?? 0) : Math.round((costOrder.tollsFeesCents ?? 0) * share) + (order.tollsFeesCents ?? 0); // trip tolls shared, the shipment's own on top
   const cost = carrierCost + driverPay + fuel + extra;
-  return { revenue, carrierCost, driverPay, fuel, miles, fuelCpm, extra, cost, share, margin: revenue - cost, marginPct: revenue ? Math.round(((revenue - cost) / revenue) * 1000) / 10 : 0 };
+  return { revenue, carrierCost, driverPay, driverPayEstimated, fuel, miles, fuelCpm, extra, cost, share, margin: revenue - cost, marginPct: revenue ? Math.round(((revenue - cost) / revenue) * 1000) / 10 : 0 };
 }
 
 export { diff };

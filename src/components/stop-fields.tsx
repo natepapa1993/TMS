@@ -7,6 +7,7 @@
  */
 
 import type { ReactNode } from "react";
+import { stopZone, fromZoneInput, zoneAbbrev } from "@/lib/time";
 
 export type Loc = { id: string; name: string; country: string; kind: string; address: { line1?: string; city?: string; state?: string; postalCode?: string; country?: string } | null };
 
@@ -85,7 +86,7 @@ function Group({ title, children }: { title: string; children: ReactNode }) {
   );
 }
 
-export function StopFields({ stop, onChange, locations, index, invalid }: { stop: StopDraft; onChange: (patch: Partial<StopDraft>) => void; locations: Loc[]; index: number; invalid?: boolean }) {
+export function StopFields({ stop, onChange, locations, index, invalid, companyZone = "America/Chicago" }: { stop: StopDraft; onChange: (patch: Partial<StopDraft>) => void; locations: Loc[]; index: number; invalid?: boolean; companyZone?: string }) {
   const id = (f: string) => `stop-${index}-${f}`;
   const linked = stop.locationId ? locations.find((l) => l.id === stop.locationId) : null;
   const n1 = index + 1;
@@ -176,7 +177,7 @@ export function StopFields({ stop, onChange, locations, index, invalid }: { stop
         )}
       </Group>
 
-      <Group title="When">
+      <Group title={`When · on the stop's clock (${zoneAbbrev(draftZone(stop, companyZone))})`}>
         <div className="inline-flex rounded-lg border border-line bg-ground p-1 mb-4" role="group" aria-label={`Stop ${n1} time kind`}>
           {([
             [false, "Window · first come"],
@@ -230,7 +231,15 @@ export function StopFields({ stop, onChange, locations, index, invalid }: { stop
 }
 
 /** What the server needs from a draft stop. */
-export function stopPayload(st: StopDraft) {
-  return { type: st.type, locationId: st.locationId, name: st.name.trim(), line1: st.line1.trim(), city: st.city.trim(), state: st.state.trim(), postalCode: st.postalCode.trim(), country: st.country, appointment: st.appointment, windowStart: st.windowStart ? new Date(st.windowStart).toISOString() : "", windowEnd: st.windowEnd ? new Date(st.windowEnd).toISOString() : "", ref: st.ref.trim(), contact: st.contact.trim(), notes: st.notes.trim(), saveLocation: st.saveLocation };
+/** The zone a stop's times are typed in: the stop's own (its state or province, else its country), else the company's. */
+export function draftZone(st: Pick<StopDraft, "country" | "state">, companyZone = "America/Chicago") {
+  return stopZone({ country: st.country, address: { state: st.state } }, companyZone);
+}
+
+/** What the server gets for a stop: times typed on the stop's own clock become instants. */
+export function stopPayload(st: StopDraft, companyZone = "America/Chicago") {
+  const z = draftZone(st, companyZone);
+  const inst = (v: string) => (v ? (fromZoneInput(v, z)?.toISOString() ?? "") : "");
+  return { type: st.type, locationId: st.locationId, name: st.name.trim(), line1: st.line1.trim(), city: st.city.trim(), state: st.state.trim(), postalCode: st.postalCode.trim(), country: st.country, appointment: st.appointment, windowStart: inst(st.windowStart), windowEnd: inst(st.windowEnd), ref: st.ref.trim(), contact: st.contact.trim(), notes: st.notes.trim(), saveLocation: st.saveLocation };
 }
 export type StopPayload = ReturnType<typeof stopPayload>;

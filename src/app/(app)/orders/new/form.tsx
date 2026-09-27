@@ -4,7 +4,8 @@ import Link from "next/link";
 import { useEffect, useMemo, useRef, useState, useTransition, type ReactNode } from "react";
 import { createLoadAction, readRateConAction, templateDraftAction, saveBuilderTemplateAction, suggestRateAction } from "../actions";
 import type { RateSuggestion } from "@/domain/rates";
-import { StopFields, blankStop, stopPayload, placeLine, timeLine, STOP_LABEL, STOP_TONE, type Loc, type StopDraft } from "@/components/stop-fields";
+import { toZoneInput, fromZoneInput } from "@/lib/time";
+import { StopFields, blankStop, stopPayload, draftZone, placeLine, timeLine, STOP_LABEL, STOP_TONE, type Loc, type StopDraft } from "@/components/stop-fields";
 import { legsFromStops, LEG_TYPE_LABEL, stopTimeProblems } from "@/domain/zones";
 
 /**
@@ -59,7 +60,7 @@ function Section({ id, n, title, hint, action, children }: { id: string; n: numb
   );
 }
 
-export function OrderForm({ customers, entities, locations, templates = [] }: { customers: { id: string; name: string; kind: string }[]; entities: { id: string; name: string }[]; locations: Loc[]; templates?: { id: string; name: string; customer: string | null }[] }) {
+export function OrderForm({ customers, entities, locations, templates = [], zone = "America/Chicago" }: { customers: { id: string; name: string; kind: string }[]; entities: { id: string; name: string }[]; locations: Loc[]; templates?: { id: string; name: string; customer: string | null }[]; zone?: string }) {
   const [f, setF] = useState({ customerId: "", brokerId: "", billingEntityId: entities.length === 1 ? entities[0].id : "", equipment: "53_dry", rate: "", rateTbd: false, currency: "USD", cargoNote: "" });
   const [refs, setRefs] = useState<Record<string, string>>({});
   const [freight, setFreight] = useState<Freight[]>([blankFreight()]);
@@ -76,7 +77,8 @@ export function OrderForm({ customers, entities, locations, templates = [] }: { 
   const [tplMsg, setTplMsg] = useState<string | null>(null);
   const [offer, setOffer] = useState<RateSuggestion | null>(null);
   const [contract, setContract] = useState<RateSuggestion | null>(null);
-  const toLocalInput = (iso: string | null) => (iso ? new Date(new Date(iso).getTime() - new Date(iso).getTimezoneOffset() * 60000).toISOString().slice(0, 16) : "");
+  // a saved lane's times come back on each stop's own clock
+  const toLocalInput = (iso: string | null, st: { country: string; state?: string | null }) => toZoneInput(iso, draftZone({ country: st.country, state: st.state ?? "" }, zone));
 
   /** Fill the builder from a saved lane on a date. */
   const applyTemplate = () =>
@@ -89,7 +91,7 @@ export function OrderForm({ customers, entities, locations, templates = [] }: { 
       setF((x) => ({ ...x, customerId: d.customerId ?? "", brokerId: d.brokerId ?? "", billingEntityId: d.billingEntityId ?? x.billingEntityId, equipment: d.equipment, rate: d.rateCents != null ? (d.rateCents / 100).toFixed(2) : "", rateTbd: d.rateCents == null, currency: d.currency, cargoNote: d.cargoNote ?? "" }));
       setRefs({ ...d.refs });
       setFreight(d.freight.length ? d.freight.map((l) => ({ commodity: l.commodity, pieces: l.pieces != null ? String(l.pieces) : "", packaging: l.packaging ?? "", weightLb: l.weightLb != null ? String(l.weightLb) : "", hazmat: !!l.hazmat })) : [blankFreight()]);
-      const next = r.data.stops.map((st) => ({ ...blankStop(st.type, st.country), locationId: st.locationId, name: st.name, line1: st.line1 ?? "", city: st.city ?? "", state: st.state ?? "", postalCode: st.postalCode ?? "", country: st.country, appointment: st.appointment, windowStart: toLocalInput(st.windowStart), windowEnd: toLocalInput(st.windowEnd), ref: st.ref ?? "", contact: st.contact ?? "", notes: st.notes ?? "" }));
+      const next = r.data.stops.map((st) => ({ ...blankStop(st.type, st.country), locationId: st.locationId, name: st.name, line1: st.line1 ?? "", city: st.city ?? "", state: st.state ?? "", postalCode: st.postalCode ?? "", country: st.country, appointment: st.appointment, windowStart: toLocalInput(st.windowStart, st), windowEnd: toLocalInput(st.windowEnd, st), ref: st.ref ?? "", contact: st.contact ?? "", notes: st.notes ?? "" }));
       setStops(next);
       setOpen(new Set());
       setTplMsg(`Filled from “${r.data.name}” for ${tpl.date}`);
@@ -99,7 +101,7 @@ export function OrderForm({ customers, entities, locations, templates = [] }: { 
     start(async () => {
       const name = window.prompt("Name this lane (e.g. Canton → Toronto, Acme)")?.trim();
       if (!name) return;
-      const r = await saveBuilderTemplateAction(name, { ...f, refs, freight, stops: stops.map(stopPayload) });
+      const r = await saveBuilderTemplateAction(name, { ...f, refs, freight, stops: stops.map((st) => stopPayload(st, zone)) });
       setTplMsg(r.ok ? `Saved as template “${name}”` : r.error);
     });
 
@@ -177,7 +179,7 @@ export function OrderForm({ customers, entities, locations, templates = [] }: { 
   const customer = customers.find((c) => c.id === f.customerId);
   const rateText = f.rateTbd || !f.rate.trim() ? "To be confirmed" : `${f.currency} ${Number(f.rate.replace(/[$,\s]/g, "")).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
-  const timing = stopTimeProblems(stops.map((st) => ({ windowStart: st.windowStart || null, windowEnd: st.windowEnd || null })));
+  const timing = stopTimeProblems(stops.map((st) => ({ windowStart: fromZoneInput(st.windowStart, draftZone(st, zone)), windowEnd: fromZoneInput(st.windowEnd, draftZone(st, zone)) })));
   const checks = [
     { ok: !!f.customerId, label: "Bill-to customer" },
     { ok: f.rateTbd || !!f.rate.trim(), label: "Rate (or to be confirmed)" },
@@ -211,7 +213,7 @@ export function OrderForm({ customers, entities, locations, templates = [] }: { 
         ...f,
         refs,
         freight,
-        stops: stops.map(stopPayload),
+        stops: stops.map((st) => stopPayload(st, zone)),
         book,
         rateConDocId: rateCon?.id ?? null,
         contract: contract ? { rateId: contract.rateId, rateType: contract.rateType, unitCents: contract.unitCents, miles: contract.miles, fuelRule: contract.fuel.rule === "included" ? "included" : contract.fuel.rule, fuelPct: contract.fuel.pct, fuelCentsPerMile: contract.fuel.centsPerMile } : null,
@@ -451,7 +453,7 @@ export function OrderForm({ customers, entities, locations, templates = [] }: { 
                       </div>
                       {isOpen && (
                         <div className="border-t border-line px-4 md:px-6 py-6">
-                          <StopFields stop={st} index={i} locations={locations} onChange={(p) => setStop(i, p)} invalid={err?.field === "stops"} />
+                          <StopFields stop={st} index={i} locations={locations} onChange={(p) => setStop(i, p)} invalid={err?.field === "stops"} companyZone={zone} />
                         </div>
                       )}
                     </div>

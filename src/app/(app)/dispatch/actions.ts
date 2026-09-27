@@ -14,8 +14,18 @@ const touch = () => {
   revalidatePath("/fleet");
 };
 
+/** Trucks ranked for a leg, with when and where each comes free and the deadhead from there to the pickup. */
 export async function candidatesAction(legId: string) {
-  return act((ctx) => O.candidatesForLeg(ctx, legId));
+  return act(async (ctx) => {
+    const cands = await O.candidatesForLeg(ctx, legId);
+    const { plannerData, deadhead } = await import("@/domain/planner");
+    const pd = await plannerData(ctx);
+    const pl = pd.legs.find((l) => l.legId === legId);
+    return cands.map((c) => {
+      const d = pd.drivers.find((x) => x.truckId === c.truckId);
+      return { ...c, freeAt: d?.availableAt ?? null, freeWhere: d?.availableIn ?? null, deadheadMi: d && pl ? deadhead(d, pl) : null };
+    });
+  });
 }
 
 export async function carrierEligibilityAction(legId: string, carrierId: string) {
@@ -69,8 +79,12 @@ export async function planAndDispatchAction(legId: string, a: O.Assignment, opts
   return r;
 }
 
-export async function advanceAction(legId: string, to: LegState | "next", ev: { source?: EventSource; note?: string } = {}) {
-  const r = await act((ctx) => O.advanceLeg(ctx, legId, to, { source: ev.source ?? "dispatcher", verified: false, note: ev.note }));
+export async function advanceAction(legId: string, to: LegState | "next", ev: { source?: EventSource; note?: string; at?: string } = {}) {
+  const r = await act((ctx) => {
+    const at = ev.at ? new Date(ev.at) : undefined;
+    if (at && (Number.isNaN(at.getTime()) || at.getTime() > Date.now() + 5 * 60_000)) throw Object.assign(new Error("That time is in the future"), { name: "ValidationError", field: "at" });
+    return O.advanceLeg(ctx, legId, to, { source: ev.source ?? "dispatcher", verified: false, note: ev.note, at });
+  });
   if (r.ok) touch();
   return r;
 }
@@ -243,4 +257,19 @@ export async function sendLinkWhatsAppAction(input: { kind: "driver" | "tracking
     const [after] = await db.select({ state: outbox.state, error: outbox.error }).from(outbox).where(eq(outbox.id, row.id)).limit(1);
     return { state: after?.state ?? "queued", error: after?.error ?? null, to };
   });
+}
+
+export async function checkCallAction(orderId: string, v: { legId?: string | null; status: string; location: string; eta: string; tempF: string; note: string; send: boolean }) {
+  const { addCheckCall } = await import("@/domain/check-calls");
+  const r = await act((ctx) => {
+    const tempF = v.tempF.trim() ? Number(v.tempF) : null;
+    return addCheckCall(ctx, orderId, { legId: v.legId ?? null, status: v.status, location: v.location, etaAt: v.eta ? new Date(v.eta) : null, tempF, note: v.note, sendToCustomer: v.send });
+  });
+  if (r.ok) touch();
+  return r;
+}
+
+export async function checkCallsAction(orderId: string) {
+  const { listCheckCalls } = await import("@/domain/check-calls");
+  return act((ctx) => listCheckCalls(ctx, orderId));
 }

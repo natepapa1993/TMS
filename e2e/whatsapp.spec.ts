@@ -62,7 +62,7 @@ test("WhatsApp day: connect the number, a tender goes by WhatsApp, Meta verifies
   await expect(page.getByRole("status")).toContainText("Tender withdrawn");
 
   // our truck runs it; the driver writes back on WhatsApp → timeline + Messages
-  await page.click(".stage-tab:has-text('Pending')");
+  await page.click(".stage-tab:has-text('All')");
   await page.locator(".row[role=button]").first().click();
   await panel.locator("button:has-text('Assign Domestic leg')").click();
   dlg = page.getByRole("dialog");

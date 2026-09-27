@@ -1,6 +1,6 @@
 // Features: F-12 tailgate through the browser — build a trip from stops, add shipments with live fit, over-capacity refused, book, dispatch the trip, shipments follow, manifest, per-shipment billing
 import { test, expect } from "@playwright/test";
-import { signupFresh, quickAdd, future } from "./helpers";
+import { signupFresh, quickAdd, future, step } from "./helpers";
 
 test("tailgate day: stops → shipments (LIFO, capacity) → book → run the trip → shipments deliver and bill one by one", async ({ page }) => {
   test.setTimeout(180_000);
@@ -84,10 +84,10 @@ test("tailgate day: stops → shipments (LIFO, capacity) → book → run the tr
   await dlg.locator("#plan-miles").fill("1500");
   await dlg.locator("button:has-text('Assign & send')").click();
   await expect(page.getByRole("status")).toContainText("Assigned and sent");
-  await page.click(".stage-tab:has-text('Dispatched')");
+  await page.click(".stage-tab:has-text('All')");
   await page.locator(".row[role=button]").first().click();
   for (let i = 0; i < 4; i++) {
-    await panel.locator("button.btn-primary.btn-lg").click(); // accepted, rolling, arrived at pickup, loaded (= departed Canton)
+    await step(panel); // accepted, rolling, arrived at pickup, loaded (= departed Canton)
     await page.waitForTimeout(200);
   }
   // shipment 1 (on at Canton) is on the truck; shipment 2 (Toledo) waits for its stop
@@ -95,21 +95,21 @@ test("tailgate day: stops → shipments (LIFO, capacity) → book → run the tr
   await expect(page.locator("tr", { hasText: "PO-1" })).toContainText("In transit");
   await expect(page.locator("tr", { hasText: "PO-2" })).toContainText("Dispatched");
   await page.goto("/dispatch");
-  await page.click(".stage-tab:has-text('Dispatched')");
+  await page.click(".stage-tab:has-text('All')");
   await page.locator(".row[role=button]").first().click();
-  await panel.locator("button.btn-primary.btn-lg").click(); // en route
+  await step(panel); // en route
   await expect(panel.locator("button.btn-primary.btn-lg")).toHaveText("Arrived at Toledo supplier"); // the stop in between comes before the delivery
-  await panel.locator("button.btn-primary.btn-lg").click();
+  await step(panel);
   await expect(panel.locator("button.btn-primary.btn-lg")).toHaveText("Leaving Toledo supplier");
-  await panel.locator("button.btn-primary.btn-lg").click();
+  await step(panel);
   await expect(panel.locator("button.btn-primary.btn-lg")).toHaveText("Arrived at delivery");
   await page.goto("/orders");
   await expect(page.locator("tr", { hasText: "PO-2" })).toContainText("In transit"); // on the truck since it left Toledo
   await page.goto("/dispatch");
-  await page.click(".stage-tab:has-text('Dispatched')");
+  await page.click(".stage-tab:has-text('All')");
   await page.locator(".row[role=button]").first().click();
   for (let i = 0; i < 2; i++) {
-    await panel.locator("button.btn-primary.btn-lg").click(); // arrived, delivered
+    await step(panel); // arrived, delivered
     await page.waitForTimeout(200);
   }
   await expect(page.locator(".stage-tab:has-text('Delivered') .count")).toHaveText("1");

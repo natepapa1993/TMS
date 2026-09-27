@@ -12,7 +12,7 @@ async function tonuLoad(page: Page, amount: string) {
   await d.locator("#tonu-amount").fill(amount);
   await d.locator("#tonu-reason").fill("Shipper cancelled");
   await d.locator("button:has-text('Cancel & bill TONU')").click();
-  await expect(page.getByTestId("load-header")).toContainText("TONU");
+  await expect(page.getByRole("status").filter({ hasText: "the fee goes to billing" })).toBeVisible(); // the header has a TONU button, so wait for the save itself
   return num;
 }
 
