@@ -11,8 +11,8 @@ import type { LegState } from "@/db/schema";
  * Works as a phone web page; asks for location and sends it with every step and every 2 minutes.
  */
 
-type Stop = { id: string; name: string; type: string; country: string; address: { line1?: string; city?: string; state?: string } | null; windowStart: string | null; windowEnd: string | null; contact: string | null; notes: string | null };
-type Item = { leg: { id: string; seq: number; type: string; state: LegState }; order: { orderNumber: string; equipment: string; cargoNote: string | null; refs: Record<string, string> }; from: Stop | null; to: Stop | null; truck: { unitNumber: string } | null; next: { to: LegState; label: string; es: string } | null; crossing: { id: string; state: string; trailerNumber: string | null; packetToken: string | null; nextStep: string | null } | null };
+type Stop = { id: string; name: string; type: string; country: string; address: { line1?: string; city?: string; state?: string } | null; windowStart: string | null; windowEnd: string | null; contact: string | null; notes: string | null; arrivedAt?: string | null; departedAt?: string | null };
+type Item = { leg: { id: string; seq: number; type: string; state: LegState }; order: { orderNumber: string; equipment: string; cargoNote: string | null; refs: Record<string, string> }; from: Stop | null; to: Stop | null; mids?: Stop[]; truck: { unitNumber: string } | null; next: { to: LegState; label: string; es: string } | null; crossing: { id: string; state: string; trailerNumber: string | null; packetToken: string | null; nextStep: string | null } | null };
 const XSTEP: Record<string, { en: string; es: string }> = { departed_yard: { en: "Departed the yard", es: "Salí del patio" }, at_mx_customs: { en: "At Mexican customs", es: "En aduana mexicana" }, in_us_customs: { en: "At US customs", es: "En aduana americana" }, cleared: { en: "Cleared — US side", es: "Liberado — lado americano" } };
 const XLABEL: Record<string, string> = { packet_sent: "Packet sent · Paquete enviado", departed_yard: "Departed yard · Salió del patio", at_mx_customs: "MX customs · Aduana MX", in_us_customs: "US customs · Aduana US", cleared: "Cleared · Liberado", held: "Held · Detenido", returned: "Returned · Regresado" };
 type Data = { driver: { name: string; driverType: string }; current: Item | null; items: Item[]; own: { label: string; status: string; expiresAt: string | null }[]; pay: PayStub[] };
@@ -130,7 +130,10 @@ export function DriverApp({ token, data }: { token: string; data: Data }) {
           </div>
           <div className="px-5 py-4 space-y-4">
             <Place label="Pickup · Recoger" s={cur.from} active={["accepted", "en_route_to_pickup", "at_pickup"].includes(cur.leg.state)} />
-            <Place label="Deliver · Entregar" s={cur.to} active={["loaded", "en_route", "at_delivery"].includes(cur.leg.state)} />
+            {(cur.mids ?? []).map((m, i) => (
+              <Place key={m.id} label={`Stop ${i + 2} · Parada ${i + 2}${m.departedAt ? " · done" : ""}`} s={m} active={cur.leg.state === "en_route" && !m.departedAt && !(cur.mids ?? []).slice(0, i).some((p) => !p.departedAt)} />
+            ))}
+            <Place label="Deliver · Entregar" s={cur.to} active={["loaded", "at_delivery"].includes(cur.leg.state) || (cur.leg.state === "en_route" && !(cur.mids ?? []).some((m) => !m.departedAt))} />
             {cur.order.cargoNote && <div className="text-[13px] text-muted">📦 {cur.order.cargoNote}</div>}
           </div>
           <div className="px-5 pb-5">

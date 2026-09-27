@@ -49,7 +49,7 @@ export function ReportsView({ dash, rows, by, preset, period, entityId, entities
   };
   const csv = `/api/reports?by=${by}&from=${period.from}&to=${period.to}${entityId ? `&entity=${entityId}` : ""}`;
   const cards: { label: string; value: string; sub: string; href: string; tone?: "red" | "amber" }[] = [
-    { label: "Revenue per truck", value: formatCents(dash.revenuePerTruckCents), sub: `${formatCents(dash.revenueCents)} on ${dash.loads} loads · ${dash.activeTrucks} active unit${dash.activeTrucks === 1 ? "" : "s"}`, href: "?by=truck" },
+    { label: "Revenue per truck", value: formatCents(dash.revenuePerTruckCents), sub: `${formatCents(dash.revenueCents)} on ${dash.loads} load${dash.loads === 1 ? "" : "s"} · ${dash.activeTrucks} active unit${dash.activeTrucks === 1 ? "" : "s"}`, href: "?by=truck" },
     { label: "Empty miles", value: `${dash.emptyPct}%`, sub: "equipment moves over all planned miles on our trucks", href: "?by=truck" },
     { label: "Margin", value: `${dash.marginPct}%`, sub: `${formatCents(dash.marginCents)} after carriers, driver pay, fuel and tolls`, href: "?by=customer" },
     { label: "Loads at risk", value: String(dash.atRisk.count), sub: dash.atRisk.count ? dash.atRisk.orders.slice(0, 3).map((o) => o.orderNumber).join(", ") : "no red flags on moving loads", href: "/dispatch", tone: dash.atRisk.count ? "red" : undefined },
@@ -90,7 +90,7 @@ export function ReportsView({ dash, rows, by, preset, period, entityId, entities
         )}
       </div>
 
-      <div className="grid grid-cols-3 xl:grid-cols-6 gap-3 mb-5" data-testid="six">
+      <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-3 mb-5" data-testid="six">
         {cards.map((c) => (
           <Link key={c.label} href={c.href.startsWith("?") ? `/reports?range=${preset}&by=${c.href.slice(4)}${entityId ? `&entity=${entityId}` : ""}` : c.href} className="card p-4 hover:border-teal transition-colors">
             <div className="eyebrow">{c.label}</div>

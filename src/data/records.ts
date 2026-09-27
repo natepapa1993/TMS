@@ -108,7 +108,17 @@ export async function list(ctx: Ctx, kind: RecordKind, opts: { archived?: "activ
     .where(scope ? and(eq(table.tenantId as never, ctx.tenantId), scope) : eq(table.tenantId as never, ctx.tenantId))
     .orderBy(desc(table.updatedAt as never))
     .limit(opts.limit ?? 500);
-  return rows as Row[];
+  return rows.map(strip) as Row[];
+}
+
+/** Secrets never leave the data layer (the user record's password hash is only ever compared in auth). */
+function strip<T extends Record<string, unknown>>(row: T): T {
+  if ("passwordHash" in row) {
+    const { passwordHash: _omit, ...rest } = row;
+    void _omit;
+    return rest as T;
+  }
+  return row;
 }
 
 export async function get(ctx: Ctx, kind: RecordKind, id: string): Promise<Row> {
@@ -117,7 +127,7 @@ export async function get(ctx: Ctx, kind: RecordKind, id: string): Promise<Row> 
   const { table } = REGISTRY[kind];
   const [row] = await db.select().from(table).where(and(eq(table.tenantId as never, ctx.tenantId), eq(table.id as never, id))).limit(1);
   if (!row) throw new NotFoundError(kind, id);
-  return row as Row;
+  return strip(row as Record<string, unknown>) as Row;
 }
 
 export async function create(ctx: Ctx, kind: RecordKind, values: Record<string, unknown>): Promise<Row> {

@@ -123,33 +123,35 @@ export function Settlements({ rows, drivers, defaultWeek, role }: { rows: Row[];
             ) : undefined
           }
         >
-          <table className="table -mx-5 w-[calc(100%+40px)]">
-            <thead>
-              <tr>
-                <th>Line</th>
-                <th>Source</th>
-                <th className="text-right">Amount</th>
-              </tr>
-            </thead>
-            <tbody>
-              {cur.st.lines.map((l) => (
-                <tr key={l.id}>
-                  <td>
-                    <span className="font-semibold">{l.description}</span>
-                    {l.disputed && <div className="text-[12px] text-red">Driver disputes: {l.disputed}</div>}
-                  </td>
-                  <td className="text-muted text-[12.5px]">{l.source}</td>
-                  <td className={`mono text-right font-semibold ${l.amountCents < 0 ? "text-red" : ""}`}>{formatCents(l.amountCents)}</td>
+          <div className="-mx-5 overflow-x-auto">
+            <table className="table">
+              <thead>
+                <tr>
+                  <th>Line</th>
+                  <th>Source</th>
+                  <th className="text-right">Amount</th>
                 </tr>
-              ))}
-              <tr>
-                <td colSpan={2} className="text-right font-extrabold">
-                  Net pay
-                </td>
-                <td className="mono text-right font-extrabold text-[15px]">{formatCents(cur.st.netCents)}</td>
-              </tr>
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {cur.st.lines.map((l) => (
+                  <tr key={l.id}>
+                    <td>
+                      <span className="font-semibold">{l.description}</span>
+                      {l.disputed && <div className="text-[12px] text-red">Driver disputes: {l.disputed}</div>}
+                    </td>
+                    <td className="text-muted text-[12.5px]">{l.source}</td>
+                    <td className={`mono text-right font-semibold ${l.amountCents < 0 ? "text-red" : ""}`}>{formatCents(l.amountCents)}</td>
+                  </tr>
+                ))}
+                <tr>
+                  <td colSpan={2} className="text-right font-extrabold">
+                    Net pay
+                  </td>
+                  <td className="mono text-right font-extrabold text-[15px]">{formatCents(cur.st.netCents)}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
           {can && (cur.st.state === "open" || cur.st.state === "reviewed") && (
             <div className="mt-3 grid grid-cols-[130px_1fr_120px_auto] gap-2 items-end">
               <div>

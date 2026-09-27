@@ -35,7 +35,7 @@ export function TripView({ tripId, state, stops, shipments, capacity, customers,
   const revenue = live.reduce((a, s) => a + (s.rateCents ?? 0), 0);
   const editable = canEdit && !["delivered", "ready_to_bill", "invoiced", "paid", "cancelled"].includes(state);
   return (
-    <div className="grid grid-cols-[1fr_300px] gap-5 items-start">
+    <div className="grid lg:grid-cols-[1fr_300px] gap-5 items-start [&>*]:min-w-0">
       <div className="space-y-5">
         {/* capacity + load plan */}
         <div className="card p-5">
@@ -53,45 +53,47 @@ export function TripView({ tripId, state, stops, shipments, capacity, customers,
           </div>
           {capacity.overWith.length > 0 && <div className="mt-2 text-red text-[13px] font-semibold">Over capacity: {capacity.overWith.join(", ")}</div>}
           <Trailer stops={stops} shipments={live} capacity={capacity} />
-          <table className="table mt-4 -mx-5 w-[calc(100%+40px)]">
-            <thead>
-              <tr>
-                <th>#</th>
-                <th>Stop</th>
-                <th>Off</th>
-                <th>On</th>
-                <th className="text-right">After · lb</th>
-                <th className="text-right">ft</th>
-                <th className="text-right">pcs</th>
-                <th>Clock</th>
-              </tr>
-            </thead>
-            <tbody>
-              {capacity.perStop.map((st) => {
-                const stop = stops.find((x) => x.id === st.stopId)!;
-                return (
-                  <tr key={st.stopId}>
-                    <td className="mono">{st.seq}</td>
-                    <td>
-                      <div className="font-bold">{stop.name}</div>
-                      <div className="text-muted text-[12px]">
-                        {stop.type.replace("_", " ")} · {[stop.address?.city, stop.address?.state].filter(Boolean).join(", ")} {stop.country}
-                      </div>
-                    </td>
-                    <td className="text-[12.5px]">{st.off.map((id) => shipments.find((s) => s.id === id)?.orderNumber).join(", ") || <span className="text-faint">—</span>}</td>
-                    <td className="text-[12.5px]">{st.on.map((id) => shipments.find((s) => s.id === id)?.orderNumber).join(", ") || <span className="text-faint">—</span>}</td>
-                    <td className="text-right mono">{st.afterWeightLbs.toLocaleString()}</td>
-                    <td className="text-right mono">{st.afterLinearFt}</td>
-                    <td className="text-right mono">{st.afterPieces}</td>
-                    <td className="text-[12px] text-muted whitespace-nowrap">
-                      {stop.arrivedAt ? `in ${new Date(stop.arrivedAt).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })}` : ""}
-                      {stop.departedAt ? ` · out ${new Date(stop.departedAt).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })}` : ""}
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
+          <div className="-mx-5 mt-4 overflow-x-auto">
+            <table className="table">
+              <thead>
+                <tr>
+                  <th>#</th>
+                  <th>Stop</th>
+                  <th>Off</th>
+                  <th>On</th>
+                  <th className="text-right">After · lb</th>
+                  <th className="text-right">ft</th>
+                  <th className="text-right">pcs</th>
+                  <th>Clock</th>
+                </tr>
+              </thead>
+              <tbody>
+                {capacity.perStop.map((st) => {
+                  const stop = stops.find((x) => x.id === st.stopId)!;
+                  return (
+                    <tr key={st.stopId}>
+                      <td className="mono">{st.seq}</td>
+                      <td>
+                        <div className="font-bold">{stop.name}</div>
+                        <div className="text-muted text-[12px]">
+                          {stop.type.replace("_", " ")} · {[stop.address?.city, stop.address?.state].filter(Boolean).join(", ")} {stop.country}
+                        </div>
+                      </td>
+                      <td className="text-[12.5px]">{st.off.map((id) => shipments.find((s) => s.id === id)?.orderNumber).join(", ") || <span className="text-faint">—</span>}</td>
+                      <td className="text-[12.5px]">{st.on.map((id) => shipments.find((s) => s.id === id)?.orderNumber).join(", ") || <span className="text-faint">—</span>}</td>
+                      <td className="text-right mono">{st.afterWeightLbs.toLocaleString()}</td>
+                      <td className="text-right mono">{st.afterLinearFt}</td>
+                      <td className="text-right mono">{st.afterPieces}</td>
+                      <td className="text-[12px] text-muted whitespace-nowrap">
+                        {stop.arrivedAt ? `in ${new Date(stop.arrivedAt).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })}` : ""}
+                        {stop.departedAt ? ` · out ${new Date(stop.departedAt).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })}` : ""}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
         </div>
 
         {/* shipments */}
@@ -112,74 +114,76 @@ export function TripView({ tripId, state, stops, shipments, capacity, customers,
           {live.length === 0 ? (
             <div className="py-8 text-center text-muted">No shipments yet. Add the first one — the trip cannot be booked without one.</div>
           ) : (
-            <table className="table -mx-5 w-[calc(100%+40px)]">
-              <thead>
-                <tr>
-                  <th>Pos</th>
-                  <th>Shipment</th>
-                  <th>Customer</th>
-                  <th>On → Off</th>
-                  <th className="text-right">Pcs · lb · ft</th>
-                  <th className="text-right">Rate</th>
-                  <th>State</th>
-                  <th>Docs</th>
-                  <th></th>
-                </tr>
-              </thead>
-              <tbody>
-                {live.map((s) => (
-                  <tr key={s.id}>
-                    <td className="mono text-muted">{s.loadSeq}</td>
-                    <td>
-                      <Link href={`/orders/${s.id}`} className="font-extrabold mono hover:text-teal whitespace-nowrap">
-                        {s.orderNumber}
-                      </Link>
-                      <div className="text-[12px] text-muted">{Object.values(s.refs).join(" · ")}</div>
-                      {s.hazmat && <Pill tone="red">HAZMAT</Pill>}
-                    </td>
-                    <td>{s.customerName}</td>
-                    <td className="text-[12.5px]">
-                      {stopName(stops, s.pickupStopId)} → {stopName(stops, s.deliveryStopId)}
-                    </td>
-                    <td className="text-right mono text-[12.5px] whitespace-nowrap">
-                      {s.pieces ?? "—"} · {(s.weightLbs ?? 0).toLocaleString()} · {s.linearFt ?? "—"}
-                    </td>
-                    <td className="text-right mono font-semibold">{s.rateTbd || s.rateCents == null ? <span className="text-faint">TBD</span> : formatCents(s.rateCents)}</td>
-                    <td>
-                      <Pill tone={TONE[s.state]} title={s.holdReason ?? undefined}>
-                        {LABEL[s.state]}
-                      </Pill>
-                      {s.holdReason && <div className="text-[11.5px] text-red">{s.holdReason}</div>}
-                    </td>
-                    <td className="space-x-1">
-                      <Pill tone={s.pod ? "green" : "slate"}>POD</Pill>
-                      {s.invoice && (
-                        <Link href={`/billing/invoices/${s.invoice.id}`}>
-                          <Pill tone="teal">{s.invoice.number ?? "draft"}</Pill>
-                        </Link>
-                      )}
-                    </td>
-                    <td className="text-right whitespace-nowrap">
-                      {canEdit && s.state === "exception" && (
-                        <button className="btn btn-sm" disabled={pending} onClick={() => run("Released", () => releaseShipmentAction(tripId, s.id))}>
-                          Release
-                        </button>
-                      )}
-                      {canEdit && ["booked", "dispatched", "in_transit"].includes(s.state) && (
-                        <button className="btn btn-sm btn-ghost text-amber" onClick={() => setHold(s)}>
-                          Hold
-                        </button>
-                      )}
-                      {editable && ["draft", "booked", "dispatched", "exception"].includes(s.state) && (
-                        <button className="btn btn-sm btn-ghost text-red" onClick={() => setRemove(s)}>
-                          Remove
-                        </button>
-                      )}
-                    </td>
+            <div className="-mx-5 overflow-x-auto">
+              <table className="table">
+                <thead>
+                  <tr>
+                    <th>Pos</th>
+                    <th>Shipment</th>
+                    <th>Customer</th>
+                    <th>On → Off</th>
+                    <th className="text-right">Pcs · lb · ft</th>
+                    <th className="text-right">Rate</th>
+                    <th>State</th>
+                    <th>Docs</th>
+                    <th></th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody>
+                  {live.map((s) => (
+                    <tr key={s.id}>
+                      <td className="mono text-muted">{s.loadSeq}</td>
+                      <td>
+                        <Link href={`/orders/${s.id}`} className="font-extrabold mono hover:text-teal whitespace-nowrap">
+                          {s.orderNumber}
+                        </Link>
+                        <div className="text-[12px] text-muted">{Object.values(s.refs).join(" · ")}</div>
+                        {s.hazmat && <Pill tone="red">HAZMAT</Pill>}
+                      </td>
+                      <td>{s.customerName}</td>
+                      <td className="text-[12.5px]">
+                        {stopName(stops, s.pickupStopId)} → {stopName(stops, s.deliveryStopId)}
+                      </td>
+                      <td className="text-right mono text-[12.5px] whitespace-nowrap">
+                        {s.pieces ?? "—"} · {(s.weightLbs ?? 0).toLocaleString()} · {s.linearFt ?? "—"}
+                      </td>
+                      <td className="text-right mono font-semibold">{s.rateTbd || s.rateCents == null ? <span className="text-faint">TBD</span> : formatCents(s.rateCents)}</td>
+                      <td>
+                        <Pill tone={TONE[s.state]} title={s.holdReason ?? undefined}>
+                          {LABEL[s.state]}
+                        </Pill>
+                        {s.holdReason && <div className="text-[11.5px] text-red">{s.holdReason}</div>}
+                      </td>
+                      <td className="space-x-1">
+                        <Pill tone={s.pod ? "green" : "slate"}>POD</Pill>
+                        {s.invoice && (
+                          <Link href={`/billing/invoices/${s.invoice.id}`}>
+                            <Pill tone="teal">{s.invoice.number ?? "draft"}</Pill>
+                          </Link>
+                        )}
+                      </td>
+                      <td className="text-right whitespace-nowrap">
+                        {canEdit && s.state === "exception" && (
+                          <button className="btn btn-sm" disabled={pending} onClick={() => run("Released", () => releaseShipmentAction(tripId, s.id))}>
+                            Release
+                          </button>
+                        )}
+                        {canEdit && ["booked", "dispatched", "in_transit"].includes(s.state) && (
+                          <button className="btn btn-sm btn-ghost text-amber" onClick={() => setHold(s)}>
+                            Hold
+                          </button>
+                        )}
+                        {editable && ["draft", "booked", "dispatched", "exception"].includes(s.state) && (
+                          <button className="btn btn-sm btn-ghost text-red" onClick={() => setRemove(s)}>
+                            Remove
+                          </button>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           )}
         </div>
       </div>

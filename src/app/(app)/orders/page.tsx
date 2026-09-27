@@ -45,7 +45,7 @@ export default async function OrdersPage({ searchParams }: PageProps<"/orders">)
             <input name="q" defaultValue={q} className="input w-64" placeholder="Search order #, customer, reference…" />
             {state && <input type="hidden" name="state" value={state} />}
           </form>
-          <div className="flex gap-1 ml-2">
+          <div className="flex gap-1 ml-2 flex-wrap">
             <Link href="/orders" className="stage-tab h-8 text-[12.5px]" data-active={!state}>
               All
             </Link>

@@ -39,7 +39,7 @@ export default async function KindListPage({ params, searchParams }: PageProps<"
         {meta.blurb}. {rows.length} {showArchived ? "archived" : "active"}.
       </PageHeader>
       <div className="px-7 pb-10">
-        <div className="flex items-center gap-2 mb-3">
+        <div className="flex items-center gap-2 mb-3 flex-wrap">
           <form className="flex gap-2">
             <input name="q" defaultValue={q} className="input w-64" placeholder={`Search ${meta.plural.toLowerCase()}…`} />
             {showArchived && <input type="hidden" name="archived" value="1" />}

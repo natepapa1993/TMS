@@ -10,7 +10,7 @@ import * as T from "./tailgate";
 import * as B from "./billing";
 import * as X from "./crossing";
 import * as R from "./reports";
-import { getOrder, planLeg, dispatchLeg, acceptLeg, advanceLeg, ValidationError } from "./orders";
+import { getOrder, planLeg, dispatchLeg, acceptLeg, advanceLeg, stampStop, pendingMidStop, ValidationError } from "./orders";
 import { updateCompany } from "./company";
 import { zonedDate } from "@/lib/time";
 
@@ -243,5 +243,46 @@ describe("tailgate trip (acceptance)", () => {
     await expect(T.holdShipment(a, s1.id, "x")).rejects.toThrow(/cannot be held/);
     const [row] = await db.select().from(orders).where(eq(orders.id, s2.id));
     expect(row.loadSeq).toBe(1);
+  });
+
+  it("a stop in between is clocked (arrived, then left) before the delivery; the shipment picked there goes in transit when the truck leaves it", async () => {
+    const trip = await T.createTrip(a, { stops: [{ type: "pickup", name: "Canton", country: "US" }, { type: "pickup", name: "Toledo", country: "US" }, { type: "delivery", name: "Laredo", country: "US" }] });
+    const [canton, toledo, laredo] = trip.stops;
+    const s1 = await T.addShipment(a, trip.order.id, { customerId: f.rxo, rateCents: 1000, pickupStopId: canton.id, deliveryStopId: laredo.id, weightLbs: 100, linearFt: 4 });
+    const s2 = await T.addShipment(a, trip.order.id, { customerId: f.magna, rateCents: 900, pickupStopId: toledo.id, deliveryStopId: laredo.id, weightLbs: 100, linearFt: 4 });
+    await T.bookTrip(a, trip.order.id);
+    const leg = trip.legs[0];
+    await planLeg(a, leg.id, { kind: "truck", truckId: f.t2117, driverId: f.martin });
+    await dispatchLeg(a, leg.id);
+    await acceptLeg(a, leg.id);
+    // too early: the truck is not en route yet
+    await expect(stampStop(a, leg.id, toledo.id, "arrived")).rejects.toThrow(/en route/);
+    for (const st of ["en_route_to_pickup", "at_pickup", "loaded", "en_route"] as const) await advanceLeg(a, leg.id, st, { source: "driver_app" });
+    expect((await getOrder(a, s1.id)).order.state).toBe("in_transit");
+    expect((await getOrder(a, s2.id)).order.state).toBe("dispatched"); // still waiting at Toledo
+    // "next" while en route clocks Toledo instead of the delivery
+    const stopsNow = () => db.select().from(stops).where(eq(stops.orderId, trip.order.id)).orderBy(stops.seq);
+    expect(pendingMidStop({ ...leg, state: "en_route" }, await stopsNow())).toMatchObject({ which: "arrived", stop: { name: "Toledo" } });
+    await advanceLeg(a, leg.id, "next", { source: "driver_app" });
+    let now = await stopsNow();
+    expect(now[1].arrivedAt).toBeTruthy();
+    expect(now[1].departedAt).toBeNull();
+    expect((await getOrder(a, trip.order.id)).legs[0].state).toBe("en_route");
+    await expect(stampStop(a, leg.id, toledo.id, "arrived")).rejects.toThrow(/already arrived/);
+    await advanceLeg(a, leg.id, "next", { source: "driver_app" }); // left Toledo
+    now = await stopsNow();
+    expect(now[1].departedAt).toBeTruthy();
+    expect((await getOrder(a, s2.id)).order.state).toBe("in_transit");
+    expect(pendingMidStop({ ...leg, state: "en_route" }, now)).toBeNull();
+    // the next "next" is the delivery
+    await advanceLeg(a, leg.id, "next", { source: "driver_app" });
+    expect((await getOrder(a, trip.order.id)).legs[0].state).toBe("at_delivery");
+    await advanceLeg(a, leg.id, "next", { source: "driver_app" });
+    expect((await getOrder(a, s1.id)).order.state).toBe("delivered");
+    expect((await getOrder(a, s2.id)).order.state).toBe("delivered");
+    // the shipment's own stop copies carry Toledo's clocks
+    const own = await db.select().from(stops).where(eq(stops.orderId, s2.id)).orderBy(stops.seq);
+    expect(own[0].arrivedAt?.getTime()).toBe(now[1].arrivedAt?.getTime());
+    expect(own[0].departedAt?.getTime()).toBe(now[1].departedAt?.getTime());
   });
 });

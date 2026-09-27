@@ -4,7 +4,7 @@ import * as s from "@/db/schema";
 import type { PositionSource, LegState } from "@/db/schema";
 import { newId } from "@/lib/ids";
 import { assertCtx, requirePermission, systemCtx, type Ctx } from "@/lib/context";
-import { advanceLeg, acceptLeg, declineLeg, NotFoundError, ValidationError } from "./orders";
+import { advanceLeg, acceptLeg, declineLeg, midStops, pendingMidStop, stampStop, NotFoundError, ValidationError } from "./orders";
 import { LEG_FORWARD } from "./states";
 
 /**
@@ -95,7 +95,10 @@ export async function driverToday(tenantId: string, driverId: string) {
     const crossing = x
       ? { id: x.id, state: x.state, trailerNumber: x.trailerNumber, packetToken: x.packetSentAt ? x.packetToken : null, packetSentAt: x.packetSentAt, nextStep: ({ packet_sent: "departed_yard", departed_yard: "at_mx_customs", at_mx_customs: "in_us_customs", in_us_customs: "cleared" } as Record<string, string>)[x.state] ?? null }
       : null;
-    return { leg, order: { id: order.id, orderNumber: order.orderNumber, equipment: order.equipment, cargoNote: order.cargoNote, refs: order.refs, state: order.state }, from, to, truck, next: nextStep(leg.state), crossing };
+    const mid = pendingMidStop(leg, stops.filter((x) => x.orderId === leg.orderId));
+    const next = mid ? { to: leg.state, label: `${mid.which === "arrived" ? "Arrived at" : "Leaving"} ${mid.stop.name}`, es: `${mid.which === "arrived" ? "Llegué a" : "Saliendo de"} ${mid.stop.name}` } : nextStep(leg.state);
+    const mids = midStops(leg, stops.filter((x) => x.orderId === leg.orderId));
+    return { leg, order: { id: order.id, orderNumber: order.orderNumber, equipment: order.equipment, cargoNote: order.cargoNote, refs: order.refs, state: order.state }, from, to, mids, truck, next, crossing };
   });
   // the leg the driver is on = first non-dispatched active leg, else the first offered one
   const current = items.find((i) => i.leg.state !== "dispatched") ?? items[0] ?? null;
@@ -138,6 +141,11 @@ export async function driverStep(tenantId: string, driverId: string, legId: stri
     return leg;
   }
   if (leg.state === "dispatched") return acceptLeg(ctx, leg.id, "driver_app");
+  if (leg.state === "en_route") {
+    const stops = await db.select().from(s.stops).where(and(eq(s.stops.tenantId, tenantId), eq(s.stops.orderId, leg.orderId)));
+    const mid = pendingMidStop(leg, stops);
+    if (mid) return stampStop(ctx, leg.id, mid.stop.id, mid.which, { source: "driver_app", verified: hasPos, lat: hasPos ? String(Number(input.lat).toFixed(6)) : undefined, lng: hasPos ? String(Number(input.lng).toFixed(6)) : undefined, note: input.note ?? undefined });
+  }
   const step = nextStep(leg.state);
   if (!step) throw new ValidationError("nothing further on this leg");
   return advanceLeg(ctx, leg.id, step.to, { source: "driver_app", verified: hasPos, lat: hasPos ? String(Number(input.lat).toFixed(6)) : undefined, lng: hasPos ? String(Number(input.lng).toFixed(6)) : undefined, note: input.note ?? undefined });
@@ -160,7 +168,7 @@ export async function trackingView(tenantId: string, orderId: string) {
     carrier: tenant?.name ?? "",
     order: { orderNumber: order.orderNumber, state: order.state, equipment: order.equipment, refs: { po: order.refs.po, reference: order.refs.reference, shipment: order.refs.shipment }, deliveredAt: order.deliveredAt },
     stops: stops.map((st) => ({ id: st.id, seq: st.seq, type: st.type, name: st.name, city: st.address?.city ?? null, state: st.address?.state ?? null, country: st.country, windowStart: st.windowStart, windowEnd: st.windowEnd, arrivedAt: st.arrivedAt, departedAt: st.departedAt })),
-    legs: legs.map((l) => ({ seq: l.seq, type: l.type, state: l.state, fromStopId: l.fromStopId, toStopId: l.toStopId })),
+    legs: legs.map((l) => ({ id: l.id, seq: l.seq, type: l.type, state: l.state, fromStopId: l.fromStopId, toStopId: l.toStopId })),
     events: events.map((e) => ({ at: e.at, legId: e.legId, toState: e.toState, verified: e.verified })),
     lastPosition: last[0] ? { at: last[0].at, lat: last[0].lat, lng: last[0].lng, place: last[0].place, source: last[0].source } : null,
   };

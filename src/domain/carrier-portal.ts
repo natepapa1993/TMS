@@ -4,7 +4,7 @@ import { db } from "@/db/client";
 import * as s from "@/db/schema";
 import { assertCtx, systemCtx, type Ctx } from "@/lib/context";
 import { issueToken, publicUrl, revokeTokensFor } from "@/lib/tokens";
-import { advanceLeg, NotFoundError, ValidationError } from "./orders";
+import { advanceLeg, pendingMidStop, NotFoundError, ValidationError } from "./orders";
 import { newId } from "@/lib/ids";
 import { newToken } from "@/lib/tokens";
 import { respondToTender, type TenderResponse } from "./tenders";
@@ -77,7 +77,10 @@ export async function carrierPortalView(tenantId: string, carrierId: string, now
       type: LEG_TYPE_LABEL[l.type] ?? l.type,
       state: l.state,
       stateLabel: LEG_LABEL[l.state],
-      next: NEXT[l.state] ?? null,
+      next: (() => {
+        const mid = pendingMidStop(l, stops.filter((x) => x.orderId === l.orderId));
+        return mid ? { to: l.state, en: `${mid.which === "arrived" ? "Arrived at" : "Leaving"} ${mid.stop.name}`, es: `${mid.which === "arrived" ? "Llegamos a" : "Saliendo de"} ${mid.stop.name}` } : (NEXT[l.state] ?? null);
+      })(),
       orderNumber: o?.orderNumber ?? "?",
       equipment: o?.equipment ?? null,
       cargoNote: o?.cargoNote ?? null,
@@ -171,6 +174,11 @@ async function ownLeg(tenantId: string, carrierId: string, legId: string) {
 export async function portalAdvance(tenantId: string, carrierId: string, legId: string, to: s.LegState, note?: string | null) {
   const ctx = systemCtx(tenantId);
   const l = await ownLeg(tenantId, carrierId, legId);
+  if (l.state === "en_route" && to === "en_route") {
+    // a stop in between: "next" clocks it (arrive, then leave) before the delivery
+    const stops = await db.select().from(s.stops).where(eq(s.stops.orderId, l.orderId));
+    if (pendingMidStop(l, stops)) return advanceLeg(ctx, legId, "next", { source: "carrier", verified: false, note: note ?? undefined });
+  }
   const next = NEXT[l.state];
   if (!next || next.to !== to) throw new ValidationError(`this load is ${LEG_LABEL[l.state]}; the next step is ${next ? LEG_LABEL[next.to] : "none"}`);
   return advanceLeg(ctx, legId, to, { source: "carrier", verified: false, note: note ?? undefined });

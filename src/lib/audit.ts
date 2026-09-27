@@ -13,7 +13,8 @@ export function diff(before: Record<string, unknown> | null, after: Record<strin
     if (skip.has(key)) continue;
     const a = before ? before[key] : undefined;
     const b = after[key];
-    if (JSON.stringify(a) !== JSON.stringify(b)) changes[key] = { from: a ?? null, to: b ?? null };
+    if (JSON.stringify(a) === JSON.stringify(b)) continue;
+    changes[key] = key === "passwordHash" ? { from: a ? "(set)" : null, to: "(changed)" } : { from: a ?? null, to: b ?? null }; // never a hash in the log
   }
   return changes;
 }

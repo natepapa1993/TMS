@@ -77,3 +77,33 @@ test("CSV import: preview shows problems, commit adds, re-import updates instead
   await expect(page.locator("table tbody tr")).toHaveCount(1);
   await expect(page.locator("table")).toContainText("2117");
 });
+
+test("users and roles: the owner adds a safety manager with a password; she signs in, sees no Billing, and /billing says so instead of failing", async ({ page, browser }) => {
+  await signupFresh(page);
+  const email = `safety-${Date.now()}@e2e.local`;
+  await quickAdd(page, "users", "Add user", { name: "Sam Safety", email, role: "compliance", password: "safety-pass-123" });
+  await expect(page.locator("table")).toContainText("Sam Safety");
+  // the record screen never shows a hash and lets the owner leave the password alone
+  await page.click("table a:has-text('Sam Safety')");
+  await expect(page.locator("#f-password")).toHaveValue("");
+  await expect(page.locator("main")).not.toContainText("$2");
+  await page.locator("#f-phone").fill("+1 956 000 0009");
+  await page.click("button:has-text('Save changes')");
+  await expect(page.getByRole("status")).toContainText("Saved");
+
+  const ctx = await browser.newContext();
+  const p2 = await ctx.newPage();
+  await p2.goto("/login");
+  await p2.fill("#email", email);
+  await p2.fill("#password", "safety-pass-123");
+  await p2.click("button:has-text('Sign in')");
+  await p2.waitForURL("**/dispatch");
+  await expect(p2.locator("aside")).toContainText("Safety & compliance");
+  await expect(p2.locator("aside nav")).not.toContainText("Billing");
+  const r = await p2.goto("/billing");
+  expect(r?.status()).toBe(200);
+  await expect(p2.locator("main")).toContainText("Billing is not part of your role");
+  await p2.goto("/compliance");
+  await expect(p2.locator("main")).toContainText("Compliance");
+  await ctx.close();
+});

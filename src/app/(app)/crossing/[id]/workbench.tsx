@@ -91,8 +91,7 @@ export function CrossingWorkbench({ data }: { data: Data }) {
           <input className="input" value={details.bridge} onChange={(e) => setDetails({ ...details, bridge: e.target.value })} placeholder="World Trade" disabled={!canEdit} />
         </div>
         <div className="text-[12.5px] text-muted">
-          {c.arrivedYardAt ? `At the yard since ${fmt(c.arrivedYardAt)}` : "Not at the border yard yet"}
-          {c.departedYardAt ? ` · departed ${fmt(c.departedYardAt)}` : ""}
+          {c.departedYardAt ? `Left the yard ${fmt(c.departedYardAt)}${c.arrivedYardAt ? ` (there since ${fmt(c.arrivedYardAt)})` : ""}` : c.arrivedYardAt ? `At the yard since ${fmt(c.arrivedYardAt)}` : "Not at the border yard yet"}
           {data.broker ? ` · MX broker ${data.broker.name}${data.broker.patente ? ` (patente ${data.broker.patente})` : ""}` : " · customer has no MX broker on file"}
         </div>
         <div className="flex gap-2">
@@ -361,7 +360,7 @@ export function CrossingWorkbench({ data }: { data: Data }) {
       {/* timeline */}
       <div className="card p-4">
         <div className="h2 mb-2">Timeline</div>
-        <ul className="grid grid-cols-2 gap-x-8 gap-y-1">
+        <ul className="space-y-1 max-h-[420px] overflow-y-auto">
           {data.events.map((e) => (
             <li key={e.id} className="text-[12.5px] flex gap-2">
               <span className="text-faint whitespace-nowrap w-28">{fmt(e.at)}</span>

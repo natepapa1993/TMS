@@ -2,7 +2,7 @@
 
 /* Crossline design tokens — navy rail, slate ground, teal accent (Design canvas: premium restyle) */
 @theme {
-  --font-sans: "Manrope", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-sans: "Manrope Variable", "Manrope", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   --color-navy: #0f172a;
   --color-navy-soft: #1e293b;
   --color-ground: #f5f7fa;
@@ -403,4 +403,17 @@ body {
   background: var(--color-teal);
   box-shadow: 0 0 0 4px rgba(15, 118, 110, 0.2);
 }
+}
+
+/* ---- narrow screens (unlayered so it wins over utilities) ---- */
+/* form controls may shrink inside grid and flex tracks (their intrinsic width would otherwise push a phone layout wide) */
+.input,
+.select,
+.textarea {
+  min-width: 0;
+}
+/* a card that holds a table scrolls sideways instead of clipping columns */
+.card:has(> .table),
+.card:has(> div > .table) {
+  overflow-x: auto;
 }

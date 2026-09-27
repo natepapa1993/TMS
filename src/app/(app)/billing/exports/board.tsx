@@ -6,6 +6,8 @@ import { Confirm, Pill, Toast, useToast } from "@/components/ui";
 import { formatCents } from "@/data/fields";
 import { previewExportAction, createExportAction, reopenExportAction } from "../actions";
 
+const n = (c: number, word: string) => `${c} ${word}${c === 1 ? "" : "s"}`;
+
 type Run = { id: string; format: string; fromDate: string; toDate: string; onlyNew: boolean; counts: Record<string, number>; fileName: string; createdAt: string; reopenedAt: string | null };
 type Preview = { invoices: number; receipts: number; carrierBills: number; settlements: number; invoicedCents: number; receivedCents: number; billsCents: number };
 
@@ -107,7 +109,7 @@ export function Exports({ runs, defaults, role }: { runs: Run[]; defaults: { fro
                     {!r.onlyNew && <span className="text-faint"> (everything)</span>}
                   </td>
                   <td className="text-[12.5px]">
-                    {r.counts.invoices} invoices · {r.counts.receipts} receipts · {r.counts.carrierBills} carrier bills · {r.counts.settlements} settlements
+                    {n(r.counts.invoices, "invoice")} · {n(r.counts.receipts, "receipt")} · {n(r.counts.carrierBills, "carrier bill")} · {n(r.counts.settlements, "settlement")}
                   </td>
                   <td className="space-x-1">
                     {r.format === "iif" ? (

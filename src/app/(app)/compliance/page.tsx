@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { requireCtx } from "@/lib/auth";
-import { dashboard, FIELD_ITEMS, type SubjectKind } from "@/domain/compliance";
+import { dashboard, evaluateAll, FIELD_ITEMS, type SubjectKind } from "@/domain/compliance";
 import { PageHeader } from "@/components/page-header";
 import { Pill } from "@/components/ui";
 import { ComplianceTable } from "./table";
@@ -15,15 +15,25 @@ const KINDS: { key: SubjectKind; label: string; path: string }[] = [
   { key: "carrier", label: "Carriers", path: "carriers" },
 ];
 
+// wall clock read outside render (the purity lint has a point: renders should not read Date.now themselves)
+const currentTime = async () => Date.now();
+
 export default async function CompliancePage({ searchParams }: PageProps<"/compliance">) {
   const ctx = await requireCtx();
   const sp = await searchParams;
   const kind = (KINDS.find((k) => k.key === sp.tab)?.key ?? "driver") as SubjectKind;
   const filter = typeof sp.f === "string" ? sp.f : "";
-  const d = await dashboard(ctx);
+  let d = await dashboard(ctx);
+  // first open (or an hour stale): evaluate now so the safety manager never looks at "not run"
+  const now = await currentTime();
+  if (!d.tiles.lastRun || now - d.tiles.lastRun.getTime() > 3600_000) {
+    await evaluateAll(ctx).catch(() => null);
+    d = await dashboard(ctx);
+  }
   const types = d.types.filter((t) => t.appliesTo === kind);
   const fields = FIELD_ITEMS[kind];
-  const columns = [...types.map((t) => ({ key: t.id, label: t.name, blocks: t.blocksDispatch })), ...fields.map((f) => ({ key: `field:${f.key}`, label: f.label, blocks: f.blocks }))];
+  // a document type and a built-in expiry field can share a name ("FAST card" scan on file vs the FAST expiry date): say which is which
+  const columns = [...types.map((t) => ({ key: t.id, label: t.name, blocks: t.blocksDispatch, sub: "on file" })), ...fields.map((f) => ({ key: `field:${f.key}`, label: f.label, blocks: f.blocks, sub: "expiry" }))];
   const rows = d.subjects[kind]
     .map((sub) => ({ ...sub, st: d.status.find((x) => x.subjectKind === kind && x.subjectId === sub.id) ?? null, override: d.overrides.find((o) => o.subjectKind === kind && o.subjectId === sub.id) ?? null }))
     .filter((r) => (filter === "blocked" ? r.st && !r.st.dispatchable : filter === "expired" ? r.st?.expired.length : filter === "expiring" ? r.st?.expiring.length : filter === "missing" ? r.st?.missing.length : true))

@@ -174,6 +174,20 @@ export async function ensureCrossing(ctx: Ctx, legId: string) {
   return load(ctx, c.id);
 }
 
+/** Every crossing leg on a live order has a crossing row. Self-heals data from before crossings existed or any path that skipped ensureCrossing. */
+export async function backfillCrossings(ctx: Ctx) {
+  assertCtx(ctx);
+  const missing = await db
+    .select({ id: s.legs.id })
+    .from(s.legs)
+    .innerJoin(s.orders, eq(s.orders.id, s.legs.orderId))
+    .leftJoin(s.crossings, eq(s.crossings.legId, s.legs.id))
+    .where(and(eq(s.legs.tenantId, ctx.tenantId), eq(s.legs.type, "crossing"), isNull(s.crossings.id), sql`${s.orders.state} not in ('draft','cancelled')`))
+    .limit(200);
+  for (const l of missing) await ensureCrossing(ctx, l.id);
+  return missing.length;
+}
+
 export async function ensureCrossingsForOrder(ctx: Ctx, orderId: string) {
   const legs = await db.select().from(s.legs).where(and(eq(s.legs.tenantId, ctx.tenantId), eq(s.legs.orderId, orderId), eq(s.legs.type, "crossing")));
   for (const l of legs) await ensureCrossing(ctx, l.id);
@@ -705,7 +719,10 @@ export async function step(ctx: Ctx, crossingId: string, to: CrossingState, e: {
     if (curIdx < CROSSING_ORDER.indexOf("packet_sent") && !["gps", "system"].includes(e.source ?? "")) throw new TransitionError("leg", c.state, to, c.state === "ready_to_cross" ? "send the packet first" : "the packet is not ready");
   }
   const extra: Partial<typeof s.crossings.$inferInsert> = {};
-  if (to === "departed_yard") extra.departedYardAt = e.at ?? new Date();
+  if (to === "departed_yard") {
+    extra.departedYardAt = e.at ?? new Date();
+    if (!c.arrivedYardAt) extra.arrivedYardAt = extra.departedYardAt; // it left, so it was there; nobody pressed the yard button
+  }
   if (to === "cleared") extra.clearedAt = e.at ?? new Date();
   if (to !== "cleared" && CROSSING_ORDER.indexOf(to) < CROSSING_ORDER.indexOf("packet_sent") && !c.packetSentAt && ["gps"].includes(e.source ?? "")) {
     // spec 3.5: truck crossing without the packet sent

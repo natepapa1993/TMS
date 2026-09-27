@@ -49,7 +49,7 @@ export default async function SettingsPage({ searchParams }: PageProps<"/setting
         )}
         <section>
           <div className="eyebrow mb-2">Company &amp; connections</div>
-          <div className="grid grid-cols-2 xl:grid-cols-3 gap-3">
+          <div className="grid sm:grid-cols-2 xl:grid-cols-3 gap-3">
             <Link href="/settings/company" className="card p-4 hover:border-teal transition-colors flex items-start justify-between gap-3">
               <div>
                 <div className="font-extrabold">Company</div>
@@ -67,7 +67,7 @@ export default async function SettingsPage({ searchParams }: PageProps<"/setting
         {SECTIONS.map((sec) => (
           <section key={sec}>
             <div className="eyebrow mb-2">{sec}</div>
-            <div className="grid grid-cols-2 xl:grid-cols-3 gap-3">
+            <div className="grid sm:grid-cols-2 xl:grid-cols-3 gap-3">
               {kinds
                 .filter((k) => KIND_META[k].section === sec)
                 .map((k) => (

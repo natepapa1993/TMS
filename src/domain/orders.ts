@@ -563,9 +563,64 @@ export async function declineLeg(ctx: Ctx, legId: string, reason: string, source
 
 export type AdvanceEvent = { source?: EventSource; verified?: boolean; at?: Date; lat?: string; lng?: string; note?: string; data?: Record<string, unknown> };
 
+// ---------- intermediate stops (a tailgate leg with three or more stops) ----------
+
+type StopLike = { id: string; seq: number; name: string; arrivedAt: Date | null; departedAt: Date | null };
+
+/** Stops strictly between a leg's first and last stop, in driving order. */
+export function midStops<T extends StopLike>(leg: Pick<Leg, "fromStopId" | "toStopId">, stops: T[]): T[] {
+  const from = stops.find((x) => x.id === leg.fromStopId);
+  const to = stops.find((x) => x.id === leg.toStopId);
+  if (!from || !to) return [];
+  return stops.filter((x) => x.seq > from.seq && x.seq < to.seq).sort((a, b) => a.seq - b.seq);
+}
+
+/** The next intermediate stop the truck still has to clock: arrive at it, then leave it. Only while the leg is en route. */
+export function pendingMidStop<T extends StopLike>(leg: Pick<Leg, "fromStopId" | "toStopId" | "state">, stops: T[]): { stop: T; which: "arrived" | "departed" } | null {
+  if (leg.state !== "en_route") return null;
+  for (const st of midStops(leg, stops)) {
+    if (!st.arrivedAt) return { stop: st, which: "arrived" };
+    if (!st.departedAt) return { stop: st, which: "departed" };
+  }
+  return null;
+}
+
+/** Clock an intermediate stop (arrived / departed). The leg stays en route; shipments that ride the trip follow the clocks. */
+export async function stampStop(ctx: Ctx, legId: string, stopId: string, which: "arrived" | "departed", ev: AdvanceEvent = {}) {
+  assertCtx(ctx);
+  return db.transaction(async (tx) => {
+    const leg = await loadLeg(tx, ctx, legId);
+    const stops = await tx.select().from(s.stops).where(and(eq(s.stops.tenantId, ctx.tenantId), eq(s.stops.orderId, leg.orderId)));
+    const stop = midStops(leg, stops).find((x) => x.id === stopId);
+    if (!stop) throw new ValidationError("that stop is not between this leg's pickup and delivery", "stopId");
+    if (leg.state !== "en_route") throw new TransitionError("leg", leg.state, which, "the truck has to be en route to clock a stop in between");
+    if (which === "arrived" && stop.arrivedAt) throw new ValidationError(`already arrived at ${stop.name}`);
+    if (which === "departed" && !stop.arrivedAt) throw new ValidationError(`arrive at ${stop.name} first`);
+    if (which === "departed" && stop.departedAt) throw new ValidationError(`already left ${stop.name}`);
+    const at = ev.at ?? new Date();
+    await tx
+      .update(s.stops)
+      .set({ ...(which === "arrived" ? { arrivedAt: at } : { departedAt: at }), updatedAt: new Date(), updatedBy: ctx.userId })
+      .where(eq(s.stops.id, stop.id));
+    await tx.insert(s.legEvents).values({ id: newId(), tenantId: ctx.tenantId, legId: leg.id, orderId: leg.orderId, at, kind: "stop", fromState: leg.state, toState: leg.state, source: ev.source ?? "dispatcher", verified: ev.verified ?? false, lat: ev.lat, lng: ev.lng, userId: ctx.userId, note: `${which === "arrived" ? "Arrived at" : "Left"} ${stop.name}`, data: { stopId: stop.id, which } });
+    await writeAudit(tx, ctx, "stop", stop.id, "update", { [which === "arrived" ? "arrivedAt" : "departedAt"]: { from: null, to: at } }, `${which === "arrived" ? "arrived at" : "left"} ${stop.name} · leg ${leg.seq}`);
+    await recomputeOrder(tx, ctx, leg.orderId);
+    return leg;
+  });
+}
+
 /** Move a leg one step (or to an explicit forward state). Writes the stop timestamps. */
 export async function advanceLeg(ctx: Ctx, legId: string, to: LegState | "next", ev: AdvanceEvent = {}) {
   assertCtx(ctx);
+  // "next" while en route with a stop still to clock in between = clock that stop, not the delivery
+  if (to === "next") {
+    const [leg] = await db.select().from(s.legs).where(and(eq(s.legs.tenantId, ctx.tenantId), eq(s.legs.id, legId))).limit(1);
+    if (leg?.state === "en_route") {
+      const stops = await db.select().from(s.stops).where(and(eq(s.stops.tenantId, ctx.tenantId), eq(s.stops.orderId, leg.orderId)));
+      const mid = pendingMidStop(leg, stops);
+      if (mid) return stampStop(ctx, legId, mid.stop.id, mid.which, ev);
+    }
+  }
   return db.transaction(async (tx) => {
     const leg = await loadLeg(tx, ctx, legId);
     let target: LegState;

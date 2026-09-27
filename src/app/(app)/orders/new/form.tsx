@@ -6,6 +6,7 @@ import { createOrderAction, type StopForm } from "../actions";
 type Loc = { id: string; name: string; country: string; kind: string; address: { line1?: string; city?: string; state?: string; postalCode?: string; country?: string } };
 const STOP_LABEL: Record<string, string> = { pickup: "Pickup", delivery: "Delivery", yard: "Yard", border_yard: "Border yard", transload: "Transload", customs: "Customs", terminal: "Terminal" };
 const REF_KEYS = ["rate_con", "po", "asn", "shipment", "reference"];
+const REF_LABEL: Record<string, string> = { rate_con: "Rate con", po: "PO", asn: "ASN", shipment: "Shipment", reference: "Reference" };
 const fmtAddr = (a: Loc["address"]) => [a.line1, a.city, [a.state, a.postalCode].filter(Boolean).join(" "), a.country].filter(Boolean).join(", ");
 
 export function OrderForm({ customers, entities, locations, templates }: { customers: { id: string; name: string; kind: string }[]; entities: { id: string; name: string }[]; locations: Loc[]; templates: { key: string; label: string; description: string; stops: string[] }[] }) {
@@ -37,7 +38,7 @@ export function OrderForm({ customers, entities, locations, templates }: { custo
     });
 
   return (
-    <div className="grid grid-cols-[1fr_340px] gap-5 items-start">
+    <div className="grid lg:grid-cols-[1fr_340px] gap-5 items-start [&>*]:min-w-0">
       <div className="space-y-4">
         <div className="card p-5">
           <div className="h2 mb-3">Who & what</div>
@@ -105,10 +106,10 @@ export function OrderForm({ customers, entities, locations, templates }: { custo
             </div>
           </div>
           <div className="eyebrow mt-4 mb-2">References</div>
-          <div className="grid grid-cols-5 gap-2">
+          <div className="grid grid-cols-2 md:grid-cols-5 gap-2">
             {REF_KEYS.map((k) => (
               <div key={k}>
-                <label className="label capitalize">{k.replace("_", " ")}</label>
+                <label className="label">{REF_LABEL[k] ?? k.replace("_", " ")}</label>
                 <input className="input" value={refs[k] ?? ""} onChange={(e) => setRefs({ ...refs, [k]: e.target.value })} />
               </div>
             ))}
@@ -142,7 +143,7 @@ export function OrderForm({ customers, entities, locations, templates }: { custo
                     ))}
                   </select>
                 </div>
-                <div className="grid grid-cols-[1.2fr_2fr_80px] gap-2">
+                <div className="grid grid-cols-2 md:grid-cols-[1.2fr_2fr_80px] gap-2">
                   <input className="input" placeholder="Name" value={st.name} onChange={(e) => setStop(i, { name: e.target.value })} aria-invalid={err?.field === "stops" && !st.name} />
                   <input className="input" placeholder="Street, City, ST 00000" value={st.address} onChange={(e) => setStop(i, { address: e.target.value })} />
                   <select className="select" value={st.country} onChange={(e) => setStop(i, { country: e.target.value })}>
@@ -150,7 +151,7 @@ export function OrderForm({ customers, entities, locations, templates }: { custo
                     <option>US</option>
                   </select>
                 </div>
-                <div className="grid grid-cols-[1fr_1fr_auto_1fr] gap-2 mt-2">
+                <div className="grid grid-cols-2 md:grid-cols-[1fr_1fr_auto_1fr] gap-2 mt-2">
                   <div>
                     <label className="label">Window from</label>
                     <input type="datetime-local" className="input" value={st.windowStart} onChange={(e) => setStop(i, { windowStart: e.target.value })} />

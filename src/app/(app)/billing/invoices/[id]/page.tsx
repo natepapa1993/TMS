@@ -38,7 +38,7 @@ export default async function InvoicePage({ params }: PageProps<"/billing/invoic
         {inv.issuedAt ? ` · issued ${inv.issuedAt.toISOString().slice(0, 10)} · due ${inv.dueAt?.toISOString().slice(0, 10)}` : ""}
         {inv.sentTo ? ` · sent to ${inv.sentTo}` : ""}
       </PageHeader>
-      <div className="px-7 pb-10 grid grid-cols-[1fr_340px] gap-5 items-start">
+      <div className="px-7 pb-10 grid lg:grid-cols-[1fr_340px] gap-5 items-start [&>*]:min-w-0">
         <div className="space-y-4">
           <div className="card overflow-hidden">
             <table className="table">

@@ -6,7 +6,7 @@ import type { RecordKind } from "./records";
  * (grouped sections, everything editable), CSV import mapping, and value coercion.
  */
 
-export type FieldType = "text" | "number" | "cents" | "date" | "select" | "boolean" | "textarea" | "ref" | "email" | "phone" | "address" | "list";
+export type FieldType = "text" | "number" | "cents" | "date" | "select" | "boolean" | "textarea" | "ref" | "email" | "phone" | "address" | "list" | "password";
 
 export type Field = {
   name: string;
@@ -78,6 +78,7 @@ export const FIELDS: Record<RecordKind, Field[]> = {
       ],
     },
     { name: "phone", label: "Phone", type: "phone", group: "User" },
+    { name: "password", label: "Password", type: "password", required: true, quick: true, group: "Sign-in", help: "At least 10 characters. On this screen, leave it blank to keep the current one." },
   ],
   location: [
     { name: "name", label: "Name", type: "text", required: true, quick: true, column: true, group: "Location", unique: true },
@@ -515,6 +516,12 @@ export function coerce(kind: RecordKind, raw: Record<string, string | undefined 
     if (!present && opts.partial) continue;
     if (!present && f.type === "boolean") continue; // a checkbox the form did not show keeps the database default (quick-add)
     const v = (raw[f.name] ?? "").toString().trim();
+    if (f.type === "password") {
+      // never a column: the action hashes raw.password itself. Required on create, "blank keeps it" on edit.
+      if (!v && f.required && !opts.partial) errors[f.name] = `${f.label} is required`;
+      else if (v && v.length < 10) errors[f.name] = `${f.label} needs at least 10 characters`;
+      continue;
+    }
     if (!v) {
       if (f.required && !opts.partial) errors[f.name] = `${f.label} is required`;
       else if (f.type === "boolean") values[f.name] = false;

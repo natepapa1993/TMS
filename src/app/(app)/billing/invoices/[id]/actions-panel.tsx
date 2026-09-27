@@ -29,6 +29,8 @@ export function InvoiceActions({ inv, role }: { inv: Inv; role: string }) {
   return (
     <aside className="card p-4 space-y-2 sticky top-5">
       <div className="eyebrow mb-1">Actions</div>
+      {s === "paid" && <div className="text-[13px] text-muted">Paid in full. Nothing left to do here.</div>}
+      {s === "void" && <div className="text-[13px] text-muted">Voided. It stays for the record; nothing can be done to it.</div>}
       {s === "draft" && (
         <button className="btn btn-primary w-full justify-center" disabled={pending} onClick={() => (inv.currency === "MXN" ? setPopup("issue") : run("Issued", () => issueInvoiceAction(inv.id)))}>
           Issue invoice

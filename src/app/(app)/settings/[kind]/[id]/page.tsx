@@ -57,7 +57,7 @@ export default async function RecordPage({ params }: PageProps<"/settings/[kind]
           </span>
         }
       />
-      <div className="px-7 pb-10 grid grid-cols-[1fr_320px] gap-5 items-start">
+      <div className="px-7 pb-10 grid lg:grid-cols-[1fr_320px] gap-5 items-start [&>*]:min-w-0">
         <div className="card p-5">
           <RecordEditor
             kind={kind}

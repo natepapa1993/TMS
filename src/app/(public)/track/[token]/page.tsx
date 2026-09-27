@@ -97,15 +97,23 @@ export default async function TrackPage({ params }: PageProps<"/track/[token]">)
         <div className="card p-5 mt-4">
           <div className="eyebrow mb-2">Updates</div>
           <ul className="space-y-1.5 text-[13px]">
-            {customerEvents.slice(0, 12).map((e, i) => (
+            {customerEvents.slice(0, 12).map((e, i) => {
+              // on a multi-leg move, say which stop a leg's step refers to ("Delivered" at the border yard is not the final delivery)
+              const leg = v.legs.length > 1 ? v.legs.find((l) => l.id === e.legId) : null;
+              const stopName = leg ? v.stops.find((st) => st.id === (["at_delivery", "completed", "en_route"].includes(e.toState ?? "") ? leg.toStopId : leg.fromStopId))?.name : null;
+              return (
               <li key={i} className="flex justify-between gap-3">
-                <span className="font-semibold">{LEG_LABEL[(e.toState ?? "unassigned") as LegState]}</span>
+                <span className="font-semibold">
+                  {LEG_LABEL[(e.toState ?? "unassigned") as LegState]}
+                  {stopName && <span className="text-muted font-normal"> · {stopName}</span>}
+                </span>
                 <span className="text-muted whitespace-nowrap">
                   {fmt(e.at)}
                   {e.verified ? " · GPS" : ""}
                 </span>
               </li>
-            ))}
+              );
+            })}
           </ul>
         </div>
       )}

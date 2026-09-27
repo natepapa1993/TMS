@@ -50,3 +50,4 @@ playwright-report/
 # playwright
 /test-results/
 /playwright-report/
+scripts/.walk/

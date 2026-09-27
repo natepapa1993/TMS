@@ -78,7 +78,7 @@ export default async function OrderPage({ params }: PageProps<"/orders/[id]">) {
         {order.holdReason ? ` · on hold: ${order.holdReason}` : ""}
         {order.cancelReason ? ` · cancelled: ${order.cancelReason}` : ""}
       </PageHeader>
-      <div className="px-7 pb-10 grid grid-cols-[1fr_360px] gap-5 items-start">
+      <div className="px-7 pb-10 grid lg:grid-cols-[1fr_360px] gap-5 items-start [&>*]:min-w-0">
         <div className="space-y-4">
           <div className="card p-5">
             <div className="h2 mb-3">Order</div>
@@ -95,42 +95,44 @@ export default async function OrderPage({ params }: PageProps<"/orders/[id]">) {
           {billingView && <Charges orderId={id} charges={JSON.parse(JSON.stringify(chargeRows))} docs={orderDocs} requiredDocs={(cust?.requiredDocs as string[] | undefined) ?? ["POD", "BOL", "RATE_CON"]} pnl={pnl} locked={["invoiced", "paid"].includes(order.state)} role={ctx.role} currency={order.currency} />}
           <div className="card p-5">
             <div className="h2 mb-3">Legs</div>
-            <table className="table -mx-5 w-[calc(100%+40px)]">
-              <thead>
-                <tr>
-                  <th>#</th>
-                  <th>Type</th>
-                  <th>From → To</th>
-                  <th>Who</th>
-                  <th>State</th>
-                  <th>Miles</th>
-                  <th>Sent</th>
-                  <th>Done</th>
-                </tr>
-              </thead>
-              <tbody>
-                {legs.map((l) => (
-                  <tr key={l.id}>
-                    <td className="mono">{l.seq}</td>
-                    <td className="font-bold">{LEG_TYPE_LABEL[l.type]}</td>
-                    <td>
-                      {stopById.get(l.fromStopId ?? "")?.name} → {stopById.get(l.toStopId ?? "")?.name}
-                    </td>
-                    <td>
-                      {l.assigneeKind === "truck" ? `Unit ${tName.get(l.truckId ?? "")}${l.driverId ? ` · ${dName.get(l.driverId)}` : ""}${l.coDriverId ? ` / ${dName.get(l.coDriverId)}` : ""}` : l.assigneeKind === "carrier" ? `${carName.get(l.carrierId ?? "")}${l.carrierRateCents != null ? ` · ${formatCents(l.carrierRateCents)}` : ""}` : <span className="text-faint">—</span>}
-                    </td>
-                    <td>
-                      <Pill tone={l.state === "completed" ? "green" : l.state === "declined" ? "red" : l.state === "unassigned" ? "slate" : "teal"}>{LEG_LABEL[l.state]}</Pill>
-                    </td>
-                    <td>
-                      <LegMiles legId={l.id} miles={l.plannedMiles} locked={readOnly || ["invoiced", "paid"].includes(order.state)} />
-                    </td>
-                    <td className="text-muted text-[12.5px]">{l.dispatchedAt ? new Date(l.dispatchedAt).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) : "—"}</td>
-                    <td className="text-muted text-[12.5px]">{l.completedAt ? new Date(l.completedAt).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) : "—"}</td>
+            <div className="-mx-5 overflow-x-auto">
+              <table className="table">
+                <thead>
+                  <tr>
+                    <th>#</th>
+                    <th>Type</th>
+                    <th>From → To</th>
+                    <th>Who</th>
+                    <th>State</th>
+                    <th>Miles</th>
+                    <th>Sent</th>
+                    <th>Done</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody>
+                  {legs.map((l) => (
+                    <tr key={l.id}>
+                      <td className="mono">{l.seq}</td>
+                      <td className="font-bold">{LEG_TYPE_LABEL[l.type]}</td>
+                      <td>
+                        {stopById.get(l.fromStopId ?? "")?.name} → {stopById.get(l.toStopId ?? "")?.name}
+                      </td>
+                      <td>
+                        {l.assigneeKind === "truck" ? `Unit ${tName.get(l.truckId ?? "")}${l.driverId ? ` · ${dName.get(l.driverId)}` : ""}${l.coDriverId ? ` / ${dName.get(l.coDriverId)}` : ""}` : l.assigneeKind === "carrier" ? `${carName.get(l.carrierId ?? "")}${l.carrierRateCents != null ? ` · ${formatCents(l.carrierRateCents)}` : ""}` : <span className="text-faint">—</span>}
+                      </td>
+                      <td>
+                        <Pill tone={l.state === "completed" ? "green" : l.state === "declined" ? "red" : l.state === "unassigned" ? "slate" : "teal"}>{LEG_LABEL[l.state]}</Pill>
+                      </td>
+                      <td>
+                        <LegMiles legId={l.id} miles={l.plannedMiles} locked={readOnly || ["invoiced", "paid"].includes(order.state)} />
+                      </td>
+                      <td className="text-muted text-[12.5px]">{l.dispatchedAt ? new Date(l.dispatchedAt).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) : "—"}</td>
+                      <td className="text-muted text-[12.5px]">{l.completedAt ? new Date(l.completedAt).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) : "—"}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
             <div className="help mt-2">
               Assign, send and advance legs from{" "}
               <Link href="/dispatch" className="text-teal font-semibold">

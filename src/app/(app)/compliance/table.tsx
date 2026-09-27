@@ -12,7 +12,7 @@ type Row = { id: string; label: string; sub: string; st: { dispatchable: boolean
 
 const tone: Record<string, string> = { ok: "pill-green", expiring: "pill-amber", expired: "pill-red", missing: "pill-amber", snoozed: "pill-slate" };
 
-export function ComplianceTable({ kind, path, columns, rows, role }: { kind: SubjectKind; path: string; columns: { key: string; label: string; blocks: boolean }[]; rows: Row[]; role: string }) {
+export function ComplianceTable({ kind, path, columns, rows, role }: { kind: SubjectKind; path: string; columns: { key: string; label: string; blocks: boolean; sub?: string }[]; rows: Row[]; role: string }) {
   const router = useRouter();
   const t = useToast();
   const [snoozeFor, setSnoozeFor] = useState<{ id: string; key: string; label: string } | null>(null);
@@ -32,6 +32,7 @@ export function ComplianceTable({ kind, path, columns, rows, role }: { kind: Sub
               <th key={c.key} title={c.blocks ? "blocks dispatch" : ""}>
                 {c.label}
                 {c.blocks ? " •" : ""}
+                {c.sub && <div className="normal-case tracking-normal font-semibold text-[10px] text-faint">{c.sub}</div>}
               </th>
             ))}
           </tr>

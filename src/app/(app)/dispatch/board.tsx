@@ -76,9 +76,16 @@ function legTone(state: LegState): "slate" | "teal" | "amber" | "red" | "green" 
   if (state === "dispatched") return "amber";
   return "teal";
 }
-function forwardLabel(state: LegState): string | null {
+function forwardLabel(leg: Pick<Leg, "state" | "fromStopId" | "toStopId">, stops: Stop[]): string | null {
+  // a stop in between (tailgate leg with three or more stops) is clocked before the delivery
+  if (leg.state === "en_route") {
+    const from = stops.find((x) => x.id === leg.fromStopId);
+    const to = stops.find((x) => x.id === leg.toStopId);
+    const mid = from && to ? stops.filter((x) => x.seq > from.seq && x.seq < to.seq).sort((a, b) => a.seq - b.seq).find((x) => !x.departedAt) : undefined;
+    if (mid) return mid.arrivedAt ? `Leaving ${mid.name}` : `Arrived at ${mid.name}`;
+  }
   const map: Partial<Record<LegState, string>> = { dispatched: "Mark accepted", accepted: "Rolling to pickup", en_route_to_pickup: "Arrived at pickup", at_pickup: "Loaded", loaded: "En route", en_route: "Arrived at delivery", at_delivery: "Delivered" };
-  return map[state] ?? null;
+  return map[leg.state] ?? null;
 }
 
 export function DispatchBoard({ data }: { data: BoardData }) {
@@ -140,13 +147,13 @@ export function DispatchBoard({ data }: { data: BoardData }) {
   return (
     <div className="flex min-h-screen">
       <div className="flex-1 min-w-0">
-        <div className="px-7 pt-6 pb-3 flex items-end justify-between gap-4">
+        <div className="px-7 pt-6 pb-3 flex items-end justify-between gap-4 flex-wrap">
           <div>
             <div className="eyebrow mb-1">{new Date().toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" })}</div>
             <div className="h1">Dispatch</div>
           </div>
-          <div className="flex items-center gap-2">
-            <input id="board-search" className="input w-60" placeholder="Search order, customer, unit…  /" value={q} onChange={(e) => setQ(e.target.value)} />
+          <div className="flex items-center gap-2 flex-wrap">
+            <input id="board-search" className="input w-60 max-w-full" placeholder="Search order, customer, unit…  /" value={q} onChange={(e) => setQ(e.target.value)} />
             <Link href="/messages" className={`btn ${data.messages ? "border-amber text-amber font-bold" : ""}`} title="What drivers and carriers wrote to the company WhatsApp">
               Messages{data.messages ? ` · ${data.messages}` : ""}
             </Link>
@@ -160,7 +167,7 @@ export function DispatchBoard({ data }: { data: BoardData }) {
             )}
           </div>
         </div>
-        <div className="px-7 pb-3 flex items-center gap-1.5">
+        <div className="px-7 pb-3 flex items-center gap-1.5 flex-wrap">
           {STAGES.map((s) => (
             <button key={s.key} className="stage-tab" data-active={stage === s.key} onClick={() => setStage(s.key)} title={s.hint}>
               {s.label} <span className="count">{counts[s.key]}</span>
@@ -323,7 +330,7 @@ function SidePanel({ r, data, busy, canDispatch, onClose, onPopup, run }: { r: R
     if (hold) primary = { label: "Release hold", onClick: () => run("Released", () => A.releaseAction(r.order.id)) };
     else if (nl.state === "unassigned" || nl.state === "declined") primary = { label: `Assign ${LEG_TYPE_LABEL[nl.type]} leg`, onClick: () => onPopup({ kind: "assign", legId: nl.id }) };
     else if (nl.state === "planned") primary = { label: nl.assigneeKind === "carrier" ? "Send to carrier" : "Send to driver", onClick: () => run("Sent", () => A.dispatchAction(nl.id)) };
-    else if (forwardLabel(nl.state)) primary = { label: forwardLabel(nl.state)!, onClick: () => run(LEG_LABEL[STAGE_OF_LEG[nl.state] === "dispatched" ? nl.state : nl.state], () => A.advanceAction(nl.id, "next")) };
+    else if (forwardLabel(nl, r.stops)) primary = { label: forwardLabel(nl, r.stops)!, onClick: () => run(LEG_LABEL[STAGE_OF_LEG[nl.state] === "dispatched" ? nl.state : nl.state], () => A.advanceAction(nl.id, "next")) };
   }
   const stopById = new Map(r.stops.map((s) => [s.id, s]));
 
@@ -470,9 +477,9 @@ function SidePanel({ r, data, busy, canDispatch, onClose, onPopup, run }: { r: R
                           </button>
                         </>
                       )}
-                      {forwardLabel(l.state) && l.state !== "dispatched" && (
+                      {forwardLabel(l, r.stops) && l.state !== "dispatched" && (
                         <button className="btn btn-sm" onClick={() => run("Updated", () => A.advanceAction(l.id, "next"))}>
-                          {forwardLabel(l.state)}
+                          {forwardLabel(l, r.stops)}
                         </button>
                       )}
                       {l.assigneeKind === "truck" && (

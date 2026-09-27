@@ -37,4 +37,17 @@ describe("field definitions", () => {
   it("select options never repeat a value", () => {
     for (const k of kinds) for (const f of FIELDS[k]) if (f.options) expect(new Set(f.options.map((o) => o.value)).size).toBe(f.options.length);
   });
+
+  it("a user's password is validated but never becomes a column; blank on edit keeps the current one", () => {
+    const missing = coerce("user", { name: "Dee", email: "dee@x.test", role: "dispatcher" });
+    expect(missing.errors.password).toMatch(/required/);
+    const short = coerce("user", { name: "Dee", email: "dee@x.test", role: "dispatcher", password: "short" });
+    expect(short.errors.password).toMatch(/10 characters/);
+    const ok = coerce("user", { name: "Dee", email: "dee@x.test", role: "dispatcher", password: "long-enough-1" });
+    expect(ok.ok).toBe(true);
+    expect("password" in ok.values).toBe(false);
+    const edit = coerce("user", { name: "Dee", password: "" }, { partial: true });
+    expect(edit.ok).toBe(true);
+    expect("password" in edit.values).toBe(false);
+  });
 });

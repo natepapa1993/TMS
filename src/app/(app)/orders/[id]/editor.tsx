@@ -6,6 +6,7 @@ import { updateOrderAction, updateStopAction } from "../actions";
 import { bookAction, cancelAction, holdAction, releaseAction, setLegMilesAction } from "../../dispatch/actions";
 import { Confirm, Toast, useToast } from "@/components/ui";
 
+const REF_LABEL: Record<string, string> = { rate_con: "Rate con", po: "PO", asn: "ASN", shipment: "Shipment", reference: "Reference" };
 type Order = { id: string; state: string; customerId: string | null; brokerId: string | null; billingEntityId: string | null; equipment: string; rateCents: number | null; rateTbd: boolean; currency: string; fuelRule: string; fuelPct: number | null; tollsFeesCents: number | null; refs: Record<string, string>; cargoNote: string | null; updatedAt: string };
 type Stop = { id: string; type: string; name: string; country: string; address: { line1?: string; city?: string; state?: string; postalCode?: string; country?: string } | null; windowStart: string | null; windowEnd: string | null; appointment: boolean; contact: string | null; notes: string | null; arrivedAt: string | null; departedAt: string | null };
 
@@ -21,7 +22,7 @@ export function OrderEditor({ order, customers, entities, readOnly }: { order: O
   const [pending, start] = useTransition();
   return (
     <fieldset disabled={readOnly} className="contents">
-      <div className="grid grid-cols-3 gap-3">
+      <div className="grid md:grid-cols-3 gap-3">
         <div>
           <label className="label">Bill to (customer or broker)</label>
           <select className="select" value={f.customerId} onChange={(e) => setF({ ...f, customerId: e.target.value })}>
@@ -103,10 +104,10 @@ export function OrderEditor({ order, customers, entities, readOnly }: { order: O
         </div>
       </div>
       <div className="eyebrow mt-4 mb-2">References</div>
-      <div className="grid grid-cols-5 gap-2">
+      <div className="grid grid-cols-2 md:grid-cols-5 gap-2">
         {Object.keys(refs).map((k) => (
           <div key={k}>
-            <label className="label capitalize">{k.replace(/_/g, " ")}</label>
+            <label className="label">{REF_LABEL[k] ?? k.replace(/_/g, " ")}</label>
             <input className="input" value={refs[k]} onChange={(e) => setRefs({ ...refs, [k]: e.target.value })} />
           </div>
         ))}
@@ -163,7 +164,7 @@ export function StopEditor({ orderId, index, stop, readOnly }: { orderId: string
       </div>
       {open && (
         <fieldset disabled={readOnly} className="px-3 pb-3 border-t border-line pt-3">
-          <div className="grid grid-cols-[1.2fr_2fr_80px] gap-2">
+          <div className="grid grid-cols-2 md:grid-cols-[1.2fr_2fr_80px] gap-2">
             <input className="input" placeholder="Name" value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} />
             <input className="input" placeholder="Street, City, ST 00000" value={f.address} onChange={(e) => setF({ ...f, address: e.target.value })} />
             <select className="select" value={f.country} onChange={(e) => setF({ ...f, country: e.target.value })}>
@@ -171,7 +172,7 @@ export function StopEditor({ orderId, index, stop, readOnly }: { orderId: string
               <option>US</option>
             </select>
           </div>
-          <div className="grid grid-cols-[1fr_1fr_auto_1fr] gap-2 mt-2">
+          <div className="grid grid-cols-2 md:grid-cols-[1fr_1fr_auto_1fr] gap-2 mt-2">
             <div>
               <label className="label">Window from</label>
               <input type="datetime-local" className="input" value={f.windowStart} onChange={(e) => setF({ ...f, windowStart: e.target.value })} />

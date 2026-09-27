@@ -59,7 +59,7 @@ export function ImportWizard({ kind, fields, template, listPath }: { kind: Recor
     );
 
   return (
-    <div className="grid grid-cols-[1fr_300px] gap-5 items-start">
+    <div className="grid lg:grid-cols-[1fr_300px] gap-5 items-start [&>*]:min-w-0">
       <div className="space-y-4">
         {!preview ? (
           <div className="card p-5">

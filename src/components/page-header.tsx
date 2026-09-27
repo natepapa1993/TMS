@@ -8,7 +8,7 @@ export function PageHeader({ eyebrow, title, actions, children }: { eyebrow?: Re
         <div className="h1">{title}</div>
         {children && <div className="text-muted mt-1 text-[13.5px]">{children}</div>}
       </div>
-      {actions && <div className="flex items-center gap-2">{actions}</div>}
+      {actions && <div className="flex items-center gap-2 flex-wrap">{actions}</div>}
     </div>
   );
 }

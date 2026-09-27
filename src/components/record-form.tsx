@@ -76,7 +76,8 @@ export function RecordForm({
     e.preventDefault();
     setTop(null);
     const missing: Record<string, string> = {};
-    for (const f of shown) if (f.required && !values[f.name]?.trim()) missing[f.name] = `${f.label} is required`;
+    const editing = !!initial?.id;
+    for (const f of shown) if (f.required && !values[f.name]?.trim() && !(f.type === "password" && editing)) missing[f.name] = `${f.label} is required`;
     if (Object.keys(missing).length) {
       setErrors(missing);
       return;
@@ -180,6 +181,9 @@ export function FieldInput({ f, value, onChange, error, refs, span, autoFocus }:
           <input {...common} inputMode="decimal" className="input pl-7" value={value} onChange={(e) => onChange(e.target.value)} placeholder="0.00" />
         </div>
       );
+      break;
+    case "password":
+      input = <input {...common} type="password" autoComplete="new-password" className="input" value={value} onChange={(e) => onChange(e.target.value)} placeholder="at least 10 characters" />;
       break;
     default:
       input = <input {...common} type={f.type === "email" ? "email" : f.type === "phone" ? "tel" : "text"} className="input" value={value} onChange={(e) => onChange(e.target.value)} placeholder={f.placeholder ?? (f.type === "address" ? "Street, City, ST 00000, US" : undefined)} />;

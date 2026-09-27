@@ -4,7 +4,7 @@ import { crossingBoard, bucketOf, BUCKET_LABEL, CROSSING_LABEL, type Bucket } fr
 import { list } from "@/data/records";
 import { PageHeader } from "@/components/page-header";
 import { redirect } from "next/navigation";
-import { ensureCrossing } from "@/domain/crossing";
+import { ensureCrossing, backfillCrossings } from "@/domain/crossing";
 import { Pill } from "@/components/ui";
 
 export const metadata = { title: "Crossing" };
@@ -22,6 +22,7 @@ export default async function CrossingBoardPage({ searchParams }: PageProps<"/cr
     const c = await ensureCrossing(ctx, sp.leg).catch(() => null);
     if (c) redirect(`/crossing/${c.id}`);
   }
+  await backfillCrossings(ctx);
   const [rows, customers, trucks, drivers, ports] = await Promise.all([crossingBoard(ctx), list(ctx, "customer", { limit: 2000 }), list(ctx, "truck", { limit: 2000 }), list(ctx, "driver", { limit: 2000 }), list(ctx, "port", { limit: 100 })]);
   const name = (rs: { id: string; [k: string]: unknown }[], k: string) => new Map(rs.map((r) => [r.id, String(r[k])]));
   const cn = name(customers, "name");

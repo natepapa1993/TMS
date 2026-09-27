@@ -19,7 +19,7 @@ export default async function ArPage() {
       </PageHeader>
       <BillingNav />
       <div className="px-7 pb-10">
-        <div className="grid grid-cols-6 gap-3 mb-4">
+        <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-3 mb-4">
           {[["Total open", totals.total, ""], ...cols.map(([k, l]) => [l, totals[k], k === "current" ? "" : k === "1_30" ? "text-amber" : "text-red"])].map(([l, v, cls]) => (
             <div key={String(l)} className="card p-4">
               <div className="eyebrow">{l}</div>

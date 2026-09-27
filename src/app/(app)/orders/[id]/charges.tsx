@@ -50,32 +50,34 @@ export function Charges({ orderId, charges, docs, requiredDocs, pnl, locked, rol
       {charges.length === 0 ? (
         <div className="text-muted text-[13px]">Line haul appears from the rate when the order delivers.</div>
       ) : (
-        <table className="table -mx-5 w-[calc(100%+40px)]">
-          <tbody>
-            {charges.map((c) => (
-              <tr key={c.id}>
-                <td className="font-semibold">
-                  {c.description}
-                  <span className="text-faint text-[12px]"> · {c.source.replace("_", " ")}</span>
-                  {!c.billable && <Pill tone="slate">not billable</Pill>}
+        <div className="-mx-5 overflow-x-auto">
+          <table className="table">
+            <tbody>
+              {charges.map((c) => (
+                <tr key={c.id}>
+                  <td className="font-semibold">
+                    {c.description}
+                    <span className="text-faint text-[12px]"> · {c.source.replace("_", " ")}</span>
+                    {!c.billable && <Pill tone="slate">not billable</Pill>}
+                  </td>
+                  <td className="text-muted text-[12.5px]">{c.unit === "flat" ? "" : `${c.unit === "h" ? (c.qty / 100).toFixed(2) : c.qty} ${c.unit} × ${formatCents(c.rateCents, c.currency)}`}</td>
+                  <td className="mono font-semibold text-right">{formatCents(c.amountCents, c.currency)}</td>
+                  <td className="text-right">{can && !c.invoiceId && <button className="btn btn-ghost btn-sm text-red" onClick={() => run("Removed", () => removeChargeAction(orderId, c.id))}>×</button>}{c.invoiceId && <Pill tone="teal">invoiced</Pill>}</td>
+                </tr>
+              ))}
+              <tr>
+                <td colSpan={2} className="text-right font-extrabold">
+                  Billable total
                 </td>
-                <td className="text-muted text-[12.5px]">{c.unit === "flat" ? "" : `${c.unit === "h" ? (c.qty / 100).toFixed(2) : c.qty} ${c.unit} × ${formatCents(c.rateCents, c.currency)}`}</td>
-                <td className="mono font-semibold text-right">{formatCents(c.amountCents, c.currency)}</td>
-                <td className="text-right">{can && !c.invoiceId && <button className="btn btn-ghost btn-sm text-red" onClick={() => run("Removed", () => removeChargeAction(orderId, c.id))}>×</button>}{c.invoiceId && <Pill tone="teal">invoiced</Pill>}</td>
+                <td className="mono text-right font-extrabold">{formatCents(total, currency)}</td>
+                <td></td>
               </tr>
-            ))}
-            <tr>
-              <td colSpan={2} className="text-right font-extrabold">
-                Billable total
-              </td>
-              <td className="mono text-right font-extrabold">{formatCents(total, currency)}</td>
-              <td></td>
-            </tr>
-          </tbody>
-        </table>
+            </tbody>
+          </table>
+        </div>
       )}
       {can && (
-        <div className="mt-3 grid grid-cols-[140px_1fr_70px_80px_110px_auto_auto] gap-2 items-end">
+        <div className="mt-3 grid grid-cols-2 md:grid-cols-[140px_1fr_70px_80px_110px_auto_auto] gap-2 items-end">
           <div>
             <label className="label">Add</label>
             <select className="select" value={f.kind} onChange={(e) => setF({ ...f, kind: e.target.value as ChargeKind })}>
