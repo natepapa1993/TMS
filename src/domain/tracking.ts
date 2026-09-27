@@ -86,6 +86,10 @@ export async function driverToday(tenantId: string, driverId: string) {
   ]);
   const crossingLegIds = legs.filter((l) => l.type === "crossing").map((l) => l.id);
   const xs = crossingLegIds.length ? await db.select().from(s.crossings).where(inArray(s.crossings.legId, crossingLegIds)) : [];
+  // photos already on file for these orders (and, on a trip, on its shipments): the app shows a check instead of asking twice
+  const shipments = orderIds.length ? await db.select({ id: s.orders.id, tripId: s.orders.tripId, deliveryStopId: s.orders.deliveryStopId }).from(s.orders).where(and(eq(s.orders.tenantId, tenantId), inArray(s.orders.tripId, orderIds))) : [];
+  const docOrderIds = [...orderIds, ...shipments.map((x) => x.id)];
+  const photos = docOrderIds.length ? await db.select({ subjectId: s.documents.subjectId, code: s.documents.code }).from(s.documents).where(and(eq(s.documents.tenantId, tenantId), eq(s.documents.subjectKind, "order"), inArray(s.documents.subjectId, docOrderIds), inArray(s.documents.code, ["POD", "SEAL_PHOTO"]), inArray(s.documents.status, ["present", "verified"]))) : [];
   const items = legs.map((leg) => {
     const order = orders.find((o) => o.id === leg.orderId)!;
     const from = stops.find((x) => x.id === leg.fromStopId) ?? null;
@@ -98,7 +102,10 @@ export async function driverToday(tenantId: string, driverId: string) {
     const mid = pendingMidStop(leg, stops.filter((x) => x.orderId === leg.orderId));
     const next = mid ? { to: leg.state, label: `${mid.which === "arrived" ? "Arrived at" : "Leaving"} ${mid.stop.name}`, es: `${mid.which === "arrived" ? "Llegué a" : "Saliendo de"} ${mid.stop.name}` } : nextStep(leg.state);
     const mids = midStops(leg, stops.filter((x) => x.orderId === leg.orderId));
-    return { leg, order: { id: order.id, orderNumber: order.orderNumber, equipment: order.equipment, cargoNote: order.cargoNote, refs: order.refs, state: order.state }, from, to, mids, truck, next, crossing };
+    const stopId = currentStopId(leg, mids);
+    const podTargets = photoTargets(order, shipments, stopId);
+    const docs = { pod: podTargets.length > 0 && podTargets.every((id) => photos.some((d) => d.subjectId === id && d.code === "POD")), seal: photos.some((d) => d.subjectId === order.id && d.code === "SEAL_PHOTO") };
+    return { leg, order: { id: order.id, orderNumber: order.orderNumber, equipment: order.equipment, cargoNote: order.cargoNote, refs: order.refs, state: order.state }, from, to, mids, truck, next, crossing, docs };
   });
   // the leg the driver is on = first non-dispatched active leg, else the first offered one
   const current = items.find((i) => i.leg.state !== "dispatched") ?? items[0] ?? null;
@@ -149,6 +156,101 @@ export async function driverStep(tenantId: string, driverId: string, legId: stri
   const step = nextStep(leg.state);
   if (!step) throw new ValidationError("nothing further on this leg");
   return advanceLeg(ctx, leg.id, step.to, { source: "driver_app", verified: hasPos, lat: hasPos ? String(Number(input.lat).toFixed(6)) : undefined, lng: hasPos ? String(Number(input.lng).toFixed(6)) : undefined, note: input.note ?? undefined });
+}
+
+/** The stop the driver is standing at, if any: the delivery once arrived, a mid stop between arrive and depart, the pickup while loading. */
+export function currentStopId(leg: { state: LegState; fromStopId: string | null; toStopId: string | null }, mids: { id: string; arrivedAt: Date | string | null; departedAt: Date | string | null }[]) {
+  if (leg.state === "at_delivery") return leg.toStopId;
+  if (leg.state === "at_pickup") return leg.fromStopId;
+  if (leg.state === "en_route") return mids.find((m) => m.arrivedAt && !m.departedAt)?.id ?? null;
+  return null;
+}
+
+/** Where a POD taken at `stopId` belongs: on a tailgate trip, every shipment getting off there; otherwise the order itself. */
+function photoTargets(order: { id: string; kind: string }, shipments: { id: string; tripId: string | null; deliveryStopId: string | null }[], stopId: string | null) {
+  if (order.kind === "trip") {
+    const here = shipments.filter((x) => x.tripId === order.id && stopId && x.deliveryStopId === stopId);
+    return here.map((x) => x.id);
+  }
+  return [order.id];
+}
+
+export type DriverPhoto = { code: "POD" | "SEAL_PHOTO"; fileName: string; mimeType: string; bytes: Buffer };
+
+/**
+ * A photo from the driver's phone (spec §5.2: seal and POD photos). A POD lands on the order — on a
+ * tailgate trip, on every shipment delivering at the stop the driver is at — as the POD billing waits
+ * for; a seal photo on the order. Noted on the leg's timeline. Never blocks the milestone button.
+ */
+export async function driverUploadPhoto(tenantId: string, driverId: string, legId: string, photo: DriverPhoto) {
+  const ctx = systemCtx(tenantId);
+  const [leg] = await db.select().from(s.legs).where(and(eq(s.legs.tenantId, tenantId), eq(s.legs.id, legId))).limit(1);
+  if (!leg || (leg.driverId !== driverId && leg.coDriverId !== driverId)) throw new NotFoundError("leg", legId);
+  if (!["POD", "SEAL_PHOTO"].includes(photo.code)) throw new ValidationError("POD or seal photo", "code");
+  const [order] = await db.select({ id: s.orders.id, kind: s.orders.kind, orderNumber: s.orders.orderNumber }).from(s.orders).where(eq(s.orders.id, leg.orderId)).limit(1);
+  if (!order) throw new NotFoundError("order", leg.orderId);
+  const stops = await db.select().from(s.stops).where(and(eq(s.stops.tenantId, tenantId), eq(s.stops.orderId, leg.orderId))).orderBy(s.stops.seq);
+  const stopId = currentStopId(leg, midStops(leg, stops));
+  let targets = [order.id];
+  if (photo.code === "POD") {
+    const here = stops.find((x) => x.id === stopId);
+    if (!here || here.type === "pickup") throw new ValidationError("take the POD photo once you have arrived at the delivery · toma la foto del POD al llegar a la entrega", "code");
+    const shipments = order.kind === "trip" ? await db.select({ id: s.orders.id, tripId: s.orders.tripId, deliveryStopId: s.orders.deliveryStopId }).from(s.orders).where(and(eq(s.orders.tenantId, tenantId), eq(s.orders.tripId, order.id))) : [];
+    targets = photoTargets(order, shipments, stopId);
+    if (!targets.length) throw new ValidationError("no shipment gets off at this stop", "code");
+  }
+  const { uploadOrderDocument } = await import("./billing");
+  const rows = [];
+  for (const orderId of targets) rows.push(await uploadOrderDocument(ctx, orderId, { code: photo.code, fileName: photo.fileName, mimeType: photo.mimeType, bytes: photo.bytes, source: "driver_app" }));
+  const stop = stops.find((x) => x.id === stopId);
+  await db.insert(s.legEvents).values({ id: newId(), tenantId, legId: leg.id, orderId: leg.orderId, kind: "document", source: "driver_app", verified: false, note: `${photo.code === "POD" ? "POD" : "Seal"} photo from the driver app${stop ? ` at ${stop.name}` : ""}${targets.length > 1 ? ` (${targets.length} shipments)` : ""}` });
+  return rows;
+}
+
+/** The driver writes to dispatch from the app. Lands in Messages like a WhatsApp reply, on the leg they are on. */
+export async function driverMessage(tenantId: string, driverId: string, legId: string | null, body: string) {
+  const text = body?.trim();
+  if (!text) throw new ValidationError("write something", "body");
+  if (text.length > 2000) throw new ValidationError("keep it under 2,000 characters", "body");
+  const [driver] = await db.select({ id: s.drivers.id, name: s.drivers.name, phone: s.drivers.phone }).from(s.drivers).where(and(eq(s.drivers.tenantId, tenantId), eq(s.drivers.id, driverId))).limit(1);
+  if (!driver) throw new NotFoundError("driver", driverId);
+  let leg: { id: string; orderId: string } | null = null;
+  if (legId) {
+    const [l] = await db.select({ id: s.legs.id, orderId: s.legs.orderId, driverId: s.legs.driverId, coDriverId: s.legs.coDriverId }).from(s.legs).where(and(eq(s.legs.tenantId, tenantId), eq(s.legs.id, legId))).limit(1);
+    if (l && (l.driverId === driverId || l.coDriverId === driverId)) leg = l;
+  }
+  const [row] = await db.insert(s.inboundMessages).values({ id: newId(), tenantId, channel: "driver_app", from: driver.phone?.replace(/[^\d]/g, "") || driver.id, fromName: driver.name, body: text, driverId, legId: leg?.id ?? null, orderId: leg?.orderId ?? null }).returning();
+  if (leg) await db.insert(s.legEvents).values({ id: newId(), tenantId, legId: leg.id, orderId: leg.orderId, kind: "message", source: "driver_app", verified: false, note: `${driver.name}: ${text}` });
+  return row;
+}
+
+/** Dispatch answers a driver: shown in the app on the next open, and on WhatsApp too when the number is connected. */
+export async function replyToDriver(ctx: Ctx, driverId: string, body: string, orderId?: string | null) {
+  assertCtx(ctx);
+  requirePermission(ctx, "orders.edit");
+  const text = body?.trim();
+  if (!text) throw new ValidationError("write something", "body");
+  const [driver] = await db.select({ id: s.drivers.id, name: s.drivers.name, phone: s.drivers.phone }).from(s.drivers).where(and(eq(s.drivers.tenantId, ctx.tenantId), eq(s.drivers.id, driverId))).limit(1);
+  if (!driver) throw new NotFoundError("driver", driverId);
+  const { enqueue, whatsappFor, deliverQueued } = await import("@/lib/outbox");
+  const row = await enqueue(ctx, { channel: "driver_app", to: driver.phone || driver.name, body: text, subjectKind: "driver_reply", subjectId: driverId, meta: { kind: "general", orderId: orderId ?? null } });
+  if (driver.phone && (await whatsappFor(ctx.tenantId))) await enqueue(ctx, { channel: "whatsapp", to: driver.phone, body: text, subjectKind: "driver_reply", subjectId: driverId, meta: { kind: "general", template: null } });
+  await deliverQueued(5).catch(() => null);
+  if (orderId) {
+    const [l] = await db.select({ id: s.legs.id }).from(s.legs).where(and(eq(s.legs.tenantId, ctx.tenantId), eq(s.legs.orderId, orderId), or(eq(s.legs.driverId, driverId), eq(s.legs.coDriverId, driverId)))).orderBy(desc(s.legs.seq)).limit(1);
+    if (l) await db.insert(s.legEvents).values({ id: newId(), tenantId: ctx.tenantId, legId: l.id, orderId, kind: "message", source: "dispatcher", verified: false, note: `Dispatch to ${driver.name}: ${text}` });
+  }
+  return row;
+}
+
+/** The conversation as the driver sees it: what they wrote and what dispatch answered, oldest first. */
+export async function driverThread(tenantId: string, driverId: string, limit = 40) {
+  const [ins, outs] = await Promise.all([
+    db.select({ id: s.inboundMessages.id, body: s.inboundMessages.body, at: s.inboundMessages.receivedAt, orderId: s.inboundMessages.orderId, handledAt: s.inboundMessages.handledAt }).from(s.inboundMessages).where(and(eq(s.inboundMessages.tenantId, tenantId), eq(s.inboundMessages.driverId, driverId), inArray(s.inboundMessages.channel, ["driver_app", "whatsapp"]))).orderBy(desc(s.inboundMessages.receivedAt)).limit(limit),
+    db.select({ id: s.outbox.id, body: s.outbox.body, at: s.outbox.createdAt, meta: s.outbox.meta }).from(s.outbox).where(and(eq(s.outbox.tenantId, tenantId), eq(s.outbox.channel, "driver_app"), eq(s.outbox.subjectId, driverId))).orderBy(desc(s.outbox.createdAt)).limit(limit),
+  ]);
+  const all = [...ins.map((m) => ({ id: m.id, who: "driver" as const, body: m.body, at: m.at, seen: !!m.handledAt })), ...outs.map((m) => ({ id: m.id, who: "dispatch" as const, body: m.body, at: m.at, seen: true }))];
+  return all.sort((a, b) => a.at.getTime() - b.at.getTime()).slice(-limit);
 }
 
 // ---------- customer tracking link ----------

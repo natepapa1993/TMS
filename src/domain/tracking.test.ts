@@ -1,13 +1,13 @@
-// Features: F-4 tendering, F-5 tracking (positions, driver app, tracking link, no-position watchdog, appointment-window flags) F-5.9 F-5.10 F-1.7
+// Features: F-4 tendering, F-5 tracking (positions, driver app, tracking link, no-position watchdog, appointment-window flags) F-5.9 F-5.10 F-1.7 F-5.11
 import { describe, it, expect, beforeEach } from "vitest";
 import { truncateAll, makeTenant } from "@/test/helpers";
 import { create } from "@/data/records";
 import { db } from "@/db/client";
-import { outbox, tenders as tendersTable, flags, legEvents, positions } from "@/db/schema";
+import { outbox, tenders as tendersTable, flags, legEvents, positions, documents, inboundMessages } from "@/db/schema";
 import { and, eq } from "drizzle-orm";
 import { createOrder, planLeg, dispatchLeg, acceptLeg, advanceLeg, getOrder, ValidationError } from "./orders";
 import { sendTender, tenderByToken, respondToTender, expireTenders, closeOpenTenderForLeg } from "./tenders";
-import { recordPosition, driverToday, driverStep, trackingView, flagStaleTracking, flagWindows, flagDetention, notifyRedFlags, latestTruckPositions } from "./tracking";
+import { recordPosition, driverToday, driverStep, trackingView, flagStaleTracking, flagWindows, flagDetention, notifyRedFlags, latestTruckPositions, driverUploadPhoto, driverMessage, replyToDriver, driverThread } from "./tracking";
 import { issueToken, resolveToken, revokeToken } from "@/lib/tokens";
 import { TransitionError } from "./states";
 
@@ -154,6 +154,76 @@ describe("tracking (F-5)", () => {
     const o2 = await crossingLeg();
     const d = await driverStep(a.tenantId, f.benja, o2.legs[1].id, { decline: true, declineReason: "sick" });
     expect(d.state).toBe("declined");
+  });
+
+  it("driver app photos: a seal photo while loading and a POD at the delivery land on the order as billing's documents; nobody else's leg; not before arriving", async () => {
+    const o = await crossingLeg();
+    const legId = o.legs[1].id;
+    const jpg = Buffer.from("\xff\xd8\xff fixture", "binary");
+    // not at a stop yet → the POD has nowhere to go
+    await driverStep(a.tenantId, f.benja, legId, {}); // accepted
+    await expect(driverUploadPhoto(a.tenantId, f.benja, legId, { code: "POD", fileName: "pod.jpg", mimeType: "image/jpeg", bytes: jpg })).rejects.toThrow(/arrived at the delivery/);
+    await driverStep(a.tenantId, f.benja, legId, {}); // en route to pickup
+    await driverStep(a.tenantId, f.benja, legId, {}); // at pickup
+    let today = await driverToday(a.tenantId, f.benja);
+    expect(today.current!.docs).toEqual({ pod: false, seal: false });
+    await driverUploadPhoto(a.tenantId, f.benja, legId, { code: "SEAL_PHOTO", fileName: "seal.jpg", mimeType: "image/jpeg", bytes: jpg });
+    today = await driverToday(a.tenantId, f.benja);
+    expect(today.current!.docs.seal).toBe(true);
+    await driverStep(a.tenantId, f.benja, legId, {}); // loaded
+    await driverStep(a.tenantId, f.benja, legId, {}); // en route
+    await driverStep(a.tenantId, f.benja, legId, {}); // at delivery
+    const other = await create(a, "driver", { name: "Nobody", driverType: "CDL" });
+    await expect(driverUploadPhoto(a.tenantId, other.id, legId, { code: "POD", fileName: "pod.jpg", mimeType: "image/jpeg", bytes: jpg })).rejects.toThrow(/not found/);
+    const rows = await driverUploadPhoto(a.tenantId, f.benja, legId, { code: "POD", fileName: "pod.jpg", mimeType: "image/jpeg", bytes: jpg });
+    expect(rows.length).toBe(1);
+    const docs = await db.select().from(documents).where(and(eq(documents.subjectKind, "order"), eq(documents.subjectId, o.order.id)));
+    expect(docs.map((d) => [d.code, d.source, d.status])).toEqual(expect.arrayContaining([["SEAL_PHOTO", "driver_app", "present"], ["POD", "driver_app", "present"]]));
+    today = await driverToday(a.tenantId, f.benja);
+    expect(today.current!.docs.pod).toBe(true);
+    const evs = await db.select().from(legEvents).where(and(eq(legEvents.legId, legId), eq(legEvents.kind, "document")));
+    expect(evs.map((e) => e.note)).toEqual(["Seal photo from the driver app at Santa Fe Yard", "POD photo from the driver app at Laredo Yard"]);
+    // a second POD photo supersedes the first; the newest is what billing sees
+    await driverUploadPhoto(a.tenantId, f.benja, legId, { code: "POD", fileName: "pod2.jpg", mimeType: "image/jpeg", bytes: jpg });
+    const pods = await db.select().from(documents).where(and(eq(documents.subjectId, o.order.id), eq(documents.code, "POD")));
+    expect(pods.map((d) => d.status).sort()).toEqual(["present", "superseded"]);
+  });
+
+  it("driver ↔ dispatch: a message from the app lands in Messages on the leg; the reply shows in the app and, with WhatsApp connected, goes there too", async () => {
+    const o = await crossingLeg();
+    const legId = o.legs[1].id;
+    await expect(driverMessage(a.tenantId, f.benja, legId, "  ")).rejects.toThrow(/write something/);
+    const m = await driverMessage(a.tenantId, f.benja, legId, "Trailer 10743 has a flat, at the yard");
+    expect(m.channel).toBe("driver_app");
+    expect(m.orderId).toBe(o.order.id);
+    expect(m.fromName).toBe("Benjamín Xochihua");
+    // a leg that isn't theirs is ignored, the message still lands
+    const other = await create(a, "driver", { name: "Nobody", driverType: "CDL" });
+    const m2 = await driverMessage(a.tenantId, other.id, legId, "hola");
+    expect(m2.legId).toBeNull();
+    const ev = await db.select().from(legEvents).where(and(eq(legEvents.legId, legId), eq(legEvents.kind, "message")));
+    expect(ev.length).toBe(1);
+    expect(ev[0].note).toContain("flat");
+    // dispatch answers; no WhatsApp connected → only the in-app row
+    await replyToDriver(a, f.benja, "Stay put, sending the tire guy", o.order.id);
+    let out = await db.select().from(outbox).where(eq(outbox.subjectKind, "driver_reply"));
+    expect(out.map((r) => [r.channel, r.state])).toEqual([["driver_app", "sent"]]);
+    const thread = await driverThread(a.tenantId, f.benja);
+    expect(thread.map((x) => [x.who, x.body])).toEqual([["driver", "Trailer 10743 has a flat, at the yard"], ["dispatch", "Stay put, sending the tire guy"]]);
+    expect(thread[0].seen).toBe(false);
+    await db.update(inboundMessages).set({ handledAt: new Date() }).where(eq(inboundMessages.id, m.id));
+    expect((await driverThread(a.tenantId, f.benja))[0].seen).toBe(true);
+    // the other driver sees nothing of Benja's thread
+    expect((await driverThread(a.tenantId, other.id)).map((x) => x.body)).toEqual(["hola"]);
+    // with WhatsApp connected and a phone on file, the reply also goes out on WhatsApp
+    const { integrations } = await import("@/db/schema");
+    await db.insert(integrations).values({ id: "int-wa", tenantId: a.tenantId, provider: "whatsapp", enabled: true, config: { phoneNumberId: "1", accessToken: "t" } });
+    const { update } = await import("@/data/records");
+    await update(a, "driver", f.benja, { phone: "+52 81 1234 5678" });
+    await replyToDriver(a, f.benja, "Tire guy is 20 min out");
+    out = await db.select().from(outbox).where(eq(outbox.subjectKind, "driver_reply"));
+    expect(out.filter((r) => r.channel === "whatsapp").length).toBe(1);
+    await expect(replyToDriver(a, f.benja, "")).rejects.toThrow(/write something/);
   });
 
   it("positions: ELD pings attach to the truck's moving leg, duplicates by external id are ignored, latest per truck", async () => {

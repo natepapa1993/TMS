@@ -6,7 +6,7 @@ import { useRouter } from "next/navigation";
 import { Modal, Pill, Spinner, Toast, useToast } from "@/components/ui";
 import type { ComplianceItem } from "@/db/schema";
 import type { SubjectKind } from "@/domain/compliance";
-import { uploadSubjectDocAction, readSubjectDocAction } from "@/app/(app)/compliance/actions";
+import { uploadSubjectDocAction, readSubjectDocAction, reviewSubjectDocAction } from "@/app/(app)/compliance/actions";
 
 type Doc = { id: string; documentTypeId: string | null; fileName: string; status: string; version: number; expiresAt: string | null; issuedAt: string | null; number: string | null; source: string; createdAt: string };
 type DocType = { id: string; name: string; tracksExpiry: boolean; required: boolean; blocksDispatch: boolean };
@@ -39,7 +39,8 @@ export function SubjectDocuments({ kind, subjectId, docs, types, status, canEdit
   };
   const ref = useRef<HTMLFormElement>(null);
   const typeName = (id: string | null) => types.find((x) => x.id === id)?.name ?? "document";
-  const active = docs.filter((d) => d.status !== "superseded");
+  const active = docs.filter((d) => d.status === "present" || d.status === "verified");
+  const pendingDocs = docs.filter((d) => d.status === "pending");
   const openType = types.find((x) => x.id === open);
   return (
     <div className="card p-4" id="documents">
@@ -68,6 +69,16 @@ export function SubjectDocuments({ kind, subjectId, docs, types, status, canEdit
         </ul>
       )}
       {status && !status.items.length && <div className="text-muted text-[12.5px] mt-1">No rules apply yet.</div>}
+      {pendingDocs.length > 0 && (
+        <div className="mt-4" data-testid="pending-docs">
+          <div className="eyebrow mb-1">From the driver app — check and confirm</div>
+          <ul className="space-y-2">
+            {pendingDocs.map((d) => (
+              <PendingDoc key={d.id} doc={d} typeName={typeName(d.documentTypeId)} tracksExpiry={types.find((x) => x.id === d.documentTypeId)?.tracksExpiry ?? false} canEdit={canEdit} onDone={(msg) => { t.ok(msg); router.refresh(); }} />
+            ))}
+          </ul>
+        </div>
+      )}
       <div className="eyebrow mt-4 mb-1">Documents on file</div>
       {active.length === 0 ? (
         <div className="text-muted text-[12.5px]">Nothing uploaded yet.</div>
@@ -169,5 +180,74 @@ export function SubjectDocuments({ kind, subjectId, docs, types, status, canEdit
       </Modal>
       <Toast message={t.toast?.message ?? null} tone={t.toast?.tone} onDone={t.clear} />
     </div>
+  );
+}
+
+/** A photo the driver sent: open it, fix the dates if needed, confirm it onto the file or send it back with a reason. */
+function PendingDoc({ doc, typeName, tracksExpiry, canEdit, onDone }: { doc: Doc; typeName: string; tracksExpiry: boolean; canEdit: boolean; onDone: (msg: string) => void }) {
+  const [expiresAt, setExpiresAt] = useState(doc.expiresAt ? doc.expiresAt.slice(0, 10) : "");
+  const [number, setNumber] = useState(doc.number ?? "");
+  const [reason, setReason] = useState("");
+  const [rejecting, setRejecting] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const [pending, start] = useTransition();
+  return (
+    <li className="rounded-lg border border-teal/40 bg-teal-soft/30 p-3 text-[12.5px]">
+      <div className="flex items-center justify-between gap-2">
+        <a href={`/api/files/${doc.id}`} target="_blank" rel="noreferrer" className="font-semibold hover:text-teal truncate">
+          {typeName} <span className="text-faint font-normal">· {doc.fileName}</span>
+        </a>
+        <span className="text-muted whitespace-nowrap">sent {new Date(doc.createdAt).toLocaleDateString("en-US", { month: "short", day: "numeric" })}</span>
+      </div>
+      {canEdit && (
+        <div className="mt-2 grid grid-cols-[1fr_1fr_auto_auto] gap-2 items-end">
+          <div>
+            <label className="label">Expires{tracksExpiry ? " *" : ""}</label>
+            <input type="date" className="input" value={expiresAt} onChange={(e) => setExpiresAt(e.target.value)} aria-label="Expires" />
+          </div>
+          <div>
+            <label className="label">Number</label>
+            <input className="input" value={number} onChange={(e) => setNumber(e.target.value)} aria-label="Number" />
+          </div>
+          <button
+            className="btn btn-primary btn-sm"
+            disabled={pending}
+            onClick={() =>
+              start(async () => {
+                setErr(null);
+                const r = await reviewSubjectDocAction(doc.id, "confirm", { expiresAt, number });
+                if (r.ok) onDone("Confirmed — on file, compliance re-run");
+                else setErr(r.error);
+              })
+            }
+          >
+            {pending ? <Spinner /> : "Confirm"}
+          </button>
+          <button className="btn btn-sm" disabled={pending} onClick={() => setRejecting((x) => !x)}>
+            Send back
+          </button>
+        </div>
+      )}
+      {rejecting && (
+        <div className="mt-2 flex gap-2">
+          <input className="input flex-1" placeholder="What is wrong? The driver sees this." value={reason} onChange={(e) => setReason(e.target.value)} aria-label="Reason" />
+          <button
+            className="btn btn-danger btn-sm"
+            disabled={pending || !reason.trim()}
+            onClick={() =>
+              start(async () => {
+                setErr(null);
+                const r = await reviewSubjectDocAction(doc.id, "reject", { reason });
+                if (r.ok) onDone("Sent back to the driver");
+                else setErr(r.error);
+              })
+            }
+          >
+            Reject
+          </button>
+        </div>
+      )}
+      {err && <div className="error mt-1">{err}</div>}
+    </li>
   );
 }

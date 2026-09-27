@@ -1,4 +1,4 @@
-// Features: F-6 compliance — engine, subject documents, snooze, 24-h override, where it bites (assign picker), digest, incidents F-6.9
+// Features: F-6 compliance — engine, subject documents, snooze, 24-h override, where it bites (assign picker), digest, incidents F-6.9 F-5.11
 import { describe, it, expect, beforeEach, vi, afterEach } from "vitest";
 import { truncateAll, makeTenant } from "@/test/helpers";
 import { create, update } from "@/data/records";
@@ -48,6 +48,48 @@ describe("engine (spec §6.1)", () => {
     expect(docs.map((d) => d.status).sort()).toEqual(["present", "superseded"]);
     // wrong subject kind refused
     await expect(C.uploadSubjectDocument(a, "truck", ids.t2117, { documentTypeId: ids.medical, fileName: "x.pdf", mimeType: "application/pdf", bytes: pdf, expiresAt: days(1) })).rejects.toThrow(/applies to drivers/);
+  });
+
+  it("a renewal sent from the driver app counts for nothing until safety confirms it; rejected goes back to the driver with the reason", async () => {
+    let st = await C.evaluateSubject(a, "driver", ids.benja);
+    expect(st.dispatchable).toBe(false);
+    let own = await C.driverOwnItems(a.tenantId, ids.benja);
+    const med = own.find((i) => i.documentTypeId === ids.medical)!;
+    expect(med).toMatchObject({ label: "Medical card", status: "missing", tracksExpiry: true, pending: null, rejected: null });
+    await expect(C.driverUploadRenewal(a.tenantId, ids.benja, { documentTypeId: ids.medical, fileName: "med.jpg", mimeType: "image/jpeg", bytes: pdf })).rejects.toBeInstanceOf(ValidationError); // expiry still required
+    const sent = await C.driverUploadRenewal(a.tenantId, ids.benja, { documentTypeId: ids.medical, fileName: "med.jpg", mimeType: "image/jpeg", bytes: pdf, expiresAt: days(300) });
+    expect(sent.status).toBe("pending");
+    st = await C.evaluateSubject(a, "driver", ids.benja);
+    expect(st.dispatchable).toBe(false); // still blocked: nobody looked
+    own = await C.driverOwnItems(a.tenantId, ids.benja);
+    expect(own.find((i) => i.documentTypeId === ids.medical)!.pending?.fileName).toBe("med.jpg");
+    const queue = await C.pendingUploads(a);
+    expect(queue.map((q) => [q.driverName, q.typeName])).toEqual([["Benjamín Xochihua", "Medical card"]]);
+    // sent back: blurry
+    await expect(C.reviewSubjectDocument(a, sent.id, "reject", {})).rejects.toBeInstanceOf(ValidationError);
+    await C.reviewSubjectDocument(a, sent.id, "reject", { reason: "blurry, take it in daylight" });
+    own = await C.driverOwnItems(a.tenantId, ids.benja);
+    expect(own.find((i) => i.documentTypeId === ids.medical)!.rejected?.reason).toBe("blurry, take it in daylight");
+    expect((await C.pendingUploads(a)).length).toBe(0);
+    await expect(C.reviewSubjectDocument(a, sent.id, "confirm", {})).rejects.toThrow(/rejected/);
+    // second try, confirmed with a corrected expiry → on file, dispatchable
+    const again = await C.driverUploadRenewal(a.tenantId, ids.benja, { documentTypeId: ids.medical, fileName: "med2.jpg", mimeType: "image/jpeg", bytes: pdf, expiresAt: days(300), number: "MED-9" });
+    const ok = await C.reviewSubjectDocument(a, again.id, "confirm", { expiresAt: days(250) });
+    expect(ok.status).toBe("verified");
+    expect(ok.number).toBe("MED-9");
+    st = await C.evaluateSubject(a, "driver", ids.benja);
+    expect(st.dispatchable).toBe(true);
+    expect(st.items.find((i) => i.key === ids.medical)!.expiresAt!.slice(0, 10)).toBe(days(250).toISOString().slice(0, 10));
+    expect((await C.driverOwnItems(a.tenantId, ids.benja)).some((i) => i.documentTypeId === ids.medical)).toBe(false);
+    // a newer pending photo replaces an older unreviewed one; confirming supersedes the card on file
+    const p1 = await C.driverUploadRenewal(a.tenantId, ids.benja, { documentTypeId: ids.medical, fileName: "p1.jpg", mimeType: "image/jpeg", bytes: pdf, expiresAt: days(700) });
+    const p2 = await C.driverUploadRenewal(a.tenantId, ids.benja, { documentTypeId: ids.medical, fileName: "p2.jpg", mimeType: "image/jpeg", bytes: pdf, expiresAt: days(700) });
+    const all = await C.subjectDocuments(a, "driver", ids.benja);
+    expect(all.find((d) => d.id === p1.id)!.status).toBe("superseded");
+    expect(all.find((d) => d.id === p2.id)!.status).toBe("pending");
+    await C.reviewSubjectDocument(a, p2.id, "confirm", {});
+    const after = await C.subjectDocuments(a, "driver", ids.benja);
+    expect(after.filter((d) => d.status === "verified" || d.status === "present").map((d) => d.fileName)).toEqual(["p2.jpg"]);
   });
 
   it("truck: expiring inspection is yellow not a block; expired plate blocks and cannot be overridden", async () => {

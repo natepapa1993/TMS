@@ -1,5 +1,5 @@
 {
-  "_doc": "Feature board (spec \u00a710.1a). Every feature has an ID, a status, and the tests that prove it. `pnpm features` fails CI when a feature marked done has no passing test reference, or a referenced test file is missing / does not mention the ID.",
+  "_doc": "Feature board (spec §10.1a). Every feature has an ID, a status, and the tests that prove it. `pnpm features` fails CI when a feature marked done has no passing test reference, or a referenced test file is missing / does not mention the ID.",
   "features": [
     {
       "id": "F-1.1",
@@ -207,7 +207,7 @@
     },
     {
       "id": "F-3",
-      "name": "Crossing: rules \u2192 checklist, documents with versions, 14 cross-checks with audited overrides, eligibility, packet PDF, generated Solicitud de Retiro, 16-state machine, driver border steps, dwell + packet watchdogs",
+      "name": "Crossing: rules → checklist, documents with versions, 14 cross-checks with audited overrides, eligibility, packet PDF, generated Solicitud de Retiro, 16-state machine, driver border steps, dwell + packet watchdogs",
       "milestone": "M2",
       "status": "done",
       "tests": [
@@ -235,7 +235,7 @@
     },
     {
       "id": "F-6",
-      "name": "Compliance: document rules \u2192 status per driver/truck/trailer/carrier, dispatchable flag in the picker/tender/crossing, uploads on the record, snooze, 24-h owner override, CSV export, daily digest, incident register",
+      "name": "Compliance: document rules → status per driver/truck/trailer/carrier, dispatchable flag in the picker/tender/crossing, uploads on the record, snooze, 24-h owner override, CSV export, daily digest, incident register",
       "milestone": "M3",
       "status": "done",
       "tests": [
@@ -245,7 +245,7 @@
     },
     {
       "id": "F-7",
-      "name": "Billing & settlements: own ledger \u2014 charges, docs gate, invoices per entity, receipts, credits, disputes, AR aging/statements/reminders, close, carrier bills (three-way, short-pay, quick pay), driver settlements + app, order P&L",
+      "name": "Billing & settlements: own ledger — charges, docs gate, invoices per entity, receipts, credits, disputes, AR aging/statements/reminders, close, carrier bills (three-way, short-pay, quick pay), driver settlements + app, order P&L",
       "milestone": "M4",
       "status": "done",
       "tests": [
@@ -256,7 +256,7 @@
     },
     {
       "id": "F-8",
-      "name": "EDI with customers: 204 tenders in \u2192 draft orders / inbox with 990, 214 milestones out, 210 invoices out, 997 both ways, partner setup as master data, inbound URL per partner",
+      "name": "EDI with customers: 204 tenders in → draft orders / inbox with 990, 214 milestones out, 210 invoices out, 997 both ways, partner setup as master data, inbound URL per partner",
       "milestone": "M5",
       "status": "done",
       "tests": [
@@ -277,7 +277,7 @@
     },
     {
       "id": "F-10",
-      "name": "Carrier portal: one persistent link per partner carrier \u2014 offers with accept/decline + driver, loads with one-tap steps and driver details, rate confirmation PDF, invoice against the delivered leg into the three-way check, COI/W-9 uploads into compliance, scorecard (acceptance, on-time, tracked) on both sides",
+      "name": "Carrier portal: one persistent link per partner carrier — offers with accept/decline + driver, loads with one-tap steps and driver details, rate confirmation PDF, invoice against the delivered leg into the three-way check, COI/W-9 uploads into compliance, scorecard (acceptance, on-time, tracked) on both sides",
       "milestone": "M8",
       "status": "done",
       "tests": [
@@ -287,7 +287,7 @@
     },
     {
       "id": "F-12",
-      "name": "Tailgate / LTL: trips built from stops (legs cut automatically, southbound crossings), shipments with their own customer, rate, refs, docs, POD and invoice, capacity + LIFO load plan with live fit, shipment states from the trip's stop clocks, holds / partial release, per-shipment crossing docs on the packet, trip manifest, trip costs shared per shipment in P&L and reports \u2014 the plan's acceptance test",
+      "name": "Tailgate / LTL: trips built from stops (legs cut automatically, southbound crossings), shipments with their own customer, rate, refs, docs, POD and invoice, capacity + LIFO load plan with live fit, shipment states from the trip's stop clocks, holds / partial release, per-shipment crossing docs on the packet, trip manifest, trip costs shared per shipment in P&L and reports — the plan's acceptance test",
       "milestone": "M9",
       "status": "done",
       "tests": [
@@ -389,6 +389,19 @@
       "status": "done",
       "tests": [
         "src/domain/tracking.test.ts"
+      ]
+    },
+    {
+      "id": "F-5.11",
+      "name": "Driver app: seal and POD photos at the stop (POD per shipment on a trip), renewals photographed from the phone that wait for safety's confirm/reject, a line to dispatch with replies in the app and on WhatsApp, driver-app link card on the record with revoke",
+      "milestone": "M1",
+      "status": "done",
+      "tests": [
+        "src/domain/tracking.test.ts",
+        "src/domain/compliance.test.ts",
+        "src/domain/tailgate.test.ts",
+        "e2e/tracking.spec.ts",
+        "e2e/compliance.spec.ts"
       ]
     },
     {

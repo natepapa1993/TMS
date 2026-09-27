@@ -23,6 +23,7 @@ const SECTIONS: { id: string; title: string; href: string; body: (string | { rul
     body: [
       "Press n for a new order in four fields. An order is cut into legs by its stops: a Mexican leg, the crossing (Mexican border yard to the US yard, or the reverse), a US leg; or one domestic leg. Each leg is assigned on its own: our truck and driver, or a partner carrier by tender (email, WhatsApp, or by phone).",
       "The panel shows one primary action for where the order is: assign, send, mark accepted, then each milestone until delivered. Drivers press the same milestones in their app with GPS; carriers in their portal. A leg can be split, pulled back, held, or the unit put out of service, from the same panel.",
+      "The driver app is one link per driver (on their record and in the Track popup), no install: today's load with the stops and navigation, one big button per step, the crossing packet, a seal photo while loading and the POD photo at the delivery (it lands on the order as the document billing waits for; on a tailgate trip, on every shipment getting off at that stop), their own documents with a photo of the renewal that waits for safety to confirm, their pay with a dispute on any line, and a line to dispatch that lands in Messages with a reply that reaches the app and WhatsApp.",
       "Flags watch the clock for you: a pickup opening soon with nobody accepted, a window that closed with no arrival, a truck sitting past the customer's free time, a truck gone quiet, a declined tender, a crossing held. Red ones are emailed to the owner and dispatchers the minute they open; all of them clear themselves when the situation does.",
       { rule: "A B-1 driver never runs a US leg. There is no override." },
       { rule: "A brown-plated unit never runs beyond the border zone (no interior Mexico)." },
@@ -48,6 +49,7 @@ const SECTIONS: { id: string; title: string; href: string; body: (string | { rul
     body: [
       "Document types are your rules: what must be on file for a driver, truck, trailer or carrier, whether it tracks an expiry, how many days ahead to alert, whether it blocks dispatch, and for which legs (a FAST card matters on the crossing, not on a domestic run). The engine re-evaluates on every save and every hour, and its verdict is what the assign picker, the tender and the crossing read.",
       "The board shows every subject against every rule with expiring, expired and missing; snooze an alert with a reason, upload from the record, export to CSV, and keep the incident register. A daily digest goes to the owner and the safety role.",
+      { rule: "A renewal a driver photographs in their app counts for nothing until safety confirms it on the record (fixing the dates if needed) — or sends it back with a reason the driver sees." },
     ],
   },
   {
@@ -67,7 +69,7 @@ const SECTIONS: { id: string; title: string; href: string; body: (string | { rul
     href: "/edi",
     body: [
       "EDI partners receive 204 tenders (over HTTP or a VAN mailbox over SFTP) that become draft orders with a 997 and a 990 back; every milestone goes out as a 214 and every issued invoice as a 210. Nothing leaves without a row in the log.",
-      "WhatsApp Business carries tenders, packets and tracking links and brings replies onto the load. Messages shows what came in and, under Sent, everything that went out with the provider's state.",
+      "WhatsApp Business carries tenders, packets and tracking links and brings replies onto the load. Messages shows what came in (WhatsApp replies and what drivers write from their app) with a Reply that reaches the driver, and, under Sent, everything that went out with the provider's state.",
       "Each carrier and each customer has one permanent link (on their record): carriers see offers, their loads with one-tap milestones, rate cons, their pay and their documents; customers see their loads with tracking, PODs, invoices and can request a load, which lands on Dispatch as a flagged draft.",
     ],
   },

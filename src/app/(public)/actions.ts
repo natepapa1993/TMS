@@ -57,6 +57,54 @@ export async function disputeSettlementLineAction(token: string, settlementId: s
   }
 }
 
+/** A POD or seal photo from the driver's phone; lands on the order (on a trip, on the shipments getting off here). */
+export async function driverPhotoAction(token: string, legId: string, form: FormData): Promise<ActionResult<{ count: number }>> {
+  const t = await resolveToken(token, "driver_app");
+  if (!t) return { ok: false, error: "This link is no longer valid. Ask dispatch for a new one.", code: "not_found" };
+  try {
+    const file = form.get("file");
+    if (!(file instanceof File) || file.size === 0) throw Object.assign(new Error("take the photo first · toma la foto primero"), { name: "ValidationError", field: "file" });
+    const code = String(form.get("code") ?? "POD") as "POD" | "SEAL_PHOTO";
+    const mime = file.type || (file.name.toLowerCase().endsWith(".pdf") ? "application/pdf" : "image/jpeg");
+    const { driverUploadPhoto } = await import("@/domain/tracking");
+    const rows = await driverUploadPhoto(t.ctx.tenantId, t.subjectId, legId, { code, fileName: file.name || `${code.toLowerCase()}.jpg`, mimeType: mime, bytes: Buffer.from(await file.arrayBuffer()) });
+    return { ok: true, data: { count: rows.length } };
+  } catch (e) {
+    return toError(e);
+  }
+}
+
+/** A renewal (new licence, medical card…) photographed by the driver; waits for safety to confirm it. */
+export async function driverRenewalAction(token: string, form: FormData): Promise<ActionResult<{ ok: true }>> {
+  const t = await resolveToken(token, "driver_app");
+  if (!t) return { ok: false, error: "This link is no longer valid. Ask dispatch for a new one.", code: "not_found" };
+  try {
+    const file = form.get("file");
+    if (!(file instanceof File) || file.size === 0) throw Object.assign(new Error("take the photo first · toma la foto primero"), { name: "ValidationError", field: "file" });
+    const { driverUploadRenewal } = await import("@/domain/compliance");
+    const { parseDate } = await import("@/data/fields");
+    const expires = String(form.get("expiresAt") ?? "");
+    const mime = file.type || (file.name.toLowerCase().endsWith(".pdf") ? "application/pdf" : "image/jpeg");
+    await driverUploadRenewal(t.ctx.tenantId, t.subjectId, { documentTypeId: String(form.get("documentTypeId") ?? ""), fileName: file.name || "renewal.jpg", mimeType: mime, bytes: Buffer.from(await file.arrayBuffer()), expiresAt: expires ? parseDate(expires) : null, number: String(form.get("number") ?? "") || null });
+    return { ok: true, data: { ok: true } };
+  } catch (e) {
+    return toError(e);
+  }
+}
+
+/** The driver writes to dispatch from the app. */
+export async function driverMessageAction(token: string, legId: string | null, body: string): Promise<ActionResult<{ id: string }>> {
+  const t = await resolveToken(token, "driver_app");
+  if (!t) return { ok: false, error: "This link is no longer valid. Ask dispatch for a new one.", code: "not_found" };
+  try {
+    const { driverMessage } = await import("@/domain/tracking");
+    const row = await driverMessage(t.ctx.tenantId, t.subjectId, legId, body);
+    return { ok: true, data: { id: row.id } };
+  } catch (e) {
+    return toError(e);
+  }
+}
+
 // ---------- carrier portal ----------
 
 async function carrierFromToken(token: string) {

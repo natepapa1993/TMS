@@ -160,7 +160,7 @@ export async function statusMap(ctx: Ctx, kind: SubjectKind) {
 
 // ---------- subject documents ----------
 
-export type SubjectUpload = { documentTypeId: string; fileName: string; mimeType: string; bytes: Buffer; expiresAt?: Date | null; issuedAt?: Date | null; number?: string | null; notes?: string | null; source?: string };
+export type SubjectUpload = { documentTypeId: string; fileName: string; mimeType: string; bytes: Buffer; expiresAt?: Date | null; issuedAt?: Date | null; number?: string | null; notes?: string | null; source?: string; status?: "present" | "pending" };
 
 export async function uploadSubjectDocument(ctx: Ctx, kind: SubjectKind, subjectId: string, input: SubjectUpload) {
   assertCtx(ctx);
@@ -172,6 +172,7 @@ export async function uploadSubjectDocument(ctx: Ctx, kind: SubjectKind, subject
   if (!type) throw new NotFoundError("document type", input.documentTypeId);
   if (type.appliesTo !== kind) throw new ValidationError(`${type.name} applies to ${type.appliesTo}s, not ${kind}s`, "documentTypeId");
   if (type.tracksExpiry && !input.expiresAt) throw new ValidationError(`${type.name} needs an expiry date`, "expiresAt");
+  const pending = input.status === "pending"; // from the driver's phone: counts only once safety confirms it
   const table = TABLE[kind];
   const [rec] = await db.select({ id: table.id }).from(table).where(and(eq(table.tenantId, ctx.tenantId), eq(table.id, subjectId))).limit(1);
   if (!rec) throw new NotFoundError(kind, subjectId);
@@ -179,16 +180,65 @@ export async function uploadSubjectDocument(ctx: Ctx, kind: SubjectKind, subject
   const doc = await db.transaction(async (tx) => {
     const [blob] = await tx.insert(s.documentBlobs).values({ id: newId(), tenantId: ctx.tenantId, sha256: sha, mimeType: input.mimeType, sizeBytes: input.bytes.length, bytes: input.bytes }).returning({ id: s.documentBlobs.id });
     const prior = await tx.select().from(s.documents).where(and(eq(s.documents.tenantId, ctx.tenantId), eq(s.documents.subjectKind, kind), eq(s.documents.subjectId, subjectId), eq(s.documents.documentTypeId, type.id), inArray(s.documents.status, ["present", "verified"])));
-    for (const p of prior) await tx.update(s.documents).set({ status: "superseded", updatedAt: new Date(), updatedBy: ctx.userId }).where(eq(s.documents.id, p.id));
+    if (!pending) for (const p of prior) await tx.update(s.documents).set({ status: "superseded", updatedAt: new Date(), updatedBy: ctx.userId }).where(eq(s.documents.id, p.id));
+    const older = await tx.select({ id: s.documents.id }).from(s.documents).where(and(eq(s.documents.tenantId, ctx.tenantId), eq(s.documents.subjectKind, kind), eq(s.documents.subjectId, subjectId), eq(s.documents.documentTypeId, type.id), eq(s.documents.status, "pending")));
+    for (const p of older) await tx.update(s.documents).set({ status: "superseded", updatedAt: new Date(), updatedBy: ctx.userId }).where(eq(s.documents.id, p.id)); // a newer photo replaces an unreviewed one
     const [row] = await tx
       .insert(s.documents)
-      .values({ id: newId(), tenantId: ctx.tenantId, documentTypeId: type.id, code: null, subjectKind: kind, subjectId, fileName: input.fileName, mimeType: input.mimeType, sizeBytes: input.bytes.length, storageKey: `blob:${blob.id}`, sha256: sha, issuedAt: input.issuedAt ?? null, expiresAt: input.expiresAt ?? null, number: input.number ?? null, source: input.source ?? "upload", status: "present", version: (Math.max(0, ...prior.map((p) => p.version)) || 0) + 1, notes: input.notes ?? null, createdBy: ctx.userId, updatedBy: ctx.userId })
+      .values({ id: newId(), tenantId: ctx.tenantId, documentTypeId: type.id, code: null, subjectKind: kind, subjectId, fileName: input.fileName, mimeType: input.mimeType, sizeBytes: input.bytes.length, storageKey: `blob:${blob.id}`, sha256: sha, issuedAt: input.issuedAt ?? null, expiresAt: input.expiresAt ?? null, number: input.number ?? null, source: input.source ?? "upload", status: pending ? "pending" : "present", version: (Math.max(0, ...prior.map((p) => p.version)) || 0) + 1, notes: input.notes ?? null, createdBy: ctx.userId, updatedBy: ctx.userId })
       .returning();
-    await writeAudit(tx, ctx, kind, subjectId, "update", { [type.name]: { from: prior[0]?.expiresAt ?? null, to: input.expiresAt ?? "present" } }, `${type.name} uploaded: ${input.fileName}`);
+    await writeAudit(tx, ctx, kind, subjectId, "update", { [type.name]: { from: prior[0]?.expiresAt ?? null, to: pending ? "pending review" : (input.expiresAt ?? "present") } }, `${type.name} ${pending ? "sent from the driver app" : "uploaded"}: ${input.fileName}`);
     return row;
   });
-  await evaluateSubject(ctx, kind, subjectId);
+  if (!pending) await evaluateSubject(ctx, kind, subjectId);
   return doc;
+}
+
+/**
+ * Safety looks at what a driver sent from the app (spec §5.2 "document upload for renewals"): confirm it,
+ * fixing the dates if the driver typed them wrong, and it becomes the document on file and compliance
+ * re-runs; or reject it with a reason the driver sees in the app. Until then it counts for nothing.
+ */
+export async function reviewSubjectDocument(ctx: Ctx, documentId: string, decision: "confirm" | "reject", input: { expiresAt?: Date | null; issuedAt?: Date | null; number?: string | null; reason?: string | null } = {}) {
+  assertCtx(ctx);
+  requirePermission(ctx, "compliance.edit");
+  const [doc] = await db.select().from(s.documents).where(and(eq(s.documents.tenantId, ctx.tenantId), eq(s.documents.id, documentId))).limit(1);
+  if (!doc || !doc.documentTypeId) throw new NotFoundError("document", documentId);
+  if (doc.status !== "pending") throw new ValidationError(`this document is ${doc.status}, not waiting for review`);
+  const kind = doc.subjectKind as SubjectKind;
+  const [type] = await db.select().from(s.documentTypes).where(eq(s.documentTypes.id, doc.documentTypeId)).limit(1);
+  if (!type) throw new NotFoundError("document type", doc.documentTypeId);
+  if (decision === "reject") {
+    if (!input.reason?.trim()) throw new ValidationError("tell the driver what is wrong (blurry, wrong side, expired…)", "reason");
+    await db.update(s.documents).set({ status: "rejected", notes: input.reason.trim(), updatedAt: new Date(), updatedBy: ctx.userId }).where(eq(s.documents.id, doc.id));
+    await writeAudit(db, ctx, kind, doc.subjectId, "update", { [type.name]: { from: "pending review", to: "rejected" } }, input.reason.trim());
+    return { ...doc, status: "rejected" as const };
+  }
+  const expiresAt = input.expiresAt === undefined ? doc.expiresAt : input.expiresAt;
+  if (type.tracksExpiry && !expiresAt) throw new ValidationError(`${type.name} needs an expiry date`, "expiresAt");
+  const row = await db.transaction(async (tx) => {
+    const prior = await tx.select().from(s.documents).where(and(eq(s.documents.tenantId, ctx.tenantId), eq(s.documents.subjectKind, kind), eq(s.documents.subjectId, doc.subjectId), eq(s.documents.documentTypeId, type.id), inArray(s.documents.status, ["present", "verified"])));
+    for (const p of prior) await tx.update(s.documents).set({ status: "superseded", updatedAt: new Date(), updatedBy: ctx.userId }).where(eq(s.documents.id, p.id));
+    const [row] = await tx.update(s.documents).set({ status: "verified", expiresAt, issuedAt: input.issuedAt === undefined ? doc.issuedAt : input.issuedAt, number: input.number === undefined ? doc.number : input.number || null, notes: "Confirmed from the driver app", updatedAt: new Date(), updatedBy: ctx.userId }).where(eq(s.documents.id, doc.id)).returning();
+    await writeAudit(tx, ctx, kind, doc.subjectId, "update", { [type.name]: { from: prior[0]?.expiresAt ?? null, to: expiresAt ?? "present" } }, `${type.name} from the driver app confirmed`);
+    return row;
+  });
+  await evaluateSubject(ctx, kind, doc.subjectId);
+  return row;
+}
+
+/** What drivers sent from the app and nobody has looked at yet. */
+export async function pendingUploads(ctx: Ctx) {
+  assertCtx(ctx);
+  requirePermission(ctx, "compliance.view");
+  const rows = await db
+    .select({ id: s.documents.id, subjectKind: s.documents.subjectKind, subjectId: s.documents.subjectId, documentTypeId: s.documents.documentTypeId, fileName: s.documents.fileName, expiresAt: s.documents.expiresAt, number: s.documents.number, createdAt: s.documents.createdAt, typeName: s.documentTypes.name, driverName: s.drivers.name })
+    .from(s.documents)
+    .leftJoin(s.documentTypes, eq(s.documentTypes.id, s.documents.documentTypeId))
+    .leftJoin(s.drivers, eq(s.drivers.id, s.documents.subjectId))
+    .where(and(eq(s.documents.tenantId, ctx.tenantId), eq(s.documents.status, "pending")))
+    .orderBy(s.documents.createdAt);
+  return rows;
 }
 
 export async function subjectDocuments(ctx: Ctx, kind: SubjectKind, subjectId: string) {
@@ -317,10 +367,33 @@ async function labelsFor(ctx: Ctx, subs: { kind: SubjectKind; id: string }[]) {
 }
 
 /** Driver app: the driver's own expiring items (spec §6.3). */
-export async function driverOwnItems(tenantId: string, driverId: string) {
-  const st = await statusFor(systemCtx(tenantId), "driver", driverId).catch(() => null);
+export type DriverOwnItem = { key: string; label: string; status: string; expiresAt: string | null; documentTypeId: string | null; tracksExpiry: boolean; pending: { fileName: string; at: string } | null; rejected: { reason: string; at: string } | null };
+
+/** What the driver sees under "Your documents": what is expiring, expired or missing, and what they already sent. */
+export async function driverOwnItems(tenantId: string, driverId: string): Promise<DriverOwnItem[]> {
+  const ctx = systemCtx(tenantId);
+  const st = await statusFor(ctx, "driver", driverId).catch(() => null);
   if (!st) return [];
-  return st.items.filter((i) => i.status === "expiring" || i.status === "expired" || i.status === "missing").map((i) => ({ label: i.label, status: i.status, expiresAt: i.expiresAt }));
+  const [types, sent] = await Promise.all([
+    db.select({ id: s.documentTypes.id, tracksExpiry: s.documentTypes.tracksExpiry }).from(s.documentTypes).where(and(eq(s.documentTypes.tenantId, tenantId), eq(s.documentTypes.appliesTo, "driver"))),
+    db.select({ documentTypeId: s.documents.documentTypeId, status: s.documents.status, fileName: s.documents.fileName, notes: s.documents.notes, at: s.documents.updatedAt }).from(s.documents).where(and(eq(s.documents.tenantId, tenantId), eq(s.documents.subjectKind, "driver"), eq(s.documents.subjectId, driverId), eq(s.documents.source, "driver_app"), inArray(s.documents.status, ["pending", "rejected"]))).orderBy(desc(s.documents.updatedAt)),
+  ]);
+  return st.items
+    .filter((i) => i.status === "expiring" || i.status === "expired" || i.status === "missing")
+    .map((i) => {
+      const typeId = i.key.startsWith("field:") ? null : i.key;
+      const p = typeId ? sent.find((d) => d.documentTypeId === typeId && d.status === "pending") : null;
+      const r = typeId && !p ? sent.find((d) => d.documentTypeId === typeId && d.status === "rejected") : null;
+      return { key: i.key, label: i.label, status: i.status, expiresAt: i.expiresAt, documentTypeId: typeId, tracksExpiry: types.find((t) => t.id === typeId)?.tracksExpiry ?? false, pending: p ? { fileName: p.fileName, at: p.at.toISOString() } : null, rejected: r ? { reason: r.notes ?? "", at: r.at.toISOString() } : null };
+    });
+}
+
+/** The driver sends a renewal from the app: a photo of the new card, the expiry they read off it. Waits for safety. */
+export async function driverUploadRenewal(tenantId: string, driverId: string, input: { documentTypeId: string; fileName: string; mimeType: string; bytes: Buffer; expiresAt?: Date | null; number?: string | null }) {
+  const ctx = systemCtx(tenantId);
+  const [driver] = await db.select({ id: s.drivers.id }).from(s.drivers).where(and(eq(s.drivers.tenantId, tenantId), eq(s.drivers.id, driverId))).limit(1);
+  if (!driver) throw new NotFoundError("driver", driverId);
+  return uploadSubjectDocument(ctx, "driver", driverId, { ...input, source: "driver_app", status: "pending", notes: "Sent from the driver app — check the photo and confirm" });
 }
 
 // ---------- incidents ----------

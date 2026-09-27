@@ -2,20 +2,24 @@
 
 import { useEffect, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { driverStepAction, driverPingAction, disputeSettlementLineAction } from "../../actions";
+import { driverStepAction, driverPingAction, disputeSettlementLineAction, driverPhotoAction, driverRenewalAction, driverMessageAction } from "../../actions";
+import { call } from "@/lib/client-call";
 import { LEG_LABEL } from "@/domain/states";
 import type { LegState } from "@/db/schema";
 
 /**
  * The driver app (spec §5.2): one screen, one big button, Spanish under English.
  * Works as a phone web page; asks for location and sends it with every step and every 2 minutes.
+ * Seal and POD photos at the stop, renewals of their own documents, and a line to dispatch (spec §5.2).
  */
 
 type Stop = { id: string; name: string; type: string; country: string; address: { line1?: string; city?: string; state?: string } | null; windowStart: string | null; windowEnd: string | null; contact: string | null; notes: string | null; arrivedAt?: string | null; departedAt?: string | null };
-type Item = { leg: { id: string; seq: number; type: string; state: LegState }; order: { orderNumber: string; equipment: string; cargoNote: string | null; refs: Record<string, string> }; from: Stop | null; to: Stop | null; mids?: Stop[]; truck: { unitNumber: string } | null; next: { to: LegState; label: string; es: string } | null; crossing: { id: string; state: string; trailerNumber: string | null; packetToken: string | null; nextStep: string | null } | null };
+type Item = { leg: { id: string; seq: number; type: string; state: LegState }; order: { orderNumber: string; equipment: string; cargoNote: string | null; refs: Record<string, string> }; from: Stop | null; to: Stop | null; mids?: Stop[]; truck: { unitNumber: string } | null; next: { to: LegState; label: string; es: string } | null; crossing: { id: string; state: string; trailerNumber: string | null; packetToken: string | null; nextStep: string | null } | null; docs: { pod: boolean; seal: boolean } };
 const XSTEP: Record<string, { en: string; es: string }> = { departed_yard: { en: "Departed the yard", es: "Salí del patio" }, at_mx_customs: { en: "At Mexican customs", es: "En aduana mexicana" }, in_us_customs: { en: "At US customs", es: "En aduana americana" }, cleared: { en: "Cleared — US side", es: "Liberado — lado americano" } };
 const XLABEL: Record<string, string> = { packet_sent: "Packet sent · Paquete enviado", departed_yard: "Departed yard · Salió del patio", at_mx_customs: "MX customs · Aduana MX", in_us_customs: "US customs · Aduana US", cleared: "Cleared · Liberado", held: "Held · Detenido", returned: "Returned · Regresado" };
-type Data = { driver: { name: string; driverType: string }; current: Item | null; items: Item[]; own: { label: string; status: string; expiresAt: string | null }[]; pay: PayStub[] };
+type OwnItem = { key: string; label: string; status: string; expiresAt: string | null; documentTypeId: string | null; tracksExpiry: boolean; pending: { fileName: string; at: string } | null; rejected: { reason: string; at: string } | null };
+type Msg = { id: string; who: "driver" | "dispatch"; body: string; at: string; seen: boolean };
+type Data = { driver: { name: string; driverType: string }; current: Item | null; items: Item[]; own: OwnItem[]; pay: PayStub[]; thread: Msg[] };
 type PayLine = { id: string; kind: string; orderNumber?: string | null; description: string; amountCents: number; disputed?: string | null; response?: string | null };
 type PayStub = { id: string; periodStart: string; periodEnd: string; state: string; currency: string; lines: PayLine[]; grossCents: number; deductionsCents: number; netCents: number; paidAt: string | null };
 const money = (c: number, cur = "USD") => `${cur === "MXN" ? "MX$" : "$"}${(c / 100).toLocaleString("en-US", { minimumFractionDigits: 2 })}`;
@@ -137,6 +141,8 @@ export function DriverApp({ token, data }: { token: string; data: Data }) {
             {cur.order.cargoNote && <div className="text-[13px] text-muted">📦 {cur.order.cargoNote}</div>}
           </div>
           <div className="px-5 pb-5">
+            {cur.leg.state === "at_pickup" && <PhotoButton token={token} legId={cur.leg.id} code="SEAL_PHOTO" done={cur.docs.seal} label="Seal photo · Foto del sello" onDone={() => router.refresh()} />}
+            {(cur.leg.state === "at_delivery" || (cur.leg.state === "en_route" && (cur.mids ?? []).some((m) => m.arrivedAt && !m.departedAt))) && <PhotoButton token={token} legId={cur.leg.id} code="POD" done={cur.docs.pod} label="POD photo · Foto del POD" onDone={() => router.refresh()} />}
             {cur.next ? (
               <button className="btn btn-primary w-full justify-center flex-col gap-0" style={{ height: 72, fontSize: 18 }} onClick={() => step(false)} disabled={pending || declining}>
                 {pending ? "…" : cur.next.label}
@@ -145,6 +151,7 @@ export function DriverApp({ token, data }: { token: string; data: Data }) {
             ) : (
               <div className="text-center text-muted">Done · Listo</div>
             )}
+            {cur.leg.state === "at_delivery" && !cur.docs.pod && <div className="text-[12.5px] text-amber font-semibold text-center mt-2">No POD photo yet — the office needs it to bill. · Falta la foto del POD.</div>}
             {(cur.leg.state === "dispatched" || cur.leg.state === "accepted") &&
               (declining ? (
                 <div className="mt-3 space-y-2">
@@ -235,21 +242,17 @@ export function DriverApp({ token, data }: { token: string; data: Data }) {
         </div>
       )}
       {data.own.length > 0 && (
-        <div className="card mt-5 p-4">
+        <div className="card mt-5 p-4" data-testid="own-docs">
           <div className="eyebrow mb-1">Your documents · Tus documentos</div>
-          <ul className="space-y-1 text-[13px]">
+          <ul className="space-y-2 text-[13px]">
             {data.own.map((i) => (
-              <li key={i.label} className="flex justify-between">
-                <span>{i.label}</span>
-                <span className={i.status === "expired" ? "text-red font-bold" : i.status === "missing" ? "text-amber font-bold" : "text-amber font-semibold"}>
-                  {i.status === "expired" ? "EXPIRED · VENCIDO" : i.status === "missing" ? "missing · falta" : `expires ${i.expiresAt ? new Date(i.expiresAt).toLocaleDateString() : ""}`}
-                </span>
-              </li>
+              <OwnDoc key={i.key} token={token} item={i} onDone={() => router.refresh()} />
             ))}
           </ul>
-          <div className="help mt-1">Send a photo of the renewal to dispatch. · Manda foto de la renovación a despacho.</div>
+          <div className="help mt-2">Take a photo of the renewal here; the office checks it and it goes on file. · Toma foto de la renovación aquí; la oficina la revisa.</div>
         </div>
       )}
+      <Chat token={token} legId={cur?.leg.id ?? null} thread={data.thread} onDone={() => router.refresh()} />
       {data.pay.length > 0 && (
         <div className="card mt-5 p-4">
           <div className="eyebrow mb-1">Your pay · Tu pago</div>
@@ -368,6 +371,162 @@ function PayCard({ token, stub, onChanged }: { token: string; stub: PayStub; onC
           )}
         </div>
       )}
+    </div>
+  );
+}
+
+/** One tap: the camera opens, the photo goes up, a check appears. Never in the way of the milestone button. */
+function PhotoButton({ token, legId, code, done, label, onDone }: { token: string; legId: string; code: "POD" | "SEAL_PHOTO"; done: boolean; label: string; onDone: () => void }) {
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const [just, setJust] = useState(false);
+  const ok = done || just;
+  return (
+    <div className="mb-3" data-testid={`photo-${code}`}>
+      <label className={`btn w-full justify-center ${ok ? "btn-ghost text-teal" : ""}`} style={{ height: 48 }}>
+        <input
+          type="file"
+          accept="image/*,application/pdf"
+          capture="environment"
+          className="hidden"
+          disabled={busy}
+          onChange={async (e) => {
+            const f = e.target.files?.[0];
+            if (!f) return;
+            setBusy(true);
+            setErr(null);
+            const fd = new FormData();
+            fd.set("file", f);
+            fd.set("code", code);
+            const r = await call(() => driverPhotoAction(token, legId, fd));
+            setBusy(false);
+            e.target.value = "";
+            if (r.ok) {
+              setJust(true);
+              onDone();
+            } else setErr(r.error);
+          }}
+        />
+        {busy ? "Sending… · Enviando…" : ok ? `✓ ${code === "POD" ? "POD" : "Seal · Sello"} on file · tap for another · otra foto` : `📷 ${label}`}
+      </label>
+      {err && (
+        <div className="error mt-1" role="alert">
+          {err}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function OwnDoc({ token, item, onDone }: { token: string; item: OwnItem; onDone: () => void }) {
+  const [open, setOpen] = useState(false);
+  const [name, setName] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const ref = useRef<HTMLFormElement>(null);
+  const d = (s: string) => new Date(s).toLocaleDateString("en-US", { month: "short", day: "numeric" });
+  return (
+    <li>
+      <div className="flex justify-between gap-2">
+        <span className="font-semibold">{item.label}</span>
+        <span className={item.status === "expired" ? "text-red font-bold" : item.status === "missing" ? "text-amber font-bold" : "text-amber font-semibold"}>
+          {item.status === "expired" ? "EXPIRED · VENCIDO" : item.status === "missing" ? "missing · falta" : `expires ${item.expiresAt ? new Date(item.expiresAt).toLocaleDateString() : ""}`}
+        </span>
+      </div>
+      {item.pending ? (
+        <div className="text-[12.5px] text-teal">Sent {d(item.pending.at)} — the office is checking it. · Enviado, la oficina lo revisa.</div>
+      ) : (
+        <>
+          {item.rejected && <div className="text-[12.5px] text-red">The office sent it back: {item.rejected.reason} · Rechazado, manda otra foto.</div>}
+          {item.documentTypeId && !open && (
+            <button type="button" className="text-[12.5px] text-teal font-semibold" onClick={() => setOpen(true)}>
+              📷 Send the new one · Mandar el nuevo
+            </button>
+          )}
+          {open && (
+            <form ref={ref} onSubmit={(e) => e.preventDefault()} className="mt-1 space-y-2 rounded-lg border border-line p-2">
+              <input type="hidden" name="documentTypeId" value={item.documentTypeId ?? ""} />
+              <label className="btn w-full justify-center">
+                <input type="file" name="file" accept="image/*,application/pdf" capture="environment" className="hidden" onChange={(e) => setName(e.target.files?.[0]?.name ?? null)} />
+                {name ? `✓ ${name}` : "📷 Photo · Foto"}
+              </label>
+              {item.tracksExpiry && (
+                <div>
+                  <label className="label">Expires · Vence</label>
+                  <input type="date" name="expiresAt" className="input" required />
+                </div>
+              )}
+              <input name="number" className="input" placeholder="Number on the card (optional) · Número" />
+              {err && <div className="error">{err}</div>}
+              <div className="flex gap-2">
+                <button type="button" className="btn flex-1 justify-center" onClick={() => setOpen(false)}>
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-primary flex-1 justify-center"
+                  disabled={busy || !name}
+                  onClick={async () => {
+                    setBusy(true);
+                    setErr(null);
+                    const r = await call(() => driverRenewalAction(token, new FormData(ref.current!)));
+                    setBusy(false);
+                    if (r.ok) {
+                      setOpen(false);
+                      onDone();
+                    } else setErr(r.error);
+                  }}
+                >
+                  {busy ? "…" : "Send · Enviar"}
+                </button>
+              </div>
+            </form>
+          )}
+        </>
+      )}
+    </li>
+  );
+}
+
+/** A line to dispatch: what the driver wrote and what the office answered. */
+function Chat({ token, legId, thread, onDone }: { token: string; legId: string | null; thread: Msg[]; onDone: () => void }) {
+  const [text, setText] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const when = (s: string) => new Date(s).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+  const send = async () => {
+    if (!text.trim()) return;
+    setBusy(true);
+    setErr(null);
+    const r = await driverMessageAction(token, legId, text);
+    setBusy(false);
+    if (r.ok) {
+      setText("");
+      onDone();
+    } else setErr(r.error);
+  };
+  return (
+    <div className="card mt-5 p-4" data-testid="chat">
+      <div className="eyebrow mb-1">Dispatch · Despacho</div>
+      {thread.length > 0 && (
+        <div className="space-y-1.5 max-h-64 overflow-y-auto mb-2">
+          {thread.map((m) => (
+            <div key={m.id} className={`text-[13px] rounded-lg px-3 py-1.5 max-w-[85%] ${m.who === "driver" ? "ml-auto bg-teal-soft" : "bg-ground"}`}>
+              <div>{m.body}</div>
+              <div className="text-[11px] text-faint">
+                {m.who === "driver" ? (m.seen ? "seen by dispatch · visto" : "sent · enviado") : "dispatch"} · {when(m.at)}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+      <div className="flex gap-2">
+        <input className="input flex-1" placeholder="Message dispatch · Mensaje a despacho" value={text} onChange={(e) => setText(e.target.value)} onKeyDown={(e) => e.key === "Enter" && send()} />
+        <button type="button" className="btn btn-primary" disabled={busy || !text.trim()} onClick={send}>
+          Send
+        </button>
+      </div>
+      {err && <div className="error mt-1">{err}</div>}
     </div>
   );
 }

@@ -398,7 +398,7 @@ export const documents = pgTable(
     expiresAt: timestamp("expires_at", { withTimezone: true }),
     number: text("number"),
     source: text("source").notNull().default("upload"), // upload | nad | viatpro | generated | driver_app | portal | email
-    status: text("status").notNull().default("present"), // present | verified | superseded | rejected
+    status: text("status").notNull().default("present"), // present | verified | superseded | rejected | pending (from the driver app, counts once safety confirms it)
     version: integer("version").notNull().default(1),
     extracted: jsonb("extracted").$type<Record<string, { value: unknown; confidence: number; source?: "ai" | "human" }>>(),
     extractionAt: timestamp("extraction_at", { withTimezone: true }), // last AI read

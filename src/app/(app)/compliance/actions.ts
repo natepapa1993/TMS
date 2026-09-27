@@ -60,3 +60,13 @@ export async function readSubjectDocAction(kind: SubjectKind, typeName: string, 
     return C.readSubjectDocument(ctx, kind, typeName, { fileName: file.name, mimeType: mime, bytes: Buffer.from(await file.arrayBuffer()) });
   });
 }
+
+/** Safety confirms or rejects what a driver sent from the app. */
+export async function reviewSubjectDocAction(documentId: string, decision: "confirm" | "reject", v: { expiresAt?: string; issuedAt?: string; number?: string; reason?: string }) {
+  const r = await act(async (ctx) => {
+    const doc = await C.reviewSubjectDocument(ctx, documentId, decision, { expiresAt: v.expiresAt === undefined ? undefined : v.expiresAt ? parseDate(v.expiresAt) : null, issuedAt: v.issuedAt === undefined ? undefined : v.issuedAt ? parseDate(v.issuedAt) : null, number: v.number, reason: v.reason });
+    return { status: doc.status, subjectKind: doc.subjectKind as SubjectKind, subjectId: doc.subjectId };
+  });
+  if (r.ok) touch(r.data.subjectKind, r.data.subjectId);
+  return r;
+}

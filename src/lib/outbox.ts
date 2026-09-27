@@ -8,10 +8,11 @@ import type { Ctx } from "./context";
 /**
  * Every outbound message is a row first (spec §4.2, §9.3): queued → sent | failed | logged.
  * Email goes through Resend when a key is configured (tenant integration or RESEND_API_KEY);
- * without one it is "logged" so the flow still works end to end in dev and tests.
+ * without one it is "logged" so the flow still works end to end in dev and tests. A driver_app
+ * message is "sent" the moment it is written: the driver's app reads it.
  */
 
-export type OutboundMessage = { channel: "email" | "whatsapp" | "sms"; to: string; subject?: string; body: string; html?: string; subjectKind?: string; subjectId?: string; meta?: OutboxMeta };
+export type OutboundMessage = { channel: "email" | "whatsapp" | "sms" | "driver_app"; to: string; subject?: string; body: string; html?: string; subjectKind?: string; subjectId?: string; meta?: OutboxMeta };
 
 export async function enqueue(ctx: Ctx, m: OutboundMessage, tx: Tx | typeof db = db) {
   const [row] = await tx
@@ -70,6 +71,12 @@ export async function deliverQueued(limit = 25) {
   let failed = 0;
   for (const m of rows) {
     try {
+      if (m.channel === "driver_app") {
+        // nothing to send: the driver's app shows it on the next open
+        await db.update(outbox).set({ state: "sent", sentAt: new Date(), attempts: sql`${outbox.attempts} + 1` }).where(eq(outbox.id, m.id));
+        sent++;
+        continue;
+      }
       if (m.channel === "whatsapp") {
         const cfg = await whatsappFor(m.tenantId);
         if (cfg) {

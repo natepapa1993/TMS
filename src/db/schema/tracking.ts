@@ -91,7 +91,7 @@ export const accessTokens = pgTable(
 export const OUTBOX_STATES = ["queued", "sent", "delivered", "read", "failed", "logged"] as const;
 
 /** Every message we send (email now, WhatsApp/SMS later). Nothing goes out without a row here. */
-export type OutboxMeta = { kind?: "tender" | "packet" | "tracking" | "general"; template?: { name: string; language?: string; params: string[] } | null };
+export type OutboxMeta = { kind?: "tender" | "packet" | "tracking" | "general"; template?: { name: string; language?: string; params: string[] } | null; orderId?: string | null };
 
 /** What people write back to us (WhatsApp today): attached to the driver / carrier by phone, and to the leg they were on. */
 export const inboundMessages = pgTable(
@@ -99,7 +99,7 @@ export const inboundMessages = pgTable(
   {
     id: id(),
     tenantId: tenantId(),
-    channel: text("channel").notNull(), // whatsapp | sms | email
+    channel: text("channel").notNull(), // whatsapp | sms | email | driver_app
     from: text("from").notNull(),
     fromName: text("from_name"),
     body: text("body").notNull(),
@@ -119,7 +119,7 @@ export const outbox = pgTable(
   {
     id: id(),
     tenantId: tenantId(),
-    channel: text("channel").notNull(), // email | whatsapp | sms
+    channel: text("channel").notNull(), // email | whatsapp | sms | driver_app (shown in the app, nothing sent)
     to: text("to").notNull(),
     subject: text("subject"),
     body: text("body").notNull(), // plain text

@@ -1,5 +1,6 @@
-// Features: F-4 F-5 — tender by email link, driver app, customer tracking link, all through the browser
+// Features: F-4 F-5 F-5.11 — tender by email link, driver app (steps, seal + POD photos, a line to dispatch), customer tracking link, all through the browser
 import { test, expect, type Page } from "@playwright/test";
+import path from "node:path";
 import { signupFresh, quickAdd, future } from "./helpers";
 
 async function fleet(page: Page) {
@@ -110,12 +111,36 @@ test("driver app: link from Fleet, one button per step with GPS, customer tracki
   await expect(phone.locator("body")).toContainText("Border yard (MX)");
   await expect(phone.locator("body")).toContainText("Unit 2117");
   await expect(phone.locator("span.pill", { hasText: "GPS on" })).toBeVisible({ timeout: 10000 });
-  const big = phone.locator("button.btn-primary");
-  for (const label of ["Accept this load", "Rolling to pickup", "Arrived at pickup", "Loaded — leaving", "En route to delivery", "Arrived at delivery", "Delivered — empty"]) {
+  const big = phone.locator("button.btn-primary").first();
+  const bol = path.join(__dirname, "fixtures", "bol.pdf");
+  for (const label of ["Accept this load", "Rolling to pickup", "Arrived at pickup"]) {
     await expect(big).toContainText(label);
     await big.click();
     await phone.waitForTimeout(400);
   }
+  // a line to dispatch while loading
+  await phone.getByPlaceholder("Message dispatch · Mensaje a despacho").fill("Shipper says 40 min more");
+  await phone.getByTestId("chat").locator("button:has-text('Send')").click();
+  await expect(phone.getByTestId("chat")).toContainText("Shipper says 40 min more");
+  await expect(phone.getByTestId("chat")).toContainText("sent · enviado");
+  // seal photo while loading: one tap, a check
+  await expect(big).toContainText("Loaded — leaving");
+  await expect(phone.getByTestId("photo-POD")).toHaveCount(0);
+  await phone.getByTestId("photo-SEAL_PHOTO").locator("input[type=file]").setInputFiles(bol);
+  await expect(phone.getByTestId("photo-SEAL_PHOTO")).toContainText("✓ Seal · Sello on file", { timeout: 10000 });
+  for (const label of ["Loaded — leaving", "En route to delivery", "Arrived at delivery"]) {
+    await expect(big).toContainText(label);
+    await big.click();
+    await phone.waitForTimeout(400);
+  }
+  // at the delivery: the POD photo is asked for before the last button
+  await expect(big).toContainText("Delivered — empty");
+  await expect(phone.locator("body")).toContainText("No POD photo yet");
+  await phone.getByTestId("photo-POD").locator("input[type=file]").setInputFiles(bol);
+  await expect(phone.getByTestId("photo-POD")).toContainText("✓ POD on file", { timeout: 10000 });
+  await expect(phone.locator("body")).not.toContainText("No POD photo yet");
+  await big.click();
+  await phone.waitForTimeout(400);
   await expect(phone.locator("body")).toContainText("Nothing assigned right now");
 
   // the customer's tracking page
@@ -136,6 +161,31 @@ test("driver app: link from Fleet, one button per step with GPS, customer tracki
   await page.click(".row[role=button]");
   await expect(panel.locator(".rounded-lg.border").nth(1)).toContainText("Delivered");
   await expect(panel).toContainText("Assign MX leg"); // MX leg was never covered; it is first in line
+
+  // the photos are the order's documents; the message is in Messages, on the order, and the reply reaches the phone
+  await page.goto("/messages");
+  const row = page.locator("tr", { hasText: "Shipper says 40 min more" });
+  await expect(row).toContainText("Benjamín Xochihua");
+  await expect(row).toContainText("driver app");
+  await expect(row).toContainText("26-00001");
+  await row.locator("button:has-text('Reply')").click();
+  await page.getByRole("dialog").getByLabel("Reply").fill("OK, tell them we need to leave by 3");
+  await page.getByRole("dialog").locator("button:has-text('Send')").click();
+  await expect(page.getByRole("status")).toContainText("the driver sees it in the app");
+  await expect(page.locator("tr", { hasText: "Shipper says 40 min more" })).toHaveCount(0); // handled
+  await expect(page.getByTestId("sent-log")).toContainText("Reply to driver");
+  await page.goto("/orders");
+  await page.click("a:has-text('26-00001')");
+  await expect(page.locator("body")).toContainText("SEAL_PHOTO");
+  await expect(page.locator("body")).toContainText("POD");
+  await expect(page.locator("body")).toContainText("POD photo from the driver app at Laredo yard");
+  await expect(page.locator("body")).toContainText("Dispatch to Benjamín Xochihua: OK, tell them");
+  const ctx3 = await browser.newContext();
+  const phone2 = await ctx3.newPage();
+  await phone2.goto(driverUrl!);
+  await expect(phone2.getByTestId("chat")).toContainText("OK, tell them we need to leave by 3");
+  await expect(phone2.getByTestId("chat")).toContainText("seen by dispatch");
+  await ctx3.close();
 });
 
 test("a revoked or random public link is refused politely", async ({ page }) => {

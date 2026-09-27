@@ -22,7 +22,7 @@ export default async function MessagesPage() {
           </Link>
         }
       >
-        What drivers and carriers write to the company WhatsApp number, and everything we sent them: tenders, packets, tracking links, invoices. Replies from someone on a leg also show on that order&apos;s timeline.
+        What drivers write from their app and what drivers and carriers write to the company WhatsApp number, with a Reply that reaches them; and everything we sent them: tenders, packets, tracking links, invoices. Replies from someone on a leg also show on that order&apos;s timeline.
       </PageHeader>
       <div className="px-7 pb-10">
         <MessagesBoard rows={JSON.parse(JSON.stringify(rows))} />

@@ -1,5 +1,5 @@
 import { resolveToken } from "@/lib/tokens";
-import { driverToday } from "@/domain/tracking";
+import { driverToday, driverThread } from "@/domain/tracking";
 import { driverOwnItems } from "@/domain/compliance";
 import { driverSettlements } from "@/domain/billing";
 import { DriverApp } from "./app";
@@ -17,6 +17,6 @@ export default async function DriverPage({ params }: PageProps<"/d/[token]">) {
         <p className="text-muted mt-1">Ask dispatch to send you a new one. / Pide a despacho un enlace nuevo.</p>
       </div>
     );
-  const [today, own, pay] = await Promise.all([driverToday(t.ctx.tenantId, t.subjectId), driverOwnItems(t.ctx.tenantId, t.subjectId), driverSettlements(t.ctx.tenantId, t.subjectId)]);
-  return <DriverApp token={token} data={JSON.parse(JSON.stringify({ driver: today.driver, current: today.current, items: today.items, own, pay }))} />;
+  const [today, own, pay, thread] = await Promise.all([driverToday(t.ctx.tenantId, t.subjectId), driverOwnItems(t.ctx.tenantId, t.subjectId), driverSettlements(t.ctx.tenantId, t.subjectId), driverThread(t.ctx.tenantId, t.subjectId)]);
+  return <DriverApp token={token} data={JSON.parse(JSON.stringify({ driver: today.driver, current: today.current, items: today.items, own, pay, thread }))} />;
 }

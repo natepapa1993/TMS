@@ -146,3 +146,16 @@ export async function pollMailboxAction(partnerId: string) {
   }
   return r;
 }
+
+export async function revokeDriverAppAction(driverId: string) {
+  const r = await act(async (ctx) => {
+    const { revokeTokensFor } = await import("@/lib/tokens");
+    const { writeAudit } = await import("@/lib/audit");
+    const { db } = await import("@/db/client");
+    await revokeTokensFor(ctx, "driver_app", driverId);
+    await writeAudit(db, ctx, "driver", driverId, "update", { driverApp: { from: "link", to: "revoked" } }, "driver app link revoked");
+    return { ok: true };
+  });
+  if (r.ok) revalidatePath(`/settings/drivers/${driverId}`);
+  return r;
+}

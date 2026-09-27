@@ -1,9 +1,9 @@
-// Features: F-3.9 F-6 compliance through the browser — rule, blocked driver on the board and in the picker, upload from the record, snooze, 24h override, export, incidents F-6.9
+// Features: F-3.9 F-6 F-5.11 compliance through the browser — rule, blocked driver on the board and in the picker, upload from the record, a renewal from the driver's phone confirmed by safety, snooze, 24h override, export, incidents F-6.9
 import { test, expect } from "@playwright/test";
 import path from "node:path";
 import { signupFresh, quickAdd, future } from "./helpers";
 
-test("safety director day: a blocking rule, the driver goes red everywhere, upload fixes it, export, incident", async ({ page }) => {
+test("safety director day: a blocking rule, the driver goes red everywhere, the driver's photo waits for safety, upload fixes it, export, incident", async ({ page, browser }) => {
   test.setTimeout(150_000);
   await signupFresh(page);
   await quickAdd(page, "customers", "Add customer", { name: "RXO", kind: "broker" });
@@ -51,21 +51,66 @@ test("safety director day: a blocking rule, the driver goes red everywhere, uplo
   await expect(cand).toContainText("Medical card missing");
   await page.keyboard.press("Escape");
 
-  // upload the card from the driver record → dispatchable
+  // the driver photographs the card from the app: it waits for safety, and the driver stays blocked until then
   await page.goto("/settings/drivers");
   await page.click("table a:has-text('Daniel')");
+  const appUrl = await page.getByTestId("driver-app-url").textContent();
+  const phone = await browser.newPage();
+  await phone.goto(appUrl!);
+  const own = phone.getByTestId("own-docs");
+  await expect(own).toContainText("Medical card");
+  await expect(own).toContainText("missing · falta");
+  await own.locator("button:has-text('Send the new one')").first().click();
+  await own.locator("input[type=file]").setInputFiles(path.join(__dirname, "fixtures", "bol.pdf"));
+  await own.locator("input[name=expiresAt]").fill(future(300));
+  await own.locator("input[name=number]").fill("MED-77");
+  await own.locator("button:has-text('Send · Enviar')").click();
+  await expect(own).toContainText("the office is checking it");
+  await page.goto("/compliance");
+  await expect(page.getByTestId("pending-uploads")).toContainText("1 document sent from the driver app");
+  await expect(page.locator("tr", { hasText: "Daniel Reyes" })).toContainText("blocked"); // nothing counts yet
+  await page.getByTestId("pending-uploads").locator("a").click();
+  await page.waitForURL("**/settings/drivers/**");
   await expect(page.locator("#documents")).toContainText("Blocked");
+  // sent back once (wrong side), then a second photo confirmed
+  const pend = page.getByTestId("pending-docs");
+  await expect(pend).toContainText("bol.pdf");
+  await pend.locator("button:has-text('Send back')").click();
+  await pend.getByLabel("Reason").fill("that is the back of the card");
+  await pend.locator("button:has-text('Reject')").click();
+  await expect(page.getByRole("status")).toContainText("Sent back to the driver");
+  await phone.reload();
+  await expect(phone.getByTestId("own-docs")).toContainText("that is the back of the card");
+  await phone.getByTestId("own-docs").locator("button:has-text('Send the new one')").first().click();
+  await phone.getByTestId("own-docs").locator("input[type=file]").setInputFiles(path.join(__dirname, "fixtures", "bol.pdf"));
+  await phone.getByTestId("own-docs").locator("input[name=expiresAt]").fill(future(300));
+  await phone.getByTestId("own-docs").locator("button:has-text('Send · Enviar')").click();
+  await expect(phone.getByTestId("own-docs")).toContainText("the office is checking it");
+  await page.reload();
+  await page.getByTestId("pending-docs").getByLabel("Number").fill("MED-77");
+  await page.getByTestId("pending-docs").locator("button:has-text('Confirm')").click();
+  await expect(page.getByRole("status")).toContainText("Confirmed");
+  await expect(page.locator("#documents")).toContainText("Dispatchable");
+  await expect(page.locator("#documents")).toContainText("#MED-77");
+  await phone.reload();
+  await expect(phone.getByTestId("own-docs").locator("button:has-text('Send the new one')")).toHaveCount(0); // the card is on file; only the expiring built-in date remains, and that is the office's
+  await phone.close();
+  // the office can also upload a renewal from the record (the manual path stays)
+  await page.goto("/settings/drivers");
+  await page.click("table a:has-text('Daniel')");
+  await expect(page.locator("#documents")).toContainText("Dispatchable");
   await page.locator("#documents").locator("button:has-text('upload')").first().click();
   const up = page.getByRole("dialog");
   await up.locator("input[type=file]").setInputFiles(path.join(__dirname, "fixtures", "bol.pdf"));
   await up.locator("button:has-text('Read with AI')").click(); // offered before the upload; honest when nothing is connected
   await expect(up.getByTestId("ai-read")).toContainText("not connected");
   await up.locator("input[name=expiresAt]").fill(future(200));
-  await up.locator("input[name=number]").fill("MED-77");
+  await up.locator("input[name=number]").fill("MED-78");
   await up.locator("button:has-text('Upload')").last().click();
   await expect(page.getByRole("status")).toContainText("compliance re-run");
   await expect(page.locator("#documents")).toContainText("Dispatchable");
-  await expect(page.locator("#documents")).toContainText("#MED-77");
+  await expect(page.locator("#documents")).toContainText("#MED-78");
+  await expect(page.locator("#documents")).not.toContainText("#MED-77"); // superseded
 
   // export
   const res = await page.request.get("/api/compliance/export?kind=driver");

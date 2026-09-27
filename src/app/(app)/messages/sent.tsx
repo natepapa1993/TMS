@@ -4,7 +4,7 @@ import { useState } from "react";
 import { Modal, Pill } from "@/components/ui";
 
 type Sent = { id: string; channel: string; to: string; subject: string | null; body: string; subjectKind: string | null; state: string; error: string | null; attempts: number; sentAt: string | null; createdAt: string };
-const KIND: Record<string, string> = { tender: "Tender", packet: "Crossing packet", tracking_link: "Tracking link", driver_link: "Driver app link", invoice: "Invoice", edi: "EDI", digest: "Digest", password_reset: "Password reset", statement: "Statement", reminder: "Reminder", alert: "Dispatch alert", owner_weekly: "Monday numbers", compliance_digest: "Compliance digest" };
+const KIND: Record<string, string> = { tender: "Tender", packet: "Crossing packet", tracking_link: "Tracking link", driver_link: "Driver app link", invoice: "Invoice", edi: "EDI", digest: "Digest", password_reset: "Password reset", statement: "Statement", reminder: "Reminder", alert: "Dispatch alert", owner_weekly: "Monday numbers", compliance_digest: "Compliance digest", driver_reply: "Reply to driver" };
 const TONE: Record<string, "slate" | "teal" | "amber" | "red" | "green" | "blue"> = { queued: "amber", sent: "green", delivered: "green", read: "green", failed: "red", logged: "slate" };
 const when = (d: string) => new Date(d).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
 

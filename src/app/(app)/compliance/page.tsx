@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { requireCtx } from "@/lib/auth";
-import { dashboard, evaluateAll, FIELD_ITEMS, type SubjectKind } from "@/domain/compliance";
+import { dashboard, evaluateAll, pendingUploads, FIELD_ITEMS, type SubjectKind } from "@/domain/compliance";
 import { PageHeader } from "@/components/page-header";
 import { Pill } from "@/components/ui";
 import { ComplianceTable } from "./table";
@@ -30,6 +30,7 @@ export default async function CompliancePage({ searchParams }: PageProps<"/compl
     await evaluateAll(ctx).catch(() => null);
     d = await dashboard(ctx);
   }
+  const pending = await pendingUploads(ctx);
   const types = d.types.filter((t) => t.appliesTo === kind);
   const fields = FIELD_ITEMS[kind];
   // a document type and a built-in expiry field can share a name ("FAST card" scan on file vs the FAST expiry date): say which is which
@@ -66,6 +67,22 @@ export default async function CompliancePage({ searchParams }: PageProps<"/compl
         Every driver, truck, trailer and carrier against your document rules. Last run {d.tiles.lastRun ? d.tiles.lastRun.toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) : "never"} · re-runs on every save and every hour.
       </PageHeader>
       <div className="px-7 pb-10">
+        {pending.length > 0 && (
+          <div className="rounded-lg border border-teal/40 bg-teal-soft/40 px-4 py-3 mb-4 text-[13px]" data-testid="pending-uploads">
+            <b>
+              {pending.length} document{pending.length === 1 ? "" : "s"} sent from the driver app
+            </b>{" "}
+            waiting for a look — nothing counts until you confirm it:{" "}
+            {pending.map((p, i) => (
+              <span key={p.id}>
+                {i > 0 && ", "}
+                <Link href={`/settings/drivers/${p.subjectId}#documents`} className="text-teal font-semibold">
+                  {p.driverName ?? p.subjectId} · {p.typeName ?? "document"}
+                </Link>
+              </span>
+            ))}
+          </div>
+        )}
         <div className="flex gap-3 mb-4">
           {tile("blocked", "Blocked from dispatch", d.tiles.blocked, "text-red")}
           {tile("expired", "Expired", d.tiles.expired, "text-red")}

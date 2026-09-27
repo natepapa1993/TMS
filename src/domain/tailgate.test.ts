@@ -1,4 +1,4 @@
-// Features: F-12 tailgate / LTL — the plan's acceptance test: a Canton → Laredo southbound trip with five shipments from three customers, planned with capacity and LIFO, crosses with all five on one packet, deconsolidates, five invoices and one settlement with margin per shipment
+// Features: F-12 F-5.11 tailgate / LTL — the plan's acceptance test: a Canton → Laredo southbound trip with five shipments from three customers, planned with capacity and LIFO, crosses with all five on one packet, deconsolidates, five invoices and one settlement with margin per shipment
 import { describe, it, expect, beforeEach } from "vitest";
 import { PDFDocument } from "pdf-lib";
 import { truncateAll, makeTenant } from "@/test/helpers";
@@ -284,5 +284,43 @@ describe("tailgate trip (acceptance)", () => {
     const own = await db.select().from(stops).where(eq(stops.orderId, s2.id)).orderBy(stops.seq);
     expect(own[0].arrivedAt?.getTime()).toBe(now[1].arrivedAt?.getTime());
     expect(own[0].departedAt?.getTime()).toBe(now[1].departedAt?.getTime());
+  });
+
+  it("a POD photo from the driver app at a trip stop lands on every shipment getting off there, and nowhere a shipment isn't", async () => {
+    const { driverUploadPhoto, driverToday } = await import("./tracking");
+    const { documents } = await import("@/db/schema");
+    const trip = await T.createTrip(a, { stops: [{ type: "pickup", name: "Canton", country: "US" }, { type: "delivery", name: "Toledo", country: "US" }, { type: "delivery", name: "Laredo", country: "US" }] });
+    const [canton, toledo, laredo] = trip.stops;
+    const s1 = await T.addShipment(a, trip.order.id, { customerId: f.rxo, rateCents: 1000, pickupStopId: canton.id, deliveryStopId: laredo.id, weightLbs: 100, linearFt: 4 });
+    const s2 = await T.addShipment(a, trip.order.id, { customerId: f.magna, rateCents: 900, pickupStopId: canton.id, deliveryStopId: toledo.id, weightLbs: 100, linearFt: 4 });
+    const s3 = await T.addShipment(a, trip.order.id, { customerId: f.toyota, rateCents: 800, pickupStopId: canton.id, deliveryStopId: toledo.id, weightLbs: 100, linearFt: 4 });
+    await T.bookTrip(a, trip.order.id);
+    const leg = trip.legs[0];
+    await planLeg(a, leg.id, { kind: "truck", truckId: f.t2117, driverId: f.martin });
+    await dispatchLeg(a, leg.id);
+    await acceptLeg(a, leg.id);
+    const jpg = Buffer.from("jpg fixture");
+    for (const st of ["en_route_to_pickup", "at_pickup", "loaded", "en_route"] as const) await advanceLeg(a, leg.id, st, { source: "driver_app" });
+    await advanceLeg(a, leg.id, "next", { source: "driver_app" }); // arrived Toledo
+    let today = await driverToday(a.tenantId, f.martin);
+    expect(today.current!.docs.pod).toBe(false);
+    const rows = await driverUploadPhoto(a.tenantId, f.martin, leg.id, { code: "POD", fileName: "toledo.jpg", mimeType: "image/jpeg", bytes: jpg });
+    expect(rows.map((r) => r.subjectId).sort()).toEqual([s2.id, s3.id].sort());
+    today = await driverToday(a.tenantId, f.martin);
+    expect(today.current!.docs.pod).toBe(true); // both Toledo shipments have one
+    await advanceLeg(a, leg.id, "next", { source: "driver_app" }); // left Toledo
+    await expect(driverUploadPhoto(a.tenantId, f.martin, leg.id, { code: "POD", fileName: "x.jpg", mimeType: "image/jpeg", bytes: jpg })).rejects.toThrow(/arrived at the delivery/);
+    await advanceLeg(a, leg.id, "next", { source: "driver_app" }); // at Laredo
+    today = await driverToday(a.tenantId, f.martin);
+    expect(today.current!.docs.pod).toBe(false); // Laredo's shipment has none yet
+    await driverUploadPhoto(a.tenantId, f.martin, leg.id, { code: "POD", fileName: "laredo.jpg", mimeType: "image/jpeg", bytes: jpg });
+    const pods = await db.select({ subjectId: documents.subjectId, fileName: documents.fileName }).from(documents).where(eq(documents.code, "POD"));
+    expect(pods.find((p) => p.subjectId === s1.id)!.fileName).toBe("laredo.jpg");
+    expect(pods.filter((p) => p.subjectId === trip.order.id).length).toBe(0); // never on the trip itself: trips don't bill
+    // the POD gate for billing is satisfied per shipment
+    await advanceLeg(a, leg.id, "next", { source: "driver_app" });
+    const { billingQueue } = await import("./billing");
+    const q = await billingQueue(a);
+    expect(q.filter((r) => r.docsComplete).map((r) => r.order.id).sort()).toEqual([s1.id, s2.id, s3.id].sort());
   });
 });
