@@ -296,12 +296,20 @@ export async function trackingView(tenantId: string, orderId: string) {
 
 // ---------- watchdog ----------
 
-/** Job: a moving leg on our own truck with no position for `hours` gets a yellow no_position flag, once. */
+/**
+ * Job: a moving leg on our own truck with no position for `hours` gets a yellow no_position flag, once.
+ * A partner carrier's leg gets the same watch once their driver's phone has reported at all (the link
+ * was opened): silence after that is worth a look; a carrier that never used the link is not.
+ */
 export async function flagStaleTracking(now = new Date(), hours = 2) {
   const cutoff = new Date(now.getTime() - hours * 3600_000);
-  const moving = await db.select().from(s.legs).where(and(inArray(s.legs.state, MOVING), eq(s.legs.assigneeKind, "truck")));
+  const moving = await db.select().from(s.legs).where(and(inArray(s.legs.state, MOVING), inArray(s.legs.assigneeKind, ["truck", "carrier"])));
   let flagged = 0;
   for (const leg of moving) {
+    if (leg.assigneeKind === "carrier") {
+      const [ever] = await db.select({ id: s.positions.id }).from(s.positions).where(and(eq(s.positions.tenantId, leg.tenantId), eq(s.positions.legId, leg.id))).limit(1);
+      if (!ever) continue;
+    }
     const [open] = await db.select({ id: s.flags.id }).from(s.flags).where(and(eq(s.flags.legId, leg.id), eq(s.flags.code, "no_position"), sql`${s.flags.clearedAt} is null`)).limit(1);
     const [recent] = await db
       .select({ id: s.positions.id })
@@ -316,7 +324,7 @@ export async function flagStaleTracking(now = new Date(), hours = 2) {
     // only after the leg has been moving for at least `hours`
     const [lastMove] = await db.select({ at: s.legEvents.at }).from(s.legEvents).where(and(eq(s.legEvents.legId, leg.id), eq(s.legEvents.kind, "transition"))).orderBy(desc(s.legEvents.recordedAt)).limit(1);
     if (lastMove && lastMove.at.getTime() > cutoff.getTime()) continue;
-    await db.insert(s.flags).values({ id: newId(), tenantId: leg.tenantId, orderId: leg.orderId, legId: leg.id, code: "no_position", level: "yellow", title: `No position for ${hours}h`, detail: "No driver-app or ELD ping while moving", owner: "dispatch" });
+    await db.insert(s.flags).values({ id: newId(), tenantId: leg.tenantId, orderId: leg.orderId, legId: leg.id, code: "no_position", level: "yellow", title: `No position for ${hours}h`, detail: leg.assigneeKind === "carrier" ? "The carrier driver's phone went quiet while moving; call the carrier" : "No driver-app or ELD ping while moving", owner: "dispatch" });
     flagged++;
   }
   return { flagged };

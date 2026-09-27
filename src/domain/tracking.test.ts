@@ -279,6 +279,17 @@ describe("tracking (F-5)", () => {
     await flagStaleTracking(new Date());
     fl = await db.select().from(flags).where(and(eq(flags.legId, o.legs[1].id), eq(flags.code, "no_position")));
     expect(fl[0].clearedAt).not.toBeNull();
+    // a partner carrier's leg: silent by nature until their driver's phone reports once; after that, silence is a flag
+    const o2 = await createOrder(a, { customerId: f.rxo, rateCents: 285000, stops, book: true });
+    await planLeg(a, o2.legs[0].id, { kind: "carrier", carrierId: f.garza });
+    await dispatchLeg(a, o2.legs[0].id);
+    await acceptLeg(a, o2.legs[0].id);
+    await advanceLeg(a, o2.legs[0].id, "en_route_to_pickup", { at: new Date(Date.now() - 3 * 3600_000), source: "carrier" });
+    expect((await flagStaleTracking(new Date())).flagged).toBe(0);
+    await recordPosition(a, { source: "phone", legId: o2.legs[0].id, at: new Date(Date.now() - 3 * 3600_000), lat: 25.7, lng: -100.3 });
+    expect((await flagStaleTracking(new Date())).flagged).toBe(1);
+    const cf = await db.select().from(flags).where(and(eq(flags.legId, o2.legs[0].id), eq(flags.code, "no_position")));
+    expect(cf[0].detail).toMatch(/carrier driver's phone/);
   });
 });
 
