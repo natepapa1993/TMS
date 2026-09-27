@@ -1,4 +1,4 @@
-// Features: F-7 billing — charges, queue with docs + rate-con hard stop, invoice lifecycle with locked snapshot and entity numbering, receipts, void/credit/dispute, AR aging + reminders, carrier bills 3-way + short-pay + pay-when-paid + 1099, driver settlements + deductions + disputes, P&L, month-end close
+// Features: F-7 billing — charges, queue with docs + rate-con hard stop, invoice lifecycle with locked snapshot and entity numbering, receipts, void/credit/dispute, AR aging + reminders, carrier bills 3-way + short-pay + pay-when-paid + 1099, driver settlements + deductions + disputes, P&L, month-end close F-4.9
 import { describe, it, expect, beforeEach, vi, afterEach } from "vitest";
 import { PDFDocument } from "pdf-lib";
 import { truncateAll, makeTenant } from "@/test/helpers";

@@ -381,6 +381,53 @@
         "src/domain/orders.test.ts",
         "e2e/carrier-portal.spec.ts"
       ]
+    },
+    {
+      "id": "F-5.10",
+      "name": "Detention-running flag and red-flag emails to the people on duty",
+      "milestone": "M1",
+      "status": "done",
+      "tests": [
+        "src/domain/tracking.test.ts"
+      ]
+    },
+    {
+      "id": "F-7.6",
+      "name": "The owner's Monday email: last week's six numbers, top customers and trucks",
+      "milestone": "M7",
+      "status": "done",
+      "tests": [
+        "src/domain/reports.test.ts"
+      ]
+    },
+    {
+      "id": "F-6.9",
+      "name": "Read with AI on compliance uploads: expiry, issue date, number, holder before filing",
+      "milestone": "M6",
+      "status": "done",
+      "tests": [
+        "src/domain/compliance.test.ts",
+        "e2e/compliance.spec.ts"
+      ]
+    },
+    {
+      "id": "F-4.9",
+      "name": "Rate confirmation read against the order: a differing rate is a flag for billing",
+      "milestone": "M6",
+      "status": "done",
+      "tests": [
+        "src/domain/billing.test.ts"
+      ]
+    },
+    {
+      "id": "F-1.7",
+      "name": "Contacts on customers, carriers, customs brokers; port bridges; alert days on rules; tracking link on dispatch for customers who require it",
+      "milestone": "M0",
+      "status": "done",
+      "tests": [
+        "src/data/fields.test.ts",
+        "src/domain/tracking.test.ts"
+      ]
     }
   ]
 }

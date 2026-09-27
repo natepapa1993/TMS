@@ -1,4 +1,4 @@
-// Features: F-3.9 F-6 compliance through the browser — rule, blocked driver on the board and in the picker, upload from the record, snooze, 24h override, export, incidents
+// Features: F-3.9 F-6 compliance through the browser — rule, blocked driver on the board and in the picker, upload from the record, snooze, 24h override, export, incidents F-6.9
 import { test, expect } from "@playwright/test";
 import path from "node:path";
 import { signupFresh, quickAdd, future } from "./helpers";

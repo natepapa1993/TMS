@@ -1,4 +1,4 @@
-// Features: F-6 compliance — engine, subject documents, snooze, 24-h override, where it bites (assign picker), digest, incidents
+// Features: F-6 compliance — engine, subject documents, snooze, 24-h override, where it bites (assign picker), digest, incidents F-6.9
 import { describe, it, expect, beforeEach, vi, afterEach } from "vitest";
 import { truncateAll, makeTenant } from "@/test/helpers";
 import { create, update } from "@/data/records";

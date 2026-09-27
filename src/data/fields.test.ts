@@ -1,4 +1,4 @@
-// Features: F-1.1
+// Features: F-1.1 F-1.7
 import { describe, it, expect } from "vitest";
 import { FIELDS, KIND_META, coerce, fieldDisplay } from "./fields";
 import { REGISTRY, type RecordKind } from "./records";
