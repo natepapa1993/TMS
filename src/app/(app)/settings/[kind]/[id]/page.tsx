@@ -16,6 +16,8 @@ import { publicUrl } from "@/lib/tokens";
 import { ediLog } from "@/domain/edi";
 import { carrierPortalLink, scorecard } from "@/domain/carrier-portal";
 import { CarrierPortalCard } from "./carrier-portal-card";
+import { customerPortalLink } from "@/domain/customer-portal";
+import { CustomerPortalCard } from "./customer-portal-card";
 
 export default async function RecordPage({ params }: PageProps<"/settings/[kind]/[id]">) {
   const { kind: path, id } = await params;
@@ -33,6 +35,7 @@ export default async function RecordPage({ params }: PageProps<"/settings/[kind]
     : [[], null, []];
   const partnerLog = kind === "ediPartner" ? await ediLog(ctx, { partnerId: id, limit: 8 }) : [];
   const [portal, score] = kind === "carrier" ? await Promise.all([carrierPortalLink(ctx, id), scorecard(ctx, id)]) : [null, null];
+  const customerPortal = kind === "customer" ? await customerPortalLink(ctx, id) : null;
   const labelField = FIELDS[kind][0].name;
   const title = String(row[labelField] ?? meta.singular);
   return (
@@ -81,6 +84,7 @@ export default async function RecordPage({ params }: PageProps<"/settings/[kind]
               canEdit={["owner", "compliance", "dispatcher", "mx_office"].includes(ctx.role)}
             />
           )}
+          {kind === "customer" && customerPortal && <CustomerPortalCard customerId={id} url={customerPortal.url} email={customerPortal.email} canEdit={["owner", "dispatcher", "billing"].includes(ctx.role)} />}
           {kind === "carrier" && portal && score && <CarrierPortalCard carrierId={id} url={portal.url} whatsapp={portal.whatsapp} email={portal.email} score={score} canEdit={["owner", "dispatcher"].includes(ctx.role)} />}
           {kind === "ediPartner" && (
             <div className="card p-4">

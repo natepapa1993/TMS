@@ -49,7 +49,7 @@ export default async function OrdersPage({ searchParams }: PageProps<"/orders">)
             <Link href="/orders" className="stage-tab h-8 text-[12.5px]" data-active={!state}>
               All
             </Link>
-            {(["booked", "dispatched", "in_transit", "exception", "delivered", "cancelled"] as OrderState[]).map((s) => (
+            {(["draft", "booked", "dispatched", "in_transit", "exception", "delivered", "cancelled"] as OrderState[]).map((s) => (
               <Link key={s} href={`/orders?state=${s}`} className="stage-tab h-8 text-[12.5px]" data-active={state === s}>
                 {LABEL[s]}
               </Link>

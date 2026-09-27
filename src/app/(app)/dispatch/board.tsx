@@ -51,6 +51,7 @@ export type BoardData = {
   role: string;
   ediInbox: number;
   messages: number;
+  requests: number;
 };
 
 const STAGES = [
@@ -157,6 +158,11 @@ export function DispatchBoard({ data }: { data: BoardData }) {
             <Link href="/messages" className={`btn ${data.messages ? "border-amber text-amber font-bold" : ""}`} title="What drivers and carriers wrote to the company WhatsApp">
               Messages{data.messages ? ` · ${data.messages}` : ""}
             </Link>
+            {data.requests > 0 && (
+              <Link href="/orders?state=draft" className="btn border-amber text-amber font-bold" title="Load requests from the customer portal: price, confirm, book">
+                Requests · {data.requests}
+              </Link>
+            )}
             <Link href="/edi" className={`btn ${data.ediInbox ? "border-amber text-amber font-bold" : ""}`} title="EDI tenders, 214 status and 210 invoices">
               EDI{data.ediInbox ? ` · ${data.ediInbox} waiting` : ""}
             </Link>

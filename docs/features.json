@@ -311,6 +311,16 @@
       "milestone": "M5",
       "status": "planned",
       "tests": []
+    },
+    {
+      "id": "F-13",
+      "name": "Customer portal: loads with tracking, POD and invoices, balance, load requests to Dispatch",
+      "milestone": "M10",
+      "status": "done",
+      "tests": [
+        "src/domain/customer-portal.test.ts",
+        "e2e/customer-portal.spec.ts"
+      ]
     }
   ]
 }

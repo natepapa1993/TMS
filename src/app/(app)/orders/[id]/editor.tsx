@@ -60,7 +60,7 @@ export function OrderEditor({ order, customers, entities, readOnly }: { order: O
         <div>
           <label className="label">Rate</label>
           <div className="flex gap-2">
-            <input className="input" inputMode="decimal" value={f.rate} disabled={f.rateTbd || readOnly} onChange={(e) => setF({ ...f, rate: e.target.value })} />
+            <input className="input" inputMode="decimal" aria-label="Rate" value={f.rate} disabled={f.rateTbd || readOnly} onChange={(e) => setF({ ...f, rate: e.target.value })} />
             <select className="select w-24" value={f.currency} onChange={(e) => setF({ ...f, currency: e.target.value })}>
               <option>USD</option>
               <option>MXN</option>

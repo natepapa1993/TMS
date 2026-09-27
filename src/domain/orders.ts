@@ -257,6 +257,8 @@ async function setOrderState(tx: Tx, ctx: Ctx, order: Order, to: OrderState, ext
 async function bookIn(tx: Tx, ctx: Ctx, order: Order, stops: Stop[]) {
   const problems = bookGuards(order, stops);
   if (problems.length) throw new ValidationError(problems.map((p) => p.message).join("; "), problems[0].field);
+  // a customer-portal request is answered by booking it
+  await tx.update(s.flags).set({ clearedAt: new Date() }).where(and(eq(s.flags.tenantId, ctx.tenantId), eq(s.flags.orderId, order.id), eq(s.flags.code, "portal_request"), sql`${s.flags.clearedAt} is null`));
   return setOrderState(tx, ctx, order, "booked");
 }
 
@@ -331,6 +333,7 @@ export async function cancelOrder(ctx: Ctx, orderId: string, reason: string) {
     if (legs.some((l) => (MOVING_LEG as readonly string[]).includes(l.state)))
       throw new TransitionError("order", order.state, "cancelled", "a leg is moving; bring it back or complete it first");
     for (const l of legs) if (l.state !== "completed" && l.state !== "cancelled") await setLegState(tx, ctx, l, "cancelled", { source: "dispatcher", note: reason });
+    await tx.update(s.flags).set({ clearedAt: new Date() }).where(and(eq(s.flags.tenantId, ctx.tenantId), eq(s.flags.orderId, order.id), sql`${s.flags.clearedAt} is null`));
     return setOrderState(tx, ctx, order, "cancelled", { cancelReason: reason.trim() }, reason);
   });
 }

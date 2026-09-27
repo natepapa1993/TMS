@@ -98,3 +98,13 @@ export async function revokeCarrierPortalAction(carrierId: string) {
   if (r.ok) revalidatePath(`/settings/carriers/${carrierId}`);
   return r;
 }
+
+export async function revokeCustomerPortalAction(customerId: string) {
+  const r = await act(async (ctx) => {
+    const { revokeCustomerPortal } = await import("@/domain/customer-portal");
+    await revokeCustomerPortal(ctx, customerId);
+    return { ok: true };
+  });
+  if (r.ok) revalidatePath(`/settings/customers/${customerId}`);
+  return r;
+}

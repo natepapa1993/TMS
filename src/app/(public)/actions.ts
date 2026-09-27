@@ -130,3 +130,22 @@ export async function portalInvoiceAction(token: string, legId: string, form: Fo
     return toError(e);
   }
 }
+
+// ---------- customer portal ----------
+
+async function customerFromToken(token: string) {
+  const t = await resolveToken(token, "customer_portal");
+  return t ? { tenantId: t.ctx.tenantId, customerId: t.subjectId } : null;
+}
+
+export async function portalRequestLoadAction(token: string, input: import("@/domain/customer-portal").LoadRequest): Promise<ActionResult<{ orderNumber: string }>> {
+  const c = await customerFromToken(token);
+  if (!c) return { ok: false, error: "This link is no longer valid. Ask your carrier contact for a new one.", code: "not_found" };
+  try {
+    const { portalRequestLoad } = await import("@/domain/customer-portal");
+    const r = await portalRequestLoad(c.tenantId, c.customerId, input);
+    return { ok: true, data: { orderNumber: r.order.orderNumber } };
+  } catch (e) {
+    return toError(e);
+  }
+}

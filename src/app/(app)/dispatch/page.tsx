@@ -6,6 +6,7 @@ import { DispatchBoard, type BoardData } from "./board";
 import { openTendersForOrders } from "@/domain/tenders";
 import { publicUrl } from "@/lib/tokens";
 import { ediInbox } from "@/domain/edi";
+import { openPortalRequests } from "@/domain/customer-portal";
 import { inbox as messageInbox } from "@/domain/messaging";
 
 export const metadata = { title: "Dispatch" };
@@ -21,7 +22,7 @@ export default async function DispatchPage() {
     list(ctx, "truck", { limit: 2000 }),
   ]);
   const custName = new Map(customers.map((c) => [c.id, String(c.name)]));
-  const [tenderRows, inbox, msgs] = await Promise.all([openTendersForOrders(ctx, rows.map((r) => r.order.id)), ediInbox(ctx), messageInbox(ctx, { limit: 50 })]);
+  const [tenderRows, inbox, msgs, requests] = await Promise.all([openTendersForOrders(ctx, rows.map((r) => r.order.id)), ediInbox(ctx), messageInbox(ctx, { limit: 50 }), openPortalRequests(ctx)]);
   const carrierName = new Map(carriers.map((c) => [c.id, String(c.name)]));
   const data: BoardData = {
     rows: rows.map((r) => ({
@@ -39,6 +40,7 @@ export default async function DispatchPage() {
     role: ctx.role,
     ediInbox: inbox.length,
     messages: msgs.filter((m) => !m.m.handledAt).length,
+    requests,
   };
   return <DispatchBoard data={data} />;
 }
