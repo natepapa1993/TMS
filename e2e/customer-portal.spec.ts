@@ -111,6 +111,14 @@ test("customer's day: one link, a load tracked to delivered, the POD and the inv
   await expect(phone.locator("body")).toContainText("terms net 45");
   await expect(phone.locator(".pill", { hasText: "$1,800.00 open" })).toBeVisible();
 
+  // the page reads in Spanish for a Mexican shipper (one tap either way); Magna is a US customer here, so English first
+  await phone.getByTestId("lang").click();
+  await expect(phone.locator("body")).toContainText("portal del cliente");
+  await expect(phone.locator(".stage-tab", { hasText: "Embarques" })).toBeVisible();
+  await expect(phone.locator("body")).toContainText("por pagar");
+  await phone.getByTestId("lang").click();
+  await expect(phone.locator(".stage-tab", { hasText: "Loads" })).toBeVisible();
+
   // the customer asks for a border load; it lands on Dispatch as a draft with a flag; dispatch prices and books it
   await phone.locator(".stage-tab", { hasText: "Request a load" }).click();
   await phone.locator("button:has-text('Send the request')").click();

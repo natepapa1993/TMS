@@ -115,7 +115,7 @@ export async function customerPortalView(tenantId: string, customerId: string, n
   const pastDueCents = invoiceRows.filter((r) => r.pastDueDays > 0).reduce((a, r) => a + r.openCents, 0);
   return {
     company: tenant?.name ?? "",
-    customer: { id: customer.id, name: customer.name, kind: customer.kind, termsDays: customer.termsDays },
+    customer: { id: customer.id, name: customer.name, kind: customer.kind, termsDays: customer.termsDays, country: customer.country },
     active: loads.filter((l) => ["booked", "dispatched", "in_transit", "exception"].includes(l.state)),
     requested: loads.filter((l) => l.state === "draft"),
     delivered: loads.filter((l) => ["delivered", "ready_to_bill", "invoiced", "paid"].includes(l.state)),
