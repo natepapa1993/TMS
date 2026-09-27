@@ -8,6 +8,7 @@ import { publicUrl } from "@/lib/tokens";
 import { ediInbox } from "@/domain/edi";
 import { openPortalRequests } from "@/domain/customer-portal";
 import { inbox as messageInbox } from "@/domain/messaging";
+import { boardEtas } from "@/domain/tracking";
 
 export const metadata = { title: "Dispatch" };
 export const dynamic = "force-dynamic";
@@ -22,7 +23,7 @@ export default async function DispatchPage() {
     list(ctx, "truck", { limit: 2000 }),
   ]);
   const custName = new Map(customers.map((c) => [c.id, String(c.name)]));
-  const [tenderRows, inbox, msgs, requests] = await Promise.all([openTendersForOrders(ctx, rows.map((r) => r.order.id)), ediInbox(ctx), messageInbox(ctx, { limit: 50 }), openPortalRequests(ctx)]);
+  const [tenderRows, inbox, msgs, requests, etas] = await Promise.all([openTendersForOrders(ctx, rows.map((r) => r.order.id)), ediInbox(ctx), messageInbox(ctx, { limit: 50 }), openPortalRequests(ctx), boardEtas(ctx)]);
   const carrierName = new Map(carriers.map((c) => [c.id, String(c.name)]));
   const data: BoardData = {
     rows: rows.map((r) => ({
@@ -41,6 +42,7 @@ export default async function DispatchPage() {
     ediInbox: inbox.length,
     messages: msgs.filter((m) => !m.m.handledAt).length,
     requests,
+    etas,
   };
   return <DispatchBoard data={data} />;
 }

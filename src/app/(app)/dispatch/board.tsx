@@ -43,6 +43,7 @@ export type Row = { order: Order; stops: Stop[]; legs: Leg[]; openFlags: Flag[];
 
 export type BoardData = {
   rows: Row[];
+  etas?: Record<string, { at: string; stopName: string; miles: number; late: boolean; positionAt: string }>;
   customers: { id: string; name: string; kind: string; note: string | null }[];
   carriers: { id: string; name: string; country: string; doNotUse: boolean }[];
   drivers: { id: string; name: string; driverType: string; currentTruckId: string | null }[];
@@ -426,6 +427,12 @@ function SidePanel({ r, data, busy, canDispatch, onClose, onPopup, run }: { r: R
                       "Nobody assigned"
                     )}
                     {l.declineReason && <div className="text-red">Declined: {l.declineReason}</div>}
+                    {data.etas?.[l.id] && (
+                      <div className={data.etas[l.id].late ? "text-red font-semibold" : "text-teal font-semibold"} data-testid="eta" title={`${data.etas[l.id].miles} mi from the last position at ${new Date(data.etas[l.id].positionAt).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })}`}>
+                        ETA {new Date(data.etas[l.id].at).toLocaleString("en-US", { weekday: "short", hour: "numeric", minute: "2-digit" })} at {data.etas[l.id].stopName}
+                        {data.etas[l.id].late ? " — past the window" : ""}
+                      </div>
+                    )}
                     {(() => {
                       const tn = r.tenders.find((t) => t.legId === l.id && (t.state === "sent" || (l.state === "accepted" && t.state === "accepted")));
                       if (!tn) return null;

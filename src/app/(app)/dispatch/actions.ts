@@ -154,10 +154,21 @@ export async function quickOrderAction(input: { customerId: string; pickup: stri
     const template = input.template || O.LEG_TEMPLATES.find((t) => t.key === "mx_crossing_us")!.key;
     const t = O.LEG_TEMPLATES.find((x) => x.key === template)!;
     // Build stops from the template: user names the ends, yards are placeholders they can rename on the order.
+    // A name that is a location on file (case aside) links the stop to it: its address and coordinates come along.
+    const { db } = await import("@/db/client");
+    const { locations } = await import("@/db/schema");
+    const { and, eq, isNull } = await import("drizzle-orm");
+    const locs = await db.select({ id: locations.id, name: locations.name, country: locations.country, address: locations.address }).from(locations).where(and(eq(locations.tenantId, ctx.tenantId), isNull(locations.archivedAt)));
+    const link = (name: string, country: string) => {
+      const l = locs.find((x) => x.name.trim().toLowerCase() === name.trim().toLowerCase() && x.country === country) ?? locs.find((x) => x.name.trim().toLowerCase() === name.trim().toLowerCase());
+      return l ? { locationId: l.id, address: l.address ?? undefined, country: l.country } : {};
+    };
     const stops = t.stops.map((type, i) => {
-      if (i === 0) return { type, name: input.pickup, country: input.pickupCountry };
-      if (i === t.stops.length - 1) return { type, name: input.delivery, country: input.deliveryCountry };
-      return { type, name: type === "border_yard" ? "Border yard (MX)" : type === "yard" ? "Laredo yard" : type, country: type === "border_yard" ? "MX" : "US" };
+      if (i === 0) return { type, name: input.pickup, country: input.pickupCountry, ...link(input.pickup, input.pickupCountry) };
+      if (i === t.stops.length - 1) return { type, name: input.delivery, country: input.deliveryCountry, ...link(input.delivery, input.deliveryCountry) };
+      const name = type === "border_yard" ? "Border yard (MX)" : type === "yard" ? "Laredo yard" : type;
+      const country = type === "border_yard" ? "MX" : "US";
+      return { type, name, country, ...link(name, country) };
     });
     return O.createOrder(ctx, { customerId: input.customerId, rateCents, rateTbd: rateCents == null, stops, template, refs: input.refs, book: true });
   });

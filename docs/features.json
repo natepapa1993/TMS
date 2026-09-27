@@ -425,6 +425,17 @@
       ]
     },
     {
+      "id": "F-5.14",
+      "name": "Verified ETA: last position (ping or GPS step) to the next stop at learned corridor speeds; stops and locations learn coordinates from verified arrivals; quick orders link stops to locations by name; ETA on the dispatch panel, tracking page and customer portal; eta_late flag against the window",
+      "milestone": "M1",
+      "status": "done",
+      "tests": [
+        "src/lib/geo.test.ts",
+        "src/domain/tracking.test.ts",
+        "e2e/tracking.spec.ts"
+      ]
+    },
+    {
       "id": "F-7.6",
       "name": "The owner's Monday email: last week's six numbers, top customers and trucks",
       "milestone": "M7",

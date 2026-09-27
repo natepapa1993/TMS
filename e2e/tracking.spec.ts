@@ -1,4 +1,4 @@
-// Features: F-4 F-5 F-5.11 F-5.13 — tender by email link, driver app (steps, seal + POD photos, a line to dispatch), customer tracking link, all through the browser
+// Features: F-4 F-5 F-5.11 F-5.13 F-5.14 — tender by email link, driver app (steps, seal + POD photos, a line to dispatch), customer tracking link, all through the browser
 import { test, expect, type Page } from "@playwright/test";
 import path from "node:path";
 import { signupFresh, quickAdd, future } from "./helpers";
@@ -12,6 +12,14 @@ async function fleet(page: Page) {
   await quickAdd(page, "carriers", "Add carrier", { name: "Transportes Garza", country: "MX", kind: "mx", dispatchEmail: "despacho@garza.test" });
   await quickAdd(page, "trucks", "Add truck", { unitNumber: "2117", usPlate: "RC59022", mxPlate: "35ES3A", mxPlateClass: "brown" });
   await quickAdd(page, "drivers", "Add driver", { name: "Benjamín Xochihua", driverType: "B1", phone: "+52 867 111 2222" });
+  // the Laredo yard is a location on file with coordinates: the quick order links its stop by name, and ETAs work from the first ping
+  await quickAdd(page, "locations", "Add location", { name: "Laredo yard", kind: "yard", country: "US", address: "1 Yard Rd, Laredo, TX 78045, US" });
+  await page.goto("/settings/locations");
+  await page.click("table a:has-text('Laredo yard')");
+  await page.locator("#f-lat").fill("27.5064");
+  await page.locator("#f-lng").fill("-99.5075");
+  await page.click("button:has-text('Save changes')");
+  await expect(page.getByRole("status")).toContainText("Saved");
   await page.goto("/settings/drivers");
   await page.click("table a:has-text('Benjamín')");
   for (const [f, d] of [["mxLicenseExpires", 400], ["fastExpires", 400], ["i94Until", 120], ["medicalExpires", 300], ["licenseExpires", 400]] as const) await page.locator(`#f-${f}`).fill(future(d));
@@ -139,6 +147,12 @@ test("driver app: link from Fleet, one button per step with GPS, customer tracki
   await expect(big).toContainText("En route to delivery");
   await big.click();
   await phone.waitForTimeout(400);
+  // en route with a GPS fix and a destination on file: the customer's page and the board carry a verified ETA
+  const mid = await ctx2.newPage();
+  await mid.goto(trackUrl);
+  await expect(mid.locator("body")).toContainText("ETA");
+  await expect(mid.locator("body")).toContainText("from GPS at");
+  await mid.close();
   // at the delivery the driver reads the seal on the doors: the app says what it should be
   await expect(big).toContainText("Arrived at delivery");
   await expect(phone.getByTestId("seal")).toContainText("Should be MX-4471");

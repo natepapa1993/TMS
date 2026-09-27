@@ -3,6 +3,7 @@ import { db, type Tx } from "@/db/client";
 import * as s from "@/db/schema";
 import type { LegState, OrderState, LegType, StopType, EventSource } from "@/db/schema";
 import { newId } from "@/lib/ids";
+import { coords } from "@/lib/geo";
 import { assertCtx, requirePermission, type Ctx } from "@/lib/context";
 import { writeAudit, diff } from "@/lib/audit";
 import { assertLegTransition, assertOrderTransition, canOrderTransition, LEG_FORWARD, STAGE_OF_LEG, TransitionError } from "./states";
@@ -189,6 +190,8 @@ export async function createOrder(ctx: Ctx, input: CreateOrderInput) {
     const [order] = await tx.insert(s.orders).values(values).returning();
     await writeAudit(tx, ctx, "order", orderId, "create", diff(null, { orderNumber, customerId: values.customerId, rateCents: values.rateCents, legTemplate: template.key }));
 
+    const locIds = input.stops.map((st) => st.locationId).filter((x): x is string => !!x);
+    const locs = locIds.length ? await tx.select({ id: s.locations.id, lat: s.locations.lat, lng: s.locations.lng }).from(s.locations).where(and(eq(s.locations.tenantId, ctx.tenantId), inArray(s.locations.id, locIds))) : [];
     const stopRows = input.stops.map((st, i) => ({
       id: newId(),
       tenantId: ctx.tenantId,
@@ -199,6 +202,8 @@ export async function createOrder(ctx: Ctx, input: CreateOrderInput) {
       name: st.name.trim(),
       address: st.address ?? null,
       country: st.country ?? "US",
+      lat: st.locationId ? (locs.find((l) => l.id === st.locationId)?.lat ?? null) : null,
+      lng: st.locationId ? (locs.find((l) => l.id === st.locationId)?.lng ?? null) : null,
       windowStart: st.windowStart ?? null,
       windowEnd: st.windowEnd ?? null,
       appointment: st.appointment ?? false,
@@ -384,6 +389,27 @@ export async function updateStop(ctx: Ctx, stopId: string, values: Partial<StopI
     if ("sealIn" in safe || "sealOut" in safe) await checkSealContinuity(tx, ctx, before.orderId);
     return after;
   });
+}
+
+/**
+ * A verified arrival is a geocode: a stop with no coordinates takes the phone's fix, and so does the
+ * location it came from when it has none — the second run to the same plant gets an ETA without
+ * anyone typing a latitude.
+ */
+export async function learnStopCoordinates(tx: Tx | typeof db, ctx: Ctx, stopId: string, lat: string, lng: string) {
+  const c = coords(lat, lng);
+  if (!c) return;
+  const [stop] = await tx.select({ id: s.stops.id, lat: s.stops.lat, lng: s.stops.lng, locationId: s.stops.locationId }).from(s.stops).where(and(eq(s.stops.tenantId, ctx.tenantId), eq(s.stops.id, stopId))).limit(1);
+  if (!stop) return;
+  const val = { lat: c.lat.toFixed(6), lng: c.lng.toFixed(6) };
+  if (!coords(stop.lat, stop.lng)) await tx.update(s.stops).set(val).where(eq(s.stops.id, stop.id));
+  if (stop.locationId) {
+    const [loc] = await tx.select({ id: s.locations.id, lat: s.locations.lat, lng: s.locations.lng }).from(s.locations).where(and(eq(s.locations.tenantId, ctx.tenantId), eq(s.locations.id, stop.locationId))).limit(1);
+    if (loc && !coords(loc.lat, loc.lng)) {
+      await tx.update(s.locations).set({ ...val, updatedAt: new Date(), updatedBy: ctx.userId }).where(eq(s.locations.id, loc.id));
+      await writeAudit(tx, ctx, "location", loc.id, "update", { lat: { from: null, to: val.lat }, lng: { from: null, to: val.lng } }, "learned from a verified arrival");
+    }
+  }
 }
 
 /**
@@ -713,6 +739,7 @@ export async function stampStop(ctx: Ctx, legId: string, stopId: string, which: 
     await tx.insert(s.legEvents).values({ id: newId(), tenantId: ctx.tenantId, legId: leg.id, orderId: leg.orderId, at, kind: "stop", fromState: leg.state, toState: leg.state, source: ev.source ?? "dispatcher", verified: ev.verified ?? false, lat: ev.lat, lng: ev.lng, userId: ctx.userId, note: `${which === "arrived" ? "Arrived at" : "Left"} ${stop.name}${seal ? ` · seal ${seal}` : ""}`, data: { stopId: stop.id, which, seal } });
     await writeAudit(tx, ctx, "stop", stop.id, "update", { [which === "arrived" ? "arrivedAt" : "departedAt"]: { from: null, to: at } }, `${which === "arrived" ? "arrived at" : "left"} ${stop.name} · leg ${leg.seq}`);
     if (seal) await checkSealContinuity(tx, ctx, leg.orderId);
+    if (which === "arrived" && ev.verified && ev.lat && ev.lng) await learnStopCoordinates(tx, ctx, stop.id, ev.lat, ev.lng);
     await recomputeOrder(tx, ctx, leg.orderId);
     return leg;
   });
@@ -754,6 +781,7 @@ export async function advanceLeg(ctx: Ctx, legId: string, to: LegState | "next",
       const set = arriving ? { arrivedAt: at, ...(seal ? { sealIn: seal } : {}) } : { departedAt: at, ...(seal ? { sealOut: seal } : {}) };
       await tx.update(s.stops).set({ ...set, updatedAt: new Date(), updatedBy: ctx.userId }).where(and(eq(s.stops.tenantId, ctx.tenantId), eq(s.stops.id, stopId)));
       if (seal) await checkSealContinuity(tx, ctx, leg.orderId);
+      if (arriving && ev.verified && ev.lat && ev.lng) await learnStopCoordinates(tx, ctx, stopId, ev.lat, ev.lng);
     }
     await recomputeOrder(tx, ctx, leg.orderId, target === "completed" ? at : undefined);
     return after;

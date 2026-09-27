@@ -1,13 +1,13 @@
-// Features: F-4 tendering, F-5 tracking (positions, driver app, tracking link, no-position watchdog, appointment-window flags) F-5.9 F-5.10 F-1.7 F-5.11
+// Features: F-4 tendering, F-5 tracking (positions, driver app, tracking link, no-position watchdog, appointment-window flags) F-5.9 F-5.10 F-1.7 F-5.11 F-5.14
 import { describe, it, expect, beforeEach } from "vitest";
 import { truncateAll, makeTenant } from "@/test/helpers";
 import { create } from "@/data/records";
 import { db } from "@/db/client";
-import { outbox, tenders as tendersTable, flags, legEvents, positions, documents, inboundMessages } from "@/db/schema";
+import { outbox, tenders as tendersTable, flags, legEvents, positions, documents, inboundMessages, stops as stopsTable, legs as legsTable } from "@/db/schema";
 import { and, eq } from "drizzle-orm";
 import { createOrder, planLeg, dispatchLeg, acceptLeg, advanceLeg, getOrder, ValidationError } from "./orders";
 import { sendTender, tenderByToken, respondToTender, expireTenders, closeOpenTenderForLeg } from "./tenders";
-import { recordPosition, driverToday, driverStep, trackingView, flagStaleTracking, flagWindows, flagDetention, notifyRedFlags, latestTruckPositions, driverUploadPhoto, driverMessage, replyToDriver, driverThread } from "./tracking";
+import { recordPosition, driverToday, driverStep, trackingView, flagStaleTracking, flagWindows, flagDetention, notifyRedFlags, latestTruckPositions, driverUploadPhoto, driverMessage, replyToDriver, driverThread, legEta, orderEtas, flagEta, speedProfile } from "./tracking";
 import { issueToken, resolveToken, revokeToken } from "@/lib/tokens";
 import { TransitionError } from "./states";
 
@@ -291,6 +291,74 @@ describe("tracking (F-5)", () => {
     expect((await flagStaleTracking(new Date())).flagged).toBe(1);
     const cf = await db.select().from(flags).where(and(eq(flags.legId, o2.legs[0].id), eq(flags.code, "no_position")));
     expect(cf[0].detail).toMatch(/carrier driver's phone/);
+  });
+});
+
+describe("ETA from the last verified position (F-5.14)", () => {
+  it("no coordinates → no ETA; a verified arrival teaches the stop and its location; then miles at the corridor speed give the ETA, late against the window is a flag that clears on arrival", async () => {
+    const gm = await create(a, "location", { name: "GM Arlington", country: "US", address: { city: "Arlington", state: "TX" } }); // no coordinates yet
+    const mk = () =>
+      createOrder(a, {
+        customerId: f.rxo,
+        rateCents: 100000,
+        stops: [
+          { type: "pickup", name: "Laredo Yard", country: "US", address: { city: "Laredo", state: "TX" } },
+          { type: "delivery", name: "GM Arlington", country: "US", locationId: gm.id, windowEnd: new Date(Date.now() + 2 * 3600_000) }, // due in two hours
+        ],
+        template: "domestic",
+        book: true,
+      });
+    const o1 = await mk();
+    const leg = o1.legs[0].id;
+    await planLeg(a, leg, { kind: "truck", truckId: f.t2117, driverId: f.benja }, { override: true, reason: "test" }).catch(async () => {
+      const t2 = await create(a, "truck", { unitNumber: "2104", usPlate: "TX2104", usPlateExpires: future });
+      const d2 = await create(a, "driver", { name: "Daniel Reyes", driverType: "CDL", licenseExpires: future, medicalExpires: future, currentTruckId: t2.id });
+      return planLeg(a, leg, { kind: "truck", truckId: t2.id, driverId: d2.id });
+    });
+    await dispatchLeg(a, leg);
+    await acceptLeg(a, leg);
+    await advanceLeg(a, leg, "en_route_to_pickup", { source: "driver_app" });
+    await advanceLeg(a, leg, "at_pickup", { source: "driver_app", verified: true, lat: "27.5064", lng: "-99.5075" }); // Laredo learned
+    await advanceLeg(a, leg, "loaded", { source: "driver_app" });
+    await advanceLeg(a, leg, "en_route", { source: "driver_app", verified: true, lat: "27.5064", lng: "-99.5075" });
+    expect(await legEta(a.tenantId, leg)).toBeNull(); // Arlington has no coordinates yet
+    // the driver arrives with a fix: the stop and the location learn it
+    await advanceLeg(a, leg, "at_delivery", { source: "driver_app", verified: true, lat: "32.7357", lng: "-97.1081" });
+    const st = await db.select().from(stopsTable).where(eq(stopsTable.orderId, o1.order.id)).orderBy(stopsTable.seq);
+    expect(st[1].lat).toBe("32.735700");
+    const { get } = await import("@/data/records");
+    expect((await get(a, "location", gm.id)).lat).toBe("32.735700");
+    await advanceLeg(a, leg, "completed", { source: "driver_app" });
+    // the next run to the same plant: stops copy the location's coordinates, the ETA works from the first position
+    const o2 = await mk();
+    const leg2 = o2.legs[0].id;
+    const st2 = await db.select().from(stopsTable).where(eq(stopsTable.orderId, o2.order.id)).orderBy(stopsTable.seq);
+    expect(st2[1].lat).toBe("32.735700");
+    const plan = await planLeg(a, leg2, { kind: "truck", truckId: (await db.select().from(legsTable).where(eq(legsTable.id, leg)))[0].truckId!, driverId: (await db.select().from(legsTable).where(eq(legsTable.id, leg)))[0].driverId! });
+    expect(plan).toBeTruthy();
+    await dispatchLeg(a, leg2);
+    await acceptLeg(a, leg2);
+    for (const s of ["en_route_to_pickup", "at_pickup", "loaded"] as const) await advanceLeg(a, leg2, s, { source: "driver_app" });
+    await advanceLeg(a, leg2, "en_route", { source: "driver_app", verified: true, lat: "27.5064", lng: "-99.5075" }); // leaving Laredo, ~400 road miles from Arlington
+    const eta = await legEta(a.tenantId, leg2);
+    expect(eta).not.toBeNull();
+    expect(eta!.stopName).toBe("GM Arlington");
+    expect(eta!.miles).toBeGreaterThan(350);
+    expect(eta!.miles).toBeLessThan(520); // ~390 straight, ×1.25 corridor factor
+    expect(eta!.mph).toBe((await speedProfile(a.tenantId)).US);
+    expect(eta!.at.getTime()).toBeGreaterThan(Date.now() + 5 * 3600_000); // hours away
+    expect(eta!.late).toBe(true); // the window closes in two hours
+    expect(Object.keys(await orderEtas(a.tenantId, o2.order.id))).toEqual([leg2]);
+    // the watchdog says so, once, keeps it current, and clears it when the truck arrives
+    expect((await flagEta()).flagged).toBe(1);
+    expect((await flagEta()).flagged).toBe(0);
+    let fl = await db.select().from(flags).where(and(eq(flags.legId, leg2), eq(flags.code, "eta_late")));
+    expect(fl.length).toBe(1);
+    expect(fl[0].title).toMatch(/ETA at GM Arlington .* past the window/);
+    await advanceLeg(a, leg2, "at_delivery", { source: "driver_app" });
+    expect((await flagEta()).cleared).toBe(1);
+    fl = await db.select().from(flags).where(and(eq(flags.legId, leg2), eq(flags.code, "eta_late")));
+    expect(fl[0].clearedAt).not.toBeNull();
   });
 });
 

@@ -6,6 +6,7 @@ import { newId } from "@/lib/ids";
 import { assertCtx, requirePermission, systemCtx, type Ctx } from "@/lib/context";
 import { advanceLeg, acceptLeg, declineLeg, midStops, pendingMidStop, stampStop, NotFoundError, ValidationError } from "./orders";
 import { LEG_FORWARD } from "./states";
+import { coords, roadMiles } from "@/lib/geo";
 
 /**
  * Tracking (spec §5): positions from the driver app, the ELD, or a phone; the driver's "today"
@@ -301,7 +302,160 @@ export async function trackingView(tenantId: string, orderId: string) {
     legs: legs.map((l) => ({ id: l.id, seq: l.seq, type: l.type, state: l.state, fromStopId: l.fromStopId, toStopId: l.toStopId })),
     events: events.map((e) => ({ at: e.at, legId: e.legId, toState: e.toState, verified: e.verified })),
     lastPosition: last[0] ? { at: last[0].at, lat: last[0].lat, lng: last[0].lng, place: last[0].place, source: last[0].source } : null,
+    etas: Object.fromEntries(Object.entries(await orderEtas(tenantId, orderId)).map(([legId, e]) => [legId, { at: e.at, stopId: e.stopId, miles: e.miles, late: e.late, positionAt: e.positionAt }])),
   };
+}
+
+// ---------- ETA (spec §5: from the last verified position, never from the carrier's number) ----------
+
+/** Default corridor speeds until the company's own runs have taught better ones. */
+const DEFAULT_MPH: Record<string, number> = { MX: 42, US: 52, X: 45 };
+const profileCache = new Map<string, { at: number; mph: Record<string, number> }>();
+
+/**
+ * Corridor speed profile, learned per side of the border from the company's completed legs in the last
+ * 180 days: road miles between the two stops over the hours between leaving one and arriving at the
+ * other. Falls back to the defaults with fewer than three runs. Cached ten minutes.
+ */
+export async function speedProfile(tenantId: string, now = new Date()) {
+  const hit = profileCache.get(tenantId);
+  if (hit && now.getTime() - hit.at < 600_000) return hit.mph;
+  const since = new Date(now.getTime() - 180 * 86400_000);
+  const legs = await db.select({ id: s.legs.id, fromStopId: s.legs.fromStopId, toStopId: s.legs.toStopId, type: s.legs.type }).from(s.legs).where(and(eq(s.legs.tenantId, tenantId), eq(s.legs.state, "completed"), gt(s.legs.completedAt, since)));
+  const stopIds = [...new Set(legs.flatMap((l) => [l.fromStopId, l.toStopId]).filter((x): x is string => !!x))];
+  const stops = stopIds.length ? await db.select({ id: s.stops.id, lat: s.stops.lat, lng: s.stops.lng, country: s.stops.country, departedAt: s.stops.departedAt, arrivedAt: s.stops.arrivedAt }).from(s.stops).where(inArray(s.stops.id, stopIds)) : [];
+  const samples: Record<string, number[]> = { MX: [], US: [], X: [] };
+  for (const l of legs) {
+    const a = stops.find((x) => x.id === l.fromStopId);
+    const b = stops.find((x) => x.id === l.toStopId);
+    const ca = a && coords(a.lat, a.lng);
+    const cb = b && coords(b.lat, b.lng);
+    if (!a || !b || !ca || !cb || !a.departedAt || !b.arrivedAt) continue;
+    const hours = (b.arrivedAt.getTime() - a.departedAt.getTime()) / 3600_000;
+    const miles = roadMiles(ca, cb);
+    if (hours < 0.25 || miles < 5) continue;
+    const mph = miles / hours;
+    if (mph < 5 || mph > 80) continue;
+    samples[l.type === "crossing" ? "X" : a.country === "MX" && b.country === "MX" ? "MX" : a.country === "US" && b.country === "US" ? "US" : "X"].push(mph);
+  }
+  const mph: Record<string, number> = { ...DEFAULT_MPH };
+  for (const k of Object.keys(samples)) if (samples[k].length >= 3) mph[k] = Math.round(samples[k].reduce((p, q) => p + q, 0) / samples[k].length);
+  profileCache.set(tenantId, { at: now.getTime(), mph });
+  return mph;
+}
+
+export type Eta = { at: Date; miles: number; mph: number; stopId: string; stopName: string; positionAt: Date; source: string; windowEnd: Date | null; late: boolean };
+
+/** The stop this leg is heading for, given where it is in its states. */
+function nextStopFor(leg: { state: LegState; fromStopId: string | null; toStopId: string | null }, mids: { id: string; arrivedAt: Date | null; departedAt: Date | null }[]) {
+  if (["accepted", "en_route_to_pickup"].includes(leg.state)) return leg.fromStopId;
+  if (leg.state === "loaded") return mids.find((m) => !m.arrivedAt)?.id ?? leg.toStopId;
+  if (leg.state === "en_route") return mids.find((m) => !m.arrivedAt)?.id ?? leg.toStopId;
+  return null;
+}
+
+/**
+ * ETA for a moving leg: last position on the leg (or its truck) inside six hours, road miles to the next
+ * stop with coordinates, the corridor speed. Null when the truck has not reported or the stop has no
+ * coordinates yet (they are learned on the first verified arrival).
+ */
+export async function legEta(tenantId: string, legId: string, now = new Date()): Promise<Eta | null> {
+  const [leg] = await db.select().from(s.legs).where(and(eq(s.legs.tenantId, tenantId), eq(s.legs.id, legId))).limit(1);
+  if (!leg) return null;
+  const stops = await db.select().from(s.stops).where(and(eq(s.stops.tenantId, tenantId), eq(s.stops.orderId, leg.orderId))).orderBy(s.stops.seq);
+  return etaFrom(tenantId, leg, stops, now);
+}
+
+async function etaFrom(tenantId: string, leg: typeof s.legs.$inferSelect, stops: (typeof s.stops.$inferSelect)[], now: Date): Promise<Eta | null> {
+  const mids = midStops(leg, stops);
+  const stopId = nextStopFor(leg, mids);
+  const stop = stops.find((x) => x.id === stopId);
+  const dest = stop && coords(stop.lat, stop.lng);
+  if (!stop || !dest) return null;
+  const cutoff = new Date(now.getTime() - 6 * 3600_000);
+  const [pos] = await db
+    .select()
+    .from(s.positions)
+    .where(and(eq(s.positions.tenantId, tenantId), or(eq(s.positions.legId, leg.id), leg.truckId ? and(eq(s.positions.truckId, leg.truckId), gt(s.positions.at, leg.dispatchedAt ?? cutoff)) : sql`false`), gt(s.positions.at, cutoff)))
+    .orderBy(desc(s.positions.at))
+    .limit(1);
+  let here = pos && coords(pos.lat, pos.lng);
+  let fix = pos ? { at: pos.at, source: pos.source as string } : null;
+  if (!here) {
+    // no ping, but a step pressed with a fix (a verified milestone) is a position too
+    const [ev] = await db.select({ at: s.legEvents.at, lat: s.legEvents.lat, lng: s.legEvents.lng, source: s.legEvents.source }).from(s.legEvents).where(and(eq(s.legEvents.legId, leg.id), eq(s.legEvents.verified, true), sql`${s.legEvents.lat} is not null`, gt(s.legEvents.at, cutoff))).orderBy(desc(s.legEvents.at)).limit(1);
+    here = ev && coords(ev.lat, ev.lng);
+    fix = ev ? { at: ev.at, source: ev.source } : null;
+  }
+  if (!here || !fix) return null;
+  const miles = roadMiles(here, dest);
+  const profile = await speedProfile(tenantId, now);
+  const side = leg.type === "crossing" ? "X" : stop.country === "MX" ? "MX" : "US";
+  const mph = profile[side] ?? DEFAULT_MPH[side];
+  const at = new Date(Math.max(now.getTime(), fix.at.getTime()) + (miles / mph) * 3600_000);
+  return { at, miles: Math.round(miles), mph, stopId: stop.id, stopName: stop.name, positionAt: fix.at, source: fix.source, windowEnd: stop.windowEnd, late: !!stop.windowEnd && at.getTime() > stop.windowEnd.getTime() };
+}
+
+/** ETAs for every moving leg of an order, keyed by leg id. */
+export async function orderEtas(tenantId: string, orderId: string, now = new Date()) {
+  const [legs, stops] = await Promise.all([db.select().from(s.legs).where(and(eq(s.legs.tenantId, tenantId), eq(s.legs.orderId, orderId), inArray(s.legs.state, ["accepted", "en_route_to_pickup", "loaded", "en_route"]))), db.select().from(s.stops).where(and(eq(s.stops.tenantId, tenantId), eq(s.stops.orderId, orderId))).orderBy(s.stops.seq)]);
+  const out: Record<string, Eta> = {};
+  for (const l of legs) {
+    const e = await etaFrom(tenantId, l, stops, now);
+    if (e) out[l.id] = e;
+  }
+  return out;
+}
+
+/** ETAs for every moving leg in the company, keyed by leg id — one pass for the dispatch board. */
+export async function boardEtas(ctx: Ctx, now = new Date()) {
+  assertCtx(ctx);
+  const legs = await db.select().from(s.legs).where(and(eq(s.legs.tenantId, ctx.tenantId), inArray(s.legs.state, ["accepted", "en_route_to_pickup", "loaded", "en_route"])));
+  const orderIds = [...new Set(legs.map((l) => l.orderId))];
+  const stops = orderIds.length ? await db.select().from(s.stops).where(and(eq(s.stops.tenantId, ctx.tenantId), inArray(s.stops.orderId, orderIds))).orderBy(s.stops.seq) : [];
+  const out: Record<string, { at: string; stopName: string; miles: number; late: boolean; positionAt: string }> = {};
+  for (const l of legs) {
+    const e = await etaFrom(ctx.tenantId, l, stops.filter((x) => x.orderId === l.orderId), now);
+    if (e) out[l.id] = { at: e.at.toISOString(), stopName: e.stopName, miles: e.miles, late: e.late, positionAt: e.positionAt.toISOString() };
+  }
+  return out;
+}
+
+/**
+ * Job: a moving leg whose ETA is past the next stop's window gets a yellow eta_late flag, kept current
+ * every tick and cleared when the ETA comes back inside the window or the truck arrives.
+ */
+export async function flagEta(now = new Date()) {
+  const moving = await db.select().from(s.legs).where(inArray(s.legs.state, ["accepted", "en_route_to_pickup", "loaded", "en_route"]));
+  const open = await db.select().from(s.flags).where(and(eq(s.flags.code, "eta_late"), sql`${s.flags.clearedAt} is null`));
+  let flagged = 0;
+  let cleared = 0;
+  const stopsByOrder = new Map<string, (typeof s.stops.$inferSelect)[]>();
+  for (const leg of moving) {
+    if (!stopsByOrder.has(leg.orderId)) stopsByOrder.set(leg.orderId, await db.select().from(s.stops).where(eq(s.stops.orderId, leg.orderId)).orderBy(s.stops.seq));
+    const eta = await etaFrom(leg.tenantId, leg, stopsByOrder.get(leg.orderId)!, now);
+    const existing = open.find((f) => f.legId === leg.id);
+    if (eta?.late) {
+      const late = Math.round((eta.at.getTime() - eta.windowEnd!.getTime()) / 60_000);
+      const title = `ETA at ${eta.stopName} ${late >= 60 ? `${Math.floor(late / 60)} h ${late % 60} min` : `${late} min`} past the window`;
+      const detail = `From the last ${eta.source.replace("_", " ")} position: ${eta.miles} mi at ${eta.mph} mph. Warn the receiver or rebook the appointment.`;
+      if (existing) {
+        if (existing.title !== title) await db.update(s.flags).set({ title, detail }).where(eq(s.flags.id, existing.id));
+      } else {
+        await db.insert(s.flags).values({ id: newId(), tenantId: leg.tenantId, orderId: leg.orderId, legId: leg.id, code: "eta_late", level: "yellow", title, detail, owner: "dispatch", data: { stopId: eta.stopId, etaAt: eta.at.toISOString() } });
+        flagged++;
+      }
+    } else if (existing) {
+      await db.update(s.flags).set({ clearedAt: now, clearedBy: "system" }).where(eq(s.flags.id, existing.id));
+      cleared++;
+    }
+  }
+  // legs no longer moving (arrived, delivered) drop their flag
+  for (const f of open) if (!moving.some((l) => l.id === f.legId)) {
+    await db.update(s.flags).set({ clearedAt: now, clearedBy: "system" }).where(eq(s.flags.id, f.id));
+    cleared++;
+  }
+  return { flagged, cleared };
 }
 
 // ---------- watchdog ----------

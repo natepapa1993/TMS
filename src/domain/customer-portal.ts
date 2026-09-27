@@ -84,11 +84,19 @@ export async function customerPortalView(tenantId: string, customerId: string, n
     const tok = await issueToken(ctx, "tracking_link", o.id, { label: "customer portal" });
     trackingByOrder.set(o.id, tok.token);
   }
+  const { orderEtas } = await import("./tracking");
+  const etaByOrder = new Map<string, { at: Date; stopName: string; late: boolean }>();
+  for (const o of orders) {
+    if (!["dispatched", "in_transit", "exception"].includes(o.state)) continue;
+    const e = Object.values(await orderEtas(tenantId, o.id, now))[0];
+    if (e) etaByOrder.set(o.id, { at: e.at, stopName: e.stopName, late: e.late });
+  }
   const loads = orders.map((o) => {
     const ls = legs.filter((l) => l.orderId === o.id && l.state !== "cancelled");
     const current = ls.find((l) => l.state !== "completed") ?? ls[ls.length - 1] ?? null;
     const inv = invoices.find((i) => i.orderIds.includes(o.id)) ?? null;
     return {
+      eta: etaByOrder.get(o.id) ?? null,
       id: o.id,
       orderNumber: o.orderNumber,
       state: o.state,

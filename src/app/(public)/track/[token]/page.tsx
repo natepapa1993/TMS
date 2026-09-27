@@ -16,8 +16,8 @@ const STOP_TYPE_ES: Record<string, string> = { pickup: "recolección", delivery:
 
 /** English or Spanish: the customer's country decides, ?lang= overrides. */
 const STR = {
-  en: { tracking: "shipment tracking", route: "Route", window: "window", arrived: "Arrived", departed: "Departed", next: "Next", lastPos: "Last known position", openMaps: "Open in Google Maps", noPos: "No position yet. It appears once the truck is moving.", updates: "Updates", times: "Times shown in", questions: (c: string) => `Questions? Contact ${c} dispatch.`, other: "Español", po: "PO", shipment: "Shipment", ref: "Ref" },
-  es: { tracking: "rastreo de embarque", route: "Ruta", window: "cita", arrived: "Llegó", departed: "Salió", next: "Siguiente", lastPos: "Última posición conocida", openMaps: "Abrir en Google Maps", noPos: "Aún sin posición. Aparece cuando el camión está en movimiento.", updates: "Actualizaciones", times: "Horas en", questions: (c: string) => `¿Dudas? Contacta a despacho de ${c}.`, other: "English", po: "PO", shipment: "Embarque", ref: "Ref" },
+  en: { tracking: "shipment tracking", route: "Route", window: "window", arrived: "Arrived", departed: "Departed", next: "Next", lastPos: "Last known position", openMaps: "Open in Google Maps", noPos: "No position yet. It appears once the truck is moving.", updates: "Updates", times: "Times shown in", questions: (c: string) => `Questions? Contact ${c} dispatch.`, other: "Español", po: "PO", shipment: "Shipment", ref: "Ref", eta: "ETA", fromGps: "from GPS at" },
+  es: { tracking: "rastreo de embarque", route: "Ruta", window: "cita", arrived: "Llegó", departed: "Salió", next: "Siguiente", lastPos: "Última posición conocida", openMaps: "Abrir en Google Maps", noPos: "Aún sin posición. Aparece cuando el camión está en movimiento.", updates: "Actualizaciones", times: "Horas en", questions: (c: string) => `¿Dudas? Contacta a despacho de ${c}.`, other: "English", po: "PO", shipment: "Embarque", ref: "Ref", eta: "Llegada estimada", fromGps: "según GPS de las" },
 };
 
 export default async function TrackPage({ params, searchParams }: PageProps<"/track/[token]">) {
@@ -90,6 +90,15 @@ export default async function TrackPage({ params, searchParams }: PageProps<"/tr
                     {s.arrivedAt && <span className="text-teal font-semibold">{S.arrived} {fmt(s.arrivedAt)}</span>}
                     {s.departedAt && <span className="text-teal font-semibold"> · {S.departed} {fmt(s.departedAt)}</span>}
                     {next && !s.arrivedAt && <span className="text-amber font-semibold">{S.next}</span>}
+                    {(() => {
+                      const e = Object.values(v.etas).find((x) => x.stopId === s.id);
+                      return e && !s.arrivedAt ? (
+                        <span className={`font-semibold ${e.late ? "text-red" : "text-teal"}`}>
+                          {" "}
+                          · {S.eta} {fmt(e.at)} <span className="text-faint font-normal">({S.fromGps} {fmt(e.positionAt)})</span>
+                        </span>
+                      ) : null;
+                    })()}
                   </div>
                 </div>
               </li>
