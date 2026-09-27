@@ -32,6 +32,8 @@ export async function tick(now = new Date()) {
     if (n % 15 === 4) {
       const C = await import("@/domain/compliance");
       out.digest = await C.sendDigests(now).catch((e) => ({ error: String(e) }));
+      const R = await import("@/domain/reports");
+      out.weekly = await R.sendOwnerWeekly(now).catch((e) => ({ error: String(e) }));
     }
     if (n % 5 === 2) {
       const { flagDwell, flagUnacknowledgedPackets } = await import("@/domain/crossing");

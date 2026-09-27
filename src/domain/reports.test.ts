@@ -131,3 +131,31 @@ describe("reports", () => {
     expect(R.weekPeriod(new Date("2026-09-27T03:00:00Z"), "UTC")).toEqual({ from: "2026-09-27", to: "2026-10-03" });
   });
 });
+
+describe("the owner's Monday email", () => {
+  it("goes out once, on a Monday after 7 in the company zone, with last week's numbers; nothing without a sender", async () => {
+    const { integrations, outbox, tenants } = await import("@/db/schema");
+    // a load delivered last week (Wednesday), in the company zone
+    const o = await domestic(f.rxo, 180000, f.t2104, f.reyes, 420);
+    await db.update(orders).set({ deliveredAt: new Date("2026-09-23T15:00:00Z") }).where(eq(orders.id, o.order.id));
+    const monday = new Date("2026-09-28T12:30:00Z"); // 8:30 AM Detroit
+    // Sunday: nothing; Monday too early: nothing
+    expect(await R.sendOwnerWeekly(new Date("2026-09-27T14:00:00Z"))).toMatchObject({ sent: 0 });
+    expect(await R.sendOwnerWeekly(new Date("2026-09-28T09:30:00Z"))).toMatchObject({ sent: 0 }); // 5:30 AM Detroit
+    // no sender: marked as done for the week, nothing queued
+    expect(await R.sendOwnerWeekly(monday)).toMatchObject({ sent: 0 });
+    expect(await db.select().from(outbox)).toHaveLength(0);
+    await db.update(tenants).set({ settings: {} }).where(eq(tenants.id, a.tenantId));
+    await db.insert(integrations).values({ id: newId(), tenantId: a.tenantId, provider: "resend", enabled: true, config: { apiKey: "re_test", from: "Reports <r@example.com>" } });
+    expect(await R.sendOwnerWeekly(monday)).toMatchObject({ sent: 1 });
+    const [mail] = await db.select().from(outbox).where(eq(outbox.subjectKind, "owner_weekly"));
+    expect(mail.to).toBe(a.email);
+    expect(mail.subject).toBe("Last week: $1,800.00 on 1 load, 100% margin".replace("100% margin", `${(await R.dashboard(a, { from: "2026-09-20", to: "2026-09-26" })).marginPct}% margin`));
+    expect(mail.body).toContain("week of 2026-09-20 to 2026-09-26");
+    expect(mail.body).toContain("RXO: $1,800.00 on 1 load");
+    expect(mail.body).toContain("Unit 2104");
+    expect(mail.body).toContain("/reports?range=custom&from=2026-09-20&to=2026-09-26");
+    // the same Monday again: once
+    expect(await R.sendOwnerWeekly(new Date("2026-09-28T16:00:00Z"))).toMatchObject({ sent: 0 });
+  });
+});

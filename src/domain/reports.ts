@@ -1,8 +1,8 @@
-import { and, eq, gte, lt, inArray, isNull } from "drizzle-orm";
+import { and, eq, gte, lt, inArray, isNull, sql } from "drizzle-orm";
 import { db } from "@/db/client";
 import * as s from "@/db/schema";
-import { assertCtx, requirePermission, type Ctx } from "@/lib/context";
-import { zonedMidnight, zonedDate, weekOfZoned } from "@/lib/time";
+import { assertCtx, requirePermission, systemCtx, type Ctx } from "@/lib/context";
+import { zonedMidnight, zonedDate, weekOfZoned, zonedParts } from "@/lib/time";
 import { getCompany } from "./company";
 import { bucketOf } from "./crossing";
 
@@ -242,3 +242,56 @@ export function breakdownCsv(by: Breakdown, rows: BreakdownRow[]) {
 }
 
 
+
+// ---------- the owner's Monday email ----------
+
+/**
+ * Job: every Monday after 7 in the company's zone, the owner gets last week's six numbers with the top
+ * customers and trucks, once per week per company, when an email sender exists. What the reports page
+ * shows, in the inbox before the week starts.
+ */
+export async function sendOwnerWeekly(now = new Date()) {
+  const { canSendEmail, enqueue } = await import("@/lib/outbox");
+  const tenants = await db.select().from(s.tenants);
+  let sent = 0;
+  for (const t of tenants) {
+    const settings = (t.settings ?? {}) as Record<string, unknown>;
+    const parts = zonedParts(now, t.timeZone);
+    if (parts.weekday !== 1 || parts.h < 7) continue; // Monday, after 7
+    const last = settings.ownerWeeklyAt ? new Date(String(settings.ownerWeeklyAt)) : null;
+    if (last && now.getTime() - last.getTime() < 6 * 86400_000) continue;
+    await db.update(s.tenants).set({ settings: { ...settings, ownerWeeklyAt: now.toISOString() } }).where(eq(s.tenants.id, t.id));
+    if (!(await canSendEmail(t.id))) continue;
+    const owners = await db.select({ email: s.users.email, name: s.users.name }).from(s.users).where(and(eq(s.users.tenantId, t.id), eq(s.users.role, "owner"), sql`${s.users.archivedAt} is null`));
+    if (!owners.length) continue;
+    const ctx = systemCtx(t.id);
+    const thisWeek = weekOfZoned(now, t.timeZone);
+    const lastWeekEnd = new Date(thisWeek.start.getTime() - 1);
+    const period = weekPeriod(lastWeekEnd, t.timeZone);
+    const [d, byCustomer, byTruck] = await Promise.all([dashboard(ctx, period), breakdown(ctx, "customer", period), breakdown(ctx, "truck", period)]);
+    const money = (c: number) => `$${(c / 100).toLocaleString("en-US", { minimumFractionDigits: 2 })}`;
+    const top = (rows: BreakdownRow[], n = 3) => rows.slice(0, n).map((r) => `  ${r.label}: ${money(r.revenueCents)} on ${r.loads} load${r.loads === 1 ? "" : "s"}`);
+    const body = [
+      `${t.name} — week of ${period.from} to ${period.to}`,
+      "",
+      `Revenue ${money(d.revenueCents)} on ${d.loads} load${d.loads === 1 ? "" : "s"} · ${money(d.revenuePerTruckCents)} per truck (${d.activeTrucks} active)`,
+      `Margin ${money(d.marginCents)} (${d.marginPct}%) after carriers, driver pay, fuel and tolls`,
+      `Empty miles ${d.emptyPct}%`,
+      `Loads at risk right now: ${d.atRisk.count}${d.atRisk.count ? ` (${d.atRisk.orders.map((o) => o.orderNumber).join(", ")})` : ""}`,
+      `Crossings pending: ${d.crossingsPending.count}`,
+      `Documents: ${d.expiringDocs.expired} expired · ${d.expiringDocs.expiring} expiring · ${d.expiringDocs.missing} missing`,
+      `Receivables open ${money(d.arOpenCents)} · past due ${money(d.arOverdueCents)}`,
+      "",
+      "Top customers:",
+      ...(top(byCustomer).length ? top(byCustomer) : ["  none delivered"]),
+      "",
+      "Top trucks:",
+      ...(top(byTruck).length ? top(byTruck) : ["  none"]),
+      "",
+      `${(process.env.APP_URL ?? "").replace(/\/$/, "")}/reports?range=custom&from=${period.from}&to=${period.to}`,
+    ].join("\n");
+    for (const o of owners) await enqueue(ctx, { channel: "email", to: o.email, subject: `Last week: ${money(d.revenueCents)} on ${d.loads} load${d.loads === 1 ? "" : "s"}, ${d.marginPct}% margin`, body, subjectKind: "owner_weekly", subjectId: t.id });
+    sent++;
+  }
+  return { sent };
+}
