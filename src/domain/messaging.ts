@@ -2,7 +2,7 @@ import { and, eq, inArray, desc, sql } from "drizzle-orm";
 import { db } from "@/db/client";
 import * as s from "@/db/schema";
 import { newId } from "@/lib/ids";
-import { assertCtx, type Ctx } from "@/lib/context";
+import { assertCtx, requirePermission, type Ctx } from "@/lib/context";
 import { normalizePhone, parseWebhook, verifySignature } from "@/integrations/whatsapp";
 
 /**
@@ -99,4 +99,16 @@ export async function inbox(ctx: Ctx, opts: { limit?: number } = {}) {
 export async function markHandled(ctx: Ctx, id: string) {
   assertCtx(ctx);
   await db.update(s.inboundMessages).set({ handledAt: new Date() }).where(and(eq(s.inboundMessages.tenantId, ctx.tenantId), eq(s.inboundMessages.id, id)));
+}
+
+/** Everything that left (or tried to): tenders, packets, tracking links, invoices, digests, reset links. The owner's answer to "did they get it?". */
+export async function sentLog(ctx: Ctx, opts: { limit?: number } = {}) {
+  assertCtx(ctx);
+  requirePermission(ctx, "orders.view");
+  return db
+    .select()
+    .from(s.outbox)
+    .where(eq(s.outbox.tenantId, ctx.tenantId))
+    .orderBy(desc(s.outbox.createdAt))
+    .limit(opts.limit ?? 200);
 }

@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { requireCtx } from "@/lib/auth";
-import { inbox } from "@/domain/messaging";
+import { inbox, sentLog } from "@/domain/messaging";
+import { SentBoard } from "./sent";
 import { PageHeader } from "@/components/page-header";
 import { MessagesBoard } from "./board";
 
@@ -9,7 +10,7 @@ export const dynamic = "force-dynamic";
 
 export default async function MessagesPage() {
   const ctx = await requireCtx();
-  const rows = await inbox(ctx, { limit: 200 });
+  const [rows, sent] = await Promise.all([inbox(ctx, { limit: 200 }), sentLog(ctx, { limit: 200 })]);
   return (
     <div>
       <PageHeader
@@ -21,10 +22,11 @@ export default async function MessagesPage() {
           </Link>
         }
       >
-        What drivers and carriers write to the company WhatsApp number. Replies from someone on a leg also show on that order&apos;s timeline.
+        What drivers and carriers write to the company WhatsApp number, and everything we sent them: tenders, packets, tracking links, invoices. Replies from someone on a leg also show on that order&apos;s timeline.
       </PageHeader>
       <div className="px-7 pb-10">
         <MessagesBoard rows={JSON.parse(JSON.stringify(rows))} />
+        <SentBoard rows={JSON.parse(JSON.stringify(sent))} />
       </div>
     </div>
   );

@@ -63,3 +63,34 @@ export async function signupAction(_prev: AuthState, form: FormData): Promise<Au
   await signIn(email, password);
   redirect("/settings?welcome=1");
 }
+
+export type ResetState = { error?: string; done?: "sent" | "no_sender"; fields?: Record<string, string> };
+
+export async function forgotAction(_prev: ResetState, form: FormData): Promise<ResetState> {
+  const email = String(form.get("email") ?? "").trim();
+  if (!email) return { error: "Enter your email.", fields: { email } };
+  const key = `reset:${await clientKey()}`;
+  const wait = throttled(key);
+  if (wait != null) return { error: `Too many requests. Try again in ${wait} minute${wait === 1 ? "" : "s"}.`, fields: { email } };
+  failed(key, Date.now(), 10); // ten reset requests per address per quarter hour, whatever the outcome
+  const { requestReset } = await import("@/domain/password-reset");
+  const r = await requestReset(email);
+  // an unknown address reads exactly like a sent one
+  return { done: r === "no_sender" ? "no_sender" : "sent", fields: { email } };
+}
+
+export async function resetAction(_prev: AuthState, form: FormData): Promise<AuthState> {
+  const token = String(form.get("token") ?? "");
+  const password = String(form.get("password") ?? "");
+  const again = String(form.get("again") ?? "");
+  if (password !== again) return { error: "The two passwords don't match." };
+  const { completeReset } = await import("@/domain/password-reset");
+  let email: string;
+  try {
+    ({ email } = await completeReset(token, password));
+  } catch (e) {
+    return { error: (e as Error).message };
+  }
+  await signIn(email, password);
+  redirect("/dispatch");
+}

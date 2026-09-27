@@ -261,3 +261,49 @@ test("book it again: a copy of an order is a new draft with the same shape and n
   await page.click("button:has-text('Book')");
   await expect(page.getByRole("status").filter({ hasText: "Booked" })).toBeVisible();
 });
+
+test("forgot password: no sender → ask the owner; with a sender the emailed link sets a new password and signs in", async ({ page, browser }) => {
+  const me = await signupFresh(page);
+  await page.goto("/login").catch(() => null); // signed in → sent back to dispatch
+  const anon = await (await browser.newContext()).newPage();
+  await anon.goto("/login");
+  await anon.click("a:has-text('Forgot your password?')");
+  await anon.fill("#email", me.email);
+  await anon.click("button:has-text('Send the link')");
+  await expect(anon.getByRole("status")).toContainText("Ask your company owner");
+  // the owner connects an email sender (a key that never sends; the link is what matters)
+  await page.goto("/settings/integrations");
+  const card = page.locator(".card", { hasText: "Email (Resend)" });
+  await card.locator("input[placeholder='paste key']").fill("re_test_key");
+  await card.locator("input[placeholder*='dispatch@']").fill("Dispatch <dispatch@example.com>");
+  await card.locator("input[type=checkbox]").check();
+  await card.locator("button:has-text('Save')").click();
+  await expect(page.getByRole("status")).toContainText("Saved");
+  await anon.goto("/forgot");
+  await anon.fill("#email", me.email);
+  await anon.click("button:has-text('Send the link')");
+  await expect(anon.getByRole("status")).toContainText("Check your email");
+  // the owner reads the sent log: every message that left, with the text as it went
+  await page.goto("/messages");
+  const sentRow = page.getByTestId("sent-log").locator("tr", { hasText: "Password reset" }).first();
+  await expect(sentRow).toContainText(me.email);
+  await sentRow.locator("button:has-text('Open')").click();
+  const link = (await page.getByTestId("sent-body").innerText()).match(/https?:\/\/\S+\/reset\/\S+/)?.[0] ?? null;
+  expect(link).toMatch(/\/reset\//);
+  await anon.goto(new URL(link!).pathname);
+  await expect(anon.locator("main, body")).toContainText(me.email);
+  await anon.fill("#password", "brand-new-password-9");
+  await anon.fill("#again", "brand-new-password-9");
+  await anon.click("button:has-text('Set password and sign in')");
+  await anon.waitForURL("**/dispatch");
+  await anon.context().clearCookies();
+  await anon.goto("/login");
+  await anon.fill("#email", me.email);
+  await anon.fill("#password", me.password);
+  await anon.click("button:has-text('Sign in')");
+  await expect(anon.getByRole("alert").filter({ hasText: "don't match" })).toBeVisible();
+  await anon.fill("#password", "brand-new-password-9");
+  await anon.click("button:has-text('Sign in')");
+  await anon.waitForURL("**/dispatch");
+  await anon.context().close();
+});

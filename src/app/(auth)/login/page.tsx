@@ -11,7 +11,12 @@ export default async function LoginPage({ searchParams }: PageProps<"/login">) {
       <div className="h1">Sign in</div>
       <p className="text-muted mt-1 mb-6">Welcome back.</p>
       <LoginForm next={next} />
-      <p className="text-[13px] text-muted mt-6">
+      <p className="text-[13px] text-muted mt-4">
+        <Link href="/forgot" className="font-semibold text-teal">
+          Forgot your password?
+        </Link>
+      </p>
+      <p className="text-[13px] text-muted mt-2">
         New company?{" "}
         <Link href="/signup" className="font-semibold text-teal">
           Set it up in a minute
