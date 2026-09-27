@@ -1,6 +1,6 @@
 // Features: F-1.1
 import { describe, it, expect } from "vitest";
-import { FIELDS, KIND_META, coerce } from "./fields";
+import { FIELDS, KIND_META, coerce, fieldDisplay } from "./fields";
 import { REGISTRY, type RecordKind } from "./records";
 
 // Invariants the screens rely on (spec §1.1 quick-add must always be able to save).
@@ -49,5 +49,18 @@ describe("field definitions", () => {
     const edit = coerce("user", { name: "Dee", password: "" }, { partial: true });
     expect(edit.ok).toBe(true);
     expect("password" in edit.values).toBe(false);
+  });
+
+  it("contacts: one per line, names required, emails checked; bridges keep their words; document codes are normalized", () => {
+    const c = coerce("customer", { contacts: "Ana Ruiz | ops | ana@magna.test | +52 844 000 0000\nBob | | | +1 956 000 0000" }, { partial: true });
+    expect(c.ok).toBe(true);
+    expect(c.values.contacts).toEqual([{ name: "Ana Ruiz", role: "ops", email: "ana@magna.test", phone: "+52 844 000 0000", whatsapp: undefined }, { name: "Bob", role: undefined, email: undefined, phone: "+1 956 000 0000", whatsapp: undefined }]);
+    expect(coerce("customer", { contacts: "Ana | ops | not-an-email" }, { partial: true }).errors.contacts).toMatch(/not a valid email/);
+    expect(coerce("customer", { contacts: " | ops | a@b.co" }, { partial: true }).errors.contacts).toMatch(/needs a name/);
+    expect(coerce("customer", { contacts: JSON.stringify([{ name: "Cy", email: "cy@x.test" }]) }, { partial: true }).values.contacts).toEqual([{ name: "Cy", email: "cy@x.test" }]);
+    expect(fieldDisplay(FIELDS.customer.find((f) => f.name === "contacts")!, [{ name: "Ana", role: "ops", email: "a@b.co" }])).toBe("Ana | ops | a@b.co");
+    expect(coerce("port", { bridges: "World Trade Bridge, Colombia Solidarity Bridge" }, { partial: true }).values.bridges).toEqual(["World Trade Bridge", "Colombia Solidarity Bridge"]);
+    expect(coerce("customer", { requiredDocs: "pod, rate con" }, { partial: true }).values.requiredDocs).toEqual(["POD", "RATE_CON"]);
+    expect(coerce("documentType", { alertDays: "30, 7" }, { partial: true }).values.alertDays).toEqual([30, 7]);
   });
 });

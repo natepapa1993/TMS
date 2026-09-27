@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useTransition, useMemo } from "react";
-import type { Field } from "@/data/fields";
+import { fieldDisplay, type Field } from "@/data/fields";
 
 /**
  * One form for every record type. `mode="quick"` shows only the essentials (spec §1.1: add a
@@ -20,6 +20,7 @@ function toInputValue(f: Field, v: unknown): string {
   if (f.type === "cents") return typeof v === "number" ? (v / 100).toFixed(2) : String(v);
   if (f.type === "boolean") return v ? "true" : "";
   if (f.type === "list") return Array.isArray(v) ? (v.length ? v.join(", ") : "none") : String(v);
+  if (f.type === "contacts") return fieldDisplay(f, v);
   if (f.type === "address") {
     const a = v as { line1?: string; city?: string; state?: string; postalCode?: string; country?: string };
     return [a.line1, a.city, [a.state, a.postalCode].filter(Boolean).join(" "), a.country].filter(Boolean).join(", ");
@@ -181,6 +182,9 @@ export function FieldInput({ f, value, onChange, error, refs, span, autoFocus }:
           <input {...common} inputMode="decimal" className="input pl-7" value={value} onChange={(e) => onChange(e.target.value)} placeholder="0.00" />
         </div>
       );
+      break;
+    case "contacts":
+      input = <textarea {...common} className="input h-24 font-mono text-[12px]" value={value} onChange={(e) => onChange(e.target.value)} placeholder={"Ana Ruiz | ops | ana@example.com | +52 844 000 0000 | +52 844 000 0000"} />;
       break;
     case "password":
       input = <input {...common} type="password" autoComplete="new-password" className="input" value={value} onChange={(e) => onChange(e.target.value)} placeholder="at least 10 characters" />;

@@ -1,4 +1,5 @@
 import type { RecordKind } from "./records";
+import type { Contact } from "@/db/schema";
 
 /**
  * Field definitions for every master-data record (spec §1.1–1.3). One place drives the list
@@ -6,7 +7,7 @@ import type { RecordKind } from "./records";
  * (grouped sections, everything editable), CSV import mapping, and value coercion.
  */
 
-export type FieldType = "text" | "number" | "cents" | "date" | "select" | "boolean" | "textarea" | "ref" | "email" | "phone" | "address" | "list" | "password";
+export type FieldType = "text" | "number" | "cents" | "date" | "select" | "boolean" | "textarea" | "ref" | "email" | "phone" | "address" | "list" | "password" | "contacts";
 
 export type Field = {
   name: string;
@@ -21,7 +22,7 @@ export type Field = {
   help?: string;
   placeholder?: string;
   unique?: boolean;
-  listOf?: "text" | "number"; // for type=list: comma-separated values; "none" saves an empty list
+  listOf?: "text" | "number" | "code"; // for type=list: comma-separated values; "none" saves an empty list; code = upper-cased identifiers (POD, RATE_CON); text = as typed
 };
 
 const COUNTRY = [
@@ -144,7 +145,7 @@ export const FIELDS: Record<RecordKind, Field[]> = {
     { name: "termsDays", label: "Terms (days)", type: "number", quick: true, column: true, group: "Billing" },
     { name: "payWhenPaid", label: "Pay-when-paid", type: "boolean", group: "Billing" },
     { name: "billingEntityId", label: "Bill from entity", type: "ref", ref: "billingEntity", group: "Billing" },
-    { name: "requiredDocs", label: "Docs before invoicing", type: "list", group: "Billing", help: "Codes the invoice needs on file · blank = POD, BOL, RATE_CON · type none if nothing is required", placeholder: "POD, BOL, RATE_CON" },
+    { name: "requiredDocs", label: "Docs before invoicing", type: "list", listOf: "code", group: "Billing", help: "Codes the invoice needs on file · blank = POD, BOL, RATE_CON · type none if nothing is required", placeholder: "POD, BOL, RATE_CON" },
     { name: "detentionFreeMinutes", label: "Detention free time (min)", type: "number", group: "Billing", help: "blank = 120" },
     { name: "detentionRateCents", label: "Detention rate / hour", type: "cents", group: "Billing", help: "blank = 75.00" },
     { name: "reminderDays", label: "Reminder days past due", type: "list", listOf: "number", group: "Billing", help: "blank = 3, 10, 20 · type none to opt out", placeholder: "3, 10, 20" },
@@ -161,6 +162,7 @@ export const FIELDS: Record<RecordKind, Field[]> = {
         { value: "portal", label: "Portal updates" },
       ],
     },
+    { name: "contacts", label: "Contacts", type: "contacts", group: "Requirements", help: "one per line: Name | role | email | phone | WhatsApp · the first with an email gets tracking links" },
     { name: "mxBrokerId", label: "Mexican customs broker", type: "ref", ref: "customsBroker", group: "Requirements" },
     { name: "usBrokerId", label: "US customs broker", type: "ref", ref: "customsBroker", group: "Requirements" },
     { name: "knowledgeMd", label: "What to know", type: "textarea", group: "Requirements", help: "Shows to dispatch on every order for this customer." },
@@ -171,6 +173,7 @@ export const FIELDS: Record<RecordKind, Field[]> = {
     { name: "patente", label: "Patente (MX)", type: "text", quick: true, column: true, group: "Broker" },
     { name: "filerCode", label: "Filer code (US)", type: "text", group: "Broker" },
     { name: "portalUrl", label: "Portal URL", type: "text", group: "Broker", placeholder: "https://" },
+    { name: "contacts", label: "Contacts", type: "contacts", group: "Broker", help: "one per line: Name | role | email | phone | WhatsApp" },
   ],
   carrier: [
     { name: "name", label: "Name", type: "text", required: true, quick: true, column: true, group: "Carrier" },
@@ -215,6 +218,7 @@ export const FIELDS: Record<RecordKind, Field[]> = {
     { name: "dispatchEmail", label: "Dispatch email", type: "email", quick: true, group: "Dispatch" },
     { name: "dispatchPhone", label: "Dispatch phone", type: "phone", group: "Dispatch" },
     { name: "whatsapp", label: "WhatsApp", type: "phone", group: "Dispatch" },
+    { name: "contacts", label: "Contacts", type: "contacts", group: "Dispatch", help: "one per line: Name | role | email | phone | WhatsApp" },
     { name: "quickPayPct", label: "Quick-pay discount %", type: "number", group: "Payables", help: "taken off when we pay within 7 days of approval · blank = none" },
     { name: "qbName", label: "QuickBooks vendor", type: "text", group: "Payables", help: "blank = same as here" },
     { name: "doNotUse", label: "Do not use", type: "boolean", column: true, group: "Status" },
@@ -410,6 +414,7 @@ export const FIELDS: Record<RecordKind, Field[]> = {
       ],
     },
     { name: "tracksExpiry", label: "Tracks expiry", type: "boolean", quick: true, column: true, group: "Rules" },
+    { name: "alertDays", label: "Alert days before expiry", type: "list", listOf: "number", group: "Rules", help: "blank = 30 · the board and the digest alert inside the largest", placeholder: "30, 7" },
     { name: "required", label: "Required", type: "boolean", column: true, group: "Rules" },
     { name: "blocksDispatch", label: "Blocks dispatch when missing/expired", type: "boolean", column: true, group: "Rules" },
     {
@@ -530,7 +535,7 @@ export function coerce(kind: RecordKind, raw: Record<string, string | undefined 
       if (f.required && !opts.partial) errors[f.name] = `${f.label} is required`;
       else if (f.type === "boolean") values[f.name] = false;
       else if (f.type === "select") continue; // selects have DB defaults; an empty one is "leave it"
-      else if (opts.partial && present) values[f.name] = null; // clearing a field on the record screen
+      else if (opts.partial && present) values[f.name] = f.type === "contacts" ? [] : null; // clearing a field on the record screen
       continue; // on create, leave the column out so the database default applies
     }
     switch (f.type) {
@@ -571,12 +576,34 @@ export function coerce(kind: RecordKind, raw: Record<string, string | undefined 
           const nums = parts.map(Number);
           if (nums.some((n) => !Number.isFinite(n))) errors[f.name] = `${f.label}: numbers separated by commas`;
           else values[f.name] = nums;
-        } else values[f.name] = parts.map((x) => x.toUpperCase().replace(/[^A-Z0-9_]+/g, "_"));
+        } else if (f.listOf === "text") values[f.name] = parts;
+        else values[f.name] = parts.map((x) => x.toUpperCase().replace(/[^A-Z0-9_]+/g, "_"));
         break;
       }
       case "address": {
         try {
           values[f.name] = v.startsWith("{") ? JSON.parse(v) : parseAddress(v);
+        } catch {
+          errors[f.name] = `${f.label} could not be read`;
+        }
+        break;
+      }
+      case "contacts": {
+        // one per line: Name | role | email | phone | WhatsApp  (JSON accepted from imports)
+        try {
+          const list: Contact[] = v.startsWith("[")
+            ? (JSON.parse(v) as Contact[])
+            : v
+                .split(/\n/)
+                .map((line) => line.trim())
+                .filter(Boolean)
+                .map((line) => {
+                  const [name, role, email, phone, whatsapp] = line.split("|").map((x) => x.trim());
+                  return { name, role: role || undefined, email: email || undefined, phone: phone || undefined, whatsapp: whatsapp || undefined };
+                });
+          const bad = list.find((c) => !c.name || (c.email && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(c.email)));
+          if (bad) errors[f.name] = bad.name ? `${f.label}: "${bad.email}" is not a valid email` : `${f.label}: every contact needs a name`;
+          else values[f.name] = list;
         } catch {
           errors[f.name] = `${f.label} could not be read`;
         }
@@ -651,6 +678,8 @@ export function fieldDisplay(f: Field, value: unknown, refs?: Map<string, string
     }
     case "list":
       return Array.isArray(value) ? (value.length ? value.join(", ") : "none") : String(value);
+    case "contacts":
+      return Array.isArray(value) ? (value as Contact[]).map((c) => [c.name, c.role ?? "", c.email ?? "", c.phone ?? "", c.whatsapp ?? ""].join(" | ").replace(/( \| )+$/, "")).join("\n") : String(value);
     default:
       return String(value);
   }
