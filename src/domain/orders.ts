@@ -94,6 +94,11 @@ async function loadLeg(tx: Tx, ctx: Ctx, legId: string): Promise<Leg> {
   if (!l) throw new NotFoundError("leg", legId);
   return l;
 }
+/** A locked load takes no edits until someone with billing rights unlocks it. */
+function assertUnlocked(order: Order) {
+  if (order.lockedAt) throw new ValidationError("this load is locked; unlock it to change it");
+}
+
 async function loadLegs(tx: Tx, ctx: Ctx, orderId: string): Promise<Leg[]> {
   return tx.select().from(s.legs).where(and(eq(s.legs.tenantId, ctx.tenantId), eq(s.legs.orderId, orderId))).orderBy(asc(s.legs.seq));
 }
@@ -356,10 +361,30 @@ export async function updateOrder(ctx: Ctx, orderId: string, values: Partial<Cre
     const before = await loadOrder(tx, ctx, orderId);
     if (expectedUpdatedAt && before.updatedAt.getTime() !== expectedUpdatedAt.getTime()) throw new ValidationError("someone else changed this order; reload", "updatedAt");
     if (["paid", "cancelled"].includes(before.state)) throw new ValidationError(`a ${before.state} order is read-only`);
-    const allowed = ["customerId", "brokerId", "billingEntityId", "portId", "equipment", "refs", "rateCents", "rateTbd", "currency", "fuelRule", "fuelPct", "tollsFeesCents", "freight", "cargoNote", "custom"] as const;
+    assertUnlocked(before);
+    const allowed = ["customerId", "brokerId", "billingEntityId", "portId", "equipment", "refs", "rateCents", "rateTbd", "currency", "fuelRule", "fuelPct", "tollsFeesCents", "freight", "cargoNote", "custom", "priority", "rateType", "rateUnitCents", "rateQty", "salesAgentId", "csrId", "dispatcherId"] as const;
     const safe: Record<string, unknown> = {};
     for (const k of allowed) if (k in values) safe[k] = values[k];
     if (typeof safe.rateCents === "number" && safe.rateCents < 0) throw new ValidationError("rate cannot be negative", "rateCents");
+    if ("priority" in safe && !["none", "low", "medium", "high"].includes(String(safe.priority))) throw new ValidationError("priority is none, low, medium or high", "priority");
+    if ("rateType" in safe && !["flat", "per_mile", "per_cwt", "per_unit"].includes(String(safe.rateType))) throw new ValidationError("unknown rate type", "rateType");
+    for (const k of ["rateUnitCents", "rateQty"] as const) if (k in safe && safe[k] != null && (typeof safe[k] !== "number" || !Number.isFinite(safe[k] as number) || (safe[k] as number) < 0)) throw new ValidationError(`${k === "rateQty" ? "quantity" : "unit rate"} must be a positive number`, k);
+    // a unit rate figures the line haul: rate × quantity
+    const type = (safe.rateType ?? before.rateType) as string;
+    if (type !== "flat") {
+      const unit = (safe.rateUnitCents !== undefined ? safe.rateUnitCents : before.rateUnitCents) as number | null;
+      const qty = (safe.rateQty !== undefined ? safe.rateQty : before.rateQty) as number | null;
+      if (unit != null && qty != null) {
+        safe.rateCents = Math.round(unit * qty);
+        safe.rateTbd = false;
+      }
+    }
+    for (const k of ["salesAgentId", "csrId", "dispatcherId"] as const) {
+      if (safe[k]) {
+        const [u] = await tx.select({ id: s.users.id }).from(s.users).where(and(eq(s.users.tenantId, ctx.tenantId), eq(s.users.id, String(safe[k])))).limit(1);
+        if (!u) throw new ValidationError("that person is not a user of this company", k);
+      } else if (k in safe) safe[k] = null;
+    }
     const [after] = await tx
       .update(s.orders)
       .set({ ...safe, updatedAt: new Date(), updatedBy: ctx.userId })
@@ -378,6 +403,7 @@ export async function updateStop(ctx: Ctx, stopId: string, values: Partial<StopI
     if (!before) throw new NotFoundError("stop", stopId);
     const order = await loadOrder(tx, ctx, before.orderId);
     if (["paid", "cancelled"].includes(order.state)) throw new ValidationError(`a ${order.state} order is read-only`);
+    assertUnlocked(order);
     if (values.name !== undefined && !values.name?.trim()) throw new ValidationError("a stop needs a name", "name");
     const allowed = ["name", "locationId", "address", "country", "windowStart", "windowEnd", "appointment", "contact", "refs", "notes", "type", "sealIn", "sealOut"] as const;
     const safe: Record<string, unknown> = {};
@@ -466,6 +492,7 @@ async function restructureStops(ctx: Ctx, orderId: string, change: (stops: StopD
     if (order.kind === "shipment") throw new ValidationError("a shipment rides its trip's stops; change them on the trip");
     if (order.kind === "trip") throw new ValidationError("change a trip's stops on the trip builder");
     if (["delivered", "ready_to_bill", "invoiced", "paid", "cancelled"].includes(order.state)) throw new ValidationError(`a ${order.state.replace(/_/g, " ")} load's stops are final`);
+    assertUnlocked(order);
     const before = await tx.select().from(s.stops).where(and(eq(s.stops.tenantId, ctx.tenantId), eq(s.stops.orderId, orderId))).orderBy(asc(s.stops.seq));
     const legs = await tx.select().from(s.legs).where(and(eq(s.legs.tenantId, ctx.tenantId), eq(s.legs.orderId, orderId))).orderBy(asc(s.legs.seq));
     const live = legs.filter((l) => l.state !== "cancelled");
@@ -626,6 +653,57 @@ export async function cancelOrder(ctx: Ctx, orderId: string, reason: string) {
     for (const l of legs) if (l.state !== "completed" && l.state !== "cancelled") await setLegState(tx, ctx, l, "cancelled", { source: "dispatcher", note: reason });
     await tx.update(s.flags).set({ clearedAt: new Date() }).where(and(eq(s.flags.tenantId, ctx.tenantId), eq(s.flags.orderId, order.id), sql`${s.flags.clearedAt} is null`));
     return setOrderState(tx, ctx, order, "cancelled", { cancelReason: reason.trim() }, reason);
+  });
+}
+
+// ---------- lock / TONU ----------
+
+/** Lock a load against edits (billing is checking it, or it was agreed as is). */
+export async function lockOrder(ctx: Ctx, orderId: string, locked: boolean) {
+  assertCtx(ctx);
+  requirePermission(ctx, "orders.edit");
+  if (!locked && !["owner", "billing"].includes(ctx.role)) throw new ValidationError("only the owner or billing can unlock a load");
+  return db.transaction(async (tx) => {
+    const order = await loadOrder(tx, ctx, orderId);
+    if (!!order.lockedAt === locked) return order;
+    const [after] = await tx
+      .update(s.orders)
+      .set({ lockedAt: locked ? new Date() : null, lockedBy: locked ? ctx.userId : null, updatedAt: new Date(), updatedBy: ctx.userId })
+      .where(and(eq(s.orders.tenantId, ctx.tenantId), eq(s.orders.id, orderId)))
+      .returning();
+    await writeAudit(tx, ctx, "order", orderId, locked ? "lock" : "unlock", { locked: { from: !locked, to: locked } });
+    return after;
+  });
+}
+
+/**
+ * Truck ordered, not used: the customer cancelled after the truck was committed. The open legs are
+ * cancelled, the load is billed the TONU fee instead of the line haul, and it goes to billing without a
+ * POD or BOL. Not once freight is on the truck.
+ */
+export async function markTonu(ctx: Ctx, orderId: string, input: { amountCents: number; reason: string }) {
+  assertCtx(ctx);
+  requirePermission(ctx, "orders.cancel");
+  if (!input.reason?.trim()) throw new ValidationError("say why the load was cancelled", "reason");
+  if (!Number.isFinite(input.amountCents) || input.amountCents <= 0) throw new ValidationError("enter the TONU amount", "amount");
+  return db.transaction(async (tx) => {
+    const order = await loadOrder(tx, ctx, orderId);
+    if (order.kind !== "order") throw new ValidationError("TONU applies to a load, not a trip or a shipment");
+    if (!["booked", "dispatched", "in_transit", "exception"].includes(order.state)) throw new TransitionError("order", order.state, "tonu", "only a booked or dispatched load can be a TONU");
+    const legs = await loadLegs(tx, ctx, orderId);
+    if (legs.some((l) => ["loaded", "en_route", "at_delivery", "completed"].includes(l.state))) throw new TransitionError("order", order.state, "tonu", "freight is already on a truck");
+    for (const l of legs) if (l.state !== "cancelled") await setLegState(tx, ctx, l, "cancelled", { source: "dispatcher", note: `TONU: ${input.reason.trim()}` });
+    await tx.update(s.flags).set({ clearedAt: new Date() }).where(and(eq(s.flags.tenantId, ctx.tenantId), eq(s.flags.orderId, order.id), sql`${s.flags.clearedAt} is null`));
+    // any charges drafted for the line haul give way to the TONU fee
+    await tx.delete(s.charges).where(and(eq(s.charges.tenantId, ctx.tenantId), eq(s.charges.orderId, order.id), inArray(s.charges.kind, ["linehaul", "fuel"])));
+    await tx.insert(s.charges).values({ id: newId(), tenantId: ctx.tenantId, orderId: order.id, kind: "tonu", description: `TONU — ${input.reason.trim()}`, qty: 1, unit: "flat", rateCents: input.amountCents, amountCents: input.amountCents, currency: order.currency, source: "manual", createdBy: ctx.userId, updatedBy: ctx.userId });
+    const [after] = await tx
+      .update(s.orders)
+      .set({ state: "delivered", previousState: order.state, tonu: true, rateCents: input.amountCents, rateTbd: false, rateType: "flat", fuelRule: "included", cancelReason: input.reason.trim(), deliveredAt: new Date(), updatedAt: new Date(), updatedBy: ctx.userId })
+      .where(and(eq(s.orders.tenantId, ctx.tenantId), eq(s.orders.id, order.id)))
+      .returning();
+    await writeAudit(tx, ctx, "order", order.id, "tonu", { state: { from: order.state, to: "delivered" }, rateCents: { from: order.rateCents, to: input.amountCents } }, input.reason.trim());
+    return after;
   });
 }
 

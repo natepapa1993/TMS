@@ -9,7 +9,13 @@ import type { LegType, StopType } from "@/db/schema";
 export const COUNTRIES = ["US", "MX", "CA"] as const;
 export type Country = (typeof COUNTRIES)[number];
 export const COUNTRY_LABEL: Record<Country, string> = { US: "United States", MX: "Mexico", CA: "Canada" };
-export const normCountry = (c: string | null | undefined): Country => (c === "MX" || c === "CA" ? c : "US");
+/** "MX", "mex", "México", "Mexico" → MX; "CA", "CAN", "Canada", "Canadá" → CA; anything else → US. */
+export const normCountry = (c: string | null | undefined): Country => {
+  const v = String(c ?? "").trim().normalize("NFD").replace(/[\u0300-\u036f]/g, "").toUpperCase().replace(/\./g, "");
+  if (v === "MX" || v === "MEX" || v === "MEXICO") return "MX";
+  if (v === "CA" || v === "CAN" || v === "CANADA") return "CA";
+  return "US";
+};
 
 export type LegZone = { type: LegType; countries: Country[] };
 

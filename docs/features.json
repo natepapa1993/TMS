@@ -529,15 +529,21 @@
       "id": "F-20.2",
       "name": "Load page with tabs; money box (flat / per mile / per weight linehaul, accessorials, FSC); typed notes; roles on the load (sales agent, CSR, dispatcher); priority; TONU; lock",
       "milestone": "M20",
-      "status": "planned",
-      "tests": []
+      "status": "done",
+      "tests": [
+        "src/domain/load-page.test.ts",
+        "e2e/load-page.spec.ts"
+      ]
     },
     {
       "id": "F-20.3",
-      "name": "Rate con upload in the load builder fills the load (AI); load templates with bulk create; Excel load import",
+      "name": "Rate con upload in the load builder fills the whole load (customer, rate, refs, freight, every stop); the PDF lands on the load",
       "milestone": "M20",
-      "status": "planned",
-      "tests": []
+      "status": "done",
+      "tests": [
+        "src/domain/ratecon-reader.test.ts",
+        "e2e/load-builder.spec.ts"
+      ]
     },
     {
       "id": "F-20.4",
@@ -697,6 +703,13 @@
       "id": "F-23.7",
       "name": "Private load and bid board with partner carriers (exchange)",
       "milestone": "M23",
+      "status": "planned",
+      "tests": []
+    },
+    {
+      "id": "F-20.8",
+      "name": "Load templates (recurring lanes) with bulk create; Excel load import",
+      "milestone": "M20",
       "status": "planned",
       "tests": []
     }

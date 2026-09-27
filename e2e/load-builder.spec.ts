@@ -1,4 +1,5 @@
-// Features: F-2.11 F-2.12 F-3.10
+// Features: F-2.11 F-2.12 F-3.10 F-20.3
+import path from "node:path";
 import { test, expect } from "@playwright/test";
 import { signupFresh, quickAdd } from "./helpers";
 
@@ -17,6 +18,10 @@ test("load builder: several pickups, a hand-off yard and a Canada delivery; the 
   await expect(stops).toHaveCount(2);
   await expect(page.getByLabel("Stop 1 location")).toHaveValue("");
   await expect(page.getByLabel("Stop 2 location")).toHaveValue("");
+
+  // a rate con can start the load; without the AI reader connected it says what to do
+  await page.getByLabel("Rate con file").setInputFiles(path.join(__dirname, "fixtures", "bol.pdf"));
+  await expect(page.getByTestId("ratecon-drop")).toContainText("connect the AI reader in Settings → Integrations");
 
   await page.locator("#l-customer").selectOption({ label: "Acme Logistics (broker)" });
   await page.locator("#l-rate").fill("3100");
@@ -78,6 +83,7 @@ test("load builder: several pickups, a hand-off yard and a Canada delivery; the 
   await page.locator("a[href^='/orders/']", { hasText: /\d{2}-\d{5}/ }).first().click();
   await page.waitForURL("**/orders/**", { waitUntil: "commit" });
   await expect(main).toContainText("Shipper Canton");
+  await page.getByTestId("tab-stops").click();
   await page.click("button:has-text('+ Add stop')");
   const d = page.getByRole("dialog");
   await expect(d).toBeVisible();
@@ -94,11 +100,11 @@ test("load builder: several pickups, a hand-off yard and a Canada delivery; the 
   await page.getByLabel("Move stop 5 up").click();
   await expect(page.getByRole("status")).toContainText("legs re-cut");
   await expect(page.getByLabel("Remove stop 4")).toBeVisible();
-  await expect(main.locator(".rounded-lg.border").nth(3)).toContainText("Consignee Montreal");
+  await expect(page.getByTestId("stops-card").locator(".rounded-lg.border").nth(3)).toContainText("Consignee Montreal");
 
   await page.getByLabel("Remove stop 4").click();
   await page.getByRole("dialog").locator("button:has-text('Remove stop')").click();
-  const stopCard = main.locator(".card", { hasText: "+ Add stop" });
+  const stopCard = page.getByTestId("stops-card");
   await expect(stopCard).not.toContainText("Consignee Montreal");
   await expect(stopCard).toContainText("Consignee Toronto");
   await expect(main).toContainText("stop removed"); // on the history

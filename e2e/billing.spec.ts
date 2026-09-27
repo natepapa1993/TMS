@@ -97,6 +97,7 @@ test("billing day: charges, docs gate, invoice to paid, AR, carrier three-way wi
   await panel.locator("summary:has-text('Details')").click();
   await panel.locator("a:has-text('Open order')").click();
   await page.waitForURL("**/orders/**", { waitUntil: "commit" });
+  await page.getByTestId("tab-money").click();
   const charges = page.locator("#charges");
   await expect(charges).toContainText("Line haul");
   await expect(charges).toContainText("$1,800.00");
@@ -131,7 +132,7 @@ test("billing day: charges, docs gate, invoice to paid, AR, carrier three-way wi
   await page.waitForURL("**/orders/**", { waitUntil: "commit" });
   await expect(page.locator("#charges")).toContainText("po # missing");
   await page.getByLabel("PO reference").fill("5700489439");
-  await page.click("button:has-text('Save order')");
+  await page.click("button:has-text('Save details')");
   await expect(page.getByRole("status")).toContainText("Saved");
   await expect(page.locator("#charges")).toContainText("po # ✓");
   await page.goto("/billing");

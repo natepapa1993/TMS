@@ -43,7 +43,16 @@ async function stopFromPayload(ctx: Parameters<Parameters<typeof act>[0]>[0], st
   };
 }
 
-export type LoadInput = { customerId: string; brokerId: string; billingEntityId: string; equipment: string; rate: string; rateTbd: boolean; currency: string; refs: Record<string, string>; cargoNote: string; freight: { commodity: string; pieces: string; packaging: string; weightLb: string; hazmat: boolean }[]; stops: StopPayload[]; book: boolean };
+export type LoadInput = { customerId: string; brokerId: string; billingEntityId: string; equipment: string; rate: string; rateTbd: boolean; currency: string; refs: Record<string, string>; cargoNote: string; freight: { commodity: string; pieces: string; packaging: string; weightLb: string; hazmat: boolean }[]; stops: StopPayload[]; book: boolean; rateConDocId?: string | null };
+
+/** Read an uploaded rate con into a draft for the builder (AI reader). */
+export async function readRateConAction(form: FormData) {
+  const f = form.get("file");
+  if (!(f instanceof File)) return { ok: false as const, error: "Choose the rate con file" };
+  const { readRateConForBuilder } = await import("@/domain/ratecon-reader");
+  const bytes = Buffer.from(await f.arrayBuffer());
+  return act((ctx) => readRateConForBuilder(ctx, { fileName: f.name, mimeType: f.type || "application/pdf", bytes }));
+}
 
 /** The load builder: any number of stops; the legs are cut from them. */
 export async function createLoadAction(input: LoadInput) {
@@ -61,7 +70,7 @@ export async function createLoadAction(input: LoadInput) {
     for (const l of freight) if ((l.pieces != null && !Number.isFinite(l.pieces)) || (l.weightLb != null && !Number.isFinite(l.weightLb))) throw Object.assign(new Error("pieces and weight are numbers"), { name: "ValidationError", field: "freight" });
     const stops = [];
     for (const st of input.stops) stops.push(await stopFromPayload(ctx, st));
-    return O.createOrder(ctx, {
+    const created = await O.createOrder(ctx, {
       customerId: input.customerId || null,
       brokerId: input.brokerId || null,
       billingEntityId: input.billingEntityId || null,
@@ -75,6 +84,11 @@ export async function createLoadAction(input: LoadInput) {
       stops,
       book: input.book,
     });
+    if (input.rateConDocId) {
+      const { attachDraftRateCon } = await import("@/domain/ratecon-reader");
+      await attachDraftRateCon(ctx, input.rateConDocId, created.order.id);
+    }
+    return created;
   });
   if (r.ok) {
     touch();
@@ -112,9 +126,22 @@ export async function moveStopAction(orderId: string, stopId: string, dir: -1 | 
   return r;
 }
 
-export async function updateOrderAction(orderId: string, values: { customerId?: string; brokerId?: string; billingEntityId?: string; equipment?: string; rate?: string; rateTbd?: boolean; currency?: string; refs?: Record<string, string>; cargoNote?: string; fuelRule?: string; fuelPct?: string; tollsFees?: string }, expectedUpdatedAt?: string) {
+export async function updateOrderAction(orderId: string, values: { customerId?: string; brokerId?: string; billingEntityId?: string; equipment?: string; rate?: string; rateTbd?: boolean; currency?: string; refs?: Record<string, string>; cargoNote?: string; fuelRule?: string; fuelPct?: string; tollsFees?: string; rateType?: string; rateUnit?: string; rateQty?: string; priority?: string; salesAgentId?: string; csrId?: string; dispatcherId?: string }, expectedUpdatedAt?: string) {
   const r = await act(async (ctx) => {
     const patch: Record<string, unknown> = {};
+    if (values.priority !== undefined) patch.priority = values.priority || "none";
+    for (const k of ["salesAgentId", "csrId", "dispatcherId"] as const) if (values[k] !== undefined) patch[k] = values[k] || null;
+    if (values.rateType !== undefined) patch.rateType = values.rateType || "flat";
+    if (values.rateUnit !== undefined) {
+      const c = values.rateUnit.trim() ? Math.round(Number(values.rateUnit.replace(/[$,\s]/g, "")) * 100) : null;
+      if (values.rateUnit.trim() && !Number.isFinite(c)) throw Object.assign(new Error("Unit rate must be an amount"), { name: "ValidationError", field: "rateUnit" });
+      patch.rateUnitCents = c;
+    }
+    if (values.rateQty !== undefined) {
+      const q = values.rateQty.trim() ? Number(values.rateQty.replace(/[,\s]/g, "")) : null;
+      if (values.rateQty.trim() && !Number.isFinite(q)) throw Object.assign(new Error("Quantity must be a number"), { name: "ValidationError", field: "rateQty" });
+      patch.rateQty = q == null ? null : Math.round(q);
+    }
     if (values.customerId !== undefined) patch.customerId = values.customerId || null;
     if (values.brokerId !== undefined) patch.brokerId = values.brokerId || null;
     if (values.billingEntityId !== undefined) patch.billingEntityId = values.billingEntityId || null;
@@ -133,7 +160,7 @@ export async function updateOrderAction(orderId: string, values: { customerId?: 
       if (values.tollsFees.trim() && !Number.isFinite(c)) throw Object.assign(new Error("Tolls & fees must be an amount"), { name: "ValidationError", field: "tollsFees" });
       patch.tollsFeesCents = c;
     }
-    if (values.rate !== undefined) {
+    if (values.rate !== undefined && (values.rateType ?? "flat") === "flat") {
       const c = values.rate.trim() ? Math.round(Number(values.rate.replace(/[$,\s]/g, "")) * 100) : null;
       if (values.rate.trim() && !Number.isFinite(c)) throw Object.assign(new Error("Rate must be a number"), { name: "ValidationError", field: "rate" });
       patch.rateCents = c;
@@ -202,5 +229,46 @@ export async function bulkBookAction(orderIds: string[]) {
     return { booked, failed };
   });
   if (r.ok) touch();
+  return r;
+}
+
+// ---------- lock, TONU, notes ----------
+
+export async function lockAction(orderId: string, locked: boolean) {
+  const r = await act((ctx) => O.lockOrder(ctx, orderId, locked));
+  if (r.ok) touch(orderId);
+  return r;
+}
+
+export async function tonuAction(orderId: string, amount: string, reason: string) {
+  const r = await act(async (ctx) => {
+    const cents = Math.round(Number(String(amount).replace(/[$,\s]/g, "")) * 100);
+    return O.markTonu(ctx, orderId, { amountCents: cents, reason });
+  });
+  if (r.ok) {
+    touch(orderId);
+    revalidatePath("/billing");
+  }
+  return r;
+}
+
+export async function addNoteAction(orderId: string, kind: string, body: string, pinned: boolean) {
+  const { addNote } = await import("@/domain/notes");
+  const r = await act((ctx) => addNote(ctx, orderId, { kind, body, pinned }));
+  if (r.ok) touch(orderId);
+  return r;
+}
+
+export async function pinNoteAction(orderId: string, id: string, pinned: boolean) {
+  const { pinNote } = await import("@/domain/notes");
+  const r = await act((ctx) => pinNote(ctx, id, pinned));
+  if (r.ok) touch(orderId);
+  return r;
+}
+
+export async function deleteNoteAction(orderId: string, id: string) {
+  const { deleteNote } = await import("@/domain/notes");
+  const r = await act((ctx) => deleteNote(ctx, id));
+  if (r.ok) touch(orderId);
   return r;
 }

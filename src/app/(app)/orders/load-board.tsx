@@ -37,7 +37,20 @@ const COLUMNS: ColumnDef<LoadRow, unknown>[] = [
         )}
       </>
     ) }),
-  col({ id: "state", accessorFn: (r) => STATE_LABEL[r.state] ?? r.state, size: 116, filterFn: "select" as never, meta: { label: "Status", filter: "select" }, header: "Status", cell: ({ row }) => <Pill tone={STATE_TONE[row.original.state] ?? "slate"}>{STATE_LABEL[row.original.state] ?? row.original.state}</Pill> }),
+  col({ id: "state", accessorFn: (r) => (r.tonu ? "TONU" : (STATE_LABEL[r.state] ?? r.state)), size: 124, filterFn: "select" as never, meta: { label: "Status", filter: "select" }, header: "Status", cell: ({ row }) => (
+      <span className="inline-flex items-center gap-1">
+        <Pill tone={row.original.tonu ? "amber" : (STATE_TONE[row.original.state] ?? "slate")}>{row.original.tonu ? "TONU" : (STATE_LABEL[row.original.state] ?? row.original.state)}</Pill>
+        {row.original.locked && (
+          <svg width="12" height="12" viewBox="0 0 16 16" aria-label="Locked" className="text-muted">
+            <title>Locked</title>
+            <path fill="currentColor" d="M5 7V5a3 3 0 1 1 6 0v2h.5A1.5 1.5 0 0 1 13 8.5v5A1.5 1.5 0 0 1 11.5 15h-7A1.5 1.5 0 0 1 3 13.5v-5A1.5 1.5 0 0 1 4.5 7H5Zm1.5 0h3V5a1.5 1.5 0 0 0-3 0v2Z" />
+          </svg>
+        )}
+      </span>
+    ) }),
+  col({ id: "priority", accessorFn: (r) => ({ high: "High", medium: "Medium", low: "Low" })[r.priority] ?? "", size: 90, filterFn: "select" as never, meta: { label: "Priority", filter: "select" }, header: "Priority", cell: ({ row }) => (row.original.priority === "none" ? "" : <Pill tone={row.original.priority === "high" ? "red" : row.original.priority === "medium" ? "amber" : "slate"}>{row.original.priority}</Pill>) }),
+  col({ id: "salesAgent", accessorFn: (r) => r.salesAgent ?? "", size: 130, filterFn: "select" as never, meta: { label: "Sales agent", filter: "select" }, header: "Sales agent" }),
+  col({ id: "dispatcher", accessorFn: (r) => r.dispatcher ?? "", size: 130, filterFn: "select" as never, meta: { label: "Dispatcher", filter: "select" }, header: "Dispatcher" }),
   col({ id: "customer", accessorFn: (r) => r.customer ?? "", size: 170, filterFn: "select" as never, meta: { label: "Customer", filter: "select" }, header: "Customer" }),
   col({ id: "broker", accessorFn: (r) => r.broker ?? "", size: 150, filterFn: "select" as never, meta: { label: "Broker", filter: "select" }, header: "Broker" }),
   col({ id: "origin", accessorFn: (r) => place(r.pickupCity, r.pickupState, r.pickupCountry, r.pickupName), size: 160, meta: { label: "Origin" }, header: "Origin", cell: ({ row }) => <span title={row.original.pickupName ?? ""}>{place(row.original.pickupCity, row.original.pickupState, row.original.pickupCountry, row.original.pickupName)}</span> }),
@@ -72,8 +85,8 @@ const COLUMNS: ColumnDef<LoadRow, unknown>[] = [
 ];
 
 const DEFAULT: ViewConfig = {
-  columns: ["orderNumber", "state", "customer", "origin", "pickupAt", "destination", "deliveryAt", "legs", "truck", "driver", "carrier", "rate", "margin", "miles", "rpm", "refs", "flags"],
-  hidden: ["broker", "shipper", "consignee", "stops", "equipment", "cost", "marginPct", "po", "reference", "rateCon", "bol", "crossing", "source", "enteredBy", "createdAt", "deliveredAt"],
+  columns: ["orderNumber", "state", "priority", "customer", "origin", "pickupAt", "destination", "deliveryAt", "legs", "truck", "driver", "carrier", "rate", "margin", "miles", "rpm", "refs", "flags"],
+  hidden: ["salesAgent", "dispatcher", "broker", "shipper", "consignee", "stops", "equipment", "cost", "marginPct", "po", "reference", "rateCon", "bol", "crossing", "source", "enteredBy", "createdAt", "deliveredAt"],
   sort: [{ id: "createdAt", desc: true }],
   quick: "all",
   pageSize: 50,

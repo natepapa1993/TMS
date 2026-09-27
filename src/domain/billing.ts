@@ -35,7 +35,8 @@ export async function ensureCharges(ctx: Ctx, orderId: string) {
   assertCtx(ctx);
   const order = await loadOrder(ctx, orderId);
   const existing = await db.select().from(s.charges).where(and(eq(s.charges.tenantId, ctx.tenantId), eq(s.charges.orderId, orderId)));
-  if (existing.some((c) => c.kind === "linehaul")) return existing;
+  // a TONU is billed its fee instead of the line haul
+  if (existing.some((c) => c.kind === "linehaul" || c.kind === "tonu")) return existing;
   if (order.rateCents == null) return existing;
   const rows: (typeof s.charges.$inferInsert)[] = [{ id: newId(), tenantId: ctx.tenantId, orderId, kind: "linehaul", description: "Line haul", qty: 1, unit: "flat", rateCents: order.rateCents, amountCents: order.rateCents, currency: order.currency, source: "rate_con", createdBy: ctx.userId, updatedBy: ctx.userId }];
   if (order.fuelRule === "pct" && order.fuelPct) {
@@ -136,10 +137,11 @@ export async function billingQueue(ctx: Ctx): Promise<QueueRow[]> {
   const out: QueueRow[] = [];
   for (const o of ords) {
     let cs = chargeRows.filter((c) => c.orderId === o.id);
-    if (!cs.some((c) => c.kind === "linehaul") && o.rateCents != null) cs = await ensureCharges(ctx, o.id);
+    if (!cs.some((c) => c.kind === "linehaul" || c.kind === "tonu") && o.rateCents != null) cs = await ensureCharges(ctx, o.id);
     const cust = customers.find((c) => c.id === (o.customerId ?? o.brokerId));
     const entity = entities.find((e) => e.id === (o.billingEntityId ?? cust?.billingEntityId)) ?? entities.find((e) => e.isDefault) ?? entities[0];
-    const required = (cust?.requiredDocs ?? ["POD", "BOL", "RATE_CON"]).map((code) => ({ code, present: docs.some((d) => d.subjectId === o.id && d.code === code) }));
+    // a TONU never picked up: no POD or BOL to wait for
+    const required = (cust?.requiredDocs ?? ["POD", "BOL", "RATE_CON"]).filter((code) => !(o.tonu && ["POD", "BOL", "SEAL"].includes(code))).map((code) => ({ code, present: docs.some((d) => d.subjectId === o.id && d.code === code) }));
     const requiredRefs = requiredRefsFor(cust, o.refs ?? {});
     const chargesCents = cs.filter((c) => c.billable).reduce((a, c) => a + c.amountCents, 0);
     out.push({ order: o, customerName: cust?.name ?? null, entityName: entity?.legalName ?? null, chargesCents, rateConCents: o.rateCents, mismatch: o.rateCents != null && chargesCents !== o.rateCents && !((o.custom as Record<string, unknown>)?.rateConMismatchAccepted), requiredDocs: required, requiredRefs, docsComplete: required.every((r) => r.present) && requiredRefs.every((r) => r.present), ageDays: o.deliveredAt ? Math.floor((Date.now() - o.deliveredAt.getTime()) / 86400_000) : 0, invoiceId: drafts.find((d) => d.orderIds.includes(o.id))?.id ?? null, paperSays: paperFlags.find((x) => x.orderId === o.id)?.title ?? null });

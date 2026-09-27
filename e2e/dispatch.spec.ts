@@ -115,9 +115,10 @@ test("dispatcher day: build a load stop by stop, B-1 blocked on the US leg, carr
   await panel.locator("summary:has-text('Details')").click();
   await panel.locator("a:has-text('Open order')").click();
   await page.waitForURL("**/orders/**");
-  await expect(page.locator(".h1")).toContainText("Delivered");
+  await expect(page.getByTestId("load-header")).toContainText("Delivered");
+  await page.getByTestId("tab-activity").click();
   await expect(page.getByText("Timeline")).toBeVisible();
-  await expect(page.locator("aside.space-y-4")).toContainText("US leg");
+  await expect(page.locator("main")).toContainText("US leg");
 });
 
 test("unit OOS from Fleet pulls the planned leg back to Pending; split makes a second Pending leg; hold blocks sending", async ({ page }) => {

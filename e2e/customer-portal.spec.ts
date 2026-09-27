@@ -133,10 +133,11 @@ test("customer's day: one link, a load tracked to delivered, the POD and the inv
   await panel.locator("a:has-text('Open order')").click();
   await page.waitForURL("**/orders/**", { waitUntil: "commit" });
   await expect(page.locator("main")).toContainText("Draft");
+  await page.getByTestId("tab-money").click();
   await page.locator("label:has-text('TBD') input[type=checkbox]").uncheck(); // the request came in TBD
   await page.locator("input[aria-label='Rate']").fill("3100");
-  await page.click("button:has-text('Save order')");
-  await expect(page.getByRole("status")).toContainText("Saved");
+  await page.click("button:has-text('Save rate')");
+  await expect(page.getByRole("status")).toContainText("Rate saved");
   await page.click("button:has-text('Book')");
   await expect(page.getByRole("status").filter({ hasText: "Booked" })).toBeVisible();
   await page.goto("/dispatch");

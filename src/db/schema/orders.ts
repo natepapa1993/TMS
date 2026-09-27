@@ -82,6 +82,16 @@ export const orders = pgTable(
     holdReason: text("hold_reason"),
     cancelReason: text("cancel_reason"),
     deliveredAt: timestamp("delivered_at", { withTimezone: true }),
+    priority: text("priority").notNull().default("none"), // none | low | medium | high
+    rateType: text("rate_type").notNull().default("flat"), // flat | per_mile | per_cwt | per_unit — how the line haul is figured
+    rateUnitCents: integer("rate_unit_cents"), // per mile / per 100 lb / per unit
+    rateQty: integer("rate_qty"), // miles, hundredweight or units the unit rate is multiplied by
+    salesAgentId: text("sales_agent_id"),
+    csrId: text("csr_id"),
+    dispatcherId: text("dispatcher_id"),
+    lockedAt: timestamp("locked_at", { withTimezone: true }),
+    lockedBy: text("locked_by"),
+    tonu: boolean("tonu").notNull().default(false), // truck ordered, not used: cancelled by the customer, billed the TONU fee
     custom: jsonb("custom").$type<Record<string, unknown>>().notNull().default(sql`'{}'::jsonb`),
     ...audit(),
   },
@@ -218,4 +228,22 @@ export const notes = pgTable(
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [index("notes_tenant_subject").on(t.tenantId, t.subjectKind, t.subjectId)],
+);
+
+export const NOTE_KINDS = ["general", "dispatch", "billing", "safety", "customer"] as const;
+export type NoteKind = (typeof NOTE_KINDS)[number];
+
+/** Notes on a load: typed, pinnable, kept with who wrote them. */
+export const orderNotes = pgTable(
+  "order_notes",
+  {
+    id: id(),
+    tenantId: tenantId(),
+    orderId: text("order_id").notNull(),
+    kind: text("kind").$type<NoteKind>().notNull().default("general"),
+    body: text("body").notNull(),
+    pinned: boolean("pinned").notNull().default(false),
+    ...audit(),
+  },
+  (t) => [index("order_notes_tenant_order").on(t.tenantId, t.orderId)],
 );

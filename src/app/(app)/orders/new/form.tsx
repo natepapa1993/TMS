@@ -1,8 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useState, useTransition, type ReactNode } from "react";
-import { createLoadAction } from "../actions";
+import { useEffect, useMemo, useRef, useState, useTransition, type ReactNode } from "react";
+import { createLoadAction, readRateConAction } from "../actions";
 import { StopFields, blankStop, stopPayload, placeLine, timeLine, STOP_LABEL, STOP_TONE, type Loc, type StopDraft } from "@/components/stop-fields";
 import { legsFromStops, LEG_TYPE_LABEL } from "@/domain/zones";
 
@@ -67,6 +67,34 @@ export function OrderForm({ customers, entities, locations }: { customers: { id:
   const [err, setErr] = useState<{ field?: string; message: string } | null>(null);
   const [active, setActive] = useState(SECTIONS[0][0]);
   const [pending, start] = useTransition();
+  const [reading, startRead] = useTransition();
+  const [rateCon, setRateCon] = useState<{ id: string; fileName: string; warnings: string[] } | null>(null);
+  const [readErr, setReadErr] = useState<string | null>(null);
+  const fileRef = useRef<HTMLInputElement>(null);
+
+  /** Fill the builder from what the reader found on the rate con. */
+  const readRateCon = (file: File) =>
+    startRead(async () => {
+      setReadErr(null);
+      const fd = new FormData();
+      fd.set("file", file);
+      const r = await readRateConAction(fd);
+      if (!r.ok) return setReadErr(r.error);
+      const d = r.data;
+      setF((x) => ({ ...x, customerId: d.customerId ?? x.customerId, rate: d.rate || x.rate, rateTbd: d.rate ? false : x.rateTbd, currency: d.currency || x.currency, equipment: d.equipment ?? x.equipment, cargoNote: x.cargoNote || d.notes }));
+      setRefs((x) => ({ ...x, ...d.refs }));
+      if (d.freight.length) setFreight(d.freight);
+      if (d.stops.length) {
+        const next = d.stops.map((st) => {
+          const loc = st.locationId ? locations.find((l) => l.id === st.locationId) : null;
+          const base = { ...blankStop(st.type, st.country), ...st, name: st.name, saveLocation: false };
+          return loc ? { ...base, locationId: loc.id } : { ...base, locationId: null };
+        });
+        setStops(next);
+        setOpen(new Set(next.map((x) => x.key)));
+      }
+      setRateCon({ id: d.documentId, fileName: file.name, warnings: d.warnings });
+    });
 
   const setStop = (i: number, patch: Partial<StopDraft>) => setStops((s) => s.map((x, j) => (j === i ? { ...x, ...patch } : x)));
   const insertAt = (i: number) => {
@@ -124,7 +152,7 @@ export function OrderForm({ customers, entities, locations }: { customers: { id:
   const submit = (book: boolean) =>
     start(async () => {
       setErr(null);
-      const r = await createLoadAction({ ...f, refs, freight, stops: stops.map(stopPayload), book });
+      const r = await createLoadAction({ ...f, refs, freight, stops: stops.map(stopPayload), book, rateConDocId: rateCon?.id ?? null });
       if (r && !r.ok) {
         setErr({ field: r.field, message: r.error });
         if (r.field === "stops") setOpen((o) => new Set([...o, ...stops.filter((s) => !s.name.trim()).map((s) => s.key)]));
@@ -143,6 +171,26 @@ export function OrderForm({ customers, entities, locations }: { customers: { id:
         </div>
         <h1 className="text-[28px] font-extrabold tracking-tight leading-tight">New load</h1>
         <p className="text-muted text-[14.5px] mt-2 max-w-[70ch]">Who pays, every stop in the order the truck runs them, the freight and the references. The load is split into legs wherever the trailer changes hands.</p>
+        <div className="mt-5 flex items-center gap-4 flex-wrap rounded-xl border border-dashed border-line bg-white px-5 py-4" data-testid="ratecon-drop" onDragOver={(e) => e.preventDefault()} onDrop={(e) => { e.preventDefault(); const file = e.dataTransfer.files?.[0]; if (file) readRateCon(file); }}>
+          <div className="flex-1 min-w-[240px]">
+            <div className="font-bold text-[14.5px]">{rateCon ? `Filled from ${rateCon.fileName}` : "Have the rate con? Start from it."}</div>
+            <div className="text-muted text-[13px] mt-0.5">{rateCon ? "Check every field below before booking; the rate con goes on the load." : "Drop the PDF here or choose it — the customer, rate, references, freight and every stop fill in."}</div>
+            {rateCon?.warnings.map((w) => (
+              <div key={w} className="text-amber text-[12.5px] mt-1 font-semibold">
+                {w}
+              </div>
+            ))}
+            {readErr && (
+              <div className="error mt-1" role="alert">
+                {readErr}
+              </div>
+            )}
+          </div>
+          <input ref={fileRef} type="file" accept="application/pdf,image/jpeg,image/png" className="hidden" aria-label="Rate con file" onChange={(e) => { const file = e.target.files?.[0]; if (file) readRateCon(file); e.target.value = ""; }} />
+          <button type="button" className="btn" disabled={reading} onClick={() => fileRef.current?.click()}>
+            {reading ? "Reading…" : rateCon ? "Read another" : "Upload rate con"}
+          </button>
+        </div>
       </div>
 
       {/* step bar */}

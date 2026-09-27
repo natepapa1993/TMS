@@ -3,7 +3,7 @@ import type { Tx, Db } from "@/db/client";
 import { newId } from "./ids";
 import type { Ctx } from "./context";
 
-export type AuditAction = "create" | "update" | "archive" | "restore" | "delete" | "transition" | "import" | "override" | "assign" | "dispatch";
+export type AuditAction = "create" | "update" | "archive" | "restore" | "delete" | "transition" | "import" | "override" | "assign" | "dispatch" | "lock" | "unlock" | "tonu";
 
 /** Field-level diff of two plain objects; ignores audit columns and unchanged values. */
 export function diff(before: Record<string, unknown> | null, after: Record<string, unknown>) {

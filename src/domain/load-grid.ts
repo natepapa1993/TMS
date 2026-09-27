@@ -16,6 +16,11 @@ export type LoadRow = {
   orderNumber: string;
   kind: string;
   state: string;
+  tonu: boolean;
+  priority: string;
+  locked: boolean;
+  salesAgent: string | null;
+  dispatcher: string | null;
   customer: string | null;
   broker: string | null;
   equipment: string;
@@ -120,6 +125,11 @@ export async function loadGrid(ctx: Ctx, opts: { days?: number } = {}): Promise<
       orderNumber: o.orderNumber,
       kind: o.kind,
       state: o.state,
+      tonu: o.tonu,
+      priority: o.priority,
+      locked: !!o.lockedAt,
+      salesAgent: o.salesAgentId ? (uName.get(o.salesAgentId) ?? null) : null,
+      dispatcher: o.dispatcherId ? (uName.get(o.dispatcherId) ?? null) : null,
       customer: o.customerId ? (cName.get(o.customerId) ?? null) : null,
       broker: o.brokerId ? (cName.get(o.brokerId) ?? null) : null,
       equipment: o.equipment,

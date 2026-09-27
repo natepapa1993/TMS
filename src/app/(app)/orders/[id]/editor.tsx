@@ -2,13 +2,13 @@
 
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { updateOrderAction, updateStopAction, addStopAction, removeStopAction, moveStopAction } from "../actions";
+import { updateOrderAction, updateStopAction, addStopAction, removeStopAction, moveStopAction, lockAction, tonuAction } from "../actions";
 import { bookAction, cancelAction, holdAction, releaseAction, setLegMilesAction, copyOrderAction } from "../../dispatch/actions";
 import { Confirm, Modal, Toast, useToast } from "@/components/ui";
 import { StopFields, blankStop, stopPayload, STOP_LABEL, COUNTRIES, type Loc, type StopDraft } from "@/components/stop-fields";
 
 const REF_LABEL: Record<string, string> = { rate_con: "Rate con", po: "PO", asn: "ASN", shipment: "Shipment", reference: "Reference" };
-type Order = { id: string; state: string; kind?: string; customerId: string | null; brokerId: string | null; billingEntityId: string | null; equipment: string; rateCents: number | null; rateTbd: boolean; currency: string; fuelRule: string; fuelPct: number | null; tollsFeesCents: number | null; refs: Record<string, string>; cargoNote: string | null; updatedAt: string };
+type Order = { id: string; state: string; kind?: string; customerId: string | null; brokerId: string | null; billingEntityId: string | null; equipment: string; rateCents: number | null; rateTbd: boolean; currency: string; fuelRule: string; fuelPct: number | null; tollsFeesCents: number | null; refs: Record<string, string>; cargoNote: string | null; updatedAt: string; lockedAt?: string | null; tonu?: boolean };
 type Stop = { id: string; type: string; name: string; country: string; address: { line1?: string; city?: string; state?: string; postalCode?: string; country?: string } | null; windowStart: string | null; windowEnd: string | null; appointment: boolean; contact: string | null; notes: string | null; arrivedAt: string | null; departedAt: string | null; sealIn?: string | null; sealOut?: string | null };
 
 const toLocal = (s: string | null) => (s ? new Date(new Date(s).getTime() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 16) : "");
@@ -17,7 +17,7 @@ const fmtAddr = (a: Stop["address"]) => (a ? [a.line1, a.city, [a.state, a.posta
 export function OrderEditor({ order, customers, entities, readOnly }: { order: Order; customers: { id: string; name: string; kind: string }[]; entities: { id: string; name: string }[]; readOnly: boolean }) {
   const router = useRouter();
   const t = useToast();
-  const [f, setF] = useState({ customerId: order.customerId ?? "", brokerId: order.brokerId ?? "", billingEntityId: order.billingEntityId ?? "", equipment: order.equipment, rate: order.rateCents != null ? (order.rateCents / 100).toFixed(2) : "", rateTbd: order.rateTbd, currency: order.currency, cargoNote: order.cargoNote ?? "", fuelRule: order.fuelRule ?? "included", fuelPct: order.fuelPct != null ? String(order.fuelPct) : "", tollsFees: order.tollsFeesCents != null ? (order.tollsFeesCents / 100).toFixed(2) : "" });
+  const [f, setF] = useState({ customerId: order.customerId ?? "", brokerId: order.brokerId ?? "", billingEntityId: order.billingEntityId ?? "", equipment: order.equipment, cargoNote: order.cargoNote ?? "" });
   const [refs, setRefs] = useState<Record<string, string>>({ rate_con: "", po: "", asn: "", shipment: "", reference: "", ...order.refs });
   const [err, setErr] = useState<string | null>(null);
   const [pending, start] = useTransition();
@@ -59,25 +59,21 @@ export function OrderEditor({ order, customers, entities, readOnly }: { order: O
           </select>
         </div>
         <div>
-          <label className="label">Rate</label>
-          <div className="flex gap-2">
-            <input className="input" inputMode="decimal" aria-label="Rate" value={f.rate} disabled={f.rateTbd || readOnly} onChange={(e) => setF({ ...f, rate: e.target.value })} />
-            <select className="select w-24" value={f.currency} onChange={(e) => setF({ ...f, currency: e.target.value })}>
-              <option>USD</option>
-              <option>MXN</option>
-              <option>CAD</option>
-            </select>
-          </div>
-          <label className="flex items-center gap-2 mt-1.5 text-[12.5px] cursor-pointer">
-            <input type="checkbox" className="accent-teal" checked={f.rateTbd} onChange={(e) => setF({ ...f, rateTbd: e.target.checked })} /> TBD
-          </label>
-        </div>
-        <div>
           <label className="label">Equipment</label>
           <select className="select" value={f.equipment} onChange={(e) => setF({ ...f, equipment: e.target.value })}>
-            {["53_dry", "53_reefer", "48_dry", "flatbed", "sprinter", "straight", "power_only"].map((e) => (
-              <option key={e} value={e}>
-                {e.replace("_", " ")}
+            {(
+              [
+                ["53_dry", "53' dry van"],
+                ["53_reefer", "53' reefer"],
+                ["48_dry", "48' dry van"],
+                ["flatbed", "Flatbed"],
+                ["sprinter", "Sprinter / cargo van"],
+                ["straight", "Straight truck"],
+                ["power_only", "Power only"],
+              ] as const
+            ).map(([v, l]) => (
+              <option key={v} value={v}>
+                {l}
               </option>
             ))}
           </select>
@@ -85,24 +81,6 @@ export function OrderEditor({ order, customers, entities, readOnly }: { order: O
         <div>
           <label className="label">Cargo note</label>
           <input className="input" value={f.cargoNote} onChange={(e) => setF({ ...f, cargoNote: e.target.value })} />
-        </div>
-        <div>
-          <label className="label">Fuel</label>
-          <div className="flex gap-2">
-            <select className="select" value={f.fuelRule} onChange={(e) => setF({ ...f, fuelRule: e.target.value })} aria-label="Fuel rule">
-              <option value="included">Included in the rate</option>
-              <option value="pct">Surcharge % of line haul</option>
-            </select>
-            {f.fuelRule === "pct" && <input className="input w-20" inputMode="numeric" value={f.fuelPct} onChange={(e) => setF({ ...f, fuelPct: e.target.value })} placeholder="%" aria-label="Fuel percent" />}
-          </div>
-        </div>
-        <div>
-          <label className="label">Tolls &amp; fees (cost)</label>
-          <div className="relative">
-            <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted">$</span>
-            <input className="input pl-7" inputMode="decimal" value={f.tollsFees} onChange={(e) => setF({ ...f, tollsFees: e.target.value })} placeholder="0.00" aria-label="Tolls and fees" />
-          </div>
-          <div className="help">Known extra cost for the P&amp;L — not billed.</div>
         </div>
       </div>
       <div className="eyebrow mt-4 mb-2">References</div>
@@ -131,7 +109,7 @@ export function OrderEditor({ order, customers, entities, readOnly }: { order: O
               })
             }
           >
-            {pending ? "Saving…" : "Save order"}
+            {pending ? "Saving…" : "Save details"}
           </button>
         </div>
       )}
@@ -263,6 +241,8 @@ export function OrderActions({ order }: { order: Order }) {
   const t = useToast();
   const [cancel, setCancel] = useState(false);
   const [hold, setHold] = useState(false);
+  const [tonu, setTonu] = useState(false);
+  const [tonuF, setTonuF] = useState({ amount: "", reason: "" });
   const [pending, start] = useTransition();
   const run = (label: string, fn: () => Promise<{ ok: boolean; error?: string }>) =>
     start(async () => {
@@ -305,11 +285,65 @@ export function OrderActions({ order }: { order: Order }) {
           Release hold
         </button>
       )}
+      {(order.kind ?? "order") === "order" && ["booked", "dispatched", "in_transit", "exception"].includes(order.state) && (
+        <button className="btn" onClick={() => setTonu(true)} title="Truck ordered, not used: cancel and bill the TONU fee">
+          TONU
+        </button>
+      )}
+      {!["paid", "cancelled"].includes(order.state) && (
+        <button className="btn" disabled={pending} onClick={() => run(order.lockedAt ? "Unlocked" : "Locked — no edits until unlocked", () => lockAction(order.id, !order.lockedAt))}>
+          {order.lockedAt ? "Unlock" : "Lock"}
+        </button>
+      )}
       {["draft", "booked", "dispatched", "in_transit", "exception"].includes(order.state) && (
         <button className="btn btn-danger" onClick={() => setCancel(true)}>
           Cancel order
         </button>
       )}
+      <Modal
+        open={tonu}
+        onClose={() => setTonu(false)}
+        title="Truck ordered, not used"
+        footer={
+          <>
+            <button className="btn" onClick={() => setTonu(false)}>
+              Back
+            </button>
+            <button
+              className="btn btn-primary"
+              disabled={pending}
+              onClick={() =>
+                start(async () => {
+                  const r = await tonuAction(order.id, tonuF.amount, tonuF.reason);
+                  if (r.ok) {
+                    setTonu(false);
+                    t.ok("TONU — the fee goes to billing");
+                    router.refresh();
+                  } else t.err(r.error);
+                })
+              }
+            >
+              Cancel &amp; bill TONU
+            </button>
+          </>
+        }
+      >
+        <p className="text-[13.5px] text-muted mb-4">The open legs are cancelled and the load is billed the TONU fee instead of the line haul. It goes to billing without a POD or BOL.</p>
+        <div className="grid grid-cols-[160px_1fr] gap-3">
+          <div>
+            <label className="label" htmlFor="tonu-amount">
+              TONU fee ({order.currency})
+            </label>
+            <input id="tonu-amount" className="input" inputMode="decimal" value={tonuF.amount} onChange={(e) => setTonuF({ ...tonuF, amount: e.target.value })} placeholder="250.00" />
+          </div>
+          <div>
+            <label className="label" htmlFor="tonu-reason">
+              Why
+            </label>
+            <input id="tonu-reason" className="input" value={tonuF.reason} onChange={(e) => setTonuF({ ...tonuF, reason: e.target.value })} placeholder="Shipper cancelled at the dock" />
+          </div>
+        </div>
+      </Modal>
       <Confirm open={hold} onClose={() => setHold(false)} title="Put on hold" needReason="Why?" confirmLabel="Hold" onConfirm={(r) => { setHold(false); run("On hold", () => holdAction(order.id, r)); }} />
       <Confirm open={cancel} onClose={() => setCancel(false)} title="Cancel this order" body="Open legs are cancelled. A moving leg must come back first." needReason="Reason" confirmLabel="Cancel order" danger onConfirm={(r) => { setCancel(false); run("Cancelled", () => cancelAction(order.id, r)); }} />
       <Toast message={t.toast?.message ?? null} tone={t.toast?.tone} onDone={t.clear} />
