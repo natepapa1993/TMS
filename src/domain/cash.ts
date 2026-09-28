@@ -62,10 +62,11 @@ export async function applyPayment(ctx: Ctx, input: PaymentInput) {
   // a payment has one currency: the one it arrived in (or, from older callers, the invoices it pays)
   let currency: string | null = input.currency ? input.currency.toUpperCase() : null;
   if (currency && !["USD", "MXN", "CAD"].includes(currency)) throw new ValidationError("the payment's currency: USD, MXN or CAD", "currency");
-  // nothing matched by hand but the remittance (or the reference) names open invoices: pay those, not "on account"
+  // nothing matched by hand but the remittance names open invoices: pay those, not "on account"
   let autoMatched = false;
   if (!apps.length) {
-    const auto = autoMatch(invoices, input.amountCents, [input.remittance, input.reference, input.note].filter(Boolean).join(" "), currency ?? undefined);
+    // only the remittance: a check number that happens to look like a PO must never move money
+    const auto = autoMatch(invoices, input.amountCents, input.remittance ?? "", currency ?? undefined);
     if (auto.length) {
       apps = auto;
       autoMatched = true;
