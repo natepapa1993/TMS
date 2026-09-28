@@ -339,7 +339,8 @@ export async function computeRequirements(ctx: Ctx, c: Crossing): Promise<Requir
     const cur = byCode.get(r.code);
     if (!cur || specificity(r) > specificity(cur)) byCode.set(r.code, r);
   }
-  const docs = await db.select().from(s.documents).where(and(eq(s.documents.tenantId, ctx.tenantId), eq(s.documents.subjectKind, "crossing"), eq(s.documents.subjectId, c.id), inArray(s.documents.status, ["present", "verified"])));
+  // one upload counts everywhere (owner #8): the load's BOL or commercial invoice ticks this checklist too
+  const docs = (await crossingDocs(ctx.tenantId, c)).map((d) => ({ ...d, code: d.key.toLowerCase() }));
   const prev = new Map(c.requirements.map((r) => [r.code, r]));
   const out: Requirement[] = [];
   for (const r of [...byCode.values()].sort((p, q) => p.packetOrder - q.packetOrder)) {
@@ -364,7 +365,7 @@ export async function computeRequirements(ctx: Ctx, c: Crossing): Promise<Requir
     const customers = ships.length ? await db.select({ id: s.customers.id, name: s.customers.name }).from(s.customers).where(inArray(s.customers.id, ships.map((x) => x.customerId ?? ""))) : [];
     ships.forEach((sh, i) => {
       const code = `shipment:${sh.id}`;
-      const doc = docs.filter((d) => d.code === code).sort((p, q) => q.version - p.version)[0];
+      const doc = docs.filter((d) => d.code === code.toLowerCase()).sort((p, q) => q.version - p.version)[0];
       const old = prev.get(code);
       const humanNa = !doc && old?.status === "na" && old.naReason !== "optional";
       const refs = Object.values(sh.refs).filter(Boolean).slice(0, 2).join(" ");
@@ -375,6 +376,13 @@ export async function computeRequirements(ctx: Ctx, c: Crossing): Promise<Requir
 }
 
 // ---------- documents ----------
+
+/** The paper this crossing sees: its own, plus the load's (and its legs') that is not another crossing's. */
+async function crossingDocs(tenantId: string, c: Pick<Crossing, "id" | "orderId">) {
+  const { loadDocuments } = await import("./load-docs");
+  const { CROSSING_ONLY } = await import("./load-docs-rules");
+  return (await loadDocuments(tenantId, [c.orderId])).filter((d) => d.crossingId === c.id || !CROSSING_ONLY.has(d.key));
+}
 
 export type UploadInput = { code: string; fileName: string; mimeType: string; bytes: Buffer; source?: string; fields?: Record<string, unknown>; notes?: string | null; extract?: boolean };
 
@@ -389,9 +397,9 @@ export async function uploadDocument(ctx: Ctx, crossingId: string, input: Upload
   const sha = createHash("sha256").update(input.bytes).digest("hex");
   const doc = await db.transaction(async (tx) => {
     const [blob] = await tx.insert(s.documentBlobs).values({ id: newId(), tenantId: ctx.tenantId, sha256: sha, mimeType: input.mimeType, sizeBytes: input.bytes.length, bytes: input.bytes }).returning({ id: s.documentBlobs.id });
-    const prior = await tx.select().from(s.documents).where(and(eq(s.documents.tenantId, ctx.tenantId), eq(s.documents.subjectKind, "crossing"), eq(s.documents.subjectId, crossingId), eq(s.documents.code, input.code), inArray(s.documents.status, ["present", "verified"])));
-    for (const p of prior) await tx.update(s.documents).set({ status: "superseded", updatedAt: new Date(), updatedBy: ctx.userId }).where(eq(s.documents.id, p.id));
-    const version = (Math.max(0, ...prior.map((p) => p.version)) || 0) + 1;
+    // the same paper uploaded on the load (a BOL) is replaced too: one record, counted everywhere
+    const { supersedePrior } = await import("./load-docs");
+    const version = await supersedePrior(tx, ctx.tenantId, { orderId: c.orderId, crossingId, legId: c.legId }, input.code, ctx.userId);
     const extracted: Record<string, { value: unknown; confidence: number; source?: "ai" | "human" }> = {};
     for (const [k, v] of Object.entries(input.fields ?? {})) if (v !== undefined && v !== null && v !== "") extracted[k] = { value: v, confidence: 1, source: "human" };
     const [row] = await tx
@@ -442,7 +450,7 @@ export async function extractDocumentFields(ctx: Ctx, documentId: string, fetchI
     if (doc.subjectKind === "crossing") {
       await event(db, ctx, doc.subjectId, { kind: "document", note: `${doc.code}: AI read ${filled} field(s) — confirm them`, data: { documentId } });
       await recompute(ctx, doc.subjectId);
-    }
+    } else await recomputeFor(ctx, doc);
     return { ran: true as const, filled, fields: r.fields, note };
   } catch (e) {
     const msg = (e as Error).message;
@@ -467,6 +475,16 @@ export async function setDocumentFields(ctx: Ctx, documentId: string, fields: Re
   await db.update(s.documents).set({ extracted, status: confirm ? "verified" : doc.status === "verified" ? "present" : doc.status, updatedAt: new Date(), updatedBy: ctx.userId }).where(eq(s.documents.id, documentId));
   await writeAudit(db, ctx, "document", documentId, "update", { fields: { from: Object.keys(doc.extracted ?? {}), to: Object.keys(extracted) } }, confirm ? "confirmed" : undefined);
   if (doc.subjectKind === "crossing") await recompute(ctx, doc.subjectId);
+  else await recomputeFor(ctx, doc);
+}
+
+/** A load-level document's fields feed the crossing's checks too. */
+async function recomputeFor(ctx: Ctx, doc: typeof s.documents.$inferSelect) {
+  const { orderOfDocument } = await import("./load-docs");
+  const orderId = await orderOfDocument(doc);
+  if (!orderId) return;
+  const { recomputeCrossingsOf } = await import("./billing");
+  await recomputeCrossingsOf(ctx, orderId);
 }
 
 export async function markNotApplicable(ctx: Ctx, crossingId: string, code: string, reason: string) {
@@ -710,9 +728,9 @@ export async function runChecks(ctx: Ctx, crossingId: string) {
   const driver = leg?.driverId ? (await db.select().from(s.drivers).where(eq(s.drivers.id, leg.driverId)).limit(1))[0] : null;
   const customer = order?.customerId ? (await db.select().from(s.customers).where(eq(s.customers.id, order.customerId)).limit(1))[0] : null;
   const broker = customer?.mxBrokerId ? (await db.select().from(s.customsBrokers).where(eq(s.customsBrokers.id, customer.mxBrokerId)).limit(1))[0] : null;
-  const docs = await db.select().from(s.documents).where(and(eq(s.documents.subjectKind, "crossing"), eq(s.documents.subjectId, crossingId), inArray(s.documents.status, ["present", "verified"])));
+  const docs = (await crossingDocs(ctx.tenantId, c)).sort((p, q) => p.createdAt.getTime() - q.createdAt.getTime());
   const byCode: Record<string, Record<string, unknown>> = {};
-  for (const d of docs) if (d.code) byCode[d.code] = Object.fromEntries(Object.entries(d.extracted ?? {}).map(([k, v]) => [k, v.value]));
+  for (const d of docs) if (d.code) byCode[d.key.toLowerCase()] = Object.fromEntries(Object.entries(d.extracted ?? {}).map(([k, v]) => [k, v.value]));
   const partner = await partnerOnLeg(leg);
   const results = runChecksPure({
     now: new Date(),
@@ -1189,12 +1207,15 @@ export async function crossingPage(ctx: Ctx, crossingId: string) {
   const c = await recompute(ctx, crossingId);
   const [leg] = await db.select().from(s.legs).where(eq(s.legs.id, c.legId)).limit(1);
   const [order] = await db.select().from(s.orders).where(eq(s.orders.id, c.orderId)).limit(1);
-  const [checks, events, docs, port] = await Promise.all([
+  const [checks, events, own, fromLoad, port] = await Promise.all([
     db.select().from(s.crossingChecks).where(eq(s.crossingChecks.crossingId, crossingId)),
     db.select().from(s.crossingEvents).where(eq(s.crossingEvents.crossingId, crossingId)).orderBy(desc(s.crossingEvents.at)).limit(200),
     db.select().from(s.documents).where(and(eq(s.documents.subjectKind, "crossing"), eq(s.documents.subjectId, crossingId))).orderBy(desc(s.documents.createdAt)),
+    // the load's own paper that this checklist asks for (a BOL uploaded on the load, a POD from the driver)
+    crossingDocs(ctx.tenantId, c).then((ds) => ds.filter((d) => d.crossingId !== c.id && c.requirements.some((r) => r.code.toUpperCase() === d.key)).map((d) => ({ ...d, code: d.key.toLowerCase(), fromLoad: true as const }))),
     c.portId ? db.select().from(s.ports).where(eq(s.ports.id, c.portId)).limit(1).then((r) => r[0] ?? null) : Promise.resolve(null),
   ]);
+  const docs = [...own.map((d) => ({ ...d, fromLoad: false })), ...fromLoad.map(({ key: _k, orderId: _o, legId: _l, crossingId: _x, on: _on, ...d }) => d)];
   const truck = leg?.truckId ? (await db.select().from(s.trucks).where(eq(s.trucks.id, leg.truckId)).limit(1))[0] : null;
   const driver = leg?.driverId ? (await db.select().from(s.drivers).where(eq(s.drivers.id, leg.driverId)).limit(1))[0] : null;
   const coDriver = leg?.coDriverId ? (await db.select().from(s.drivers).where(eq(s.drivers.id, leg.coDriverId)).limit(1))[0] : null;

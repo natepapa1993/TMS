@@ -13,7 +13,7 @@ import type { CrossingState, Requirement } from "@/db/schema";
  * cross-checks, eligibility, packet, steps (right) · timeline (bottom).
  */
 
-type Doc = { id: string; code: string | null; fileName: string; mimeType: string; status: string; version: number; source: string; extracted: Record<string, { value: unknown; confidence: number; source?: string }> | null; extractionAt: string | null; extractionNote: string | null; createdAt: string };
+type Doc = { id: string; code: string | null; fileName: string; mimeType: string; status: string; version: number; source: string; extracted: Record<string, { value: unknown; confidence: number; source?: string }> | null; extractionAt: string | null; extractionNote: string | null; createdAt: string; fromLoad?: boolean };
 type Check = { code: string; state: string; message: string | null; values: Record<string, unknown> | null; overrideReason: string | null; overrideBy: string | null };
 type Ev = { id: string; at: string; kind: string; fromState: string | null; toState: string | null; source: string; verified: boolean; userId: string | null; note: string | null };
 type Data = {
@@ -173,7 +173,7 @@ export function CrossingWorkbench({ data }: { data: Data }) {
                   </div>
                   <div className="text-footnote text-muted flex items-center justify-between gap-2 mt-0.5">
                     <span className="truncate">
-                      {doc ? `${doc.fileName} · v${doc.version} · ${doc.source}` : r.onFile ? r.onFile : r.status === "na" ? (r.naReason === "optional" ? "not required" : r.naReason) : `from ${r.providedBy.replace("_", " ")}`}
+                      {doc ? `${doc.fileName} · v${doc.version} · ${doc.fromLoad ? "uploaded on the load" : doc.source}` : r.onFile ? r.onFile : r.status === "na" ? (r.naReason === "optional" ? "not required" : r.naReason) : `from ${r.providedBy.replace("_", " ")}`}
                     </span>
                     {canEdit && beforePacket && (
                       <span className="flex gap-1 flex-none" onClick={(e) => e.stopPropagation()}>

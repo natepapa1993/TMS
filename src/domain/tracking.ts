@@ -98,7 +98,7 @@ export async function driverToday(tenantId: string, driverId: string) {
   // photos already on file for these orders (and, on a trip, on its shipments): the app shows a check instead of asking twice
   const shipments = orderIds.length ? await db.select({ id: s.orders.id, tripId: s.orders.tripId, deliveryStopId: s.orders.deliveryStopId }).from(s.orders).where(and(eq(s.orders.tenantId, tenantId), inArray(s.orders.tripId, orderIds))) : [];
   const docOrderIds = [...orderIds, ...shipments.map((x) => x.id)];
-  const photos = docOrderIds.length ? await db.select({ subjectId: s.documents.subjectId, code: s.documents.code }).from(s.documents).where(and(eq(s.documents.tenantId, tenantId), eq(s.documents.subjectKind, "order"), inArray(s.documents.subjectId, docOrderIds), inArray(s.documents.code, ["POD", "SEAL_PHOTO"]), inArray(s.documents.status, ["present", "verified"]))) : [];
+  const photos = docOrderIds.length ? await db.select({ subjectId: s.documents.subjectId, code: s.documents.code }).from(s.documents).where(and(eq(s.documents.tenantId, tenantId), eq(s.documents.subjectKind, "order"), inArray(s.documents.subjectId, docOrderIds), inArray(s.documents.code, ["POD", "SEAL_PHOTO", "BOL"]), inArray(s.documents.status, ["present", "verified"]))) : [];
   const items = legs.map((leg) => {
     const order = orders.find((o) => o.id === leg.orderId)!;
     const from = stops.find((x) => x.id === leg.fromStopId) ?? null;
@@ -127,7 +127,7 @@ export async function driverToday(tenantId: string, driverId: string) {
       return [...orderStops].filter((x) => x.seq < seq && x.sealOut).sort((p, q) => q.seq - p.seq)[0]?.sealOut ?? null;
     })();
     const podTargets = photoTargets(order, shipments, stopId);
-    const docs = { pod: podTargets.length > 0 && podTargets.every((id) => photos.some((d) => d.subjectId === id && d.code === "POD")), seal: photos.some((d) => d.subjectId === order.id && d.code === "SEAL_PHOTO") };
+    const docs = { pod: podTargets.length > 0 && podTargets.every((id) => photos.some((d) => d.subjectId === id && d.code === "POD")), seal: photos.some((d) => d.subjectId === order.id && d.code === "SEAL_PHOTO"), bol: photos.some((d) => d.subjectId === order.id && d.code === "BOL") };
     const held = order.state === "exception";
     return { leg, order: { id: order.id, orderNumber: order.orderNumber, equipment: order.equipment, cargoNote: order.cargoNote, refs: order.refs, state: order.state, held, holdReason: held ? (order.holdReason ?? null) : null }, from, to, mids, truck, next: held || leg.state === "completed" ? null : next, crossing, docs, sealExpected, freightReady };
   });
@@ -229,7 +229,7 @@ export async function podTargetsForLeg(tenantId: string, leg: { orderId: string;
   return shipments.filter((x) => x.deliveryStopId && onLeg.has(x.deliveryStopId)).map((x) => x.id);
 }
 
-export type DriverPhoto = { code: "POD" | "SEAL_PHOTO"; fileName: string; mimeType: string; bytes: Buffer };
+export type DriverPhoto = { code: "POD" | "SEAL_PHOTO" | "BOL"; fileName: string; mimeType: string; bytes: Buffer };
 
 /**
  * A photo from the driver's phone (spec §5.2: seal and POD photos). A POD lands on the order — on a
@@ -240,7 +240,7 @@ export async function driverUploadPhoto(tenantId: string, driverId: string, legI
   const ctx = systemCtx(tenantId);
   const [leg] = await db.select().from(s.legs).where(and(eq(s.legs.tenantId, tenantId), eq(s.legs.id, legId))).limit(1);
   if (!leg || (leg.driverId !== driverId && leg.coDriverId !== driverId)) throw new NotFoundError("leg", legId);
-  if (!["POD", "SEAL_PHOTO"].includes(photo.code)) throw new ValidationError("POD or seal photo", "code");
+  if (!["POD", "SEAL_PHOTO", "BOL"].includes(photo.code)) throw new ValidationError("POD, BOL or seal photo", "code");
   const [order] = await db.select({ id: s.orders.id, kind: s.orders.kind, orderNumber: s.orders.orderNumber }).from(s.orders).where(eq(s.orders.id, leg.orderId)).limit(1);
   if (!order) throw new NotFoundError("order", leg.orderId);
   const stops = await db.select().from(s.stops).where(and(eq(s.stops.tenantId, tenantId), eq(s.stops.orderId, leg.orderId))).orderBy(s.stops.seq);
@@ -258,7 +258,7 @@ export async function driverUploadPhoto(tenantId: string, driverId: string, legI
   const rows = [];
   for (const orderId of targets) rows.push(await uploadOrderDocument(ctx, orderId, { code: photo.code, fileName: photo.fileName, mimeType: photo.mimeType, bytes: photo.bytes, source: "driver_app" }));
   const stop = stops.find((x) => x.id === stopId);
-  await db.insert(s.legEvents).values({ id: newId(), tenantId, legId: leg.id, orderId: leg.orderId, kind: "document", source: "driver_app", verified: false, note: `${photo.code === "POD" ? "POD" : "Seal"} photo from the driver app${stop ? ` at ${stop.name}` : ""}${targets.length > 1 ? ` (${targets.length} shipments)` : ""}` });
+  await db.insert(s.legEvents).values({ id: newId(), tenantId, legId: leg.id, orderId: leg.orderId, kind: "document", source: "driver_app", verified: false, note: `${photo.code === "POD" ? "POD" : photo.code === "BOL" ? "BOL" : "Seal"} photo from the driver app${stop ? ` at ${stop.name}` : ""}${targets.length > 1 ? ` (${targets.length} shipments)` : ""}` });
   return rows;
 }
 

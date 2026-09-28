@@ -183,11 +183,13 @@ export async function packetParts(ctx: Ctx, invoiceId: string): Promise<{ parts:
   const want = (customer?.invoiceDocs ?? customer?.requiredDocs ?? ["POD", "BOL", "RATE_CON"]).map((c) => c.toUpperCase());
   const missing: string[] = [];
   if (!want.length || !orders.length) return { parts, missing };
-  const docs = await db.select().from(s.documents).where(and(eq(s.documents.tenantId, ctx.tenantId), eq(s.documents.subjectKind, "order"), inArray(s.documents.subjectId, orders.map((o) => o.id)), inArray(s.documents.status, ["present", "verified"]))).orderBy(desc(s.documents.createdAt));
+  // wherever each paper was uploaded (the load, the crossing, the driver's phone), newest first
+  const { loadDocuments } = await import("./load-docs");
+  const docs = await loadDocuments(ctx.tenantId, orders.map((o) => o.id));
   for (const o of [...orders].sort((p, q) => p.orderNumber.localeCompare(q.orderNumber))) {
     for (const code of want) {
       if (o.tonu && ["POD", "BOL", "SEAL"].includes(code)) continue;
-      const d = docs.find((x) => x.subjectId === o.id && x.code?.toUpperCase() === code);
+      const d = docs.find((x) => x.orderId === o.id && x.key === code);
       if (!d) {
         missing.push(`${o.orderNumber} ${code}`);
         continue;

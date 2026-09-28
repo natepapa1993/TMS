@@ -7,7 +7,7 @@ import { Modal, Pill, Toast, useToast } from "@/components/ui";
 import { formatCents } from "@/data/fields";
 import { receiveBillAction, approveBillAction, payBillAction } from "../actions";
 
-type Row = { bill: { id: string; state: string; currency: string; expectedCents: number; accessorialCents: number; invoicedCents: number | null; approvedCents: number | null; paidCents: number | null; carrierInvoiceNumber: string | null; payDate: string | null; paidAt: string | null; shortPayNote: string | null; approvalNote: string | null; orderId: string }; carrierName: string; orderNumber: string; legSeq: number; legType: string; check: { expected: number; invoiced: number | null; podPresent: boolean; rateMatch: boolean; difference: number | null } };
+type Row = { bill: { id: string; state: string; currency: string; expectedCents: number; accessorialCents: number; invoicedCents: number | null; approvedCents: number | null; paidCents: number | null; carrierInvoiceNumber: string | null; payDate: string | null; paidAt: string | null; shortPayNote: string | null; approvalNote: string | null; orderId: string }; carrierName: string; orderNumber: string; legSeq: number; legType: string; check: { expected: number; invoiced: number | null; podPresent: boolean; rateMatch: boolean; difference: number | null; invoiceDocId?: string | null } };
 const TONE: Record<string, "slate" | "teal" | "amber" | "red" | "green" | "blue"> = { expected: "slate", received: "blue", approved: "teal", scheduled: "amber", paid: "green", disputed: "red" };
 
 export function CarrierBills({ rows, role, totals1099 }: { rows: Row[]; role: string; totals1099: { name: string; country: string; total: number; currency?: string }[] }) {
@@ -63,6 +63,11 @@ export function CarrierBills({ rows, role, totals1099 }: { rows: Row[]; role: st
                   <td className="space-x-1">
                     {r.bill.invoicedCents != null && (r.check.rateMatch ? <Pill tone="green">rate ✓</Pill> : <Pill tone="red">{(r.check.difference ?? 0) > 0 ? "+" : ""}{formatCents(r.check.difference ?? 0, r.bill.currency)}</Pill>)}
                     {r.check.podPresent ? <Pill tone="green">POD ✓</Pill> : <Pill tone="amber">no POD</Pill>}
+                    {r.check.invoiceDocId ? (
+                      <a href={`/api/files/${r.check.invoiceDocId}`} target="_blank" rel="noreferrer" title="The carrier's invoice, from wherever it was uploaded">
+                        <Pill tone="green">invoice PDF ✓</Pill>
+                      </a>
+                    ) : null}
                   </td>
                   <td className="mono">
                     {r.bill.paidCents != null ? formatCents(r.bill.paidCents, r.bill.currency) : r.bill.approvedCents != null ? formatCents(r.bill.approvedCents, r.bill.currency) : "—"}

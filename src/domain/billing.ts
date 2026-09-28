@@ -265,7 +265,8 @@ export async function billingQueue(ctx: Ctx): Promise<QueueRow[]> {
   const ids = ords.map((o) => o.id);
   const [chargeRows, docs, customers, entities, drafts] = await Promise.all([
     db.select().from(s.charges).where(and(eq(s.charges.tenantId, ctx.tenantId), inArray(s.charges.orderId, ids))),
-    db.select({ subjectId: s.documents.subjectId, code: s.documents.code }).from(s.documents).where(and(eq(s.documents.tenantId, ctx.tenantId), eq(s.documents.subjectKind, "order"), inArray(s.documents.subjectId, ids), inArray(s.documents.status, ["present", "verified"]))),
+    // every document of these loads, wherever it was uploaded: the crossing's BOL counts here (owner #8)
+    import("./load-docs").then(({ loadDocuments }) => loadDocuments(ctx.tenantId, ids)),
     db.select().from(s.customers).where(eq(s.customers.tenantId, ctx.tenantId)),
     db.select().from(s.billingEntities).where(eq(s.billingEntities.tenantId, ctx.tenantId)),
     db.select({ id: s.invoices.id, orderIds: s.invoices.orderIds }).from(s.invoices).where(and(eq(s.invoices.tenantId, ctx.tenantId), inArray(s.invoices.state, ["draft"]))),
@@ -281,7 +282,7 @@ export async function billingQueue(ctx: Ctx): Promise<QueueRow[]> {
     // a TONU never picked up: no POD or BOL to wait for
     // a POD dispatch said will not come ("bill without POD", with the reason on the record) counts as on file
     const podWaived = !!(o.custom as { podWaived?: unknown } | null)?.podWaived;
-    const required = (cust?.requiredDocs ?? ["POD", "BOL", "RATE_CON"]).filter((code) => !(o.tonu && ["POD", "BOL", "SEAL"].includes(code))).map((code) => ({ code, present: docs.some((d) => d.subjectId === o.id && d.code === code) || (code === "POD" && podWaived) }));
+    const required = (cust?.requiredDocs ?? ["POD", "BOL", "RATE_CON"]).filter((code) => !(o.tonu && ["POD", "BOL", "SEAL"].includes(code))).map((code) => ({ code, present: docs.some((d) => d.orderId === o.id && d.key === code.toUpperCase()) || (code === "POD" && podWaived) }));
     const requiredRefs = requiredRefsFor(cust, o.refs ?? {});
     const pendingRows = cs.filter((c) => c.billable && !c.invoiceId && c.approvalState === "pending");
     const chargesCents = cs.filter(billsNow).reduce((a, c) => a + c.amountCents, 0);
@@ -331,24 +332,54 @@ export async function resetChargesToRateCon(ctx: Ctx, orderId: string) {
   return r;
 }
 
-/** Upload a POD / BOL / rate con on the order (billing docs). */
-export async function uploadOrderDocument(ctx: Ctx, orderId: string, input: { code: string; fileName: string; mimeType: string; bytes: Buffer; source?: string }) {
+/**
+ * Upload a document on the load (POD, BOL, rate con, carrier's invoice, carta porte…). One record, counted
+ * everywhere (owner #8): it replaces the same paper uploaded on the crossing or a leg, and the crossing
+ * checklist sees it. A crossing-only paper (DODA, carta porte…) on a load with one crossing is filed on that
+ * crossing; a carrier's invoice with a leg is filed on that leg.
+ */
+export async function uploadOrderDocument(ctx: Ctx, orderId: string, input: { code: string; fileName: string; mimeType: string; bytes: Buffer; source?: string; legId?: string | null }) {
   assertCtx(ctx);
   requirePermission(ctx, "orders.edit");
   if (!input.bytes?.length) throw new ValidationError("empty file", "file");
   if (!/^(application\/pdf|image\/(jpeg|png))$/.test(input.mimeType)) throw new ValidationError("PDF, JPG or PNG only", "file");
   await loadOrder(ctx, orderId);
+  const { docKey, CROSSING_ONLY } = await import("./load-docs-rules");
+  const { supersedePrior } = await import("./load-docs");
+  const key = docKey(input.code);
+  if (CROSSING_ONLY.has(key)) {
+    const xs = await db.select({ id: s.crossings.id }).from(s.crossings).where(and(eq(s.crossings.tenantId, ctx.tenantId), eq(s.crossings.orderId, orderId), sql`${s.crossings.state} <> 'cancelled'`));
+    if (xs.length === 1) {
+      const { uploadDocument } = await import("./crossing");
+      return uploadDocument(ctx, xs[0].id, { code: key.toLowerCase(), fileName: input.fileName, mimeType: input.mimeType, bytes: input.bytes, source: input.source });
+    }
+  }
+  let legId: string | null = null;
+  if (input.legId) {
+    const [leg] = await db.select({ id: s.legs.id }).from(s.legs).where(and(eq(s.legs.tenantId, ctx.tenantId), eq(s.legs.id, input.legId), eq(s.legs.orderId, orderId))).limit(1);
+    if (!leg) throw new NotFoundError("leg", input.legId);
+    legId = leg.id;
+  }
   const sha = createHash("sha256").update(input.bytes).digest("hex");
   const row = await db.transaction(async (tx) => {
     const [blob] = await tx.insert(s.documentBlobs).values({ id: newId(), tenantId: ctx.tenantId, sha256: sha, mimeType: input.mimeType, sizeBytes: input.bytes.length, bytes: input.bytes }).returning({ id: s.documentBlobs.id });
-    const prior = await tx.select().from(s.documents).where(and(eq(s.documents.tenantId, ctx.tenantId), eq(s.documents.subjectKind, "order"), eq(s.documents.subjectId, orderId), eq(s.documents.code, input.code), inArray(s.documents.status, ["present", "verified"])));
-    for (const p of prior) await tx.update(s.documents).set({ status: "superseded" }).where(eq(s.documents.id, p.id));
-    const [row] = await tx.insert(s.documents).values({ id: newId(), tenantId: ctx.tenantId, code: input.code, subjectKind: "order", subjectId: orderId, fileName: input.fileName, mimeType: input.mimeType, sizeBytes: input.bytes.length, storageKey: `blob:${blob.id}`, sha256: sha, source: input.source ?? "upload", version: (Math.max(0, ...prior.map((p) => p.version)) || 0) + 1, createdBy: ctx.userId, updatedBy: ctx.userId }).returning();
-    await writeAudit(tx, ctx, "order", orderId, "update", { [input.code]: { from: prior[0]?.fileName ?? null, to: input.fileName } });
+    const [prior] = await tx.select({ fileName: s.documents.fileName }).from(s.documents).where(and(eq(s.documents.tenantId, ctx.tenantId), eq(s.documents.subjectKind, legId ? "leg" : "order"), eq(s.documents.subjectId, legId ?? orderId), eq(s.documents.code, input.code), inArray(s.documents.status, ["present", "verified"]))).limit(1);
+    const version = await supersedePrior(tx, ctx.tenantId, { orderId, legId }, input.code, ctx.userId);
+    const [row] = await tx.insert(s.documents).values({ id: newId(), tenantId: ctx.tenantId, code: input.code, subjectKind: legId ? "leg" : "order", subjectId: legId ?? orderId, fileName: input.fileName, mimeType: input.mimeType, sizeBytes: input.bytes.length, storageKey: `blob:${blob.id}`, sha256: sha, source: input.source ?? "upload", version, createdBy: ctx.userId, updatedBy: ctx.userId }).returning();
+    await writeAudit(tx, ctx, "order", orderId, "update", { [input.code]: { from: prior?.fileName ?? null, to: input.fileName } });
     return row;
   });
   if (input.code === "RATE_CON") await readRateCon(ctx, row.id, input).catch(() => null); // never blocks the upload
+  await recomputeCrossingsOf(ctx, orderId).catch((e) => console.error(`[docs] crossing recompute ${orderId}: ${String(e)}`));
   return row;
+}
+
+/** A paper uploaded on the load (a BOL, a commercial invoice) ticks the crossing checklist too. */
+export async function recomputeCrossingsOf(ctx: Ctx, orderId: string) {
+  const xs = await db.select({ id: s.crossings.id }).from(s.crossings).where(and(eq(s.crossings.tenantId, ctx.tenantId), eq(s.crossings.orderId, orderId), sql`${s.crossings.state} not in ('cleared','cancelled')`));
+  if (!xs.length) return;
+  const { recompute } = await import("./crossing");
+  for (const x of xs) await recompute(ctx, x.id);
 }
 
 /**
@@ -1017,7 +1048,9 @@ export async function receiveCarrierBill(ctx: Ctx, id: string, r: { invoicedCent
   const b = await loadBill(ctx, id);
   if (!["expected", "received", "disputed"].includes(b.state)) throw new TransitionError("order", b.state, "received");
   if (!Number.isFinite(r.invoicedCents) || r.invoicedCents < 0) throw new ValidationError("amount", "invoicedCents");
-  const [after] = await db.update(s.carrierBills).set({ state: "received", invoicedCents: r.invoicedCents, carrierInvoiceNumber: r.carrierInvoiceNumber ?? null, carrierInvoiceDocId: r.docId ?? null, accessorialCents: r.accessorialCents ?? b.accessorialCents, receivedAt: new Date(), updatedAt: new Date(), updatedBy: ctx.userId }).where(eq(s.carrierBills.id, id)).returning();
+  // the carrier's invoice already uploaded on the load or the leg (portal, office) is the bill's document
+  const docId = r.docId ?? b.carrierInvoiceDocId ?? (await threeWayMany(ctx, [b]))[0].invoiceDocId;
+  const [after] = await db.update(s.carrierBills).set({ state: "received", invoicedCents: r.invoicedCents, carrierInvoiceNumber: r.carrierInvoiceNumber ?? null, carrierInvoiceDocId: docId ?? null, accessorialCents: r.accessorialCents ?? b.accessorialCents, receivedAt: new Date(), updatedAt: new Date(), updatedBy: ctx.userId }).where(eq(s.carrierBills.id, id)).returning();
   await writeAudit(db, ctx, "carrier_bill", id, "update", { invoicedCents: { from: b.invoicedCents, to: r.invoicedCents } });
   return after;
 }
@@ -1030,17 +1063,27 @@ export function threeWayOf(b: Pick<typeof s.carrierBills.$inferSelect, "expected
 
 export async function threeWay(ctx: Ctx, id: string) {
   const b = await loadBill(ctx, id);
-  const [pod] = await db.select({ id: s.documents.id }).from(s.documents).where(and(eq(s.documents.subjectKind, "order"), eq(s.documents.subjectId, b.orderId), eq(s.documents.code, "POD"), inArray(s.documents.status, ["present", "verified"]))).limit(1);
-  return threeWayOf(b, !!pod);
+  return (await threeWayMany(ctx, [b]))[0];
 }
 
-/** The three-way check for a whole list in two queries instead of two per bill. */
+/**
+ * The three-way check for a whole list in one pass. The POD and the carrier's invoice count from wherever they
+ * were uploaded: the office, the driver's phone, the carrier's portal, the crossing (owner #8).
+ */
 export async function threeWayMany(ctx: Ctx, bills: (typeof s.carrierBills.$inferSelect)[]) {
   assertCtx(ctx);
-  const orderIds = [...new Set(bills.map((b) => b.orderId))];
-  const pods = orderIds.length ? await db.select({ orderId: s.documents.subjectId }).from(s.documents).where(and(eq(s.documents.tenantId, ctx.tenantId), eq(s.documents.subjectKind, "order"), inArray(s.documents.subjectId, orderIds), eq(s.documents.code, "POD"), inArray(s.documents.status, ["present", "verified"]))) : [];
-  const has = new Set(pods.map((p) => p.orderId));
-  return bills.map((b) => threeWayOf(b, has.has(b.orderId)));
+  const { loadDocuments } = await import("./load-docs");
+  const docs = await loadDocuments(ctx.tenantId, bills.map((b) => b.orderId));
+  return bills.map((b) => {
+    const invoiceDoc = b.carrierInvoiceDocId ? (docs.find((d) => d.id === b.carrierInvoiceDocId) ?? null) : carrierInvoiceFor(docs, b);
+    return { ...threeWayOf(b, docs.some((d) => d.orderId === b.orderId && d.key === "POD")), invoiceDocId: invoiceDoc?.id ?? null };
+  });
+}
+
+/** The carrier's invoice for this bill: filed on its leg, else on the load when only one carrier bills it. */
+function carrierInvoiceFor(docs: { id: string; key: string; orderId: string; legId: string | null; on: string }[], b: Pick<typeof s.carrierBills.$inferSelect, "orderId" | "legId">) {
+  const mine = docs.filter((d) => d.orderId === b.orderId && d.key === "CARRIER_INVOICE");
+  return mine.find((d) => d.legId === b.legId) ?? (mine.every((d) => d.on === "load") ? (mine[0] ?? null) : null);
 }
 
 export async function approveCarrierBill(ctx: Ctx, id: string, a: { approvedCents?: number; note?: string | null; shortPayNote?: string | null; payDate?: Date | null; allowNoPod?: boolean }) {

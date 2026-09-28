@@ -6,6 +6,7 @@ import { Toast, useToast } from "@/components/ui";
 import { updateOrderAction, addNoteAction, pinNoteAction, deleteNoteAction } from "../actions";
 import { UploadDoc } from "@/app/(app)/billing/queue";
 import { useClock } from "@/components/zone";
+import { docLabel } from "@/domain/load-docs-rules";
 
 /* ---------- tabs ---------- */
 
@@ -337,57 +338,78 @@ export function NotesPanel({ orderId, notes, me, isOwner }: { orderId: string; n
 
 /* ---------- documents ---------- */
 
-type Doc = { id: string; code: string | null; fileName: string; status: string; source: string; createdAt: string; author: string | null };
+type Doc = { id: string; code: string | null; fileName: string; status: string; source: string; createdAt: string; author: string | null; on?: string; crossingId?: string | null; counts?: string[] };
 const DOC_CODES: [string, string][] = [
   ["RATE_CON", "Rate confirmation"],
   ["BOL", "Bill of lading"],
   ["POD", "Proof of delivery"],
   ["LUMPER", "Lumper receipt"],
   ["SCALE", "Scale ticket"],
-  ["INVOICE", "Customer invoice"],
+  ["INVOICE", "Commercial invoice"],
+  ["PACKING_LIST", "Packing list"],
+  ["CARRIER_INVOICE", "Carrier's invoice"],
+  ["CARTA_PORTE", "Carta porte"],
+  ["DODA", "DODA"],
+  ["ENTRY", "US entry / pedimento"],
   ["OTHER", "Other"],
 ];
 
+/** Every document of the load, wherever it came in, and every place it counts (owner #8). */
 export function DocumentsPanel({ orderId, docs, required, canUpload }: { orderId: string; docs: Doc[]; required: string[]; canUpload: boolean }) {
   const clock = useClock();
   const router = useRouter();
   const [uploadFor, setUploadFor] = useState<string | null>(null);
   const [code, setCode] = useState("RATE_CON");
-  const label = (c: string | null) => DOC_CODES.find(([v]) => v === c)?.[1] ?? (c ?? "Document").replace(/_/g, " ");
+  const label = (c: string | null) => docLabel(c);
   return (
     <div className="grid lg:grid-cols-[1fr_320px] gap-6 items-start">
       <div className="card overflow-hidden">
         {docs.length === 0 ? (
-          <div className="p-10 text-center text-muted text-body">No documents on this load yet.</div>
+          <div className="p-10 text-center text-muted text-body">No documents on this load yet. Upload once here, on the crossing, from the carrier portal or the driver app: it counts everywhere.</div>
         ) : (
-          <table className="table">
-            <thead>
-              <tr>
-                <th>Type</th>
-                <th>File</th>
-                <th>From</th>
-                <th>Added</th>
-                <th>Status</th>
-              </tr>
-            </thead>
-            <tbody>
-              {docs.map((d) => (
-                <tr key={d.id}>
-                  <td className="font-semibold">{label(d.code)}</td>
-                  <td>
-                    <a href={`/api/files/${d.id}`} target="_blank" rel="noreferrer" className="text-teal font-semibold hover:underline">
-                      {d.fileName}
-                    </a>
-                  </td>
-                  <td className="text-muted text-callout">{d.author ?? d.source.replace(/_/g, " ")}</td>
-                  <td className="text-muted text-callout">{clock.at(d.createdAt, { style: "short" })}</td>
-                  <td>
-                    <span className={`pill ${d.status === "verified" ? "pill-green" : d.status === "pending" ? "pill-amber" : "pill-slate"}`}>{d.status}</span>
-                  </td>
+          <div className="overflow-x-auto">
+            <table className="table" data-testid="load-docs">
+              <thead>
+                <tr>
+                  <th>Type</th>
+                  <th>File</th>
+                  <th>Came in on</th>
+                  <th>Counts for</th>
+                  <th>Added</th>
+                  <th>Status</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {docs.map((d) => (
+                  <tr key={d.id}>
+                    <td className="font-semibold whitespace-nowrap">{label(d.code)}</td>
+                    <td>
+                      <a href={`/api/files/${d.id}`} target="_blank" rel="noreferrer" className="text-teal font-semibold hover:underline break-all">
+                        {d.fileName}
+                      </a>
+                    </td>
+                    <td className="text-muted text-callout whitespace-nowrap">
+                      {d.on === "Crossing" && d.crossingId ? (
+                        <a href={`/crossing/${d.crossingId}`} className="text-teal hover:underline">
+                          Crossing
+                        </a>
+                      ) : (
+                        (d.on ?? "Load")
+                      )}
+                      <div className="text-footnote">{d.author ?? d.source.replace(/_/g, " ")}</div>
+                    </td>
+                    <td className="text-callout" data-testid="counts-for">
+                      {d.counts?.length ? d.counts.join(" · ") : <span className="text-faint">on file</span>}
+                    </td>
+                    <td className="text-muted text-callout whitespace-nowrap">{clock.at(d.createdAt, { style: "short" })}</td>
+                    <td>
+                      <span className={`pill ${d.status === "verified" ? "pill-green" : d.status === "pending" ? "pill-amber" : "pill-slate"}`}>{d.status}</span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         )}
       </div>
       <div className="space-y-4">
@@ -395,7 +417,7 @@ export function DocumentsPanel({ orderId, docs, required, canUpload }: { orderId
           <div className="text-body font-extrabold mb-3">Needed to bill</div>
           <ul className="space-y-2 text-callout">
             {required.map((c) => {
-              const has = docs.some((d) => d.code === c && d.status !== "pending");
+              const has = docs.some((d) => (d.code ?? "").toUpperCase() === c.toUpperCase() && d.status !== "pending");
               return (
                 <li key={c} className="flex items-center gap-2.5">
                   <span className={`w-5 h-5 rounded-full grid place-items-center text-caption font-extrabold ${has ? "bg-teal text-white" : "border-2 border-line"}`}>{has ? "✓" : ""}</span>
