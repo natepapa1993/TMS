@@ -16,6 +16,7 @@ export function Approvals({ rows, needOwner }: { rows: Row[]; needOwner: boolean
   const t = useToast();
   const [pending, start] = useTransition();
   const [reject, setReject] = useState<Row | null>(null);
+  const [on, setOn] = useState(needOwner);
   const waiting = rows.filter((r) => r.state === "pending").length;
   const run = (label: string, fn: () => Promise<{ ok: boolean; error?: string }>) =>
     start(async () => {
@@ -30,13 +31,28 @@ export function Approvals({ rows, needOwner }: { rows: Row[]; needOwner: boolean
       <div className="flex items-center gap-3 mb-2 flex-wrap">
         <div className="eyebrow">Approvals{rows.length ? ` · ${rows.length}` : ""}</div>
         <label className="ml-auto flex items-center gap-2 text-footnote text-muted cursor-pointer" title="Off: an override takes effect at once and waits here for your review. On: it is only a request until you approve it.">
-          <input type="checkbox" className="accent-teal" checked={needOwner} disabled={pending} onChange={(e) => run(e.target.checked ? "Overrides now wait for you" : "Overrides take effect at once again", () => overrideApprovalSettingAction(e.target.checked))} data-testid="override-approval-setting" />
+          <input
+            type="checkbox"
+            className="accent-teal"
+            checked={on}
+            disabled={pending}
+            onChange={(e) => {
+              const next = e.target.checked;
+              setOn(next);
+              run(next ? "Overrides now wait for you" : "Overrides take effect at once again", async () => {
+                const r = await overrideApprovalSettingAction(next);
+                if (!r.ok) setOn(!next);
+                return r;
+              });
+            }}
+            data-testid="override-approval-setting"
+          />
           Overrides need my approval first
         </label>
       </div>
       <div className="card overflow-hidden">
         {rows.length === 0 ? (
-          <div className="py-8 text-center text-muted text-callout">Nothing to approve. {needOwner ? "When someone overrides a block, it waits here for you." : "Overrides your team makes show up here for you to review."}</div>
+          <div className="py-8 text-center text-muted text-callout">Nothing to approve. {on ? "When someone overrides a block, it waits here for you." : "Overrides your team makes show up here for you to review."}</div>
         ) : (
           <ul className="divide-y divide-line">
             {rows.map((r) => (

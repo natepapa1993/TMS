@@ -98,8 +98,9 @@ export const FIELDS: Record<RecordKind, Field[]> = {
       column: true,
       group: "User",
       options: [
-        { value: "owner", label: "Owner" },
+        // owner #22: a new person is a dispatcher unless the owner picks otherwise (the first option is the default)
         { value: "dispatcher", label: "Dispatcher" },
+        { value: "owner", label: "Owner" },
         { value: "billing", label: "Billing" },
         { value: "compliance", label: "Safety & compliance" },
         { value: "mx_office", label: "Mexico office" },
