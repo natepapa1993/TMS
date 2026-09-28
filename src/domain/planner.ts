@@ -121,6 +121,20 @@ export type PlannerDriver = {
   events: { id: string; kind: string; label: string; startsAt: string; endsAt: string; hard: boolean; note: string | null; subject: "driver" | "truck" }[];
 };
 
+/**
+ * The planner by truck: who is in it (solo or team, CDL or B-1), and one of four plain statuses —
+ * available, on a load, waiting on a crossing (its next load's freight hasn't crossed yet), or
+ * unavailable (shop, time off, no driver, or paperwork that blocks dispatch) with the reason.
+ */
+export type PlannerTruck = Omit<PlannerDriver, "driverId" | "name" | "driverType" | "phone" | "truckId" | "unit" | "truckStatus" | "status"> & {
+  truckId: string;
+  unit: string;
+  crew: { driverId: string; name: string; driverType: string; phone: string | null }[];
+  team: boolean;
+  status: "available" | "on_load" | "waiting_crossing" | "unavailable";
+  why: string | null;
+};
+
 export async function plannerData(ctx: Ctx, now = new Date()) {
   assertCtx(ctx);
   requirePermission(ctx, "orders.view");
@@ -130,15 +144,24 @@ export async function plannerData(ctx: Ctx, now = new Date()) {
     .innerJoin(s.orders, eq(s.orders.id, s.legs.orderId))
     .where(and(eq(s.legs.tenantId, ctx.tenantId), inArray(s.legs.state, [...new Set([...OPEN_LEG, ...ACTIVE])]), inArray(s.orders.state, ["booked", "dispatched", "in_transit", "exception"])));
   const orderIds = [...new Set(legs.map((l) => l.order.id))];
-  const [stops, allLegCounts, customers, drivers, trucks, users, events, lastPos] = await Promise.all([
+  const [stops, allLegCounts, customers, drivers, trucks, users, events, lastPos, blocked, recentDone] = await Promise.all([
     orderIds.length ? db.select().from(s.stops).where(and(eq(s.stops.tenantId, ctx.tenantId), inArray(s.stops.orderId, orderIds))) : Promise.resolve([]),
-    orderIds.length ? db.select({ orderId: s.legs.orderId, id: s.legs.id }).from(s.legs).where(and(eq(s.legs.tenantId, ctx.tenantId), inArray(s.legs.orderId, orderIds))) : Promise.resolve([]),
+    orderIds.length ? db.select({ orderId: s.legs.orderId, id: s.legs.id, seq: s.legs.seq, type: s.legs.type, state: s.legs.state }).from(s.legs).where(and(eq(s.legs.tenantId, ctx.tenantId), inArray(s.legs.orderId, orderIds))) : Promise.resolve([]),
     db.select({ id: s.customers.id, name: s.customers.name }).from(s.customers).where(eq(s.customers.tenantId, ctx.tenantId)),
     db.select().from(s.drivers).where(and(eq(s.drivers.tenantId, ctx.tenantId), isNull(s.drivers.archivedAt))),
     db.select().from(s.trucks).where(and(eq(s.trucks.tenantId, ctx.tenantId), isNull(s.trucks.archivedAt))),
     db.select({ id: s.users.id, name: s.users.name }).from(s.users).where(eq(s.users.tenantId, ctx.tenantId)),
     eventsBetween(db, ctx.tenantId, new Date(now.getTime() - 86400_000), new Date(now.getTime() + 30 * 86400_000)),
     db.select().from(s.positions).where(and(eq(s.positions.tenantId, ctx.tenantId), gte(s.positions.at, new Date(now.getTime() - 3 * 86400_000)))).orderBy(desc(s.positions.at)).limit(2000),
+    db.select().from(s.complianceStatus).where(and(eq(s.complianceStatus.tenantId, ctx.tenantId), eq(s.complianceStatus.dispatchable, false))),
+    // where each truck last delivered: an idle truck is free where its last load ended
+    db
+      .select({ truckId: s.legs.truckId, driverId: s.legs.driverId, completedAt: s.legs.completedAt, stop: s.stops })
+      .from(s.legs)
+      .innerJoin(s.stops, eq(s.stops.id, s.legs.toStopId))
+      .where(and(eq(s.legs.tenantId, ctx.tenantId), eq(s.legs.state, "completed"), gte(s.legs.completedAt, new Date(now.getTime() - 14 * 86400_000))))
+      .orderBy(desc(s.legs.completedAt))
+      .limit(500),
   ]);
   const stop = new Map(stops.map((x) => [x.id, x]));
   const cName = new Map(customers.map((c) => [c.id, c.name]));
@@ -186,7 +209,8 @@ export async function plannerData(ctx: Ctx, now = new Date()) {
     const planned = mine.filter((l) => l.leg.state === "planned").sort((p, q) => (start(p)?.getTime() ?? 0) - (start(q)?.getTime() ?? 0));
     const cur = moving.sort((p, q) => (end(q)?.getTime() ?? 0) - (end(p)?.getTime() ?? 0))[0];
     const last = [...mine].sort((p, q) => (end(q)?.getTime() ?? 0) - (end(p)?.getTime() ?? 0))[0];
-    const lastStop = last ? stop.get(last.leg.toStopId ?? "") : undefined;
+    const done = last ? undefined : recentDone.find((r) => r.driverId === d.id || (truck && r.truckId === truck.id));
+    const lastStop = last ? stop.get(last.leg.toStopId ?? "") : done?.stop;
     const pos = lastPos.find((p) => p.driverId === d.id || (truck && p.truckId === truck.id));
     const posC = pos ? coords(pos.lat, pos.lng) : null;
     const lastC = lastStop ? coords(lastStop.lat, lastStop.lng) : null;
@@ -217,7 +241,81 @@ export async function plannerData(ctx: Ctx, now = new Date()) {
   });
   // "last seen" text is only a hint; keep availability places human
   for (const d of outDrivers) if (d.availableIn?.startsWith("last seen")) d.availableIn = "last GPS position";
-  return { legs: openLegs, drivers: outDrivers.sort((p, q) => p.name.localeCompare(q.name)) };
+
+  // ---- by truck ----
+  const blockOf = (kind: string, id: string) => blocked.find((b) => b.subjectKind === kind && b.subjectId === id);
+  const blockWhy = (b: (typeof blocked)[number]) => {
+    const i = b.items.find((x) => x.blocksDispatch && ["expired", "missing"].includes(x.status === "snoozed" ? (x.underlying ?? "") : x.status));
+    const label = (i?.label ?? b.expired[0] ?? b.missing[0] ?? "").replace(/ (expiry|expires)$/i, "");
+    return label ? `${label} ${i && (i.status === "missing" || i.underlying === "missing") ? "missing" : "expired"}` : "paperwork blocks dispatch";
+  };
+  const byOrder = new Map<string, typeof allLegCounts>();
+  for (const l of allLegCounts) byOrder.set(l.orderId, [...(byOrder.get(l.orderId) ?? []), l]);
+  const fmtUntil = (d: Date) => d.toLocaleString("en-US", { month: "short", day: "numeric", timeZone: "America/Chicago" });
+  const outTrucks: PlannerTruck[] = trucks
+    .map((t) => {
+      const crewD = outDrivers.filter((d) => d.truckId === t.id);
+      const lead = crewD.find((d) => d.status === "on_load") ?? crewD[0] ?? null;
+      const truckLegs = legs.filter((l) => l.leg.truckId === t.id && (ACTIVE as readonly string[]).includes(l.leg.state));
+      // a co-driver on the truck's current load counts as crew even if their profile names another truck
+      for (const l of truckLegs) {
+        const co = outDrivers.find((d) => d.driverId === l.leg.coDriverId);
+        if (co && !crewD.includes(co)) crewD.push(co);
+      }
+      const evs = events.filter((e) => e.subjectKind === "truck" && e.subjectId === t.id);
+      const truckEvents = evs.map((e) => ({ id: e.id, kind: e.kind, label: EVENT_LABEL[e.kind], startsAt: e.startsAt.toISOString(), endsAt: e.endsAt.toISOString(), hard: e.hard, note: e.note, subject: "truck" as const }));
+      const allEvents = [...truckEvents, ...crewD.flatMap((d) => d.events.filter((e) => e.subject === "driver"))];
+      const offNow = allEvents.find((e) => e.hard && new Date(e.startsAt) <= now && new Date(e.endsAt) >= now);
+      const moving = truckLegs.some((l) => (MOVING as readonly string[]).includes(l.leg.state));
+      // its next load waits on freight that hasn't crossed: an earlier MX or crossing leg of the same order isn't done
+      const waiting = truckLegs
+        .filter((l) => ["planned", "dispatched", "accepted"].includes(l.leg.state))
+        .map((l) => ({ l, before: (byOrder.get(l.order.id) ?? []).filter((o) => o.seq < l.leg.seq && (o.type === "mx" || o.type === "crossing") && o.state !== "completed" && o.state !== "cancelled") }))
+        .find((x) => x.before.length);
+      const tBlock = blockOf("truck", t.id);
+      const dBlocks = crewD.map((d) => blockOf("driver", d.driverId));
+      let status: PlannerTruck["status"] = "available";
+      let why: string | null = null;
+      if (t.status === "oos") { status = "unavailable"; why = `Out of service${t.oosReason ? ` — ${t.oosReason}` : ""}${t.oosUntil ? ` · until ${fmtUntil(t.oosUntil)}` : ""}`; }
+      else if (!crewD.length) { status = "unavailable"; why = "No driver in this truck"; }
+      else if (offNow) { status = "unavailable"; why = `${offNow.label} until ${fmtUntil(new Date(offNow.endsAt))}`; }
+      const blockText = tBlock ? `Truck: ${blockWhy(tBlock)}` : crewD.length && dBlocks.every(Boolean) ? `${crewD[0].name.split(" ")[0]}: ${blockWhy(dBlocks[0]!)}` : null;
+      if (status === "unavailable") {
+        /* set above */
+      } else if (moving || (lead?.status === "on_load" && !waiting)) {
+        // already on a load: paperwork that blocks the next dispatch shows as a warning
+        status = "on_load";
+        why = blockText;
+      } else if (blockText) {
+        status = "unavailable";
+        why = blockText;
+      } else if (waiting) {
+        status = "waiting_crossing";
+        const mxOpen = waiting.before.find((o) => o.type === "mx");
+        const cross = waiting.before.find((o) => o.type === "crossing");
+        why = `${waiting.l.order.orderNumber} — ${mxOpen ? "freight still on the Mexican side" : cross && (MOVING as readonly string[]).includes(cross.state) ? "freight crossing the bridge now" : "waiting for the crossing"}`;
+      }
+      const base = lead ?? ({ current: null, availableAt: iso(now), availableIn: null, availableLat: null, availableLng: null, next: null, hos: null, dispatcher: null } as Partial<PlannerDriver>);
+      return {
+        truckId: t.id,
+        unit: t.unitNumber,
+        crew: crewD.map((d) => ({ driverId: d.driverId, name: d.name, driverType: d.driverType, phone: d.phone })),
+        team: crewD.length > 1,
+        status,
+        why,
+        dispatcher: base.dispatcher ?? null,
+        current: base.current ?? null,
+        availableAt: status === "unavailable" && offNow ? offNow.endsAt : status === "unavailable" && t.oosUntil ? iso(t.oosUntil) : (base.availableAt ?? null),
+        availableIn: base.availableIn ?? null,
+        availableLat: base.availableLat ?? null,
+        availableLng: base.availableLng ?? null,
+        next: base.next ?? null,
+        hos: base.hos ?? null,
+        events: allEvents,
+      };
+    })
+    .sort((p, q) => p.unit.localeCompare(q.unit, "en-US", { numeric: true }));
+  return { legs: openLegs, drivers: outDrivers.sort((p, q) => p.name.localeCompare(q.name)), trucks: outTrucks };
 }
 
 /** Road miles from where the driver comes free to the leg's pickup, when both have coordinates. */

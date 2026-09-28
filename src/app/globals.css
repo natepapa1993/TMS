@@ -1895,3 +1895,66 @@ body {
     display: none;
   }
 }
+
+/* ---- planner by truck: crew and licence tags ---- */
+.crew-tag,
+.type-tag {
+  display: inline-flex;
+  align-items: center;
+  height: 1.375rem;
+  padding: 0 0.5rem;
+  border-radius: 6px;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  white-space: nowrap;
+  background: var(--color-fill);
+  color: var(--color-ink-2);
+}
+.crew-tag.crew-team {
+  background: #efe9fd;
+  color: #5b3cc4;
+}
+.type-tag.type-b1 {
+  background: #fff3e0;
+  color: #9a5b00;
+}
+.type-tag.type-dual {
+  background: #e8f1fd;
+  color: #0a5bc4;
+}
+
+/* phones: each truck is a card — unit and crew on the left, status on the right, then when/where and actions */
+@media (max-width: 767px) {
+  .truck-table thead {
+    display: none;
+  }
+  .truck-table,
+  .truck-table tbody {
+    display: block;
+    width: 100%;
+  }
+  .truck-table tr {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 8px 12px;
+    padding: 14px 16px;
+    border-bottom: 1px solid var(--color-line);
+  }
+  .truck-table td {
+    display: block;
+    padding: 0;
+    border: 0;
+    min-width: 0 !important;
+  }
+  .truck-table td:nth-child(2) {
+    text-align: right;
+    max-width: 52vw;
+  }
+  .truck-table td:nth-child(n + 3) {
+    grid-column: 1 / -1;
+    text-align: left;
+  }
+  .truck-table td:last-child:empty {
+    display: none;
+  }
+}

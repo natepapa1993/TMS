@@ -14,7 +14,7 @@ async function driver(page: Page, name: string, unit: string) {
   await expect(page.getByRole("status")).toContainText("Saved");
 }
 
-test("planner: loads beside drivers, time off blocks, rank for a load, assign & send", async ({ page }) => {
+test("planner: loads beside trucks (solo/team, CDL/B-1, status), time off makes a truck unavailable, rank for a load, assign & send", async ({ page }) => {
   test.setTimeout(150_000);
   await signupFresh(page);
   await quickAdd(page, "customers", "Add customer", { name: "Acme Logistics", kind: "broker" });
@@ -27,27 +27,37 @@ test("planner: loads beside drivers, time off blocks, rank for a load, assign & 
   await page.click("a:has-text('Planner')");
   await page.waitForURL("**/dispatch/planner", { waitUntil: "commit" });
   await expect(page.getByTestId("planner-leg")).toHaveCount(1);
-  await expect(page.getByTestId("planner-driver")).toHaveCount(2);
+  // by truck: each unit with its crew, solo or team, licence type, and a plain status
+  await expect(page.getByTestId("planner-truck")).toHaveCount(2);
+  await expect(page.getByTestId("planner-truck").filter({ hasText: "Daniel Reyes" })).toContainText("Solo");
+  await expect(page.getByTestId("planner-truck").filter({ hasText: "Daniel Reyes" })).toContainText("CDL");
+  await expect(page.getByTestId("planner-truck").filter({ hasText: "Daniel Reyes" })).toContainText("Available");
 
-  // Ana is on vacation from now
-  await page.getByTestId("planner-driver").filter({ hasText: "Ana Cruz" }).locator("button:has-text('+ Time off')").click();
+  // Ana is on vacation from now: her truck shows unavailable, and until when
+  await page.getByTestId("planner-truck").filter({ hasText: "Ana Cruz" }).locator("button:has-text('Time off')").click();
   const d = page.getByRole("dialog");
   await d.locator("#ev-kind").selectOption("vacation");
   await d.locator("#ev-note").fill("family trip");
   await d.locator("button:has-text('Add')").click();
   await expect(page.getByRole("status")).toContainText("Vacation added");
-  const ana = page.getByTestId("planner-driver").filter({ hasText: "Ana Cruz" });
-  await expect(ana).toContainText("Off");
-  await expect(ana).toContainText("Vacation");
+  const ana = page.getByTestId("planner-truck").filter({ hasText: "Ana Cruz" });
+  await expect(ana).toContainText("Unavailable");
+  await expect(ana).toContainText("Vacation until");
 
-  // pick the load: Daniel ranks first, Ana needs an override for her vacation
+  // the same people by driver, one tap away
+  await page.getByRole("group", { name: "Show" }).locator("button:has-text('Drivers')").click();
+  await expect(page.getByTestId("planner-driver")).toHaveCount(2);
+  await expect(page.getByTestId("planner-driver").filter({ hasText: "Ana Cruz" })).toContainText("Off");
+  await page.getByRole("group", { name: "Show" }).locator("button:has-text('Trucks')").click();
+
+  // pick the load: Daniel's truck ranks first, Ana's needs an override for her vacation
   await page.getByTestId("planner-leg").filter({ hasText: num }).click();
-  await expect(page.locator("section[aria-label='Drivers']")).toContainText(`Drivers for ${num}`);
-  await expect(page.getByTestId("planner-driver").first()).toContainText("Daniel Reyes");
+  await expect(page.locator("section[aria-label='Trucks']")).toContainText(`Trucks for ${num}`);
+  await expect(page.getByTestId("planner-truck").first()).toContainText("Daniel Reyes");
   await expect(ana).toContainText(/Override: .*vacation/);
 
-  await page.getByTestId("planner-driver").filter({ hasText: "Daniel Reyes" }).locator("button:has-text('Assign & send')").click();
+  await page.getByTestId("planner-truck").filter({ hasText: "Daniel Reyes" }).locator("button:has-text('Assign & send')").click();
   await expect(page.getByRole("status")).toContainText(`${num} → 2104 · Daniel Reyes — sent`);
   await expect(page.getByTestId("planner-leg")).toHaveCount(0);
-  await expect(page.getByTestId("planner-driver").filter({ hasText: "Daniel Reyes" })).toContainText(num);
+  await expect(page.getByTestId("planner-truck").filter({ hasText: "Daniel Reyes" })).toContainText(num);
 });

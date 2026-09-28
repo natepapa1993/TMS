@@ -56,7 +56,7 @@ export async function ensureDemoCompany(opts: { force?: boolean; now?: Date } = 
 }
 
 /** Bump when the builder changes: every deployment then rebuilds the demo once with the new data. */
-const DEMO_VERSION = 2;
+const DEMO_VERSION = 3;
 const BASE = { demo: true, dispatchPhone: "+1 956 555 0142" };
 
 async function ensure(opts: { force?: boolean; now?: Date }): Promise<string> {
@@ -233,7 +233,7 @@ async function build(a: Ctx, nowDate: Date) {
   const fut = (d: number) => new Date(now + d * DAY);
   const truck = async (unit: string, extra: Record<string, unknown> = {}) => (await create(a, "truck", { unitNumber: unit, usPlate: `TX${unit}F`, usPlateExpires: fut(240), mxPlate: `${unit}-FF-${unit.slice(-1)}`, mxPlateExpires: fut(240), dotInspectionExpires: fut(150), year: 2023, make: "Freightliner", model: "Cascadia", ...extra })).id;
   const T: Record<string, string> = {};
-  for (const u of ["201", "202", "203", "204", "205", "206", "207", "208", "209", "210"]) T[u] = await truck(u, u === "204" ? { usPlateExpires: fut(9) } : u === "209" ? { dotInspectionExpires: fut(-2) } : u === "210" ? { make: "Kenworth", model: "T680" } : {});
+  for (const u of ["201", "202", "203", "204", "205", "206", "207", "208", "209", "210", "211", "212", "213", "214", "215"]) T[u] = await truck(u, u === "204" ? { usPlateExpires: fut(9) } : u === "209" ? { dotInspectionExpires: fut(-2) } : u === "210" ? { make: "Kenworth", model: "T680" } : {});
   const R: Record<string, string> = {};
   for (const [u, kind] of [["5301", "53_dry"], ["5302", "53_dry"], ["5303", "53_dry"], ["5304", "53_dry"], ["5305", "53_dry"], ["5306", "53_reefer"], ["5307", "53_reefer"], ["5308", "53_dry"], ["5309", "53_dry"], ["5310", "53_dry"]] as const) R[u] = (await create(a, "trailer", { unitNumber: u, kind, lengthFt: 53, usPlate: `TR${u}`, inspectionExpires: fut(u === "5305" ? 12 : 200) })).id;
   const driver = async (name: string, truckId: string | null, extra: Record<string, unknown> = {}) => (await create(a, "driver", { name, driverType: "CDL", phone: `+1 956 555 01${String(Math.floor(Math.random() * 90) + 10)}`, whatsapp: null, licenseState: "TX", licenseNumber: `TX${Math.floor(10000000 + Math.random() * 8999999)}`, licenseClass: "A", licenseExpires: fut(600), medicalExpires: fut(300), fastExpires: fut(500), currentTruckId: truckId, hireDate: fut(-400), payType: "per_mile", payRateCents: 62, ...extra })).id;
@@ -248,8 +248,15 @@ async function build(a: Ctx, nowDate: Date) {
     priya: await driver("Priya Singh", T["208"], { licenseState: "ON", licenseNumber: "S4210-55012-81203" }),
     tomas: await driver("Tomás Ibarra", T["209"], { hireDate: fut(-12) }),
     denise: await driver("Denise Carter", T["210"], { licenseExpires: fut(-4) }),
+    // 211 runs team; 212 is a B-1 crossing truck
+    ramiro: await driver("Ramiro Lozano", T["211"]),
+    sofia: await driver("Sofía Lozano", T["211"]),
+    mateo: await driver("Mateo Ruiz", T["213"]),
+    carlos: await driver("Carlos Benavides", T["214"], { driverType: "DUAL", mxLicenseNumber: "LF-6620418", mxLicenseExpires: fut(280) }),
+    beto: await driver("Beto Cavazos", T["215"]),
+    oscar: await driver("Óscar Peña", T["212"], { driverType: "B1", visaType: "B1", licenseState: null, licenseNumber: null, mxLicenseNumber: "LF-5519034", mxLicenseExpires: fut(320), i94Until: fut(90) }),
   };
-  const truckOf: Record<string, string> = { [D.rafael]: T["201"], [D.marisol]: T["202"], [D.jorge]: T["203"], [D.kevin]: T["204"], [D.luz]: T["205"], [D.arturo]: T["206"], [D.hector]: T["207"], [D.priya]: T["208"], [D.tomas]: T["209"], [D.denise]: T["210"] };
+  const truckOf: Record<string, string> = { [D.rafael]: T["201"], [D.marisol]: T["202"], [D.jorge]: T["203"], [D.kevin]: T["204"], [D.luz]: T["205"], [D.arturo]: T["206"], [D.hector]: T["207"], [D.priya]: T["208"], [D.tomas]: T["209"], [D.denise]: T["210"], [D.ramiro]: T["211"], [D.sofia]: T["211"], [D.oscar]: T["212"], [D.mateo]: T["213"], [D.carlos]: T["214"], [D.beto]: T["215"] };
   const on = (d: string, trailer?: string) => ({ kind: "truck" as const, truckId: truckOf[d], driverId: d, trailerId: trailer ?? null });
 
   // ---------------- helpers for the day ----------------
@@ -375,10 +382,17 @@ async function build(a: Ctx, nowDate: Date) {
           await X.markArrivedYard(a, c.id, { at: at(-5) });
         }
       }
-      if (stage === "mx_rolling") return;
+      if (stage === "mx_rolling") {
+        // Óscar's B-1 truck is booked for the bridge once the freight reaches Nuevo Laredo
+        await O.planLeg(a, crossing.id, on(D.oscar), { plannedMiles: 8, ...ov });
+        return;
+      }
       const box = stage === "at_border" ? R["5309"] : R["5310"];
       await O.planLeg(a, crossing.id, on(D.arturo, box), { plannedMiles: 8, ...ov });
       if (stage === "at_border") {
+        // the Lozano team waits at the Laredo yard to take it north once it clears
+        await O.planLeg(a, us.id, { ...on(D.ramiro, box), coDriverId: D.sofia }, { plannedMiles: 157, ...ov });
+        await O.dispatchLeg(a, us.id);
         await walk(crossing.id, "en_route", now - 2 * H, 3);
         await ping(crossing.id, D.arturo, L.nld, L.yard, 0.5, 0.3, 3);
         await addCheckCall(a, o.order.id, { status: "at_border", location: "World Trade Bridge, US side", note: "In the FAST lane, ~40 min" });
@@ -409,6 +423,7 @@ async function build(a: Ctx, nowDate: Date) {
   });
   await step("portal request (draft)", () => portalRequestLoad(a.tenantId, C.sierra, { pickup: { name: "Sierra Madre Components — Apodaca", city: "Apodaca", state: "NL", country: "MX", windowStart: appt(2, 8) }, delivery: { name: "Alamo Auto Plant — San Antonio", city: "San Antonio", state: "TX", country: "US" }, equipment: "53_dry", po: "SMC-REQ-9921", cargoNote: "22 pallets harnesses", contact: "Lucía, logística" }));
   await step("truck 210 OOS", () => O.setTruckOos(a, T["210"], "Annual inspection failed — brake chamber", fut(2)));
+  await step("vacation: Beto", () => addEvent(a, { subjectKind: "driver", subjectId: D.beto, kind: "vacation", startsAt: appt(-2, 0), endsAt: appt(4, 0), hard: true, note: "Family trip to Monterrey" }));
   await step("time off: Denise", () => addEvent(a, { subjectKind: "driver", subjectId: D.denise, kind: "other", startsAt: appt(0, 0), endsAt: appt(3, 0), hard: true, note: "Off until the licence renewal clears at DPS" }));
 
   // ---------------- delivered this week → the billing queue ----------------
@@ -422,14 +437,14 @@ async function build(a: Ctx, nowDate: Date) {
       delivered.push({ id: o.order.id, num: o.order.orderNumber });
     });
   await done("delivered: ready", C.summit, 182000, L.yard, L.dallas, D.jorge, 2, ["POD", "RATE_CON"], 430);
-  await done("delivered: ready 2", C.northstar, 152000, L.sa, L.dallas, D.marisol, 3, ["POD"], 275);
+  await done("delivered: ready 2", C.northstar, 152000, L.sa, L.dallas, D.carlos, 3, ["POD"], 275);
   await done("delivered: ready 3", C.northstar, 168000, L.yard, L.sa, D.rafael, 3, ["POD"], 157);
-  await done("delivered: missing POD", C.summit, 176000, L.dallas, L.yard, D.kevin, 1, ["RATE_CON"], 430);
+  await done("delivered: missing POD", C.summit, 176000, L.dallas, L.yard, D.mateo, 1, ["RATE_CON"], 430);
   await done("delivered: detention waiting", C.lonestar, 245000, L.houston, L.dallas, D.luz, 2, ["POD"], 240);
   await done("delivered: Canada", C.maple, 188000, L.detroit, L.mississauga, D.priya, 4, ["POD"], 235);
   await done("delivered: for invoicing", C.summit, 199000, L.yard, L.dallas, D.jorge, 6, ["POD", "RATE_CON"], 430);
   await done("delivered: for invoicing 2", C.sierra, 285000, L.yard, L.sa, D.hector, 7, ["POD", "BOL"], 157);
-  await done("delivered: for invoicing 3", C.lonestar, 230000, L.houston, L.dallas, D.marisol, 8, ["POD"], 240);
+  await done("delivered: for invoicing 3", C.lonestar, 230000, L.houston, L.dallas, D.beto, 8, ["POD"], 240);
   await done("delivered: for invoicing 4", C.maple, 176000, L.detroit, L.mississauga, D.priya, 9, ["POD"], 235);
   await done("delivered: for invoicing 5", C.summit, 205000, L.yard, L.dallas, D.rafael, 12, ["POD", "RATE_CON"], 430);
   await done("delivered: for invoicing 6", C.lonestar, 240000, L.houston, L.joliet, D.luz, 14, ["POD"], 1085);
@@ -502,7 +517,7 @@ async function build(a: Ctx, nowDate: Date) {
 
   // ---------------- safety ----------------
   await step("document type: medical card", () => create(a, "documentType", { name: "Drug & alcohol policy receipt", appliesTo: "driver", tracksExpiry: false, required: false, blocksDispatch: false }));
-  for (const [d, n] of [[D.rafael, 9], [D.marisol, 9], [D.jorge, 9], [D.kevin, 7], [D.luz, 9], [D.arturo, 8], [D.hector, 9], [D.priya, 6], [D.tomas, 3], [D.denise, 9]] as const)
+  for (const [d, n] of [[D.rafael, 9], [D.marisol, 9], [D.jorge, 9], [D.kevin, 7], [D.luz, 9], [D.arturo, 8], [D.hector, 9], [D.priya, 6], [D.tomas, 3], [D.denise, 9], [D.ramiro, 9], [D.sofia, 9], [D.oscar, 8], [D.mateo, 9], [D.carlos, 9], [D.beto, 9]] as const)
     await step("dq file", async () => {
       const items = ["application", "mvr_hire", "road_test", "clearinghouse_full", "prior_employers", "mvr_annual", "annual_review", "clearinghouse_annual"].slice(0, n);
       for (const k of items) await S.recordDq(a, d, k, { completedAt: new Date(now - (k.includes("annual") ? 120 : 380) * DAY), note: k === "annual_review" ? "Reviewed by S. Guerra" : null });

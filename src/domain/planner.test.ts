@@ -5,7 +5,7 @@ import { create } from "@/data/records";
 import { createOrder, planLeg, dispatchLeg, acceptLeg, advanceLeg, candidatesForLeg, EligibilityError } from "./orders";
 import { addEvent, deleteEvent, plannerData, deadhead } from "./planner";
 import { db } from "@/db/client";
-import { stops as stopsT } from "@/db/schema";
+import { stops as stopsT, trucks as trucksT } from "@/db/schema";
 import { eq, and } from "drizzle-orm";
 
 const future = new Date(Date.now() + 365 * 86400_000);
@@ -108,4 +108,36 @@ describe("planner data", () => {
     expect(dh).toBeGreaterThan(150);
     expect(dh).toBeLessThan(260);
   });
+
+  it("by truck: solo or team with each driver's licence type, and available / on a load / waiting on crossing / unavailable with the reason", async () => {
+    const t3 = await create(a, "truck", { unitNumber: "2120", usPlate: "TX2120", usPlateExpires: future });
+    const t4 = await create(a, "truck", { unitNumber: "2130", usPlate: "TX2130", usPlateExpires: future });
+    await create(a, "truck", { unitNumber: "2140", usPlate: "TX2140", usPlateExpires: future });
+    const ram = await create(a, "driver", { name: "Ramiro Lozano", driverType: "CDL", licenseExpires: future, medicalExpires: future, currentTruckId: t3.id });
+    const sof = await create(a, "driver", { name: "Sofía Lozano", driverType: "CDL", licenseExpires: future, medicalExpires: future, currentTruckId: t3.id });
+    await create(a, "driver", { name: "Óscar Peña", driverType: "B1", visaType: "B1", mxLicenseNumber: "LF-1", mxLicenseExpires: future, i94Until: future, currentTruckId: t4.id });
+    await db.update(trucksT).set({ status: "oos", oosReason: "brake chamber" }).where(eq(trucksT.id, f.t2));
+    // the team is booked on the US leg of a load whose freight is still in Mexico
+    const x = await createOrder(a, { customerId: f.cust, rateCents: 285000, book: true, template: "mx_crossing_us", stops: [{ type: "pickup", name: "MTY", country: "MX" }, { type: "border_yard", name: "Nuevo Laredo", country: "MX" }, { type: "yard", name: "Laredo", country: "US" }, { type: "delivery", name: "Dallas DC", country: "US" }] } as never);
+    const us = x.legs.find((l) => l.type === "us")!;
+    await planLeg(a, us.id, { kind: "truck", truckId: t3.id, driverId: ram.id, coDriverId: sof.id }, { override: true, reason: "test" });
+
+    const p = await plannerData(a);
+    const by = (u: string) => p.trucks.find((t) => t.unit === u)!;
+    expect(p.trucks.map((t) => t.unit)).toEqual(["2104", "2117", "2120", "2130", "2140"]);
+    expect(by("2104")).toMatchObject({ status: "available", team: false, crew: [{ name: "Daniel Reyes", driverType: "CDL" }] });
+    expect(by("2117")).toMatchObject({ status: "unavailable", why: "Out of service — brake chamber" });
+    expect(by("2120")).toMatchObject({ status: "waiting_crossing", team: true });
+    expect(by("2120").crew.map((c) => c.name).sort()).toEqual(["Ramiro Lozano", "Sofía Lozano"]);
+    expect(by("2120").why).toMatch(/Mexican side/);
+    expect(by("2130")).toMatchObject({ status: "available", crew: [{ name: "Óscar Peña", driverType: "B1" }] });
+    expect(by("2140")).toMatchObject({ status: "unavailable", why: "No driver in this truck", crew: [] });
+
+    // time off now makes a truck unavailable, and says until when
+    await addEvent(a, { subjectKind: "driver", subjectId: f.dan, kind: "vacation", startsAt: new Date(Date.now() - 3600_000), endsAt: day(3, 0) });
+    const q = await plannerData(a);
+    expect(q.trucks.find((t) => t.unit === "2104")).toMatchObject({ status: "unavailable" });
+    expect(q.trucks.find((t) => t.unit === "2104")!.why).toMatch(/^Vacation until /);
+  });
 });
+
