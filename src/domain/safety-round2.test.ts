@@ -7,7 +7,8 @@ import { parseDate } from "@/data/fields";
 import { db } from "@/db/client";
 import { tenants } from "@/db/schema";
 import * as S from "./safety";
-import { repairInstant, oosReleaseNeedsReason, lookupViolation } from "./safety-rules";
+import { repairInstant, oosReleaseNeedsReason, lookupViolation, followUpSchedule, rtdProblem, overlappingDraw } from "./safety-rules";
+import * as C from "./compliance";
 
 // Safety round-2 retest fixes: same-day repair sign-off (N1), a reason to take an OOS finding off (N3), 393.9 (N11)
 
@@ -95,5 +96,90 @@ describe("the violation table (safety N11)", () => {
     expect(lookupViolation("393.9")).toMatchObject({ basic: "vehicle", severity: 6 });
     expect(lookupViolation("49 CFR 393.9")).toMatchObject({ severity: 6 });
     expect(lookupViolation("393.47")).toBeNull(); // several paragraphs with different weights: not guessed
+  });
+});
+
+describe("return to duty needs the SAP on the record and an observed test (safety #16)", () => {
+  const refuse = async () => {
+    const t = await S.addTest(a, { driverId: f.d1, reason: "reasonable_suspicion", substance: "drug" });
+    await S.recordResult(a, t.id, { result: "refusal" });
+    expect((await C.statusFor(a, "driver", f.d1)).dispatchable).toBe(false);
+  };
+  const sap = () => ({ sapName: "Dr. R. Salinas, SAP", sapEvaluatedAt: new Date(), sapEducationDoneAt: new Date(), observed: true, followUpPlanned: 6, followUpMonths: 12 });
+
+  it("a negative RTD 30 minutes after a refusal, with no SAP, is refused and the hold stays", async () => {
+    await refuse();
+    await expect(S.addTest(a, { driverId: f.d1, reason: "return_to_duty", substance: "drug", collectedAt: new Date(), result: "negative", followUpPlanned: 6 })).rejects.toThrow(/Name the SAP/);
+    await expect(S.addTest(a, { driverId: f.d1, reason: "return_to_duty", substance: "drug", collectedAt: new Date(), result: "negative", ...sap(), sapEducationDoneAt: null })).rejects.toThrow(/education or treatment/);
+    await expect(S.addTest(a, { driverId: f.d1, reason: "return_to_duty", substance: "drug", collectedAt: new Date(), result: "negative", ...sap(), observed: false })).rejects.toThrow(/direct observation/);
+    await expect(S.addTest(a, { driverId: f.d1, reason: "return_to_duty", substance: "drug", collectedAt: new Date(), result: "negative", ...sap(), followUpMonths: null })).rejects.toThrow(/months/);
+    await expect(S.addTest(a, { driverId: f.d1, reason: "return_to_duty", substance: "drug", collectedAt: new Date(), result: "negative", ...sap(), sapEvaluatedAt: new Date(Date.now() - 3 * DAY) })).rejects.toThrow(/after the violation/);
+    expect((await C.statusFor(a, "driver", f.d1)).dispatchable).toBe(false);
+  });
+
+  it("an RTD ordered first (pending) and completed with the SAP details lifts the hold; the follow-ups become dated to-dos", async () => {
+    await refuse();
+    const rtd = await S.addTest(a, { driverId: f.d1, reason: "return_to_duty", substance: "drug", collectedAt: new Date(), result: "pending" });
+    await expect(S.recordResult(a, rtd.id, { result: "negative" })).rejects.toThrow(/SAP/);
+    await S.recordResult(a, rtd.id, { result: "negative", ...sap(), specimenType: "urine", mroVerifiedAt: new Date() });
+    expect((await C.statusFor(a, "driver", f.d1)).dispatchable).toBe(true);
+    const t = (await S.driverTests(a, f.d1)).tests.find((x) => x.id === rtd.id)!;
+    expect(t).toMatchObject({ sapName: "Dr. R. Salinas, SAP", observed: true, followUpPlanned: 6, followUpMonths: 12, specimenType: "urine" });
+    const standing = (await S.driverTests(a, f.d1)).standing;
+    expect(standing.followUp!.schedule).toHaveLength(6);
+    expect(standing.followUp!.nextDue).toBe(standing.followUp!.schedule[0]);
+    const prog = await S.daProgram(a, new Date().getUTCFullYear());
+    expect(prog.followUpsDue).toEqual([]); // the first is due in 2 months, not yet a to-do
+  });
+
+  it("the schedule: 6 in the first 12 months, the rest spread over the plan", () => {
+    const start = new Date("2026-01-01T00:00:00Z");
+    const six = followUpSchedule(start, 6, 12).map((d) => d.slice(0, 10));
+    expect(six).toHaveLength(6);
+    expect(six[0] >= "2026-02-28" && six[0] <= "2026-03-02").toBe(true);
+    expect(six[5].slice(0, 7)).toBe("2027-01");
+    const twelve = followUpSchedule(start, 12, 48);
+    expect(twelve.filter((d) => d < "2027-01-02")).toHaveLength(6);
+    expect(twelve[11].slice(0, 7)).toBe("2030-01");
+    expect(rtdProblem({ id: "x", driverId: "d", reason: "return_to_duty", substance: "alcohol", result: "negative", collectedAt: new Date(), resultAt: null, sapName: "S", sapEvaluatedAt: new Date(), sapEducationDoneAt: new Date(), followUpPlanned: 6, followUpMonths: 12 }, null)).toBeNull(); // breath alcohol isn't observed
+  });
+
+  it("the test keeps its papers (confidential), the MRO date and the specimen", async () => {
+    const t = await S.addTest(a, { driverId: f.d1, reason: "pre_employment", substance: "drug", collectedAt: new Date(Date.now() - 2 * DAY), result: "negative", specimenType: "oral_fluid", mroVerifiedAt: new Date() });
+    await expect(S.addTest(a, { driverId: f.d1, reason: "post_accident", substance: "alcohol", collectedAt: new Date(), result: "negative", specimenType: "urine" })).rejects.toThrow(/breath or oral fluid/);
+    await expect(S.addTest(a, { driverId: f.d1, reason: "pre_employment", substance: "drug", collectedAt: new Date(), result: "negative", mroVerifiedAt: new Date(Date.now() - 5 * DAY) })).rejects.toThrow(/after the collection/);
+    await S.attachTestDocument(a, t.id, { fileName: "ccf.pdf", mimeType: "application/pdf", bytes: Buffer.from("%PDF-1.4") });
+    await expect(S.attachTestDocument({ ...a, role: "dispatcher" }, t.id, { fileName: "x.pdf", mimeType: "application/pdf", bytes: Buffer.from("%PDF") })).rejects.toThrow(/permission/);
+    const mine = (await S.driverTests(a, f.d1)).tests.find((x) => x.id === t.id)!;
+    expect(mine.docs.map((d) => d.fileName)).toEqual(["ccf.pdf"]);
+    expect(mine.specimenType).toBe("oral_fluid");
+    // the paper isn't one of the driver's documents dispatch sees
+    expect((await C.subjectDocuments(a, "driver", f.d1)).length).toBe(0);
+  });
+});
+
+describe("D&A validation (safety N10)", () => {
+  it("a collection can't be in the future, before the selection or before the accident", async () => {
+    await expect(S.addTest(a, { driverId: f.d1, reason: "reasonable_suspicion", substance: "drug", collectedAt: new Date(Date.now() + 20 * 60_000), result: "pending" })).rejects.toThrow(/in the future/);
+    const draw = await S.drawRandom(a, { period: `${new Date().getUTCFullYear()}-${String(new Date().getUTCMonth() + 1).padStart(2, "0")}`, drugRate: 100, alcoholRate: 0, drawsPerYear: 12 });
+    expect(draw.drug).toHaveLength(1);
+    const sel = (await S.driverTests(a, f.d1)).tests.find((t) => t.reason === "random")!;
+    await expect(S.recordResult(a, sel.id, { collectedAt: new Date(sel.selectedAt!.getTime() - 20 * 60_000), result: "pending" })).rejects.toThrow(/before the driver was selected/);
+    await S.recordResult(a, sel.id, { collectedAt: new Date(), result: "pending" });
+    const { saveIncident } = await import("./compliance");
+    const inc = await saveIncident(a, null, { occurredAt: new Date(Date.now() - 60 * 60_000), kind: "accident", driverId: f.d1, description: "Tow-away", citation: true, towAway: true });
+    await expect(S.addTest(a, { driverId: f.d1, reason: "post_accident", substance: "alcohol", incidentId: inc.id, collectedAt: new Date(Date.now() - 2 * 60 * 60_000), result: "negative" })).rejects.toThrow(/before the accident/);
+  });
+
+  it("monthly and quarterly draws can't cover the same period", async () => {
+    expect(overlappingDraw("2026-09", ["2026-Q3"])).toBe("2026-Q3");
+    expect(overlappingDraw("2026-Q3", ["2026-07"])).toBe("2026-07");
+    expect(overlappingDraw("2026-10", ["2026-Q3"])).toBeNull();
+    const y = new Date().getUTCFullYear();
+    const q = Math.floor(new Date().getUTCMonth() / 3) + 1;
+    const month = `${y}-${String(new Date().getUTCMonth() + 1).padStart(2, "0")}`;
+    await S.drawRandom(a, { period: `${y}-Q${q}`, drugRate: 50, alcoholRate: 10, drawsPerYear: 4 });
+    await expect(S.drawRandom(a, { period: month, drugRate: 50, alcoholRate: 10, drawsPerYear: 12 })).rejects.toThrow(/already covers part of/);
+    await expect(S.drawRandom(a, { period: month, drugRate: 50, alcoholRate: 10, drawsPerYear: 4 })).rejects.toThrow(/12 draws a year|already covers/);
   });
 });

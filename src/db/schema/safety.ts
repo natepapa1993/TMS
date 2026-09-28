@@ -49,6 +49,13 @@ export const daTests = pgTable(
     collector: text("collector"),
     mro: text("mro"),
     followUpPlanned: integer("follow_up_planned"), // on a return-to-duty test: the SAP's number of follow-up tests
+    followUpMonths: integer("follow_up_months"), // …over this many months (12–60, 40.307(d))
+    specimenType: text("specimen_type").$type<"urine" | "oral_fluid" | "breath">(), // null = urine for drug, breath for alcohol
+    mroVerifiedAt: timestamp("mro_verified_at", { withTimezone: true }), // the day the MRO verified the drug result
+    observed: boolean("observed").notNull().default(false), // directly observed collection (required for return-to-duty and follow-up drug tests, 40.67(b))
+    sapName: text("sap_name"), // return-to-duty: the substance abuse professional
+    sapEvaluatedAt: timestamp("sap_evaluated_at", { withTimezone: true }), // …their initial evaluation
+    sapEducationDoneAt: timestamp("sap_education_done_at", { withTimezone: true }), // …education / treatment done (the SAP's follow-up evaluation)
     clearinghouseReportedAt: timestamp("clearinghouse_reported_at", { withTimezone: true }),
     note: text("note"),
     ...audit(),

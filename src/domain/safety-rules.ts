@@ -114,20 +114,72 @@ export function dqComplianceItems(lines: DqLine[], opts: { levels?: Record<strin
 export const REASON_LABEL: Record<string, string> = { pre_employment: "Pre-employment", random: "Random", post_accident: "Post-accident", reasonable_suspicion: "Reasonable suspicion", return_to_duty: "Return to duty", follow_up: "Follow-up" };
 export const RESULT_LABEL: Record<string, string> = { selected: "Selected — not collected yet", pending: "Collected — waiting for result", negative: "Negative", negative_dilute: "Negative-dilute", positive: "Positive (verified)", refusal: "Refusal to test", cancelled: "Cancelled" };
 
-export type DaTestLike = { id: string; driverId: string; reason: string; substance: string; result: string; collectedAt: Date | string | null; resultAt: Date | string | null; selectedAt?: Date | string | null; followUpPlanned?: number | null; clearinghouseReportedAt?: Date | string | null; incidentId?: string | null };
+export type DaTestLike = { id: string; driverId: string; reason: string; substance: string; result: string; collectedAt: Date | string | null; resultAt: Date | string | null; selectedAt?: Date | string | null; followUpPlanned?: number | null; followUpMonths?: number | null; clearinghouseReportedAt?: Date | string | null; incidentId?: string | null; observed?: boolean | null; sapName?: string | null; sapEvaluatedAt?: Date | string | null; sapEducationDoneAt?: Date | string | null };
 
 const at = (t: DaTestLike) => new Date(t.resultAt ?? t.collectedAt ?? t.selectedAt ?? 0).getTime();
+
+export const SPECIMEN_LABEL: Record<string, string> = { urine: "Urine", oral_fluid: "Oral fluid", breath: "Breath" };
+/** Which specimens a test can use: drug tests urine or oral fluid (Part 40 since 2023), alcohol breath or saliva. */
+export const specimensFor = (substance: string) => (substance === "alcohol" ? ["breath", "oral_fluid"] : ["urine", "oral_fluid"]);
+
+/** The SAP process is on the record: who, the evaluation, education / treatment done (40.281–40.301). */
+export const sapComplete = (t: DaTestLike) => !!(t.sapName?.trim() && t.sapEvaluatedAt && t.sapEducationDoneAt);
+
+/**
+ * A return-to-duty test that lifts a hold: negative, after the SAP's evaluation and the education or treatment
+ * the SAP required, and — for drugs — collected under direct observation (40.67(b)). Anything less and the
+ * driver stays on the hold, however soon after the violation someone types a negative.
+ */
+export const rtdClears = (t: DaTestLike) => t.reason === "return_to_duty" && ["negative", "negative_dilute"].includes(t.result) && sapComplete(t) && (t.substance === "alcohol" || !!t.observed) && (!!t.followUpPlanned && !!t.followUpMonths);
+
+/**
+ * Why a return-to-duty result can't clear the hold yet, in words Safety acts on, or null. Checked when the
+ * negative result is saved so nobody records it believing the driver is cleared.
+ */
+export function rtdProblem(t: DaTestLike & { collectedAt: Date | string | null }, violationAt: Date | string | null): { message: string; field: string } | null {
+  if (t.reason !== "return_to_duty" || !["negative", "negative_dilute"].includes(t.result)) return null;
+  if (!t.sapName?.trim()) return { message: "Name the SAP (substance abuse professional) who evaluated the driver", field: "sapName" };
+  if (!t.sapEvaluatedAt) return { message: "When did the SAP evaluate the driver?", field: "sapEvaluatedAt" };
+  if (!t.sapEducationDoneAt) return { message: "When was the education or treatment the SAP required done (the SAP's follow-up evaluation)?", field: "sapEducationDoneAt" };
+  const ms = (d: Date | string | null | undefined) => (d ? new Date(d).getTime() : null);
+  if (violationAt && ms(t.sapEvaluatedAt)! < new Date(violationAt).getTime()) return { message: "The SAP evaluation comes after the violation", field: "sapEvaluatedAt" };
+  if (ms(t.sapEducationDoneAt)! < ms(t.sapEvaluatedAt)!) return { message: "Education or treatment is done after the SAP's evaluation", field: "sapEducationDoneAt" };
+  if (t.collectedAt && new Date(t.collectedAt).getTime() < ms(t.sapEducationDoneAt)! - 86400_000) return { message: "The return-to-duty test is collected after the SAP says the education or treatment is done", field: "collectedAt" };
+  if (t.substance === "drug" && !t.observed) return { message: "A return-to-duty drug test is collected under direct observation (40.67(b)) — tick Observed", field: "observed" };
+  if (!t.followUpPlanned || t.followUpPlanned < 6 || t.followUpPlanned > 60) return { message: "The SAP's follow-up plan: at least 6 tests in the first 12 months (40.307)", field: "followUpPlanned" };
+  if (!t.followUpMonths || t.followUpMonths < 12 || t.followUpMonths > 60) return { message: "Over how many months? 12 to 60 (40.307(d))", field: "followUpMonths" };
+  return null;
+}
+
+/**
+ * The follow-up schedule as due dates: at least 6 tests in the first 12 months (evenly, or all of them when the
+ * plan is 12 months), the rest spread over the remaining months. The SAP sets the number; dates are "due by",
+ * and the actual days stay unannounced to the driver.
+ */
+export function followUpSchedule(rtdAt: Date | string, count: number, months: number): string[] {
+  const start = new Date(rtdAt).getTime();
+  const MONTH = 30.4375 * 86400_000;
+  const out: string[] = [];
+  const first = months <= 12 ? count : Math.min(count, 6);
+  const firstSpan = Math.min(months, 12);
+  for (let k = 1; k <= first; k++) out.push(new Date(start + (k * firstSpan * MONTH) / first).toISOString());
+  const rest = count - first;
+  for (let k = 1; k <= rest; k++) out.push(new Date(start + 12 * MONTH + (k * (months - 12) * MONTH) / rest).toISOString());
+  return out;
+}
 
 /**
  * A driver with a verified positive or a refusal may not do safety-sensitive work until the return-to-duty
  * process ends with a negative return-to-duty test (49 CFR 40.285, 382.501–503).
  */
-export function daStanding<T extends DaTestLike>(tests: T[]) {
+export function daStanding<T extends DaTestLike>(tests: T[], now = new Date()) {
   const sorted = [...tests].sort((p, q) => at(p) - at(q));
   const violation = [...sorted].reverse().find((t) => t.result === "positive" || t.result === "refusal") ?? null;
-  const rtd = violation ? (sorted.find((t) => t.reason === "return_to_duty" && ["negative", "negative_dilute"].includes(t.result) && at(t) > at(violation)) ?? null) : null;
+  const rtd = violation ? (sorted.find((t) => rtdClears(t) && at(t) > at(violation)) ?? null) : null;
   const prohibited = !!violation && !rtd;
   const followUps = rtd ? sorted.filter((t) => t.reason === "follow_up" && at(t) > at(rtd) && t.result !== "cancelled" && t.result !== "selected" && t.result !== "pending") : [];
+  const schedule = rtd?.followUpPlanned && rtd.followUpMonths ? followUpSchedule(rtd.collectedAt ?? rtd.resultAt ?? now, rtd.followUpPlanned, rtd.followUpMonths) : [];
+  const nextDue = schedule[followUps.length] ?? null;
   const preEmployment = sorted.find((t) => t.reason === "pre_employment" && t.substance === "drug" && ["negative", "negative_dilute"].includes(t.result)) ?? null;
   // collected (or ordered) and waiting: a pending result is not a negative one
   const preEmploymentPending = !preEmployment && sorted.some((t) => t.reason === "pre_employment" && t.substance === "drug" && (t.result === "pending" || t.result === "selected"));
@@ -135,7 +187,7 @@ export function daStanding<T extends DaTestLike>(tests: T[]) {
     prohibited,
     violation,
     rtd,
-    followUp: rtd?.followUpPlanned ? { done: followUps.length, planned: rtd.followUpPlanned } : null,
+    followUp: rtd?.followUpPlanned ? { done: followUps.length, planned: rtd.followUpPlanned, months: rtd.followUpMonths ?? null, schedule, nextDue, overdue: !!nextDue && new Date(nextDue).getTime() < now.getTime() } : null,
     preEmploymentNegativeAt: preEmployment ? new Date(preEmployment.resultAt ?? preEmployment.collectedAt ?? 0).toISOString() : null,
     preEmploymentPending,
   };
@@ -172,6 +224,24 @@ export function periodStart(period: string): Date | null {
   const m = /^(\d{4})-(\d{2})$/.exec(period);
   if (m && +m[2] >= 1 && +m[2] <= 12) return new Date(Date.UTC(+m[1], +m[2] - 1, 1));
   return null;
+}
+
+/** The months a random period covers: 2026-Q3 → Jul 1 to Oct 1, 2026-09 → Sep 1 to Oct 1 (UTC, end exclusive). */
+export function periodRange(period: string): { start: Date; end: Date } | null {
+  const start = periodStart(period);
+  if (!start) return null;
+  const months = /Q/.test(period) ? 3 : 1;
+  return { start, end: new Date(Date.UTC(start.getUTCFullYear(), start.getUTCMonth() + months, 1)) };
+}
+
+/** An existing draw whose period overlaps this one (a monthly 2026-09 inside a quarterly 2026-Q3), or null. */
+export function overlappingDraw(period: string, existing: string[]): string | null {
+  const r = periodRange(period);
+  if (!r) return null;
+  return existing.find((p) => {
+    const o = periodRange(p);
+    return !!o && o.start < r.end && r.start < o.end;
+  }) ?? null;
 }
 
 /** Pick n distinct items with a random source (crypto in the app, seeded in tests). */

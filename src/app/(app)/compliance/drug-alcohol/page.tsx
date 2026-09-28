@@ -2,7 +2,9 @@ import Link from "next/link";
 import { requireCtx } from "@/lib/auth";
 import { can } from "@/lib/context";
 import { daProgram } from "@/domain/safety";
-import { REASON_LABEL, RESULT_LABEL } from "@/domain/safety-rules";
+import { REASON_LABEL, RESULT_LABEL, SPECIMEN_LABEL } from "@/domain/safety-rules";
+import { tenantZone } from "@/domain/company";
+import { fmtWhen, zonedDate } from "@/lib/time";
 import { listIncidents } from "@/domain/compliance";
 import { list } from "@/data/records";
 import { PageHeader } from "@/components/page-header";
@@ -13,19 +15,22 @@ import { TestButton, ResultButton, ClearinghouseButton, DrawButton } from "../sa
 export const metadata = { title: "Drug & alcohol" };
 export const dynamic = "force-dynamic";
 
-const day = (v: string | Date | null | undefined) => (v ? new Date(v).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }) : "—");
-const when = (v: string | Date | null | undefined) => (v ? new Date(v).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) : "—");
 
 export default async function DrugAlcoholPage({ searchParams }: PageProps<"/compliance/drug-alcohol">) {
   const ctx = await requireCtx();
   if (!can(ctx, "safety.confidential")) return <NoAccess area="Drug & alcohol (confidential, 49 CFR 40.321)" role={ctx.role} />;
   const sp = await searchParams;
   const now = new Date();
-  const year = Number(sp.year) || now.getUTCFullYear();
+  // every time on this page on the company's clock, with the zone printed: an 8-hour alcohol deadline reads the same for everyone (safety N2)
+  const zone = await tenantZone(ctx.tenantId);
+  const day = (v: string | Date | null | undefined) => fmtWhen(v, zone, { style: "date" }) ?? "—";
+  const when = (v: string | Date | null | undefined) => fmtWhen(v, zone, { style: "short", now, year: true }) ?? "—";
+  const year = Number(sp.year) || Number(zonedDate(now, zone).slice(0, 4));
   const [p, drivers, incidents] = await Promise.all([daProgram(ctx, year), list(ctx, "driver", { limit: 2000 }), listIncidents(ctx)]);
   const opts = drivers.map((d) => ({ id: d.id, name: String(d.name) })).sort((p, q) => p.name.localeCompare(q.name, "en-US", { numeric: true }));
   const accidents = incidents.filter((i) => i.kind === "accident").map((i) => ({ id: i.id, label: `${day(i.occurredAt)} · ${i.description.slice(0, 60)}` }));
-  const quarter = `${now.getUTCFullYear()}-Q${Math.floor(now.getUTCMonth() / 3) + 1}`;
+  const today = zonedDate(now, zone);
+  const quarter = `${today.slice(0, 4)}-Q${Math.floor((Number(today.slice(5, 7)) - 1) / 3) + 1}`;
   const pace = (done: number, req: number) => (req === 0 ? "text-faint" : done >= req ? "text-green" : "text-amber");
   return (
     <div>
@@ -36,7 +41,7 @@ export default async function DrugAlcoholPage({ searchParams }: PageProps<"/comp
       <div className="px-gutter pb-10 space-y-5">
         <div className="flex items-center gap-2 text-callout">
           {[year - 1, year, year + 1]
-            .filter((y) => y <= now.getUTCFullYear())
+            .filter((y) => y <= Number(today.slice(0, 4)))
             .map((y) => (
               <Link key={y} href={`/compliance/drug-alcohol?year=${y}`} className="stage-tab" data-active={y === year}>
                 {y}
@@ -72,7 +77,7 @@ export default async function DrugAlcoholPage({ searchParams }: PageProps<"/comp
           </div>
         </div>
 
-        {(p.duties.length > 0 || p.postAccident.some((x) => !x.alcoholDone || !x.drugDone)) && (
+        {(p.duties.length > 0 || p.followUpsDue.length > 0 || p.postAccident.some((x) => !x.alcoholDone || !x.drugDone)) && (
           <div className="card border-amber/60 p-4 space-y-2" data-testid="da-todo">
             <div className="eyebrow text-amber">To do</div>
             {p.postAccident
@@ -86,6 +91,14 @@ export default async function DrugAlcoholPage({ searchParams }: PageProps<"/comp
                   <TestButton drivers={opts} incidents={accidents} preset={{ driverId: x.driverId, reason: "post_accident", substance: x.alcoholDone ? "drug" : "alcohol", incidentId: x.incidentId }} label="Record" small />
                 </div>
               ))}
+            {p.followUpsDue.map((x) => (
+              <div key={x.driverId} className="flex items-center justify-between gap-3 text-callout" data-testid="follow-up-due">
+                <span>
+                  <b>{x.driver}</b> — follow-up test {x.n} of {x.of} (SAP plan) {x.overdue ? <span className="text-red font-semibold">was due {day(x.dueAt)}</span> : <>due by {day(x.dueAt)}</>}. Observed collection; don&rsquo;t tell the driver ahead.
+                </span>
+                <TestButton drivers={opts} preset={{ driverId: x.driverId, reason: "follow_up", substance: "drug", observed: true }} label="Record" small />
+              </div>
+            ))}
             {p.duties.map((d) => (
               <div key={d.id} className="flex items-center justify-between gap-3 text-callout">
                 <span>
@@ -106,7 +119,7 @@ export default async function DrugAlcoholPage({ searchParams }: PageProps<"/comp
                   <Link href={`/compliance/drivers/${h.id}`} className="font-semibold hover:text-teal">
                     {h.name}
                   </Link>
-                  <span>{h.prohibited ? <span className="pill pill-red">hold since {day(h.since)} — SAP and a negative return-to-duty test</span> : h.followUp ? <span className="pill pill-amber">follow-up {h.followUp.done} of {h.followUp.planned}</span> : null}</span>
+                  <span>{h.prohibited ? <span className="pill pill-red">hold since {day(h.since)} — SAP and a negative return-to-duty test</span> : h.followUp ? <span className="pill pill-amber">follow-up {h.followUp.done} of {h.followUp.planned}{h.followUp.nextDue ? ` · next by ${day(h.followUp.nextDue)}` : ""}</span> : null}</span>
                 </li>
               ))}
             </ul>
@@ -141,10 +154,20 @@ export default async function DrugAlcoholPage({ searchParams }: PageProps<"/comp
                       </Link>
                     </td>
                     <td>{REASON_LABEL[t.reason] ?? t.reason}</td>
-                    <td className="capitalize">{t.substance}</td>
+                    <td>
+                      <span className="capitalize">{t.substance}</span>
+                      {(t.specimenType || t.observed) && <div className="text-footnote text-muted">{[t.specimenType ? SPECIMEN_LABEL[t.specimenType] : null, t.observed ? "observed" : null].filter(Boolean).join(" · ")}</div>}
+                    </td>
                     <td className="whitespace-nowrap">{t.collectedAt ? when(t.collectedAt) : t.selectedAt ? `selected ${when(t.selectedAt)}` : "—"}</td>
                     <td>
                       <span className={`pill ${t.result === "positive" || t.result === "refusal" ? "pill-red" : t.result.startsWith("negative") ? "pill-green" : t.result === "cancelled" ? "pill-slate" : "pill-amber"}`}>{RESULT_LABEL[t.result] ?? t.result}</span>
+                      {t.mroVerifiedAt && <div className="text-footnote text-muted">MRO verified {day(t.mroVerifiedAt)}</div>}
+                      {t.reason === "return_to_duty" && t.sapName && <div className="text-footnote text-muted">SAP {t.sapName} · evaluated {day(t.sapEvaluatedAt)} · done {day(t.sapEducationDoneAt)}</div>}
+                      {t.docs.map((d) => (
+                        <a key={d.id} href={`/api/files/${d.id}`} target="_blank" rel="noreferrer" className="block text-footnote text-teal">
+                          {d.fileName}
+                        </a>
+                      ))}
                     </td>
                     <td className="text-right whitespace-nowrap">{["selected", "pending"].includes(t.result) && <ResultButton test={JSON.parse(JSON.stringify(t))} />}</td>
                   </tr>

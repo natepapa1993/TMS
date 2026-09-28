@@ -45,11 +45,11 @@ describe("drug & alcohol rules", () => {
   it("a positive or a refusal holds the driver until a negative return-to-duty test; follow-ups count after it", () => {
     const pos = t({ result: "positive", resultAt: new Date(now.getTime() - 60 * DAY) });
     expect(daStanding([pos]).prohibited).toBe(true);
-    const rtd = t({ reason: "return_to_duty", result: "negative", resultAt: new Date(now.getTime() - 20 * DAY), followUpPlanned: 6 });
+    const rtd = t({ reason: "return_to_duty", result: "negative", resultAt: new Date(now.getTime() - 20 * DAY), followUpPlanned: 6, followUpMonths: 12, observed: true, sapName: "SAP", sapEvaluatedAt: new Date(now.getTime() - 50 * DAY), sapEducationDoneAt: new Date(now.getTime() - 25 * DAY) });
     const fu = t({ reason: "follow_up", result: "negative", resultAt: new Date(now.getTime() - 5 * DAY) });
-    const st = daStanding([fu, rtd, pos]);
+    const st = daStanding([fu, rtd, pos], now);
     expect(st.prohibited).toBe(false);
-    expect(st.followUp).toEqual({ done: 1, planned: 6 });
+    expect(st.followUp).toMatchObject({ done: 1, planned: 6, months: 12 });
     expect(daStanding([t({ reason: "return_to_duty", resultAt: new Date(now.getTime() - 90 * DAY) }), pos]).prohibited).toBe(true); // an old RTD doesn't lift a newer positive
   });
   it("who reports what to the Clearinghouse: the employer files alcohol ≥ 0.04, refusals and the RTD negative; the MRO files drug positives", () => {
@@ -179,11 +179,12 @@ describe("drug & alcohol program", () => {
     expect(prog.holds.map((h) => h.name)).toEqual(["Daniel Reyes"]);
     await S.markClearinghouseReported(a, mine.id);
     // return to duty after the SAP: at least 6 follow-ups
-    await expect(S.addTest(a, { driverId: f.d1, reason: "return_to_duty", substance: "drug", collectedAt: days(0), result: "negative", followUpPlanned: 3 })).rejects.toThrow(/at least 6/);
-    await S.addTest(a, { driverId: f.d1, reason: "return_to_duty", substance: "drug", collectedAt: days(0), result: "negative", followUpPlanned: 6 });
+    const sap = { sapName: "Dr. R. Salinas", sapEvaluatedAt: new Date(), sapEducationDoneAt: new Date(), observed: true, followUpMonths: 12 };
+    await expect(S.addTest(a, { driverId: f.d1, reason: "return_to_duty", substance: "drug", collectedAt: days(0), result: "negative", followUpPlanned: 3, ...sap })).rejects.toThrow(/at least 6/);
+    await S.addTest(a, { driverId: f.d1, reason: "return_to_duty", substance: "drug", collectedAt: days(0), result: "negative", followUpPlanned: 6, ...sap });
     expect((await C.statusFor(a, "driver", f.d1)).dispatchable).toBe(true);
     prog = await S.daProgram(a, 2026);
-    expect(prog.holds[0].followUp).toEqual({ done: 0, planned: 6 });
+    expect(prog.holds[0].followUp).toMatchObject({ done: 0, planned: 6, months: 12 });
     await expect(S.daProgram({ ...a, role: "dispatcher" }, 2026)).rejects.toThrow(/permission/);
   });
   it("a fatal accident owes post-accident tests until they're recorded against it", async () => {

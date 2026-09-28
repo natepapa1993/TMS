@@ -36,21 +36,53 @@ export async function recordDqAction(driverId: string, itemKey: string, form: Fo
   return r;
 }
 
-export type TestForm = { driverId: string; reason: string; substance: string; incidentId?: string; collectedAt?: string; result?: string; specimenId?: string; collector?: string; mro?: string; followUpPlanned?: string; note?: string };
+export type TestForm = { driverId: string; reason: string; substance: string; incidentId?: string; collectedAt?: string; result?: string; specimenId?: string; collector?: string; mro?: string; followUpPlanned?: string; followUpMonths?: string; note?: string; specimenType?: string; mroVerifiedAt?: string; observed?: boolean; sapName?: string; sapEvaluatedAt?: string; sapEducationDoneAt?: string };
+type ResultForm = Omit<TestForm, "driverId" | "reason" | "substance" | "incidentId"> & { result: string };
+
+const num = (v: string | undefined) => (v === undefined ? undefined : v.trim() ? Number(v) : null);
+/** The test's details from the dialog: dates as instants, numbers as numbers; a field left out stays as it is. */
+const details = (v: ResultForm) => ({
+  specimenId: v.specimenId,
+  collector: v.collector,
+  mro: v.mro,
+  note: v.note,
+  specimenType: v.specimenType,
+  observed: v.observed,
+  sapName: v.sapName,
+  followUpPlanned: num(v.followUpPlanned),
+  followUpMonths: num(v.followUpMonths),
+  collectedAt: v.collectedAt === undefined ? undefined : when(v.collectedAt),
+  mroVerifiedAt: v.mroVerifiedAt === undefined ? undefined : when(v.mroVerifiedAt),
+  sapEvaluatedAt: v.sapEvaluatedAt === undefined ? undefined : when(v.sapEvaluatedAt),
+  sapEducationDoneAt: v.sapEducationDoneAt === undefined ? undefined : when(v.sapEducationDoneAt),
+});
+const defined = <T extends Record<string, unknown>>(o: T) => Object.fromEntries(Object.entries(o).filter(([, x]) => x !== undefined)) as Partial<T>;
 
 export async function addTestAction(v: TestForm) {
   const r = await act(async (ctx) => {
-    const row = await S.addTest(ctx, { ...v, incidentId: v.incidentId || null, collectedAt: when(v.collectedAt), followUpPlanned: v.followUpPlanned ? Number(v.followUpPlanned) : null });
+    const d = details({ ...v, result: v.result ?? "pending" });
+    const row = await S.addTest(ctx, { ...defined(d), driverId: v.driverId, reason: v.reason, substance: v.substance, result: v.result, incidentId: v.incidentId || null, collectedAt: d.collectedAt ?? null, followUpPlanned: d.followUpPlanned ?? null, followUpMonths: d.followUpMonths ?? null, mroVerifiedAt: d.mroVerifiedAt ?? null, sapEvaluatedAt: d.sapEvaluatedAt ?? null, sapEducationDoneAt: d.sapEducationDoneAt ?? null });
     return { id: row.id };
   });
   if (r.ok) touch(v.driverId);
   return r;
 }
 
-export async function recordResultAction(testId: string, v: { collectedAt?: string; result: string; specimenId?: string; collector?: string; mro?: string; followUpPlanned?: string; note?: string }) {
+export async function recordResultAction(testId: string, v: ResultForm) {
   const r = await act(async (ctx) => {
-    const row = await S.recordResult(ctx, testId, { ...v, collectedAt: v.collectedAt === undefined ? undefined : when(v.collectedAt), followUpPlanned: v.followUpPlanned ? Number(v.followUpPlanned) : undefined });
+    const row = await S.recordResult(ctx, testId, { ...defined(details(v)), result: v.result } as Parameters<typeof S.recordResult>[2]);
     return { driverId: row.driverId };
+  });
+  if (r.ok) touch(r.data.driverId);
+  return r;
+}
+
+/** The CCF, the MRO letter or the breath test form, kept with the test (confidential like the result). */
+export async function attachTestDocumentAction(testId: string, form: FormData) {
+  const r = await act(async (ctx) => {
+    const file = form.get("file");
+    if (!(file instanceof File) || !file.size) throw bad("pick the file", "file");
+    return S.attachTestDocument(ctx, testId, { fileName: file.name, mimeType: file.type || (file.name.toLowerCase().endsWith(".pdf") ? "application/pdf" : "image/jpeg"), bytes: Buffer.from(await file.arrayBuffer()) });
   });
   if (r.ok) touch(r.data.driverId);
   return r;

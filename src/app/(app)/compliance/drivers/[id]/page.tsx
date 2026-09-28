@@ -3,7 +3,9 @@ import { notFound } from "next/navigation";
 import { requireCtx } from "@/lib/auth";
 import { can } from "@/lib/context";
 import { driverSafetyFile } from "@/domain/safety";
-import { BASICS, REASON_LABEL, RESULT_LABEL } from "@/domain/safety-rules";
+import { BASICS, REASON_LABEL, RESULT_LABEL, SPECIMEN_LABEL } from "@/domain/safety-rules";
+import { tenantZone } from "@/domain/company";
+import { fmtWhen } from "@/lib/time";
 import { list } from "@/data/records";
 import { PageHeader } from "@/components/page-header";
 import { SafetyNav } from "../../nav";
@@ -12,8 +14,6 @@ import { DqRecordButton, TestButton, ResultButton, ClearinghouseButton, Inspecti
 export const dynamic = "force-dynamic";
 
 const TONE: Record<string, string> = { ok: "pill-green", expiring: "pill-amber", expired: "pill-red", missing: "pill-amber", snoozed: "pill-slate", na: "pill-slate" };
-const day = (v: string | Date | null | undefined) => (v ? new Date(v).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: "UTC" }) : "—");
-const when = (v: string | Date | null | undefined) => (v ? new Date(v).toLocaleString("en-US", { month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit" }) : "—");
 const basicLabel = (k: string) => BASICS.find((b) => b.key === k)?.label ?? k;
 
 export async function generateMetadata({ params }: PageProps<"/compliance/drivers/[id]">) {
@@ -29,6 +29,10 @@ export default async function DriverSafetyFilePage({ params }: PageProps<"/compl
   const f = await driverSafetyFile(ctx, id).catch(() => null);
   if (!f) notFound();
   const canEdit = can(ctx, "compliance.edit");
+  // the company's clock, with the zone printed (safety N2); calendar dates (done on, due) as dates
+  const zone = await tenantZone(ctx.tenantId);
+  const day = (v: string | Date | null | undefined) => fmtWhen(v, zone, { style: "date" }) ?? "—";
+  const when = (v: string | Date | null | undefined) => fmtWhen(v, zone, { style: "short", year: true }) ?? "—";
   const [drivers, trucks, trailers] = await Promise.all([list(ctx, "driver", { limit: 2000 }), list(ctx, "truck", { limit: 2000 }), list(ctx, "trailer", { limit: 2000 })]);
   // pickers in name / unit-number order
   const opts = { drivers: drivers.map((d) => ({ id: d.id, name: String(d.name) })).sort((p, q) => p.name.localeCompare(q.name, "en-US", { numeric: true })), trucks: trucks.map((t) => ({ id: t.id, name: String(t.unitNumber) })).sort((p, q) => p.name.localeCompare(q.name, "en-US", { numeric: true })), trailers: trailers.map((t) => ({ id: t.id, name: String(t.unitNumber) })).sort((p, q) => p.name.localeCompare(q.name, "en-US", { numeric: true })) };
@@ -141,7 +145,8 @@ export default async function DriverSafetyFilePage({ params }: PageProps<"/compl
                       <b className="text-red">On hold since {day(f.da.standing.violation?.resultAt ?? f.da.standing.violation?.createdAt)} — back to work only after the SAP process and a negative return-to-duty test.</b>
                     ) : f.da.standing.followUp ? (
                       <b>
-                        Follow-up testing: {f.da.standing.followUp.done} of {f.da.standing.followUp.planned} done.
+                        Follow-up testing: {f.da.standing.followUp.done} of {f.da.standing.followUp.planned} done{f.da.standing.followUp.months ? ` over ${f.da.standing.followUp.months} months` : ""}.
+                        {f.da.standing.followUp.nextDue && <span className={f.da.standing.followUp.overdue ? "text-red" : ""}> Next due by {day(f.da.standing.followUp.nextDue)}.</span>}
                       </b>
                     ) : (
                       "No hold."
@@ -167,10 +172,20 @@ export default async function DriverSafetyFilePage({ params }: PageProps<"/compl
                     {f.da.tests.map((t) => (
                       <tr key={t.id}>
                         <td>{REASON_LABEL[t.reason] ?? t.reason}</td>
-                        <td className="capitalize">{t.substance}</td>
-                        <td className="whitespace-nowrap">{t.collectedAt ? when(t.collectedAt) : t.selectedAt ? `selected ${day(t.selectedAt)}` : "—"}</td>
+                        <td>
+                          <span className="capitalize">{t.substance}</span>
+                          {(t.specimenType || t.observed) && <div className="text-footnote text-muted">{[t.specimenType ? SPECIMEN_LABEL[t.specimenType] : null, t.observed ? "observed" : null].filter(Boolean).join(" · ")}</div>}
+                        </td>
+                        <td className="whitespace-nowrap">{t.collectedAt ? when(t.collectedAt) : t.selectedAt ? `selected ${when(t.selectedAt)}` : "—"}</td>
                         <td>
                           <span className={`pill ${t.result === "positive" || t.result === "refusal" ? "pill-red" : t.result.startsWith("negative") ? "pill-green" : "pill-amber"}`}>{RESULT_LABEL[t.result] ?? t.result}</span>
+                          {t.mroVerifiedAt && <div className="text-footnote text-muted">MRO verified {day(t.mroVerifiedAt)}</div>}
+                          {t.reason === "return_to_duty" && t.sapName && <div className="text-footnote text-muted">SAP {t.sapName} · evaluated {day(t.sapEvaluatedAt)} · done {day(t.sapEducationDoneAt)} · {t.followUpPlanned} follow-ups over {t.followUpMonths} months</div>}
+                          {t.docs.map((doc) => (
+                            <a key={doc.id} href={`/api/files/${doc.id}`} target="_blank" rel="noreferrer" className="block text-footnote text-teal">
+                              {doc.fileName}
+                            </a>
+                          ))}
                           {t.duty && <div className="text-footnote text-red mt-1">{t.duty}</div>}
                         </td>
                         <td className="text-right whitespace-nowrap space-x-1">
@@ -199,7 +214,7 @@ export default async function DriverSafetyFilePage({ params }: PageProps<"/compl
                   {f.inspections.map((i) => (
                     <tr key={i.id}>
                       <td className="whitespace-nowrap">
-                        {day(i.inspectedAt)}
+                        {when(i.inspectedAt)}
                         <div className="text-footnote text-muted">
                           {i.jurisdiction ?? i.country} · level {i.level}
                           {i.reportNumber ? ` · ${i.reportNumber}` : ""}
@@ -252,7 +267,7 @@ export default async function DriverSafetyFilePage({ params }: PageProps<"/compl
                   <li key={i.id}>
                     <div className="flex justify-between gap-2">
                       <b className="capitalize">{i.kind.replace("_", " ")}</b>
-                      <span className="text-faint">{day(i.occurredAt)}</span>
+                      <span className="text-faint">{when(i.occurredAt)}</span>
                     </div>
                     <div className="text-muted">{i.description}</div>
                     {i.postAccident && <div className="text-amber">Post-accident testing required ({i.postAccident.why})</div>}
@@ -274,7 +289,7 @@ export default async function DriverSafetyFilePage({ params }: PageProps<"/compl
                   <li key={o.id}>
                     <div className="flex justify-between gap-2">
                       <b>{o.who}</b>
-                      <span className="text-faint">{day(o.at)}</span>
+                      <span className="text-faint">{when(o.at)}</span>
                     </div>
                     <div className="text-muted">{o.what}</div>
                     <div className="italic">{o.reason}</div>

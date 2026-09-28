@@ -8,7 +8,7 @@ import { assertCtx, can, requirePermission, type Ctx } from "@/lib/context";
 import { writeAudit } from "@/lib/audit";
 import { NotFoundError, ValidationError } from "./orders";
 import { evaluateSubject, isBuiltIn } from "./compliance";
-import { DQ_ITEMS, dqLines, daStanding, clearinghouseDuty, randomRequirement, perDraw, pick, postAccidentDuty, basicOf, unitOf, basicMeasures, oosRates, driverPoints, BASICS, periodStart, lookupViolation, roadsideOos, oosReleaseNeedsReason, repairInstant } from "./safety-rules";
+import { DQ_ITEMS, dqLines, daStanding, rtdProblem, specimensFor, SPECIMEN_LABEL, clearinghouseDuty, randomRequirement, perDraw, pick, overlappingDraw, postAccidentDuty, basicOf, unitOf, basicMeasures, oosRates, driverPoints, BASICS, periodStart, lookupViolation, roadsideOos, oosReleaseNeedsReason, repairInstant } from "./safety-rules";
 import { zonedDate } from "@/lib/time";
 
 /**
@@ -22,7 +22,7 @@ async function loadDriver(ctx: Ctx, driverId: string) {
   return d;
 }
 
-async function storeFile(ctx: Ctx, subjectId: string, code: string, file: { fileName: string; mimeType: string; bytes: Buffer }, subjectKind: "driver" | "truck" | "trailer" = "driver") {
+async function storeFile(ctx: Ctx, subjectId: string, code: string, file: { fileName: string; mimeType: string; bytes: Buffer }, subjectKind: "driver" | "truck" | "trailer" | "da_test" = "driver") {
   if (!file.bytes?.length) throw new ValidationError("empty file", "file");
   if (file.bytes.length > 15 * 1024 * 1024) throw new ValidationError("file is over 15 MB", "file");
   if (!/^(application\/pdf|image\/(jpeg|png))$/.test(file.mimeType)) throw new ValidationError("PDF, JPG or PNG only", "file");
@@ -76,13 +76,43 @@ export async function dqOverview(ctx: Ctx) {
 // ---------- drug & alcohol ----------
 
 
-export type DaTestInput = { driverId: string; reason: string; substance: string; incidentId?: string | null; collectedAt?: Date | null; result?: string; specimenId?: string | null; collector?: string | null; mro?: string | null; followUpPlanned?: number | null; note?: string | null };
+export type DaTestFields = { collectedAt?: Date | null; specimenId?: string | null; collector?: string | null; mro?: string | null; followUpPlanned?: number | null; followUpMonths?: number | null; note?: string | null; specimenType?: string | null; mroVerifiedAt?: Date | null; observed?: boolean; sapName?: string | null; sapEvaluatedAt?: Date | null; sapEducationDoneAt?: Date | null };
+export type DaTestInput = DaTestFields & { driverId: string; reason: string; substance: string; incidentId?: string | null; result?: string };
 
-function checkResult(result: string, collectedAt: Date | null | undefined) {
+/**
+ * A collection is a moment that already happened: not in the future (5 minutes for clocks), not before the
+ * driver was selected or the accident it follows (safety N10).
+ */
+function checkResult(result: string, collectedAt: Date | null | undefined, opts: { selectedAt?: Date | null; after?: { at: Date; what: string } | null; now?: Date } = {}) {
   if (!(DA_RESULTS as readonly string[]).includes(result)) throw new ValidationError("pick a result", "result");
   if (["negative", "negative_dilute", "positive"].includes(result) && !collectedAt) throw new ValidationError("when was the specimen collected?", "collectedAt");
-  if (collectedAt && collectedAt.getTime() > Date.now() + 3600_000) throw new ValidationError("the collection time is in the future", "collectedAt");
+  if (!collectedAt) return;
+  const now = opts.now ?? new Date();
+  if (collectedAt.getTime() > now.getTime() + 5 * 60_000) throw new ValidationError("the collection time is in the future", "collectedAt");
+  if (opts.selectedAt && collectedAt.getTime() < opts.selectedAt.getTime()) throw new ValidationError("the collection can't be before the driver was selected", "collectedAt");
+  if (opts.after && collectedAt.getTime() < opts.after.at.getTime()) throw new ValidationError(`the collection can't be before ${opts.after.what}`, "collectedAt");
 }
+
+/** Specimen, MRO verification and observation: what the custody and control form says. */
+function checkDetails(substance: string, f: DaTestFields & { collectedAt?: Date | null }, now = new Date()) {
+  if (f.specimenType && !specimensFor(substance).includes(f.specimenType)) throw new ValidationError(`a ${substance} test is ${specimensFor(substance).map((x) => SPECIMEN_LABEL[x].toLowerCase()).join(" or ")}`, "specimenType");
+  if (f.mroVerifiedAt) {
+    if (substance !== "drug") throw new ValidationError("the MRO verifies drug results; alcohol results come from the breath alcohol technician", "mroVerifiedAt");
+    if (f.mroVerifiedAt.getTime() > now.getTime() + 86400_000) throw new ValidationError("the MRO-verified date is in the future", "mroVerifiedAt");
+    if (f.collectedAt && f.mroVerifiedAt.toISOString().slice(0, 10) < f.collectedAt.toISOString().slice(0, 10) && f.mroVerifiedAt.getTime() < f.collectedAt.getTime() - 86400_000) throw new ValidationError("the MRO verifies the result after the collection", "mroVerifiedAt");
+  }
+  if (f.followUpMonths != null && (f.followUpMonths < 12 || f.followUpMonths > 60)) throw new ValidationError("follow-up testing runs 12 to 60 months (40.307(d))", "followUpMonths");
+  for (const k of ["sapEvaluatedAt", "sapEducationDoneAt"] as const) if (f[k] && f[k]!.getTime() > now.getTime() + 86400_000) throw new ValidationError("that date is in the future", k);
+}
+
+/** When the driver's latest verified positive or refusal was, before a given test (the one the RTD answers). */
+async function violationBefore(ctx: Ctx, driverId: string, exceptId?: string) {
+  const tests = await db.select().from(s.daTests).where(and(eq(s.daTests.tenantId, ctx.tenantId), eq(s.daTests.driverId, driverId)));
+  const v = daStanding(tests.filter((t) => t.id !== exceptId)).violation;
+  return v ? (v.resultAt ?? v.collectedAt ?? v.createdAt) : null;
+}
+
+const clean = (v: string | null | undefined) => v?.trim() || null;
 
 /** A test ordered or done outside a random draw: pre-employment, post-accident, reasonable suspicion, return-to-duty, follow-up. */
 export async function addTest(ctx: Ctx, input: DaTestInput) {
@@ -94,15 +124,24 @@ export async function addTest(ctx: Ctx, input: DaTestInput) {
   if (input.reason === "pre_employment" && input.substance === "alcohol") throw new ValidationError("pre-employment alcohol tests are optional and not tracked here; record the drug test", "substance");
   const driver = await loadDriver(ctx, input.driverId);
   const result = (input.result || "pending") as DaResult;
-  checkResult(result, input.collectedAt);
-  if (input.reason === "return_to_duty" && input.followUpPlanned != null && (input.followUpPlanned < 6 || input.followUpPlanned > 60)) throw new ValidationError("the SAP sets at least 6 follow-up tests in the first 12 months (40.307)", "followUpPlanned");
+  let after: { at: Date; what: string } | null = null;
   if (input.incidentId) {
-    const [inc] = await db.select({ id: s.incidents.id }).from(s.incidents).where(and(eq(s.incidents.tenantId, ctx.tenantId), eq(s.incidents.id, input.incidentId))).limit(1);
+    const [inc] = await db.select({ id: s.incidents.id, occurredAt: s.incidents.occurredAt }).from(s.incidents).where(and(eq(s.incidents.tenantId, ctx.tenantId), eq(s.incidents.id, input.incidentId))).limit(1);
     if (!inc) throw new NotFoundError("incident", input.incidentId);
+    after = { at: inc.occurredAt, what: "the accident" };
+  }
+  checkResult(result, input.collectedAt, { after });
+  checkDetails(input.substance, input);
+  if (input.reason === "return_to_duty" && input.followUpPlanned != null && (input.followUpPlanned < 6 || input.followUpPlanned > 60)) throw new ValidationError("the SAP sets at least 6 follow-up tests in the first 12 months (40.307)", "followUpPlanned");
+  const rtd = input.reason === "return_to_duty";
+  const values = { collectedAt: input.collectedAt ?? null, result, specimenId: clean(input.specimenId), collector: clean(input.collector), mro: clean(input.mro), followUpPlanned: rtd ? (input.followUpPlanned ?? null) : null, followUpMonths: rtd ? (input.followUpMonths ?? null) : null, note: clean(input.note), specimenType: (input.specimenType || null) as "urine" | "oral_fluid" | "breath" | null, mroVerifiedAt: input.mroVerifiedAt ?? null, observed: !!input.observed, sapName: rtd ? clean(input.sapName) : null, sapEvaluatedAt: rtd ? (input.sapEvaluatedAt ?? null) : null, sapEducationDoneAt: rtd ? (input.sapEducationDoneAt ?? null) : null };
+  if (rtd) {
+    const p = rtdProblem({ id: "", driverId: driver.id, reason: input.reason, substance: input.substance, resultAt: null, ...values }, await violationBefore(ctx, driver.id));
+    if (p) throw new ValidationError(p.message, p.field);
   }
   const [row] = await db
     .insert(s.daTests)
-    .values({ id: newId(), tenantId: ctx.tenantId, driverId: driver.id, reason: input.reason as DaReason, substance: input.substance, incidentId: input.incidentId ?? null, collectedAt: input.collectedAt ?? null, result, resultAt: result !== "pending" ? new Date() : null, specimenId: input.specimenId?.trim() || null, collector: input.collector?.trim() || null, mro: input.mro?.trim() || null, followUpPlanned: input.reason === "return_to_duty" ? (input.followUpPlanned ?? null) : null, note: input.note?.trim() || null, createdBy: ctx.userId, updatedBy: ctx.userId })
+    .values({ id: newId(), tenantId: ctx.tenantId, driverId: driver.id, reason: input.reason as DaReason, substance: input.substance, incidentId: input.incidentId ?? null, ...values, resultAt: result !== "pending" ? new Date() : null, createdBy: ctx.userId, updatedBy: ctx.userId })
     .returning();
   await writeAudit(db, ctx, "da_test", row.id, "create", undefined, `${input.reason.replace(/_/g, " ")} ${input.substance} test`);
   await afterResult(ctx, row);
@@ -110,22 +149,70 @@ export async function addTest(ctx: Ctx, input: DaTestInput) {
 }
 
 /** The result comes in (or a selected driver was collected, or refused). */
-export async function recordResult(ctx: Ctx, testId: string, input: { collectedAt?: Date | null; result: string; specimenId?: string | null; collector?: string | null; mro?: string | null; followUpPlanned?: number | null; note?: string | null }) {
+export async function recordResult(ctx: Ctx, testId: string, input: DaTestFields & { result: string }) {
   assertCtx(ctx);
   requirePermission(ctx, "safety.confidential");
   const [t] = await db.select().from(s.daTests).where(and(eq(s.daTests.tenantId, ctx.tenantId), eq(s.daTests.id, testId))).limit(1);
   if (!t) throw new NotFoundError("test", testId);
   const collectedAt = input.collectedAt === undefined ? t.collectedAt : input.collectedAt;
-  checkResult(input.result, collectedAt);
+  let after: { at: Date; what: string } | null = null;
+  if (t.incidentId) {
+    const [inc] = await db.select({ occurredAt: s.incidents.occurredAt }).from(s.incidents).where(and(eq(s.incidents.tenantId, ctx.tenantId), eq(s.incidents.id, t.incidentId))).limit(1);
+    if (inc) after = { at: inc.occurredAt, what: "the accident" };
+  }
+  checkResult(input.result, collectedAt, { selectedAt: t.selectedAt, after });
   if (input.result === "selected") throw new ValidationError("pick a result", "result");
+  const pickv = <K extends keyof DaTestFields>(k: K, cur: unknown) => (input[k] === undefined ? cur : typeof input[k] === "string" ? clean(input[k] as string) : input[k]);
+  const rtd = t.reason === "return_to_duty";
+  const merged = {
+    collectedAt,
+    result: input.result as DaResult,
+    specimenId: pickv("specimenId", t.specimenId) as string | null,
+    collector: pickv("collector", t.collector) as string | null,
+    mro: pickv("mro", t.mro) as string | null,
+    followUpPlanned: rtd ? (pickv("followUpPlanned", t.followUpPlanned) as number | null) : t.followUpPlanned,
+    followUpMonths: rtd ? (pickv("followUpMonths", t.followUpMonths) as number | null) : t.followUpMonths,
+    note: pickv("note", t.note) as string | null,
+    specimenType: (pickv("specimenType", t.specimenType) || null) as "urine" | "oral_fluid" | "breath" | null,
+    mroVerifiedAt: pickv("mroVerifiedAt", t.mroVerifiedAt) as Date | null,
+    observed: input.observed === undefined ? t.observed : !!input.observed,
+    sapName: rtd ? (pickv("sapName", t.sapName) as string | null) : null,
+    sapEvaluatedAt: rtd ? (pickv("sapEvaluatedAt", t.sapEvaluatedAt) as Date | null) : null,
+    sapEducationDoneAt: rtd ? (pickv("sapEducationDoneAt", t.sapEducationDoneAt) as Date | null) : null,
+  };
+  checkDetails(t.substance, merged);
+  if (rtd) {
+    const p = rtdProblem({ ...t, ...merged }, await violationBefore(ctx, t.driverId, t.id));
+    if (p) throw new ValidationError(p.message, p.field);
+  }
   const [row] = await db
     .update(s.daTests)
-    .set({ collectedAt, result: input.result as DaResult, resultAt: input.result === "pending" ? null : new Date(), specimenId: input.specimenId === undefined ? t.specimenId : input.specimenId?.trim() || null, collector: input.collector === undefined ? t.collector : input.collector?.trim() || null, mro: input.mro === undefined ? t.mro : input.mro?.trim() || null, followUpPlanned: t.reason === "return_to_duty" && input.followUpPlanned !== undefined ? input.followUpPlanned : t.followUpPlanned, note: input.note === undefined ? t.note : input.note?.trim() || null, updatedAt: new Date(), updatedBy: ctx.userId })
+    .set({ ...merged, resultAt: input.result === "pending" ? null : new Date(), updatedAt: new Date(), updatedBy: ctx.userId })
     .where(eq(s.daTests.id, t.id))
     .returning();
   await writeAudit(db, ctx, "da_test", t.id, "update", { result: { from: t.result, to: row.result } });
   await afterResult(ctx, row);
   return row;
+}
+
+/** The custody and control form, the MRO letter, the breath test form: kept with the test, confidential like it. */
+export async function attachTestDocument(ctx: Ctx, testId: string, file: { fileName: string; mimeType: string; bytes: Buffer }) {
+  assertCtx(ctx);
+  requirePermission(ctx, "safety.confidential");
+  const [t] = await db.select({ id: s.daTests.id, driverId: s.daTests.driverId }).from(s.daTests).where(and(eq(s.daTests.tenantId, ctx.tenantId), eq(s.daTests.id, testId))).limit(1);
+  if (!t) throw new NotFoundError("test", testId);
+  const id = await storeFile(ctx, t.id, "da:test", file, "da_test");
+  await writeAudit(db, ctx, "da_test", t.id, "update", { document: { from: null, to: file.fileName } });
+  return { id, driverId: t.driverId };
+}
+
+/** The papers kept with each test, by test id. */
+async function testDocuments(ctx: Ctx, testIds: string[]) {
+  const out = new Map<string, { id: string; fileName: string }[]>();
+  if (!testIds.length) return out;
+  const docs = await db.select({ id: s.documents.id, fileName: s.documents.fileName, subjectId: s.documents.subjectId }).from(s.documents).where(and(eq(s.documents.tenantId, ctx.tenantId), eq(s.documents.subjectKind, "da_test"), inArray(s.documents.subjectId, testIds), isNull(s.documents.archivedAt)));
+  for (const d of docs) out.set(d.subjectId, [...(out.get(d.subjectId) ?? []), { id: d.id, fileName: d.fileName }]);
+  return out;
 }
 
 /** A positive or a refusal puts the driver on a safety hold: compliance re-runs and dispatch is told to reassign (without the reason). */
@@ -171,6 +258,11 @@ export async function drawRandom(ctx: Ctx, input: { period: string; drugRate: nu
   if (!(input.drugRate >= 0 && input.drugRate <= 100 && input.alcoholRate >= 0 && input.alcoholRate <= 100)) throw new ValidationError("rates are annual percentages", "drugRate");
   const [dup] = await db.select({ id: s.daDraws.id }).from(s.daDraws).where(and(eq(s.daDraws.tenantId, ctx.tenantId), eq(s.daDraws.period, period))).limit(1);
   if (dup) throw new ValidationError(`${period} is already drawn`, "period");
+  // monthly and quarterly draws can't cover the same weeks: a September draw after a Q3 draw picks drivers twice for one period
+  const sameYear = await db.select({ period: s.daDraws.period }).from(s.daDraws).where(and(eq(s.daDraws.tenantId, ctx.tenantId), sql`${s.daDraws.period} like ${`${starts.getUTCFullYear()}-%`}`));
+  const clash = overlappingDraw(period, sameYear.map((d) => d.period));
+  if (clash) throw new ValidationError(`${clash} already covers part of ${period} — keep one draw frequency (quarterly or monthly) for the year`, "period");
+  if (/Q/.test(period) ? input.drawsPerYear === 12 : input.drawsPerYear !== 12) throw new ValidationError(/Q/.test(period) ? "a quarter's draw is one of 4 a year (or 2 / 1); monthly draws use a month like 2026-10" : "a monthly period (2026-10) is one of 12 draws a year", "drawsPerYear");
   const pool = await poolFor(ctx);
   if (!pool.length) throw new ValidationError("no drivers in the pool", "period");
   const drugCount = perDraw(pool.length, input.drugRate, input.drawsPerYear);
@@ -215,13 +307,19 @@ export async function daProgram(ctx: Ctx, year: number) {
       const mine = tests.filter((t) => t.incidentId === i.id);
       return { incidentId: i.id, driverId: i.driverId!, driver: name.get(i.driverId!) ?? "?", occurredAt: i.occurredAt.toISOString(), ...duty!, alcoholDone: mine.some((t) => t.substance === "alcohol"), drugDone: mine.some((t) => t.substance === "drug") };
     });
+  const docs = await testDocuments(ctx, tests.map((t) => t.id));
+  // the SAP's follow-up plan as dated to-dos: the next test due, flagged once it's within 30 days or late
+  const followUpsDue = standing
+    .filter((x) => x.followUp?.nextDue && new Date(x.followUp.nextDue).getTime() < Date.now() + 30 * 86400_000)
+    .map((x) => ({ driverId: x.id, driver: x.name, n: x.followUp!.done + 1, of: x.followUp!.planned, dueAt: x.followUp!.nextDue!, overdue: x.followUp!.overdue }));
   return {
     year,
+    followUpsDue,
     // the roster an auditor asks for: who was in the pool at each draw, and who was picked
     draws: draws.map((d) => ({ ...d, pool: d.poolDriverIds.map((id) => ({ id, name: name.get(id) ?? "(removed driver)" })).sort((p, q) => p.name.localeCompare(q.name)), selected: tests.filter((t) => t.drawId === d.id).map((t) => ({ name: name.get(t.driverId) ?? "?", substance: t.substance, result: t.result })) })),
     required: req,
     done: { drug: doneRandom("drug"), alcohol: doneRandom("alcohol") },
-    tests: tests.filter((t) => inYear(t) || t.result === "selected" || t.result === "pending").map((t) => ({ ...t, driver: name.get(t.driverId) ?? "?", duty: clearinghouseDuty(t) })),
+    tests: tests.filter((t) => inYear(t) || t.result === "selected" || t.result === "pending").map((t) => ({ ...t, driver: name.get(t.driverId) ?? "?", duty: clearinghouseDuty(t), docs: docs.get(t.id) ?? [] })),
     open: tests.filter((t) => t.result === "selected" || t.result === "pending").length,
     holds: standing.filter((x) => x.prohibited || x.followUp).map((x) => ({ id: x.id, name: x.name, prohibited: x.prohibited, followUp: x.followUp, since: x.violation ? (x.violation.resultAt ?? x.violation.createdAt).toISOString() : null })),
     duties,
@@ -235,7 +333,8 @@ export async function driverTests(ctx: Ctx, driverId: string) {
   assertCtx(ctx);
   requirePermission(ctx, "safety.confidential");
   const tests = await db.select().from(s.daTests).where(and(eq(s.daTests.tenantId, ctx.tenantId), eq(s.daTests.driverId, driverId))).orderBy(desc(s.daTests.createdAt));
-  return { tests: tests.map((t) => ({ ...t, duty: t.clearinghouseReportedAt ? null : clearinghouseDuty(t) })), standing: daStanding(tests) };
+  const docs = await testDocuments(ctx, tests.map((t) => t.id));
+  return { tests: tests.map((t) => ({ ...t, duty: t.clearinghouseReportedAt ? null : clearinghouseDuty(t), docs: docs.get(t.id) ?? [] })), standing: daStanding(tests) };
 }
 
 // ---------- roadside inspections ----------
@@ -510,7 +609,10 @@ export async function driverSafetyFile(ctx: Ctx, driverId: string) {
     dq: lines.map((l) => ({ ...l, history: records.filter((r) => r.itemKey === l.key).map((r) => ({ at: (r.completedAt ?? r.createdAt).toISOString(), notRequired: r.notRequired, note: r.note, file: docs.find((d) => d.id === r.documentId) ?? null })) })),
     credentials: items.filter((i) => !isBuiltIn(i.key) || i.key.startsWith("field:")).filter((i) => !i.key.startsWith("da:")),
     dispatchable: status[0]?.dispatchable ?? true,
-    da: confidential ? { tests: tests.map((t) => ({ ...t, duty: t.clearinghouseReportedAt ? null : clearinghouseDuty(t) })), standing } : null,
+    da: confidential ? await (async () => {
+      const docs = await testDocuments(ctx, tests.map((t) => t.id));
+      return { tests: tests.map((t) => ({ ...t, duty: t.clearinghouseReportedAt ? null : clearinghouseDuty(t), docs: docs.get(t.id) ?? [] })), standing };
+    })() : null,
     inspections: insp.list,
     points: insp.drivers[0] ?? null,
     incidents: incidents.map((i) => ({ ...i, postAccident: postAccidentDuty(i) })),

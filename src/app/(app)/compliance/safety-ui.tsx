@@ -4,8 +4,8 @@ import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Modal, Toast, useToast, Confirm } from "@/components/ui";
 import { useZone } from "@/components/zone";
-import { recordDqAction, addTestAction, recordResultAction, clearinghouseReportedAction, drawRandomAction, saveInspectionAction, deleteInspectionAction, signOffRepairAction, type TestForm, type InspectionForm } from "./safety-actions";
-import { basicOf, BASICS, REASON_LABEL, RESULT_LABEL, lookupViolation } from "@/domain/safety-rules";
+import { recordDqAction, addTestAction, recordResultAction, attachTestDocumentAction, clearinghouseReportedAction, drawRandomAction, saveInspectionAction, deleteInspectionAction, signOffRepairAction, type TestForm, type InspectionForm } from "./safety-actions";
+import { basicOf, BASICS, REASON_LABEL, RESULT_LABEL, lookupViolation, specimensFor, SPECIMEN_LABEL } from "@/domain/safety-rules";
 import { toZoneInput, fromZoneInput, zonedDate, zoneLabel } from "@/lib/time";
 
 type Opt = { id: string; name: string };
@@ -108,17 +108,111 @@ export function DqRecordButton({ driverId, itemKey, label, hint, primary }: { dr
 
 // ---------- drug & alcohol ----------
 
+type Clock = ReturnType<typeof useSafetyClock>;
+type Details = Pick<TestForm, "specimenType" | "mroVerifiedAt" | "observed" | "sapName" | "sapEvaluatedAt" | "sapEducationDoneAt" | "followUpPlanned" | "followUpMonths">;
+const dayOf = (v: string | null | undefined) => (v ? new Date(v).toISOString().slice(0, 10) : "");
+
+/**
+ * What the custody and control form says beyond the result: the specimen, the MRO's verification, whether the
+ * collection was observed — and for a return-to-duty test the SAP's name, evaluation, education done and the
+ * follow-up plan. The hold stays until those are on the record.
+ */
+function TestDetailFields({ f, set, substance, reason, clock, file, setFile }: { f: Details; set: (k: keyof Details, v: string | boolean) => void; substance: string; reason: string; clock: Clock; file: File | null; setFile: (x: File | null) => void }) {
+  const rtd = reason === "return_to_duty";
+  const mustObserve = substance === "drug" && (rtd || reason === "follow_up");
+  return (
+    <>
+      <div>
+        <label className="label" htmlFor="t-specimen">
+          Specimen
+        </label>
+        <select id="t-specimen" className="select" value={f.specimenType || (substance === "alcohol" ? "breath" : "urine")} onChange={(e) => set("specimenType", e.target.value)}>
+          {specimensFor(substance).map((k) => (
+            <option key={k} value={k}>
+              {k === "oral_fluid" && substance === "alcohol" ? "Saliva (oral fluid)" : SPECIMEN_LABEL[k]}
+            </option>
+          ))}
+        </select>
+      </div>
+      {substance === "drug" && (
+        <div>
+          <label className="label" htmlFor="t-mro-at">
+            MRO verified on
+          </label>
+          <input id="t-mro-at" type="date" className="input" value={f.mroVerifiedAt ?? ""} onChange={(e) => set("mroVerifiedAt", e.target.value)} max={clock.today()} />
+        </div>
+      )}
+      {substance === "drug" && (
+        <label className="flex items-center gap-2 text-callout cursor-pointer self-end pb-2">
+          <input type="checkbox" className="accent-teal" checked={!!f.observed} onChange={(e) => set("observed", e.target.checked)} data-testid="t-observed" /> Directly observed{mustObserve ? " (required)" : ""}
+        </label>
+      )}
+      {rtd && (
+        <div className="col-span-3 rounded-lg border border-line p-3 grid grid-cols-3 gap-3" data-testid="sap-fields">
+          <div className="col-span-3 eyebrow">SAP and the follow-up plan — the hold lifts only with these and a negative result</div>
+          <div>
+            <label className="label" htmlFor="t-sap">
+              SAP (name)
+            </label>
+            <input id="t-sap" className="input" value={f.sapName ?? ""} onChange={(e) => set("sapName", e.target.value)} placeholder="Dr. R. Salinas, SAP" />
+          </div>
+          <div>
+            <label className="label" htmlFor="t-sap-eval">
+              SAP evaluation
+            </label>
+            <input id="t-sap-eval" type="date" className="input" value={f.sapEvaluatedAt ?? ""} onChange={(e) => set("sapEvaluatedAt", e.target.value)} max={clock.today()} />
+          </div>
+          <div>
+            <label className="label" htmlFor="t-sap-done">
+              Education / treatment done
+            </label>
+            <input id="t-sap-done" type="date" className="input" value={f.sapEducationDoneAt ?? ""} onChange={(e) => set("sapEducationDoneAt", e.target.value)} max={clock.today()} />
+          </div>
+          <div>
+            <label className="label" htmlFor="t-fu">
+              Follow-up tests
+            </label>
+            <input id="t-fu" type="number" min={6} max={60} className="input" value={f.followUpPlanned ?? ""} onChange={(e) => set("followUpPlanned", e.target.value)} placeholder="6 or more" />
+          </div>
+          <div>
+            <label className="label" htmlFor="t-fu-months">
+              Over (months)
+            </label>
+            <input id="t-fu-months" type="number" min={12} max={60} className="input" value={f.followUpMonths ?? ""} onChange={(e) => set("followUpMonths", e.target.value)} placeholder="12 to 60" />
+          </div>
+          <div className="help self-end">At least 6 in the first 12 months (40.307). Due dates show as to-dos; the actual days stay unannounced.</div>
+        </div>
+      )}
+      <label className="col-span-3 block border-2 border-dashed border-line rounded-lg p-3 text-center cursor-pointer hover:border-teal">
+        <input type="file" accept="application/pdf,image/jpeg,image/png" className="hidden" onChange={(e) => setFile(e.target.files?.[0] ?? null)} data-testid="t-file" />
+        <div className="text-callout font-semibold">{file?.name ?? "Attach the CCF, MRO letter or breath test form (PDF, JPG, PNG)"}</div>
+      </label>
+    </>
+  );
+}
+
+/** Upload the paper picked in a test dialog once the test is saved. */
+async function uploadTestFile(testId: string, file: File | null) {
+  if (!file) return null;
+  const fd = new FormData();
+  fd.set("file", file);
+  const r = await attachTestDocumentAction(testId, fd);
+  return r.ok ? null : r.error;
+}
+
 export function TestButton({ drivers, driverId, incidents, preset, label = "+ Record a test", small }: { drivers: Opt[]; driverId?: string; incidents?: { id: string; label: string }[]; preset?: Partial<TestForm>; label?: string; small?: boolean }) {
   const clock = useSafetyClock();
   const router = useRouter();
   const t = useToast();
-  const blank = (): TestForm => ({ driverId: driverId ?? "", reason: "pre_employment", substance: "drug", incidentId: "", collectedAt: clock.input(), result: "pending", specimenId: "", collector: "", mro: "", followUpPlanned: "", note: "", ...preset });
+  const blank = (): TestForm => ({ driverId: driverId ?? "", reason: "pre_employment", substance: "drug", incidentId: "", collectedAt: clock.input(), result: "pending", specimenId: "", collector: "", mro: "", followUpPlanned: "", followUpMonths: "", note: "", specimenType: "", mroVerifiedAt: "", observed: false, sapName: "", sapEvaluatedAt: "", sapEducationDoneAt: "", ...preset });
   const [f, setF] = useState<TestForm | null>(null);
+  const [file, setFile] = useState<File | null>(null);
+  const [err, setErr] = useState<string | null>(null);
   const [pending, start] = useTransition();
-  const set = (k: keyof TestForm, v: string) => setF((x) => (x ? { ...x, [k]: v } : x));
+  const set = (k: keyof TestForm, v: string | boolean) => setF((x) => (x ? { ...x, [k]: v, ...(k === "reason" && v === "return_to_duty" ? { observed: true } : {}) } : x));
   return (
     <>
-      <button className={`btn ${small ? "btn-sm" : "btn-primary"}`} onClick={() => setF(blank())} data-testid="add-test">
+      <button className={`btn ${small ? "btn-sm" : "btn-primary"}`} onClick={() => { setErr(null); setFile(null); setF(blank()); }} data-testid="add-test">
         {label}
       </button>
       {f && (
@@ -137,10 +231,13 @@ export function TestButton({ drivers, driverId, incidents, preset, label = "+ Re
                 disabled={pending}
                 onClick={() =>
                   start(async () => {
+                    setErr(null);
                     const r = await addTestAction({ ...f, collectedAt: f.result === "pending" && !f.collectedAt ? "" : clock.iso(f.collectedAt) });
-                    if (!r.ok) return t.err(r.error);
+                    if (!r.ok) return setErr(r.error);
+                    const upErr = await uploadTestFile(r.data.id, file);
                     setF(null);
-                    t.ok("Test recorded");
+                    if (upErr) t.err(`Test recorded, but the file didn't upload: ${upErr}`);
+                    else t.ok("Test recorded");
                     router.refresh();
                   })
                 }
@@ -182,9 +279,9 @@ export function TestButton({ drivers, driverId, incidents, preset, label = "+ Re
               <label className="label" htmlFor="t-substance">
                 Test
               </label>
-              <select id="t-substance" className="select" value={f.substance} onChange={(e) => set("substance", e.target.value)}>
-                <option value="drug">Drug (urine, 5-panel DOT)</option>
-                <option value="alcohol">Alcohol (breath)</option>
+              <select id="t-substance" className="select" value={f.substance} onChange={(e) => setF({ ...f, substance: e.target.value, specimenType: "" })}>
+                <option value="drug">Drug (5-panel DOT)</option>
+                <option value="alcohol">Alcohol</option>
               </select>
             </div>
             {f.reason === "post_accident" && incidents && (
@@ -206,7 +303,7 @@ export function TestButton({ drivers, driverId, incidents, preset, label = "+ Re
               <label className="label" htmlFor="t-collected">
                 Collected ({clock.abbr})
               </label>
-              <input id="t-collected" type="datetime-local" className="input" value={f.collectedAt} onChange={(e) => set("collectedAt", e.target.value)} />
+              <input id="t-collected" type="datetime-local" className="input" value={f.collectedAt} onChange={(e) => set("collectedAt", e.target.value)} max={clock.input()} />
             </div>
             <div>
               <label className="label" htmlFor="t-result">
@@ -240,14 +337,7 @@ export function TestButton({ drivers, driverId, incidents, preset, label = "+ Re
               </label>
               <input id="t-mro" className="input" value={f.mro} onChange={(e) => set("mro", e.target.value)} />
             </div>
-            {f.reason === "return_to_duty" && (
-              <div>
-                <label className="label" htmlFor="t-fu">
-                  Follow-up tests (SAP plan)
-                </label>
-                <input id="t-fu" type="number" min={6} className="input" value={f.followUpPlanned} onChange={(e) => set("followUpPlanned", e.target.value)} placeholder="6 or more" />
-              </div>
-            )}
+            <TestDetailFields f={f} set={set} substance={f.substance} reason={f.reason} clock={clock} file={file} setFile={setFile} />
             <div className="col-span-3">
               <label className="label" htmlFor="t-note">
                 Note
@@ -255,7 +345,12 @@ export function TestButton({ drivers, driverId, incidents, preset, label = "+ Re
               <input id="t-note" className="input" value={f.note} onChange={(e) => set("note", e.target.value)} />
             </div>
           </div>
-          <div className="help mt-2">Confidential (49 CFR 40.321): only the owner and Safety see results. A verified positive or a refusal puts the driver on a hold dispatch sees without the reason, until a negative return-to-duty test.</div>
+          {err && (
+            <div className="error mt-2" role="alert">
+              {err}
+            </div>
+          )}
+          <div className="help mt-2">Confidential (49 CFR 40.321): only the owner and Safety see results. A verified positive or a refusal puts the driver on a hold dispatch sees without the reason, until the SAP process is recorded and an observed return-to-duty test is negative.</div>
         </Modal>
       )}
       <Toast message={t.toast?.message ?? null} tone={t.toast?.tone} onDone={t.clear} />
@@ -263,15 +358,36 @@ export function TestButton({ drivers, driverId, incidents, preset, label = "+ Re
   );
 }
 
-export function ResultButton({ test }: { test: { id: string; result: string; collectedAt: string | null; reason: string; specimenId: string | null; followUpPlanned: number | null } }) {
+type ResultTest = { id: string; result: string; collectedAt: string | null; reason: string; substance: string; specimenId: string | null; followUpPlanned: number | null; followUpMonths?: number | null; specimenType?: string | null; mroVerifiedAt?: string | null; observed?: boolean; sapName?: string | null; sapEvaluatedAt?: string | null; sapEducationDoneAt?: string | null };
+
+export function ResultButton({ test }: { test: ResultTest }) {
   const clock = useSafetyClock();
   const router = useRouter();
   const t = useToast();
-  const [f, setF] = useState<{ collectedAt: string; result: string; specimenId: string; followUpPlanned: string } | null>(null);
+  const [f, setF] = useState<(Details & { collectedAt: string; result: string; specimenId: string }) | null>(null);
+  const [file, setFile] = useState<File | null>(null);
+  const [err, setErr] = useState<string | null>(null);
   const [pending, start] = useTransition();
+  const open = () => {
+    setErr(null);
+    setFile(null);
+    setF({
+      collectedAt: clock.input(test.collectedAt ?? new Date()),
+      result: test.result === "selected" ? "pending" : test.result,
+      specimenId: test.specimenId ?? "",
+      followUpPlanned: test.followUpPlanned ? String(test.followUpPlanned) : "",
+      followUpMonths: test.followUpMonths ? String(test.followUpMonths) : "",
+      specimenType: test.specimenType ?? "",
+      mroVerifiedAt: dayOf(test.mroVerifiedAt),
+      observed: test.observed || (test.substance === "drug" && ["return_to_duty", "follow_up"].includes(test.reason)),
+      sapName: test.sapName ?? "",
+      sapEvaluatedAt: dayOf(test.sapEvaluatedAt),
+      sapEducationDoneAt: dayOf(test.sapEducationDoneAt),
+    });
+  };
   return (
     <>
-      <button className="btn btn-sm" onClick={() => setF({ collectedAt: clock.input(test.collectedAt ?? new Date()), result: test.result === "selected" ? "pending" : test.result, specimenId: test.specimenId ?? "", followUpPlanned: test.followUpPlanned ? String(test.followUpPlanned) : "" })} data-testid="record-result">
+      <button className="btn btn-sm" onClick={open} data-testid="record-result">
         {test.result === "selected" ? "Collected" : "Result"}
       </button>
       {f && (
@@ -279,6 +395,7 @@ export function ResultButton({ test }: { test: { id: string; result: string; col
           open
           onClose={() => setF(null)}
           title="Collection and result"
+          wide
           footer={
             <>
               <button className="btn" onClick={() => setF(null)}>
@@ -289,10 +406,13 @@ export function ResultButton({ test }: { test: { id: string; result: string; col
                 disabled={pending}
                 onClick={() =>
                   start(async () => {
-                    const r = await recordResultAction(test.id, { collectedAt: f.result === "refusal" && !f.collectedAt ? "" : clock.iso(f.collectedAt), result: f.result, specimenId: f.specimenId, followUpPlanned: f.followUpPlanned || undefined });
-                    if (!r.ok) return t.err(r.error);
+                    setErr(null);
+                    const r = await recordResultAction(test.id, { ...f, collectedAt: f.result === "refusal" && !f.collectedAt ? "" : clock.iso(f.collectedAt), ...(test.reason === "return_to_duty" ? {} : { followUpPlanned: undefined, followUpMonths: undefined, sapName: undefined, sapEvaluatedAt: undefined, sapEducationDoneAt: undefined }) });
+                    if (!r.ok) return setErr(r.error);
+                    const upErr = await uploadTestFile(test.id, file);
                     setF(null);
-                    t.ok(`Saved: ${RESULT_LABEL[f.result] ?? f.result}`);
+                    if (upErr) t.err(`Saved, but the file didn't upload: ${upErr}`);
+                    else t.ok(`Saved: ${RESULT_LABEL[f.result] ?? f.result}`);
                     router.refresh();
                   })
                 }
@@ -302,12 +422,12 @@ export function ResultButton({ test }: { test: { id: string; result: string; col
             </>
           }
         >
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-3 gap-3">
             <div>
               <label className="label" htmlFor="r-collected">
                 Collected ({clock.abbr})
               </label>
-              <input id="r-collected" type="datetime-local" className="input" value={f.collectedAt} onChange={(e) => setF({ ...f, collectedAt: e.target.value })} />
+              <input id="r-collected" type="datetime-local" className="input" value={f.collectedAt} onChange={(e) => setF({ ...f, collectedAt: e.target.value })} max={clock.input()} />
             </div>
             <div>
               <label className="label" htmlFor="r-result">
@@ -329,15 +449,13 @@ export function ResultButton({ test }: { test: { id: string; result: string; col
               </label>
               <input id="r-ccf" className="input" value={f.specimenId} onChange={(e) => setF({ ...f, specimenId: e.target.value })} />
             </div>
-            {test.reason === "return_to_duty" && (
-              <div>
-                <label className="label" htmlFor="r-fu">
-                  Follow-up tests (SAP plan)
-                </label>
-                <input id="r-fu" type="number" min={6} className="input" value={f.followUpPlanned} onChange={(e) => setF({ ...f, followUpPlanned: e.target.value })} />
-              </div>
-            )}
+            <TestDetailFields f={f} set={(k, v) => setF((x) => (x ? { ...x, [k]: v } : x))} substance={test.substance} reason={test.reason} clock={clock} file={file} setFile={setFile} />
           </div>
+          {err && (
+            <div className="error mt-2" role="alert">
+              {err}
+            </div>
+          )}
           <div className="help mt-2">A driver who doesn&rsquo;t show up after being told to test is a refusal (40.191).</div>
         </Modal>
       )}
@@ -374,6 +492,7 @@ export function ClearinghouseButton({ testId }: { testId: string }) {
 }
 
 export function DrawButton({ period, pool }: { period: string; pool: number }) {
+  const clock = useSafetyClock();
   const router = useRouter();
   const t = useToast();
   const [f, setF] = useState<{ period: string; drugRate: string; alcoholRate: string; drawsPerYear: string } | null>(null);
@@ -436,7 +555,7 @@ export function DrawButton({ period, pool }: { period: string; pool: number }) {
                 <label className="label" htmlFor="dr-per-year">
                   Draws a year
                 </label>
-                <select id="dr-per-year" className="select" value={f.drawsPerYear} onChange={(e) => setF({ ...f, drawsPerYear: e.target.value })}>
+                <select id="dr-per-year" className="select" value={f.drawsPerYear} onChange={(e) => setF({ ...f, drawsPerYear: e.target.value, period: e.target.value === "12" ? clock.today().slice(0, 7) : /Q/.test(f.period) ? f.period : period })}>
                   <option value="4">4 (quarterly)</option>
                   <option value="12">12 (monthly)</option>
                   <option value="2">2</option>
