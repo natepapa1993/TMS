@@ -6,13 +6,13 @@ import { pdfText } from "@/lib/pdf-text";
 export type PacketPart = { name: string; mimeType: string; bytes: Uint8Array };
 
 /** One PDF: a cover page listing the contents, then every document in packet order. Images become a page each. */
-export async function buildPacketPdf(input: { title: string; parts: PacketPart[] }): Promise<Uint8Array> {
+export async function buildPacketPdf(input: { title: string; parts: PacketPart[]; builtAt?: string | null }): Promise<Uint8Array> {
   const out = await PDFDocument.create();
   const font = await out.embedFont(StandardFonts.HelveticaBold);
   const body = await out.embedFont(StandardFonts.Helvetica);
   const cover = out.addPage([612, 792]);
   cover.drawText(pdfText(input.title), { x: 54, y: 720, size: 20, font, color: rgb(0.06, 0.09, 0.16) });
-  cover.drawText(`Built ${new Date().toISOString().replace("T", " ").slice(0, 16)} UTC`, { x: 54, y: 696, size: 10, font: body, color: rgb(0.4, 0.45, 0.55) });
+  cover.drawText(pdfText(`Built ${input.builtAt ?? `${new Date().toISOString().replace("T", " ").slice(0, 16)} UTC`}`), { x: 54, y: 696, size: 10, font: body, color: rgb(0.4, 0.45, 0.55) });
   let y = 650;
   input.parts.forEach((p, i) => {
     cover.drawText(pdfText(`${i + 1}.  ${p.name}`), { x: 54, y, size: 12, font: body, color: rgb(0.06, 0.09, 0.16) });

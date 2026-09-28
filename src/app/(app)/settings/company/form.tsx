@@ -5,7 +5,21 @@ import { useRouter } from "next/navigation";
 import { saveCompanyAction } from "../actions";
 import { Toast, useToast } from "@/components/ui";
 
-const ZONES = ["America/Detroit", "America/New_York", "America/Chicago", "America/Denver", "America/Phoenix", "America/Los_Angeles", "America/Monterrey", "America/Mexico_City", "America/Matamoros", "America/Ciudad_Juarez", "America/Tijuana"];
+/** The company's clock, in words a dispatcher picks from (owner #23): no typing "America/Detroit". */
+const ZONES: [string, string][] = [
+  ["America/Detroit", "Eastern — Detroit, Michigan"],
+  ["America/New_York", "Eastern — New York, Atlanta"],
+  ["America/Toronto", "Eastern — Toronto, Ontario"],
+  ["America/Chicago", "Central — Chicago, Dallas, Laredo"],
+  ["America/Matamoros", "Central, US daylight time — Nuevo Laredo, Reynosa, Piedras Negras"],
+  ["America/Monterrey", "Central, no daylight time — Monterrey, Saltillo"],
+  ["America/Mexico_City", "Central, no daylight time — Mexico City, Querétaro"],
+  ["America/Denver", "Mountain — Denver, El Paso"],
+  ["America/Ciudad_Juarez", "Mountain, US daylight time — Ciudad Juárez"],
+  ["America/Phoenix", "Mountain, no daylight time — Phoenix"],
+  ["America/Los_Angeles", "Pacific — Los Angeles"],
+  ["America/Tijuana", "Pacific — Tijuana"],
+];
 
 const QB_FIELDS: [string, string, string][] = [
   ["arAccount", "Accounts receivable", "invoices post here"],
@@ -38,13 +52,14 @@ export function CompanyForm({ initial, canEdit }: { initial: { name: string; tim
           <label className="label" htmlFor="c-tz">
             Time zone
           </label>
-          <input id="c-tz" className="input" list="tz-list" value={f.timeZone} onChange={(e) => setF({ ...f, timeZone: e.target.value })} aria-invalid={err?.field === "timeZone"} />
-          <datalist id="tz-list">
-            {ZONES.map((z) => (
-              <option key={z} value={z} />
+          <select id="c-tz" className="select" value={f.timeZone} onChange={(e) => setF({ ...f, timeZone: e.target.value })} aria-invalid={err?.field === "timeZone"}>
+            {(ZONES.some(([z]) => z === f.timeZone) ? ZONES : [[f.timeZone, f.timeZone] as [string, string], ...ZONES]).map(([z, l]) => (
+              <option key={z} value={z}>
+                {l}
+              </option>
             ))}
-          </datalist>
-          <div className="help">Digests, today on the boards and month-end close use this.</div>
+          </select>
+          <div className="help">Times not tied to a stop (sent, history, digests, today on the boards, month-end close) are on this clock. Stop times are always on the stop&apos;s own clock.</div>
         </div>
         <div>
           <label className="label" htmlFor="c-fuel">

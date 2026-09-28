@@ -102,11 +102,11 @@ export async function driverToday(tenantId: string, driverId: string) {
     // a crossing leg is one ordered flow: the leg's steps to the caja, then the border steps (never both at once)
     const flow = x ? XL!.crossingDriverNext(leg.state, x.state) : null;
     const crossing = x
-      ? { id: x.id, state: x.state, trailerNumber: x.trailerNumber, packetToken: x.packetSentAt ? x.packetToken : null, packetSentAt: x.packetSentAt, nextStep: flow?.kind === "border" ? flow.to : null, wait: flow?.kind === "wait" ? { en: flow.en, es: flow.es } : null, fromCountry: x.fromCountry, toCountry: x.toCountry, stateLabel: XL!.crossingStateLabel(x.state, x), steps: Object.fromEntries((["departed_yard", "at_mx_customs", "in_us_customs", "cleared"] as const).map((k) => [k, XL!.stepLabel(k, x) ?? { en: k, es: k }])) }
+      ? { id: x.id, state: x.state, trailerNumber: x.trailerNumber, packetToken: x.packetSentAt ? x.packetToken : null, packetSentAt: x.packetSentAt, nextStep: flow?.kind === "border" ? flow.to : null, wait: flow?.kind === "wait" ? { en: flow.en, es: flow.es } : leg.state === "loaded" && flow?.kind === "leg" ? { en: "No crossing packet from dispatch yet — call before the bridge", es: "Aún no hay paquete de cruce — llama antes del puente" } : null, fromCountry: x.fromCountry, toCountry: x.toCountry, stateLabel: XL!.crossingStateLabel(x.state, x), steps: Object.fromEntries((["departed_yard", "at_mx_customs", "in_us_customs", "cleared"] as const).map((k) => [k, XL!.stepLabel(k, x) ?? { en: k, es: k }])) }
       : null;
     const mid = pendingMidStop(leg, stops.filter((x) => x.orderId === leg.orderId));
     const plain = mid ? { to: leg.state, label: `${mid.which === "arrived" ? "Arrived at" : "Leaving"} ${mid.stop.name}`, es: `${mid.which === "arrived" ? "Llegué a" : "Saliendo de"} ${mid.stop.name}` } : nextStep(leg.state);
-    const next = !flow ? plain : flow.kind === "leg" ? (flow.to === "loaded" ? { to: "loaded" as LegState, label: "Caja picked up — loaded", es: "Caja enganchada — cargado" } : nextStep(leg.state)) : null;
+    const next = !flow ? plain : flow.kind === "leg" ? nextStep(leg.state) : null;
     // the freight this leg picks up: is it there yet (the leg that brings it delivered)?
     const before = legsOfOrders.find((p) => p.orderId === leg.orderId && p.toStopId === leg.fromStopId && p.id !== leg.id);
     const freightReady = before ? before.state === "completed" : null;
@@ -161,7 +161,7 @@ export async function driverStep(tenantId: string, driverId: string, legId: stri
     const [x] = await db.select().from(s.crossings).where(eq(s.crossings.legId, leg.id)).limit(1);
     if (!x) throw new NotFoundError("crossing", leg.id);
     if (input.crossingHold) await X.hold(ctx, x.id, input.crossingHold, "driver_app");
-    else await X.step(ctx, x.id, input.crossingStep as import("@/db/schema").CrossingState, { source: "driver_app", verified: hasPos });
+    else await X.step(ctx, x.id, input.crossingStep as import("@/db/schema").CrossingState, { source: "driver_app", verified: hasPos, seal: input.seal ?? null });
     return leg;
   }
   if (leg.state === "dispatched") return acceptLeg(ctx, leg.id, "driver_app");

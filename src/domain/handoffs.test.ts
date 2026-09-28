@@ -160,7 +160,7 @@ describe("crossing and legs move together (F-31.3, dispatch B3)", () => {
       }
     expect(crossingDriverNext("dispatched", "packet_sent")).toEqual({ kind: "leg", to: "accepted" });
     expect(crossingDriverNext("at_pickup", "ready_to_cross")).toEqual({ kind: "leg", to: "loaded" });
-    expect(crossingDriverNext("loaded", "ready_to_cross").kind).toBe("wait"); // no packet yet
+    expect(crossingDriverNext("loaded", "ready_to_cross")).toEqual({ kind: "leg", to: "en_route" }); // no packet: the leg rolls, the crossing follows
     expect(crossingDriverNext("loaded", "packet_sent")).toEqual({ kind: "border", to: "departed_yard" });
     expect(crossingDriverNext("en_route", "departed_yard")).toEqual({ kind: "border", to: "at_mx_customs" });
     expect(crossingDriverNext("en_route", "in_us_customs")).toEqual({ kind: "border", to: "cleared" });

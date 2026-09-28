@@ -1096,7 +1096,7 @@ export async function stampStop(ctx: Ctx, legId: string, stopId: string, which: 
 }
 
 /** Move a leg one step (or to an explicit forward state). Writes the stop timestamps. */
-export async function advanceLeg(ctx: Ctx, legId: string, to: LegState | "next", ev: AdvanceEvent = {}) {
+export async function advanceLeg(ctx: Ctx, legId: string, to: LegState | "next", ev: AdvanceEvent = {}, opts: { syncCrossing?: boolean } = {}) {
   assertCtx(ctx);
   // "next" while en route with a stop still to clock in between = clock that stop, not the delivery
   if (to === "next") {
@@ -1107,7 +1107,7 @@ export async function advanceLeg(ctx: Ctx, legId: string, to: LegState | "next",
       if (mid) return stampStop(ctx, legId, mid.stop.id, mid.which, ev);
     }
   }
-  return db.transaction(async (tx) => {
+  const moved = await db.transaction(async (tx) => {
     const leg = await loadLeg(tx, ctx, legId);
     let target: LegState;
     if (to === "next") {
@@ -1137,6 +1137,12 @@ export async function advanceLeg(ctx: Ctx, legId: string, to: LegState | "next",
     await recomputeOrder(tx, ctx, leg.orderId, target === "completed" ? at : undefined);
     return after;
   });
+  // the crossing follows its leg right away (departed the yard once it rolls, cleared once delivered), not at the next page load
+  if (moved.type === "crossing" && opts.syncCrossing !== false && ["at_pickup", "en_route", "at_delivery", "completed"].includes(moved.state)) {
+    const [x] = await db.select({ id: s.crossings.id }).from(s.crossings).where(and(eq(s.crossings.tenantId, ctx.tenantId), eq(s.crossings.legId, moved.id))).limit(1);
+    if (x) await (await import("./crossing")).recompute(ctx, x.id).catch(() => null);
+  }
+  return moved;
 }
 
 /**

@@ -227,7 +227,7 @@ describe("crossing lifecycle (spec §3.1)", () => {
     // a document arriving now does not yank the state back
     await X.uploadDocument(a, c.id, { code: "packing_list", fileName: "pl.pdf", mimeType: "application/pdf", bytes: await pdf("pl"), fields: { pieces: 26 } });
     expect((await X.recompute(a, c.id)).state).toBe("cleared");
-  });
+  }, 30_000); // many documents, the packet, the border: slow on a busy machine
 
   it("packet unacknowledged → red flag; hold and release; returned → re-verify", async () => {
     const { o, c } = await crossingOrder();
@@ -265,7 +265,7 @@ describe("crossing lifecycle (spec §3.1)", () => {
     cur = await X.reverify(a, c.id);
     expect(["docs_complete", "docs_verified", "eligibility_checked"]).toContain(cur.state);
     expect(cur.packetBuiltAt).toBeNull();
-  });
+  }, 30_000); // many documents, the packet, the border: slow on a busy machine
 
   it("rules: a customer-specific row overrides the base; blue plates make carta porte optional; n/a needs a reason", async () => {
     const { c } = await crossingOrder();

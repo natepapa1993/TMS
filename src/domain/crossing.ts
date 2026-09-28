@@ -259,7 +259,8 @@ export function crossingDriverNext(leg: LegState, x: CrossingState): CrossingNex
   if (["dispatched", "accepted", "en_route_to_pickup", "at_pickup"].includes(leg)) return { kind: "leg", to: LEG_NEXT[leg]! };
   if (leg === "at_delivery") return { kind: "leg", to: "completed" };
   if (x === "cleared") return { kind: "leg", to: leg === "loaded" ? "en_route" : "at_delivery" };
-  if (leg === "loaded") return x === "packet_sent" ? { kind: "border", to: "departed_yard" } : PHYSICAL.includes(x) ? { kind: "border", to: FORWARD[x]! } : { kind: "wait", en: "Waiting for the crossing packet from dispatch", es: "Esperando el paquete de cruce de despacho" };
+  // loaded with no packet sent: the leg can still roll (a company that keeps its papers elsewhere); the border steps follow
+  if (leg === "loaded") return x === "packet_sent" ? { kind: "border", to: "departed_yard" } : PHYSICAL.includes(x) ? { kind: "border", to: FORWARD[x]! } : { kind: "leg", to: "en_route" };
   // en route with the caja: the border steps, from wherever the crossing is
   if (x === "packet_sent" || !PHYSICAL.includes(x)) return { kind: "border", to: x === "packet_sent" ? "departed_yard" : "at_mx_customs" };
   return { kind: "border", to: FORWARD[x]! };
@@ -920,7 +921,7 @@ export function stepLabel(state: CrossingState, c?: { fromCountry: string; toCou
  * with it (B3): the border steps need the caja picked up at the yard (the leg Loaded); Departed the yard puts the
  * leg en route; Cleared delivers the leg at the yard on the other side, which wakes up the next leg.
  */
-export async function step(ctx: Ctx, crossingId: string, to: CrossingState, e: { source?: string; verified?: boolean; note?: string | null; at?: Date } = {}) {
+export async function step(ctx: Ctx, crossingId: string, to: CrossingState, e: { source?: string; verified?: boolean; note?: string | null; at?: Date; seal?: string | null } = {}) {
   assertCtx(ctx);
   const c = await load(ctx, crossingId);
   if (to === "held" || to === "returned" || to === "cancelled") throw new ValidationError("use hold / markReturned / cancel");
@@ -958,7 +959,7 @@ export async function step(ctx: Ctx, crossingId: string, to: CrossingState, e: {
 }
 
 /** The crossing leg follows its border step: en route once it left the yard, delivered at the far yard once cleared. */
-async function legFollowsCrossing(ctx: Ctx, leg: typeof s.legs.$inferSelect, to: CrossingState, e: { source?: string; verified?: boolean; at?: Date }) {
+async function legFollowsCrossing(ctx: Ctx, leg: typeof s.legs.$inferSelect, to: CrossingState, e: { source?: string; verified?: boolean; at?: Date; seal?: string | null }) {
   const { advanceLeg } = await import("./orders");
   const src = (["driver_app", "gps", "carrier", "dispatcher", "system"].includes(e.source ?? "") ? e.source : "system") as "driver_app" | "gps" | "carrier" | "dispatcher" | "system";
   const ev = { source: src, verified: e.verified ?? false, at: e.at, note: `border: ${CROSSING_LABEL[to].toLowerCase()}` };
@@ -968,7 +969,8 @@ async function legFollowsCrossing(ctx: Ctx, leg: typeof s.legs.$inferSelect, to:
   for (const target of walk) {
     const order: LegState[] = ["dispatched", "accepted", "en_route_to_pickup", "at_pickup", "loaded", "en_route", "at_delivery", "completed"];
     if (order.indexOf(state) < 0 || order.indexOf(state) >= order.indexOf(target)) continue;
-    const moved = await advanceLeg(systemCtx(ctx.tenantId), leg.id, target, ev);
+    // the seal the driver reads at the far yard is recorded where the leg arrives (and checked against the one applied)
+    const moved = await advanceLeg(systemCtx(ctx.tenantId), leg.id, target, target === "at_delivery" ? { ...ev, seal: e.seal ?? null } : ev, { syncCrossing: false });
     state = moved.state;
   }
   if (to === "cleared" && state === "completed") {
@@ -1091,7 +1093,9 @@ export async function buildPacket(ctx: Ctx, crossingId: string) {
     parts.push({ name: `${c.requirements.find((r) => r.documentId === id)?.label ?? d.code}`, mimeType: d.mimeType, bytes: new Uint8Array(blob.bytes) });
   }
   const [order] = await db.select().from(s.orders).where(eq(s.orders.id, c.orderId)).limit(1);
-  const pdf = await buildPacketPdf({ title: `Crossing packet ${order.orderNumber}${c.trailerNumber ? ` · caja ${c.trailerNumber}` : ""}`, parts });
+  const { tenantZone } = await import("./company");
+  const { fmtWhen } = await import("@/lib/time");
+  const pdf = await buildPacketPdf({ title: `Crossing packet ${order.orderNumber}${c.trailerNumber ? ` · caja ${c.trailerNumber}` : ""}`, parts, builtAt: fmtWhen(new Date(), await tenantZone(ctx.tenantId), { year: true }) });
   const sha = createHash("sha256").update(pdf).digest("hex");
   const [blob] = await db.insert(s.documentBlobs).values({ id: newId(), tenantId: ctx.tenantId, sha256: sha, mimeType: "application/pdf", sizeBytes: pdf.length, bytes: Buffer.from(pdf) }).returning({ id: s.documentBlobs.id });
   await db.update(s.crossings).set({ packetStorageKey: `blob:${blob.id}`, packetBuiltAt: new Date(), packetToken: c.packetToken ?? newToken(), updatedAt: new Date(), updatedBy: ctx.userId }).where(eq(s.crossings.id, crossingId));

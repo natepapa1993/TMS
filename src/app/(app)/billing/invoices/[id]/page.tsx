@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { fmtWhen } from "@/lib/time";
 import { shortDate } from "@/lib/time";
 import { db } from "@/db/client";
 import { invoices } from "@/db/schema";
@@ -18,6 +19,7 @@ const TONE: Record<string, "slate" | "teal" | "amber" | "red" | "green" | "blue"
 export default async function InvoicePage({ params }: PageProps<"/billing/invoices/[id]">) {
   const { id } = await params;
   const ctx = await requireCtx();
+  const companyZone = await (await import("@/domain/company")).tenantZone(ctx.tenantId);
   const d = await invoiceById(ctx, id).catch(() => null);
   if (!d) notFound();
   const { invoice: inv, lines, receipts, creditMemos, entity, customer, orders } = d;
@@ -157,7 +159,7 @@ export default async function InvoicePage({ params }: PageProps<"/billing/invoic
                       {d.to ? ` · ${d.to}` : ""}
                       {d.reference ? <span className="text-muted"> — {d.reference}</span> : null}
                     </span>
-                    <span className="text-muted whitespace-nowrap">{d.at.slice(0, 16).replace("T", " ")}</span>
+                    <span className="text-muted whitespace-nowrap">{fmtWhen(d.at, companyZone, { style: "short" })}</span>
                   </li>
                 ))}
               </ul>

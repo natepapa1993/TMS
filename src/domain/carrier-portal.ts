@@ -290,7 +290,7 @@ async function partnerFlow(l: typeof s.legs.$inferSelect) {
   return { ...X.crossingDriverNext(l.state, x.state), crossing: x, labels: (k: s.CrossingState) => X.stepLabel(k, x) };
 }
 function flowNext(f: NonNullable<Awaited<ReturnType<typeof partnerFlow>>>): { to: string; en: string; es: string; border?: boolean } | null {
-  if (f.kind === "leg") return f.to === "loaded" ? { to: "loaded", en: "Caja picked up — loaded", es: "Caja enganchada — cargado" } : (Object.values(NEXT).find((n) => n?.to === f.to) ?? null);
+  if (f.kind === "leg") return Object.values(NEXT).find((n) => n?.to === f.to) ?? null;
   if (f.kind === "border") {
     const lb = f.labels(f.to);
     return { to: f.to, en: lb?.en ?? f.to, es: lb?.es ?? f.to, border: true };

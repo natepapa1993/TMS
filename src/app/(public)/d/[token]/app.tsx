@@ -108,8 +108,9 @@ export function DriverApp({ token, data }: { token: string; data: Data }) {
       if (!cur) return;
       const fix = await getFix(6000);
       setGps(fix ? "on" : "off");
-      const r = await driverStepAction(token, cur.leg.id, { lat: fix?.lat ?? null, lng: fix?.lng ?? null, accuracyM: fix?.accuracyM ?? null, crossingStep: holdWhy ? null : to, crossingHold: holdWhy ?? null });
+      const r = await driverStepAction(token, cur.leg.id, { lat: fix?.lat ?? null, lng: fix?.lng ?? null, accuracyM: fix?.accuracyM ?? null, crossingStep: holdWhy ? null : to, crossingHold: holdWhy ?? null, seal: to === "cleared" ? seal.trim() || null : null });
       if (r.ok) {
+        setSeal("");
         setHolding(false);
         setHoldReason("");
         router.refresh();
@@ -220,6 +221,13 @@ export function DriverApp({ token, data }: { token: string; data: Data }) {
               </a>
             )}
             {x!.wait && x!.state !== "held" && <div className="text-callout text-muted text-center">{x!.wait.en} · {x!.wait.es}</div>}
+            {x!.nextStep === "cleared" && (
+              // cleared = the caja is at the yard on the other side: the seal on the doors, checked against the one applied
+              <div data-testid="seal">
+                <input className="input mono" placeholder="Seal found # · Sello encontrado" value={seal} onChange={(e) => setSeal(e.target.value)} aria-label="Seal found" />
+                {cur.sealExpected && <div className="text-footnote text-muted mt-1">Should be {cur.sealExpected} · Debe ser {cur.sealExpected}</div>}
+              </div>
+            )}
             {x!.state !== "held" && x!.nextStep && (
               <button className="btn btn-primary w-full justify-center flex-col gap-0" style={{ height: 64, fontSize: 17 }} onClick={() => xstep(x!.nextStep)} disabled={pending || holding}>
                 {(x!.steps?.[x!.nextStep] ?? XSTEP[x!.nextStep])?.en}

@@ -5,7 +5,7 @@ import { useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Modal, Pill, Toast, useToast } from "@/components/ui";
 import { roadMiles } from "@/lib/geo";
-import { fmtWhen, zonedDate } from "@/lib/time";
+import { fmtWhen, zonedDate, toZoneInput, fromZoneInput } from "@/lib/time";
 import { useZone } from "@/components/zone";
 import type { PlannerDriver, PlannerLeg, PlannerTruck } from "@/domain/planner";
 import { planAction, planAndDispatchAction } from "../actions";
@@ -418,8 +418,10 @@ export function Planner({ data, canPlan }: { data: { legs: PlannerLeg[]; drivers
 type EventSubject = { name: string; driverId: string | null; truckId: string | null; unit: string | null };
 
 function EventModal({ driver, onClose, onDone }: { driver: EventSubject; onClose: () => void; onDone: (msg: string) => void }) {
+  // typed on the company's clock, whatever zone this computer is in
+  const zone = useZone();
   const today = new Date();
-  const local = (d: Date) => new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+  const local = (d: Date) => toZoneInput(d, zone);
   const [f, setF] = useState({ subject: driver.driverId ? "driver" : "truck", kind: driver.driverId ? "vacation" : "repair", startsAt: local(today), endsAt: local(new Date(today.getTime() + 2 * 86400_000)), hard: true, note: "" });
   const [err, setErr] = useState<string | null>(null);
   const [pending, start] = useTransition();
@@ -442,7 +444,7 @@ function EventModal({ driver, onClose, onDone }: { driver: EventSubject; onClose
                 setErr(null);
                 const subjectKind = (repair && driver.truckId) || !driver.driverId ? "truck" : f.subject;
                 const subjectId = subjectKind === "truck" ? driver.truckId! : driver.driverId!;
-                const r = await addEventAction({ subjectKind, subjectId, kind: f.kind, startsAt: new Date(f.startsAt).toISOString(), endsAt: new Date(f.endsAt).toISOString(), hard: f.hard, note: f.note });
+                const r = await addEventAction({ subjectKind, subjectId, kind: f.kind, startsAt: fromZoneInput(f.startsAt, zone)?.toISOString() ?? "", endsAt: fromZoneInput(f.endsAt, zone)?.toISOString() ?? "", hard: f.hard, note: f.note });
                 if (r.ok) onDone(`${EVENT_KINDS.find(([v]) => v === f.kind)?.[1]} added`);
                 else setErr(r.error);
               })

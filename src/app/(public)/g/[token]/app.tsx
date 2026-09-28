@@ -111,7 +111,7 @@ export function CarrierDriverApp({ token, data }: { token: string; data: Data })
           {data.order.cargoNote && <div className="text-callout text-muted">📦 {data.order.cargoNote}</div>}
         </div>
         <div className="px-5 pb-5">
-          {atDelivery && !data.handoff && <PodButton token={token} done={data.podOnFile} onDone={() => router.refresh()} />}
+          {atDelivery && <PodButton token={token} done={data.podOnFile} onDone={() => router.refresh()} />}
           {dropping && (
             <div className="mb-3 space-y-2" data-testid="caja-drop">
               <div className="text-callout font-semibold">Leaving the caja at {data.to?.name} · Dejando la caja en {data.to?.name}</div>
@@ -134,7 +134,7 @@ export function CarrierDriverApp({ token, data }: { token: string; data: Data })
           ) : (
             <div className="text-center text-muted">{data.leg.done ? "Done — thank you · Listo, gracias" : "Waiting for dispatch · Esperando a despacho"}</div>
           )}
-          {st === "at_delivery" && !data.podOnFile && <div className="text-callout text-amber font-semibold text-center mt-2">Take the POD photo before you leave. · Toma la foto del POD antes de salir.</div>}
+          {st === "at_delivery" && !data.podOnFile && !data.handoff && <div className="text-callout text-amber font-semibold text-center mt-2">Take the POD photo before you leave. · Toma la foto del POD antes de salir.</div>}
           {err && (
             <div className="error mt-2" role="alert">
               {err}
@@ -231,7 +231,7 @@ function PhotoInput({ token, done, onDone }: { token: string; done: boolean; onD
       <label className={`btn w-full justify-center ${ok ? "btn-ghost text-teal" : ""}`} style={{ height: 48 }}>
         <input
           type="file"
-          accept="image/*"
+          accept="image/*,application/pdf"
           capture="environment"
           className="hidden"
           disabled={busy}

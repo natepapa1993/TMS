@@ -96,10 +96,17 @@ test("carrier's day: one link, accept the offer, run the load, get paid, keep do
     await big.click();
     await driver.waitForTimeout(400);
   }
-  // at the delivery the POD goes up from the phone, before the last button
-  await expect(driver.locator("body")).toContainText("Take the POD photo before you leave");
+  // the drop at the border yard for the crossing truck: the caja number, the seal and a photo (M18), no POD
+  const drop = driver.getByTestId("caja-drop");
+  await expect(drop).toContainText("Leaving the caja at Border yard (MX)");
   await driver.getByTestId("photo-POD").locator("input[type=file]").setInputFiles(path.join(__dirname, "fixtures", "bol.pdf"));
   await expect(driver.getByTestId("photo-POD")).toContainText("✓ POD on file", { timeout: 10000 });
+  await big.click();
+  await expect(driver.getByRole("alert")).toContainText("caja number");
+  await drop.getByLabel("Caja number").fill("caja-7702");
+  await driver.getByLabel("Seal on the caja").fill("sm-448812");
+  await driver.getByTestId("photo-caja").locator("input[type=file]").setInputFiles(path.join(__dirname, "fixtures", "bol.pdf"));
+  await expect(driver.getByTestId("photo-caja")).toContainText("✓ Caja photo on file", { timeout: 10000 });
   await big.click();
   await expect(driver.locator("body")).toContainText("Done — thank you");
   await ctx3.close();
