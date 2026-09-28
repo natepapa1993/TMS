@@ -2,24 +2,36 @@
 
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { Modal, Toast, useToast } from "@/components/ui";
+import { Modal, Toast, useToast, Confirm } from "@/components/ui";
+import { useZone } from "@/components/zone";
 import { recordDqAction, addTestAction, recordResultAction, clearinghouseReportedAction, drawRandomAction, saveInspectionAction, deleteInspectionAction, signOffRepairAction, type TestForm, type InspectionForm } from "./safety-actions";
 import { basicOf, BASICS, REASON_LABEL, RESULT_LABEL, lookupViolation } from "@/domain/safety-rules";
-import { localDay } from "@/lib/time";
+import { toZoneInput, fromZoneInput, zonedDate, zoneLabel } from "@/lib/time";
 
 type Opt = { id: string; name: string };
-const today = () => localDay();
-/** An instant as a datetime-local value on the viewer's clock. */
-const localInput = (d: Date | string = new Date()) => {
-  const x = new Date(d);
-  return new Date(x.getTime() - x.getTimezoneOffset() * 60_000).toISOString().slice(0, 16);
-};
-const fromLocal = (v: string) => (v ? new Date(v).toISOString() : "");
+/**
+ * Every Safety date and time is typed and read on the company's clock, whatever zone the browser is in (safety N2):
+ * a post-accident deadline or a collection time reads the same for Safety in Laredo and the owner travelling.
+ */
+function useSafetyClock() {
+  const zone = useZone();
+  return {
+    zone,
+    /** "CDT": printed next to every date-time box */
+    abbr: zoneLabel(zone),
+    today: () => zonedDate(new Date(), zone),
+    /** an instant as a datetime-local value on the company's clock */
+    input: (d: Date | string | null | undefined = new Date()) => toZoneInput(d ?? new Date(), zone),
+    /** a datetime-local value read on the company's clock → ISO */
+    iso: (v: string | null | undefined) => (v ? (fromZoneInput(v, zone)?.toISOString() ?? "") : ""),
+  };
+}
 
 
 // ---------- qualification file ----------
 
 export function DqRecordButton({ driverId, itemKey, label, hint, primary }: { driverId: string; itemKey: string; label: string; hint: string; primary?: boolean }) {
+  const clock = useSafetyClock();
   const router = useRouter();
   const t = useToast();
   const [open, setOpen] = useState(false);
@@ -71,7 +83,7 @@ export function DqRecordButton({ driverId, itemKey, label, hint, primary }: { dr
                 <label className="label" htmlFor="dq-date">
                   Done on
                 </label>
-                <input type="date" id="dq-date" name="completedAt" className="input" defaultValue={today()} />
+                <input type="date" id="dq-date" name="completedAt" className="input" defaultValue={clock.today()} />
               </div>
               <div>
                 <label className="label" htmlFor="dq-file">
@@ -97,9 +109,10 @@ export function DqRecordButton({ driverId, itemKey, label, hint, primary }: { dr
 // ---------- drug & alcohol ----------
 
 export function TestButton({ drivers, driverId, incidents, preset, label = "+ Record a test", small }: { drivers: Opt[]; driverId?: string; incidents?: { id: string; label: string }[]; preset?: Partial<TestForm>; label?: string; small?: boolean }) {
+  const clock = useSafetyClock();
   const router = useRouter();
   const t = useToast();
-  const blank = (): TestForm => ({ driverId: driverId ?? "", reason: "pre_employment", substance: "drug", incidentId: "", collectedAt: localInput(), result: "pending", specimenId: "", collector: "", mro: "", followUpPlanned: "", note: "", ...preset });
+  const blank = (): TestForm => ({ driverId: driverId ?? "", reason: "pre_employment", substance: "drug", incidentId: "", collectedAt: clock.input(), result: "pending", specimenId: "", collector: "", mro: "", followUpPlanned: "", note: "", ...preset });
   const [f, setF] = useState<TestForm | null>(null);
   const [pending, start] = useTransition();
   const set = (k: keyof TestForm, v: string) => setF((x) => (x ? { ...x, [k]: v } : x));
@@ -124,7 +137,7 @@ export function TestButton({ drivers, driverId, incidents, preset, label = "+ Re
                 disabled={pending}
                 onClick={() =>
                   start(async () => {
-                    const r = await addTestAction({ ...f, collectedAt: f.result === "pending" && !f.collectedAt ? "" : fromLocal(f.collectedAt ?? "") });
+                    const r = await addTestAction({ ...f, collectedAt: f.result === "pending" && !f.collectedAt ? "" : clock.iso(f.collectedAt) });
                     if (!r.ok) return t.err(r.error);
                     setF(null);
                     t.ok("Test recorded");
@@ -191,7 +204,7 @@ export function TestButton({ drivers, driverId, incidents, preset, label = "+ Re
             )}
             <div>
               <label className="label" htmlFor="t-collected">
-                Collected
+                Collected ({clock.abbr})
               </label>
               <input id="t-collected" type="datetime-local" className="input" value={f.collectedAt} onChange={(e) => set("collectedAt", e.target.value)} />
             </div>
@@ -251,13 +264,14 @@ export function TestButton({ drivers, driverId, incidents, preset, label = "+ Re
 }
 
 export function ResultButton({ test }: { test: { id: string; result: string; collectedAt: string | null; reason: string; specimenId: string | null; followUpPlanned: number | null } }) {
+  const clock = useSafetyClock();
   const router = useRouter();
   const t = useToast();
   const [f, setF] = useState<{ collectedAt: string; result: string; specimenId: string; followUpPlanned: string } | null>(null);
   const [pending, start] = useTransition();
   return (
     <>
-      <button className="btn btn-sm" onClick={() => setF({ collectedAt: localInput(test.collectedAt ?? new Date()), result: test.result === "selected" ? "pending" : test.result, specimenId: test.specimenId ?? "", followUpPlanned: test.followUpPlanned ? String(test.followUpPlanned) : "" })} data-testid="record-result">
+      <button className="btn btn-sm" onClick={() => setF({ collectedAt: clock.input(test.collectedAt ?? new Date()), result: test.result === "selected" ? "pending" : test.result, specimenId: test.specimenId ?? "", followUpPlanned: test.followUpPlanned ? String(test.followUpPlanned) : "" })} data-testid="record-result">
         {test.result === "selected" ? "Collected" : "Result"}
       </button>
       {f && (
@@ -275,7 +289,7 @@ export function ResultButton({ test }: { test: { id: string; result: string; col
                 disabled={pending}
                 onClick={() =>
                   start(async () => {
-                    const r = await recordResultAction(test.id, { collectedAt: f.result === "refusal" && !f.collectedAt ? "" : fromLocal(f.collectedAt), result: f.result, specimenId: f.specimenId, followUpPlanned: f.followUpPlanned || undefined });
+                    const r = await recordResultAction(test.id, { collectedAt: f.result === "refusal" && !f.collectedAt ? "" : clock.iso(f.collectedAt), result: f.result, specimenId: f.specimenId, followUpPlanned: f.followUpPlanned || undefined });
                     if (!r.ok) return t.err(r.error);
                     setF(null);
                     t.ok(`Saved: ${RESULT_LABEL[f.result] ?? f.result}`);
@@ -291,7 +305,7 @@ export function ResultButton({ test }: { test: { id: string; result: string; col
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label className="label" htmlFor="r-collected">
-                Collected
+                Collected ({clock.abbr})
               </label>
               <input id="r-collected" type="datetime-local" className="input" value={f.collectedAt} onChange={(e) => setF({ ...f, collectedAt: e.target.value })} />
             </div>
@@ -333,6 +347,7 @@ export function ResultButton({ test }: { test: { id: string; result: string; col
 }
 
 export function ClearinghouseButton({ testId }: { testId: string }) {
+  const clock = useSafetyClock();
   const router = useRouter();
   const t = useToast();
   const [pending, start] = useTransition();
@@ -344,7 +359,7 @@ export function ClearinghouseButton({ testId }: { testId: string }) {
         data-testid="ch-reported"
         onClick={() =>
           start(async () => {
-            const r = await clearinghouseReportedAction(testId, today());
+            const r = await clearinghouseReportedAction(testId, clock.today());
             if (!r.ok) return t.err(r.error);
             t.ok("Marked reported to the Clearinghouse");
             router.refresh();
@@ -454,15 +469,17 @@ export function DrawButton({ period, pool }: { period: string; pool: number }) {
 
 type V = InspectionForm["violations"][number];
 const blankV = (): V => ({ code: "", description: "", basic: "", severity: "", oos: false, unit: "", on: "", removed: false });
-export type InspectionRow = { id: string; inspectedAt: string; reportNumber: string | null; country: string; jurisdiction: string | null; level: number; hazmat: boolean; driverId: string | null; truckId: string | null; trailerId: string | null; orderId: string | null; location: string | null; dataQs: string; note: string | null; driverOosUntil?: string | null; violations: { code: string; description: string; basic: string | null; severity: number; oos: boolean; unit: string; on?: string; removed?: boolean }[] };
+export type InspectionRow = { id: string; inspectedAt: string; reportNumber: string | null; country: string; jurisdiction: string | null; level: number; hazmat: boolean; driverId: string | null; truckId: string | null; trailerId: string | null; orderId: string | null; location: string | null; dataQs: string; note: string | null; driverOosUntil?: string | null; repair?: unknown; violations: { code: string; description: string; basic: string | null; severity: number; oos: boolean; unit: string; on?: string; removed?: boolean }[] };
 
 export function InspectionButton({ drivers, trucks, trailers, edit, driverId, label = "+ Log inspection" }: { drivers: Opt[]; trucks: Opt[]; trailers: Opt[]; edit?: InspectionRow; driverId?: string; label?: string }) {
+  const clock = useSafetyClock();
   const router = useRouter();
   const t = useToast();
+  const [removing, setRemoving] = useState(false);
   const init = (): InspectionForm =>
     edit
-      ? { inspectedAt: localInput(edit.inspectedAt), reportNumber: edit.reportNumber ?? "", country: edit.country, jurisdiction: edit.jurisdiction ?? "", level: String(edit.level), hazmat: edit.hazmat, driverId: edit.driverId ?? "", truckId: edit.truckId ?? "", trailerId: edit.trailerId ?? "", orderId: edit.orderId ?? "", location: edit.location ?? "", dataQs: edit.dataQs, note: edit.note ?? "", driverOosUntil: edit.driverOosUntil ? localInput(edit.driverOosUntil) : "", violations: edit.violations.map((v) => ({ ...v, basic: v.basic ?? "", severity: v.severity ? String(v.severity) : "", on: v.on ?? "", removed: !!v.removed })) }
-      : { inspectedAt: localInput(), reportNumber: "", country: "US", jurisdiction: "", level: "1", hazmat: false, driverId: driverId ?? "", truckId: "", trailerId: "", orderId: "", location: "", dataQs: "none", note: "", driverOosUntil: "", violations: [] };
+      ? { inspectedAt: clock.input(edit.inspectedAt), reportNumber: edit.reportNumber ?? "", country: edit.country, jurisdiction: edit.jurisdiction ?? "", level: String(edit.level), hazmat: edit.hazmat, driverId: edit.driverId ?? "", truckId: edit.truckId ?? "", trailerId: edit.trailerId ?? "", orderId: edit.orderId ?? "", location: edit.location ?? "", dataQs: edit.dataQs, note: edit.note ?? "", driverOosUntil: edit.driverOosUntil ? clock.input(edit.driverOosUntil) : "", oosReleaseReason: "", violations: edit.violations.map((v) => ({ ...v, basic: v.basic ?? "", severity: v.severity ? String(v.severity) : "", on: v.on ?? "", removed: !!v.removed })) }
+      : { inspectedAt: clock.input(), reportNumber: "", country: "US", jurisdiction: "", level: "1", hazmat: false, driverId: driverId ?? "", truckId: "", trailerId: "", orderId: "", location: "", dataQs: "none", note: "", driverOosUntil: "", violations: [] };
   const [f, setF] = useState<InspectionForm | null>(null);
   const [pending, start] = useTransition();
   const setV = (i: number, patch: Partial<V>) => setF((x) => (x ? { ...x, violations: x.violations.map((v, j) => (j === i ? { ...v, ...patch } : v)) } : x));
@@ -470,6 +487,9 @@ export function InspectionButton({ drivers, trucks, trailers, edit, driverId, la
   const isVehicle = (v: V) => (v.unit ? v.unit === "vehicle" : ["vehicle", "hm"].includes(v.basic));
   const driverOos = !!f?.driverId && !!f?.violations.some((v) => v.oos && !v.removed && !isVehicle(v) && (v.code || v.description));
   const vehicleOos = !!(f?.truckId || f?.trailerId) && !!f?.violations.some((v) => v.oos && !v.removed && isVehicle(v) && (v.code || v.description));
+  // an out-of-service finding coming off without a repair sign-off: the reason goes on the overrides log (safety N3)
+  const heldOos = edit && !edit.repair ? edit.violations.filter((v) => v.oos && !v.removed).length : 0;
+  const releasing = !!f && heldOos > 0 && f.violations.filter((v) => v.oos && !v.removed && (v.code || v.description)).length < heldOos;
   const sel = (id: string, l: string, k: "driverId" | "truckId" | "trailerId", opts: Opt[]) => (
     <div>
       <label className="label" htmlFor={id}>
@@ -502,13 +522,15 @@ export function InspectionButton({ drivers, trucks, trailers, edit, driverId, la
                 <button
                   className="btn btn-ghost text-red mr-auto"
                   onClick={() =>
-                    start(async () => {
-                      const r = await deleteInspectionAction(edit.id);
-                      if (!r.ok) return t.err(r.error);
-                      setF(null);
-                      t.ok("Inspection removed");
-                      router.refresh();
-                    })
+                    heldOos
+                      ? setRemoving(true)
+                      : start(async () => {
+                          const r = await deleteInspectionAction(edit.id);
+                          if (!r.ok) return t.err(r.error);
+                          setF(null);
+                          t.ok("Inspection removed");
+                          router.refresh();
+                        })
                   }
                 >
                   Remove
@@ -522,7 +544,7 @@ export function InspectionButton({ drivers, trucks, trailers, edit, driverId, la
                 disabled={pending}
                 onClick={() =>
                   start(async () => {
-                    const r = await saveInspectionAction(edit?.id ?? null, { ...f, inspectedAt: fromLocal(f.inspectedAt), driverOosUntil: fromLocal(f.driverOosUntil) });
+                    const r = await saveInspectionAction(edit?.id ?? null, { ...f, inspectedAt: clock.iso(f.inspectedAt), driverOosUntil: clock.iso(f.driverOosUntil) });
                     if (!r.ok) return t.err(r.error);
                     setF(null);
                     t.ok(f.violations.length ? "Inspection saved" : "Clean inspection saved");
@@ -538,7 +560,7 @@ export function InspectionButton({ drivers, trucks, trailers, edit, driverId, la
           <div className="grid grid-cols-4 gap-3">
             <div className="col-span-2">
               <label className="label" htmlFor="i-at">
-                When
+                When ({clock.abbr})
               </label>
               <input id="i-at" type="datetime-local" className="input" value={f.inspectedAt} onChange={(e) => setF({ ...f, inspectedAt: e.target.value })} />
             </div>
@@ -669,16 +691,49 @@ export function InspectionButton({ drivers, trucks, trailers, edit, driverId, la
                 </div>
                 <div>
                   <label className="label" htmlFor="i-oos-until">
-                    Out of service until
+                    Out of service until ({clock.abbr})
                   </label>
                   <input id="i-oos-until" type="datetime-local" className="input" value={f.driverOosUntil} onChange={(e) => setF({ ...f, driverOosUntil: e.target.value })} />
                 </div>
+              </div>
+            )}
+            {releasing && (
+              <div className="rounded-lg border border-amber/50 bg-amber-soft/40 p-3 my-2" data-testid="oos-release">
+                <label className="label" htmlFor="i-oos-release">
+                  Why is the out-of-service finding coming off without a repair?
+                </label>
+                <input id="i-oos-release" className="input" list="oos-release-reasons" value={f.oosReleaseReason ?? ""} onChange={(e) => setF({ ...f, oosReleaseReason: e.target.value })} placeholder="Data entry error — it wasn't OOS on the report" />
+                <datalist id="oos-release-reasons">
+                  <option value="Data entry error — it wasn't OOS on the report" />
+                  <option value="DataQs accepted — violation removed" />
+                  <option value="Wrong unit on the inspection" />
+                </datalist>
+                <div className="help mt-1">The unit goes back in service with no repair sign-off. Your name and this reason go on the overrides log.</div>
               </div>
             )}
             {vehicleOos && <div className="text-callout text-red font-semibold my-2">A vehicle out-of-service order takes the {f.trailerId && !f.truckId ? "trailer" : "unit"} out of service until you sign off the repair on this inspection.</div>}
             <div className="help">{us ? <>Common codes fill in their description, BASIC and SMS weight — check them against your report. Other codes: the BASIC comes from the CFR part (395 = HOS, 393/396 = Vehicle Maintenance…) and the weight from FMCSA&rsquo;s SMS table.</> : <>Canadian and Mexican violations are kept as the report says them — no BASIC, no SMS weight — and stay out of the SMS measures.</>}</div>
           </div>
         </Modal>
+      )}
+      {edit && (
+        <Confirm
+          open={removing}
+          onClose={() => setRemoving(false)}
+          title="Remove this inspection?"
+          body="It still holds a unit or driver out of service. Removing it puts them back to work without a repair sign-off."
+          needReason="Why (logged by mistake, wrong unit…)"
+          confirmLabel="Remove"
+          danger
+          onConfirm={async (reason) => {
+            const r = await deleteInspectionAction(edit.id, reason);
+            setRemoving(false);
+            if (!r.ok) return t.err(r.error);
+            setF(null);
+            t.ok("Inspection removed");
+            router.refresh();
+          }}
+        />
       )}
       <Toast message={t.toast?.message ?? null} tone={t.toast?.tone} onDone={t.clear} />
     </>
@@ -687,6 +742,7 @@ export function InspectionButton({ drivers, trucks, trailers, edit, driverId, la
 
 /** Sign off the repair after a vehicle out-of-service order: what was fixed, by whom, when, and the repair order. */
 export function RepairButton({ inspectionId, unit }: { inspectionId: string; unit: string }) {
+  const clock = useSafetyClock();
   const router = useRouter();
   const t = useToast();
   const [open, setOpen] = useState(false);
@@ -714,7 +770,10 @@ export function RepairButton({ inspectionId, unit }: { inspectionId: string; uni
               onClick={() =>
                 start(async () => {
                   setErr(null);
-                  const r = await signOffRepairAction(inspectionId, new FormData(form!));
+                  const fd = new FormData(form!);
+                  // a date and time on the company's clock: a same-day roadside repair is signed off after the inspection
+                  fd.set("at", clock.iso(String(fd.get("at") ?? "")));
+                  const r = await signOffRepairAction(inspectionId, fd);
                   if (!r.ok) return setErr(r.error);
                   setOpen(false);
                   t.ok(`${unit} is back in service`);
@@ -737,9 +796,9 @@ export function RepairButton({ inspectionId, unit }: { inspectionId: string; uni
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label className="label" htmlFor="rp-at">
-                Repaired on
+                Repaired at ({clock.abbr})
               </label>
-              <input id="rp-at" name="at" type="date" className="input" defaultValue={today()} />
+              <input id="rp-at" name="at" type="datetime-local" className="input" defaultValue={clock.input()} />
             </div>
             <label className="block border-2 border-dashed border-line rounded-lg p-3 text-center cursor-pointer hover:border-teal self-end">
               <input type="file" name="file" accept="application/pdf,image/jpeg,image/png" className="hidden" onChange={(e) => setName(e.target.files?.[0]?.name ?? null)} />

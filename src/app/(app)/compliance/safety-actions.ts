@@ -73,7 +73,7 @@ export async function drawRandomAction(v: { period: string; drugRate: string; al
   return r;
 }
 
-export type InspectionForm = { inspectedAt: string; reportNumber: string; country: string; jurisdiction: string; level: string; hazmat: boolean; driverId: string; truckId: string; trailerId: string; orderId: string; location: string; dataQs: string; note: string; driverOosUntil: string; violations: { code: string; description: string; basic: string; severity: string; oos: boolean; unit: string; on: string; removed: boolean }[] };
+export type InspectionForm = { inspectedAt: string; reportNumber: string; country: string; jurisdiction: string; level: string; hazmat: boolean; driverId: string; truckId: string; trailerId: string; orderId: string; location: string; dataQs: string; note: string; driverOosUntil: string; oosReleaseReason?: string; violations: { code: string; description: string; basic: string; severity: string; oos: boolean; unit: string; on: string; removed: boolean }[] };
 
 export async function saveInspectionAction(id: string | null, v: InspectionForm) {
   const r = await act(async (ctx) => {
@@ -86,8 +86,8 @@ export async function saveInspectionAction(id: string | null, v: InspectionForm)
   return r;
 }
 
-export async function deleteInspectionAction(id: string) {
-  const r = await act((ctx) => S.deleteInspection(ctx, id));
+export async function deleteInspectionAction(id: string, reason?: string) {
+  const r = await act((ctx) => S.deleteInspection(ctx, id, reason));
   if (r.ok) touch();
   return r;
 }
@@ -97,7 +97,8 @@ export async function signOffRepairAction(inspectionId: string, form: FormData) 
   const r = await act(async (ctx) => {
     const file = form.get("file");
     const f = file instanceof File && file.size > 0 ? { fileName: file.name, mimeType: file.type || (file.name.toLowerCase().endsWith(".pdf") ? "application/pdf" : "image/jpeg"), bytes: Buffer.from(await file.arrayBuffer()) } : null;
-    const row = await S.signOffRepair(ctx, inspectionId, { note: String(form.get("note") ?? ""), at: when(form.get("at")), file: f });
+    const raw = String(form.get("at") ?? "").trim();
+    const row = await S.signOffRepair(ctx, inspectionId, { note: String(form.get("note") ?? ""), at: when(raw), dateOnly: /^\d{4}-\d{2}-\d{2}$/.test(raw), file: f });
     return { id: row.id, driverId: row.driverId };
   });
   if (r.ok) {

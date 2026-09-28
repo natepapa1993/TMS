@@ -255,7 +255,11 @@ export const VIOLATION_CODES: { code: string; description: string; basic: NonNul
   { code: "391.11(b)(2)", description: "Driver can't read or speak English sufficiently", basic: "fitness", severity: 4 },
   { code: "391.41(a)", description: "No medical certificate in the driver's possession", basic: "fitness", severity: 1 },
   { code: "391.45(b)", description: "Expired medical certificate", basic: "fitness", severity: 1 },
+  { code: "393.9", description: "Inoperable required lamp", basic: "vehicle", severity: 6 },
   { code: "393.9(a)", description: "Inoperable required lamp", basic: "vehicle", severity: 6 },
+  { code: "393.9H", description: "Inoperable head lamps", basic: "vehicle", severity: 6 },
+  { code: "393.9T", description: "Inoperable tail lamp", basic: "vehicle", severity: 6 },
+  { code: "393.9TS", description: "Inoperative turn signal", basic: "vehicle", severity: 6 },
   { code: "393.11", description: "Lamps or reflective devices missing / not as required", basic: "vehicle", severity: 3 },
   { code: "393.45", description: "Brake hose or tubing damaged", basic: "vehicle", severity: 4 },
   { code: "393.47(e)", description: "Clamp or roto-chamber brake out of adjustment", basic: "vehicle", severity: 4 },
@@ -289,6 +293,37 @@ export function roadsideOos(i: { violations: Violation[]; truckId?: string | nul
     trailer: i.trailerId ? vehicle.filter((v) => onOf(v) === "trailer") : [],
     driver: i.driverId ? live.filter((v) => v.unit === "driver") : [],
   };
+}
+
+/** Out-of-service findings still in force on an inspection (ticked OOS, not removed). */
+export const liveOos = (vs: Violation[]) => vs.filter((v) => v.oos && !v.removed);
+
+/**
+ * Whether an edit takes an out-of-service finding away (unticked, removed, deleted) from an inspection whose
+ * repair was never signed off: that puts a unit or driver back to work without a repair, so it needs a reason
+ * on the record (safety N3). A DataQs acceptance is its own reason.
+ */
+export function oosReleaseNeedsReason(before: { violations: Violation[]; repair?: unknown }, after: { violations: Violation[]; dataQs?: string | null }) {
+  if (before.repair) return { released: false, defaultReason: null };
+  const was = liveOos(before.violations);
+  const now = liveOos(after.violations);
+  const key = (v: Violation) => `${v.code}|${v.unit}|${v.on ?? ""}`;
+  const still = new Set(now.map(key));
+  const gone = was.filter((v) => !still.has(key(v)));
+  if (!gone.length && now.length >= was.length) return { released: false, defaultReason: null };
+  // every finding that went away was marked "removed" and the DataQ was accepted: that is the reason
+  const viaDataQs = after.dataQs === "accepted" && gone.every((g) => after.violations.some((v) => key(v) === key(g) && v.removed));
+  return { released: true, defaultReason: viaDataQs ? "DataQs accepted — violation removed" : null };
+}
+
+/**
+ * When a repair after an out-of-service order was done. A date alone (the form's day, noon UTC) on the day of the
+ * inspection means that day, after the inspection: a same-day roadside repair is signed off at the inspection's
+ * time or now, whichever is later (safety N1). A date and time is taken as given.
+ */
+export function repairInstant(at: Date, inspectedAt: Date, opts: { dateOnly: boolean; sameDay: boolean; now: Date }) {
+  if (!opts.dateOnly || at.getTime() >= inspectedAt.getTime() || !opts.sameDay) return at;
+  return opts.now.getTime() > inspectedAt.getTime() && opts.now.getTime() - inspectedAt.getTime() < 86400_000 ? opts.now : inspectedAt;
 }
 
 /** SMS time weight: 3 in the last 6 months, 2 for 6–12, 1 for 12–24, 0 older. */

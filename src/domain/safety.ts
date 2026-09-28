@@ -8,7 +8,8 @@ import { assertCtx, can, requirePermission, type Ctx } from "@/lib/context";
 import { writeAudit } from "@/lib/audit";
 import { NotFoundError, ValidationError } from "./orders";
 import { evaluateSubject, isBuiltIn } from "./compliance";
-import { DQ_ITEMS, dqLines, daStanding, clearinghouseDuty, randomRequirement, perDraw, pick, postAccidentDuty, basicOf, unitOf, basicMeasures, oosRates, driverPoints, BASICS, periodStart, lookupViolation, roadsideOos } from "./safety-rules";
+import { DQ_ITEMS, dqLines, daStanding, clearinghouseDuty, randomRequirement, perDraw, pick, postAccidentDuty, basicOf, unitOf, basicMeasures, oosRates, driverPoints, BASICS, periodStart, lookupViolation, roadsideOos, oosReleaseNeedsReason, repairInstant } from "./safety-rules";
+import { zonedDate } from "@/lib/time";
 
 /**
  * Safety depth: the driver qualification file, the drug & alcohol program, roadside inspections with the
@@ -239,7 +240,7 @@ export async function driverTests(ctx: Ctx, driverId: string) {
 
 // ---------- roadside inspections ----------
 
-export type InspectionInput = { inspectedAt: Date; reportNumber?: string | null; country: string; jurisdiction?: string | null; level: number; hazmat?: boolean; driverId?: string | null; truckId?: string | null; trailerId?: string | null; orderId?: string | null; location?: string | null; violations: Partial<Violation>[]; dataQs?: string; note?: string | null; driverOosUntil?: Date | null };
+export type InspectionInput = { inspectedAt: Date; reportNumber?: string | null; country: string; jurisdiction?: string | null; level: number; hazmat?: boolean; driverId?: string | null; truckId?: string | null; trailerId?: string | null; orderId?: string | null; location?: string | null; violations: Partial<Violation>[]; dataQs?: string; note?: string | null; driverOosUntil?: Date | null; /** why an out-of-service finding is taken off without a repair (data entry error, DataQs…) */ oosReleaseReason?: string | null };
 
 /**
  * A roadside inspection. US violations need their BASIC and SMS weight (the common codes fill in from the
@@ -285,8 +286,13 @@ export async function saveInspection(ctx: Ctx, id: string | null, input: Inspect
   if (id) {
     const [before] = await db.select().from(s.inspections).where(and(eq(s.inspections.tenantId, ctx.tenantId), eq(s.inspections.id, id))).limit(1);
     if (!before) throw new NotFoundError("inspection", id);
+    // unticking OOS (or removing the finding) puts a unit or driver back to work without a repair: say why, on the record
+    const release = oosReleaseNeedsReason(before, values);
+    const reason = input.oosReleaseReason?.trim() || release.defaultReason;
+    if (release.released && !reason) throw new ValidationError("Why is the out-of-service finding coming off without a repair? (data entry error, DataQs accepted…)", "oosReleaseReason");
     [row] = await db.update(s.inspections).set({ ...values, updatedAt: new Date(), updatedBy: ctx.userId }).where(eq(s.inspections.id, id)).returning();
     await writeAudit(db, ctx, "inspection", id, "update");
+    if (release.released) await writeAudit(db, ctx, "inspection", id, "override", { oos: { from: "out of service", to: "finding removed" } }, reason!);
     // the driver or units changed on the edit: release whatever this inspection held before
     await applyRoadsideOos(ctx, row, before);
     return row;
@@ -355,7 +361,7 @@ async function applyRoadsideOos(ctx: Ctx, i: typeof s.inspections.$inferSelect, 
  * The repair after a vehicle out-of-service order, certified (396.9(d)): who, when, what was done, with the
  * repair order attached. The truck or trailer comes back into service with it — and only with it.
  */
-export async function signOffRepair(ctx: Ctx, inspectionId: string, input: { note: string; at?: Date | null; file?: { fileName: string; mimeType: string; bytes: Buffer } | null }) {
+export async function signOffRepair(ctx: Ctx, inspectionId: string, input: { note: string; at?: Date | null; dateOnly?: boolean; file?: { fileName: string; mimeType: string; bytes: Buffer } | null }, now = new Date()) {
   assertCtx(ctx);
   requirePermission(ctx, "compliance.edit");
   const [i] = await db.select().from(s.inspections).where(and(eq(s.inspections.tenantId, ctx.tenantId), eq(s.inspections.id, inspectionId))).limit(1);
@@ -365,9 +371,13 @@ export async function signOffRepair(ctx: Ctx, inspectionId: string, input: { not
   if (i.repair) throw new ValidationError(`the repair was signed off by ${i.repair.byName} on ${i.repair.at.slice(0, 10)}`);
   const note = input.note?.trim();
   if (!note) throw new ValidationError("what was repaired, and by whom (shop, mechanic)", "note");
-  const at = input.at ?? new Date();
-  if (at.getTime() < i.inspectedAt.getTime()) throw new ValidationError("the repair comes after the inspection", "at");
-  if (at.getTime() > Date.now() + 3600_000) throw new ValidationError("the repair time is in the future", "at");
+  const { tenantZone } = await import("./company");
+  const zone = await tenantZone(ctx.tenantId);
+  const given = input.at ?? now;
+  // "Repaired on <the inspection's day>": the same-day roadside fix, after the inspection (not midnight before it)
+  const at = repairInstant(given, i.inspectedAt, { dateOnly: !!input.dateOnly, sameDay: zonedDate(given, zone) === zonedDate(i.inspectedAt, zone) || given.toISOString().slice(0, 10) === zonedDate(i.inspectedAt, zone), now });
+  if (at.getTime() < i.inspectedAt.getTime()) throw new ValidationError("the repair comes after the inspection — same day is fine, at or after the inspection's time", "at");
+  if (at.getTime() > now.getTime() + 3600_000) throw new ValidationError("the repair time is in the future", "at");
   const unitKind = oos.truck.length ? "truck" : "trailer";
   const documentId = input.file ? await storeFile(ctx, (unitKind === "truck" ? i.truckId : i.trailerId)!, `repair:${i.id}`, input.file, unitKind) : null;
   const [me] = ctx.userId ? await db.select({ name: s.users.name }).from(s.users).where(eq(s.users.id, ctx.userId)).limit(1) : [];
@@ -389,12 +399,18 @@ export async function openRoadsideOos(ctx: Ctx) {
   return [...trucks.map((t) => ({ ...t, kind: "truck" as const })), ...trailers.map((t) => ({ ...t, kind: "trailer" as const }))];
 }
 
-export async function deleteInspection(ctx: Ctx, id: string) {
+export async function deleteInspection(ctx: Ctx, id: string, reason?: string | null) {
   assertCtx(ctx);
   requirePermission(ctx, "compliance.edit");
+  const [was] = await db.select().from(s.inspections).where(and(eq(s.inspections.tenantId, ctx.tenantId), eq(s.inspections.id, id))).limit(1);
+  if (!was) throw new NotFoundError("inspection", id);
+  // removing an inspection whose OOS order was never repaired releases the unit: that needs a reason too
+  const release = oosReleaseNeedsReason(was, { violations: [] });
+  if (release.released && !reason?.trim()) throw new ValidationError("This inspection still holds a unit or driver out of service. Say why it's being removed (logged by mistake, wrong unit…)", "oosReleaseReason");
   const [row] = await db.update(s.inspections).set({ archivedAt: new Date(), updatedBy: ctx.userId }).where(and(eq(s.inspections.tenantId, ctx.tenantId), eq(s.inspections.id, id))).returning();
   if (!row) throw new NotFoundError("inspection", id);
-  await writeAudit(db, ctx, "inspection", id, "archive");
+  await writeAudit(db, ctx, "inspection", id, "archive", undefined, reason?.trim() || undefined);
+  if (release.released) await writeAudit(db, ctx, "inspection", id, "override", { oos: { from: "out of service", to: "inspection removed" } }, reason!.trim());
   await applyRoadsideOos(ctx, { ...row, violations: [] }, row); // logged by mistake: whatever it held is released
 }
 
@@ -425,7 +441,7 @@ export async function overrideLog(ctx: Ctx, opts: { days?: number; kind?: string
   const since = new Date(Date.now() - (opts.days ?? 90) * 86400_000);
   const rows = await db.select().from(s.auditLog).where(and(eq(s.auditLog.tenantId, ctx.tenantId), eq(s.auditLog.action, "override"), gte(s.auditLog.at, since))).orderBy(desc(s.auditLog.at)).limit(1000);
   const ids = (e: string) => [...new Set(rows.filter((r) => r.entity === e).map((r) => r.entityId))];
-  const [users, legs, crossings, orders, drivers, trucks, trailers, carriers] = await Promise.all([
+  const [users, legs, crossings, orders, drivers, trucks, trailers, carriers, insp] = await Promise.all([
     db.select({ id: s.users.id, name: s.users.name }).from(s.users).where(eq(s.users.tenantId, ctx.tenantId)),
     ids("leg").length ? db.select({ id: s.legs.id, orderId: s.legs.orderId }).from(s.legs).where(and(eq(s.legs.tenantId, ctx.tenantId), inArray(s.legs.id, ids("leg")))) : [],
     ids("crossing").length ? db.select({ id: s.crossings.id, orderId: s.crossings.orderId }).from(s.crossings).where(and(eq(s.crossings.tenantId, ctx.tenantId), inArray(s.crossings.id, ids("crossing")))) : [],
@@ -434,9 +450,10 @@ export async function overrideLog(ctx: Ctx, opts: { days?: number; kind?: string
     db.select({ id: s.trucks.id, name: s.trucks.unitNumber }).from(s.trucks).where(eq(s.trucks.tenantId, ctx.tenantId)),
     db.select({ id: s.trailers.id, name: s.trailers.unitNumber }).from(s.trailers).where(eq(s.trailers.tenantId, ctx.tenantId)),
     db.select({ id: s.carriers.id, name: s.carriers.name }).from(s.carriers).where(eq(s.carriers.tenantId, ctx.tenantId)),
+    ids("inspection").length ? db.select({ id: s.inspections.id, country: s.inspections.country, jurisdiction: s.inspections.jurisdiction, reportNumber: s.inspections.reportNumber, truckId: s.inspections.truckId, trailerId: s.inspections.trailerId, driverId: s.inspections.driverId }).from(s.inspections).where(and(eq(s.inspections.tenantId, ctx.tenantId), inArray(s.inspections.id, ids("inspection")))) : [],
   ]);
   const m = <T extends { id: string }>(xs: T[]) => new Map(xs.map((x) => [x.id, x]));
-  const U = m(users), L = m(legs), X = m(crossings), O = m(orders), D = m(drivers), T = m(trucks), R = m(trailers), C = m(carriers);
+  const U = m(users), L = m(legs), X = m(crossings), O = m(orders), D = m(drivers), T = m(trucks), R = m(trailers), C = m(carriers), I = m(insp);
   const load = (orderId: string | undefined) => (orderId ? { subject: `Load ${O.get(orderId)?.orderNumber ?? ""}`.trim(), href: `/orders/${orderId}` } : { subject: "Load", href: null });
   const names = (ch: Record<string, { to: unknown }> | null) =>
     [ch?.driverId && D.get(String(ch.driverId.to))?.name, ch?.coDriverId && D.get(String(ch.coDriverId.to))?.name, ch?.truckId && `unit ${T.get(String(ch.truckId.to))?.name ?? ""}`, ch?.trailerId && `trailer ${R.get(String(ch.trailerId.to))?.name ?? ""}`, ch?.carrierId && C.get(String(ch.carrierId.to))?.name].filter(Boolean).join(", ");
@@ -452,6 +469,11 @@ export async function overrideLog(ctx: Ctx, opts: { days?: number; kind?: string
     }
     if (r.entity === "crossing") return { ...base, kind: "crossing", ...load(X.get(r.entityId)?.orderId), what: ch?.check ? "Crossing document check" : "Crossing eligibility" } as OverrideRow;
     if (r.entity === "order") return { ...base, kind: "rate_con", ...load(r.entityId), what: "Charges accepted against the rate con" } as OverrideRow;
+    if (r.entity === "inspection") {
+      const i = I.get(r.entityId);
+      const unit = i ? [i.truckId && `unit ${T.get(i.truckId)?.name ?? ""}`, i.trailerId && `trailer ${R.get(i.trailerId)?.name ?? ""}`, i.driverId && D.get(i.driverId)?.name].filter(Boolean).join(", ") : "";
+      return { ...base, kind: "paperwork", subject: `Inspection ${i ? [i.jurisdiction ?? i.country, i.reportNumber].filter(Boolean).join(" ") : ""}`.trim(), href: "/compliance/inspections", what: `Roadside out-of-service finding removed without a repair${unit ? ` (${unit})` : ""}` } as OverrideRow;
+    }
     const label = r.entity === "driver" ? D.get(r.entityId)?.name : r.entity === "truck" ? `Unit ${T.get(r.entityId)?.name ?? ""}` : r.entity === "trailer" ? `Trailer ${R.get(r.entityId)?.name ?? ""}` : r.entity === "carrier" ? C.get(r.entityId)?.name : r.entityId;
     const path = { driver: "drivers", truck: "trucks", trailer: "trailers", carrier: "carriers" }[r.entity as "driver"];
     return { ...base, kind: "paperwork", subject: label ?? r.entity, href: path ? `/settings/${path}/${r.entityId}` : null, what: "24-hour dispatch override on a blocked record" } as OverrideRow;
