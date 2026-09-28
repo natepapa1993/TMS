@@ -31,6 +31,7 @@ export const tenders = pgTable(
     driverName: text("driver_name"),
     driverPhone: text("driver_phone"),
     unitNumber: text("unit_number"),
+    unitPlate: text("unit_plate"), // the tractor's plates as the carrier gave them (a partner's unit is not in our Fleet)
     trailerNumber: text("trailer_number"),
     message: text("message"), // what we said in the tender
     ...audit(),
