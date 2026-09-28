@@ -47,7 +47,7 @@ describe("renewing a built-in credential from the phone (blockers 2 and 3)", () 
     expect(hist.some((h) => h.note?.includes("Medical card renewal from the driver app confirmed") && h.changes?.medicalExpires)).toBe(true);
 
     // next year's renewal: the old image is kept as an earlier version
-    const again = await C.uploadCredential({ ...a, role: "compliance" }, "driver", jorge, "field:medicalExpires", { fileName: "med2.pdf", mimeType: "application/pdf", bytes: jpg, expiresAt: noon(days(900)) });
+    const again = await C.uploadCredential({ ...a, role: "compliance" }, "driver", jorge, "field:medicalExpires", { fileName: "med2.pdf", mimeType: "application/pdf", bytes: jpg, expiresAt: noon(days(720)) });
     const docs = await C.subjectDocuments(a, "driver", jorge);
     expect(docs.filter((x) => x.code === "field:medicalExpires").map((x) => [x.version, x.status]).sort()).toEqual([[1, "superseded"], [2, "present"]]);
     expect(again.version).toBe(2);
@@ -78,6 +78,14 @@ describe("renewing a built-in credential from the phone (blockers 2 and 3)", () 
     const st = await C.statusFor(a, "truck", unit);
     expect(st.items.find((i) => i.key === "field:dotInspectionExpires")).toMatchObject({ label: "Annual inspection", status: "ok", level: "hard" });
     expect(st.items.find((i) => i.key === "field:dotInspectionExpires")!.documentId).toBeTruthy();
+  });
+});
+
+describe("medical certificate dates", () => {
+  it("a medical certificate is good for 24 months at most: a later date is refused on upload and on confirm", async () => {
+    await expect(C.uploadCredential(a, "driver", jorge, "field:medicalExpires", { fileName: "m.pdf", mimeType: "application/pdf", bytes: jpg, expiresAt: days(800) })).rejects.toThrow(/24 months at most/);
+    const sent = await C.driverUploadRenewal(a.tenantId, jorge, { uploadKey: "field:medicalExpires", fileName: "m.jpg", mimeType: "image/jpeg", bytes: jpg, expiresAt: days(700) });
+    await expect(C.reviewSubjectDocument(a, sent.id, "confirm", { expiresAt: days(1000) })).rejects.toThrow(/24 months at most/);
   });
 });
 

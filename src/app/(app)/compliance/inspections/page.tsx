@@ -19,12 +19,21 @@ export default async function InspectionsPage() {
   const ctx = await requireCtx();
   const canEdit = can(ctx, "compliance.edit");
   const [b, drivers, trucks, trailers] = await Promise.all([inspectionsBoard(ctx), list(ctx, "driver", { limit: 2000 }), list(ctx, "truck", { limit: 2000 }), list(ctx, "trailer", { limit: 2000 })]);
-  const opts = { drivers: drivers.map((d) => ({ id: d.id, name: String(d.name) })), trucks: trucks.map((t) => ({ id: t.id, name: String(t.unitNumber) })), trailers: trailers.map((t) => ({ id: t.id, name: String(t.unitNumber) })) };
+  // pickers in name / unit-number order
+  const opts = { drivers: drivers.map((d) => ({ id: d.id, name: String(d.name) })).sort((p, q) => p.name.localeCompare(q.name, "en-US", { numeric: true })), trucks: trucks.map((t) => ({ id: t.id, name: String(t.unitNumber) })).sort((p, q) => p.name.localeCompare(q.name, "en-US", { numeric: true })), trailers: trailers.map((t) => ({ id: t.id, name: String(t.unitNumber) })).sort((p, q) => p.name.localeCompare(q.name, "en-US", { numeric: true })) };
   const name = (o: { id: string; name: string }[], id: string | null) => (id ? (o.find((x) => x.id === id)?.name ?? "") : "");
   const maxMeasure = Math.max(1, ...b.measures.map((m) => m.measure));
   return (
     <div>
-      <PageHeader eyebrow="Safety & compliance" title="Roadside inspections" actions={canEdit ? <InspectionButton {...opts} /> : undefined}>
+      <PageHeader eyebrow="Safety & compliance" title="Roadside inspections" actions={
+          <>
+            <a href="/api/compliance/registers?kind=inspections" className="btn">
+              Export CSV
+            </a>
+            {canEdit && <InspectionButton {...opts} />}
+          </>
+        }
+      >
         Every inspection with its violations, the BASICs they fall in, out-of-service rates by country, and who picks up the points. The measures follow FMCSA&rsquo;s SMS method (24 months, time-weighted, severity-weighted) on your US inspections; your official percentiles need the national peer group — check them on the FMCSA SMS site.
       </PageHeader>
       <SafetyNav role={ctx.role} />

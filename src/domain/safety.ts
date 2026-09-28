@@ -506,3 +506,46 @@ export async function incidentDuties(ctx: Ctx, incidentIds: string[]) {
   return out;
 }
 
+
+// ---------- registers for an auditor (CSV, dates as YYYY-MM-DD) ----------
+
+const csvq = (v: string) => (/[",\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v);
+const ymd = (d: Date | string | null | undefined) => (d ? new Date(d).toISOString().slice(0, 10) : "");
+
+async function nameMaps(ctx: Ctx) {
+  const [drivers, trucks, trailers] = await Promise.all([
+    db.select({ id: s.drivers.id, name: s.drivers.name }).from(s.drivers).where(eq(s.drivers.tenantId, ctx.tenantId)),
+    db.select({ id: s.trucks.id, name: s.trucks.unitNumber }).from(s.trucks).where(eq(s.trucks.tenantId, ctx.tenantId)),
+    db.select({ id: s.trailers.id, name: s.trailers.unitNumber }).from(s.trailers).where(eq(s.trailers.tenantId, ctx.tenantId)),
+  ]);
+  const m = (xs: { id: string; name: string }[]) => (id: string | null) => (id ? (xs.find((x) => x.id === id)?.name ?? "") : "");
+  return { driver: m(drivers), truck: m(trucks), trailer: m(trailers) };
+}
+
+/** Every roadside inspection, one line per violation (a clean one gets one line), with the repair sign-off. */
+export async function inspectionsCsv(ctx: Ctx, years = 3) {
+  assertCtx(ctx);
+  requirePermission(ctx, "compliance.view");
+  const since = new Date(Date.now() - years * 365 * 86400_000);
+  const [list, n] = await Promise.all([db.select().from(s.inspections).where(and(eq(s.inspections.tenantId, ctx.tenantId), isNull(s.inspections.archivedAt), gte(s.inspections.inspectedAt, since))).orderBy(desc(s.inspections.inspectedAt)), nameMaps(ctx)]);
+  const head = ["Date", "Country", "State / province", "CVSA level", "Report #", "Driver", "Truck", "Trailer", "Violation", "Description", "BASIC", "SMS weight", "Out of service", "Removed (DataQs)", "DataQs", "Driver OOS until", "Repair signed off", "Repair by", "Repair note"];
+  const lines = [head];
+  for (const i of list) {
+    const base = [ymd(i.inspectedAt), i.country, i.jurisdiction ?? "", String(i.level), i.reportNumber ?? "", n.driver(i.driverId), n.truck(i.truckId), n.trailer(i.trailerId)];
+    const tail = [i.dataQs, i.driverOosUntil ? i.driverOosUntil.toISOString() : "", ymd(i.repair?.at), i.repair?.byName ?? "", i.repair?.note ?? ""];
+    const vs = i.violations.length ? i.violations : [null];
+    for (const v of vs) lines.push([...base, v?.code ?? "clean", v?.description ?? "", v?.basic ? (BASICS.find((b) => b.key === v.basic)?.label ?? v.basic) : "", v?.basic ? String(v.severity) : "", v?.oos ? "yes" : "", v?.removed ? "yes" : "", ...tail]);
+  }
+  return lines.map((l) => l.map(csvq).join(",")).join("\n");
+}
+
+/** The accident register (49 CFR 390.15): every incident, recordable ones marked, 3 years. */
+export async function accidentRegisterCsv(ctx: Ctx, years = 3) {
+  assertCtx(ctx);
+  requirePermission(ctx, "compliance.view");
+  const since = new Date(Date.now() - years * 365 * 86400_000);
+  const [list, n] = await Promise.all([db.select().from(s.incidents).where(and(eq(s.incidents.tenantId, ctx.tenantId), isNull(s.incidents.archivedAt), gte(s.incidents.occurredAt, since))).orderBy(desc(s.incidents.occurredAt)), nameMaps(ctx)]);
+  const head = ["Date", "Time (UTC)", "Kind", "DOT recordable", "Location", "Driver", "Truck", "Trailer", "Injuries", "Fatality", "Tow-away", "Citation", "Preventable", "Police report", "Claim #", "Status", "What happened"];
+  const lines = [head, ...list.map((i) => [ymd(i.occurredAt), i.occurredAt.toISOString().slice(11, 16), i.kind.replace(/_/g, " "), i.dotRecordable ? "yes" : "no", i.location ?? "", n.driver(i.driverId), n.truck(i.truckId), n.trailer(i.trailerId), i.injuries ? "yes" : "no", i.fatality ? "yes" : "no", i.towAway ? "yes" : "no", i.citation ? "yes" : "no", i.preventable === "preventable" ? "yes" : i.preventable === "not_preventable" ? "no" : "", i.policeReport ?? "", i.claimNumber ?? "", i.status, i.description])];
+  return lines.map((l) => l.map(csvq).join(",")).join("\n");
+}

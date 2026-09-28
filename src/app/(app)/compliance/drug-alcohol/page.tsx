@@ -23,7 +23,7 @@ export default async function DrugAlcoholPage({ searchParams }: PageProps<"/comp
   const now = new Date();
   const year = Number(sp.year) || now.getUTCFullYear();
   const [p, drivers, incidents] = await Promise.all([daProgram(ctx, year), list(ctx, "driver", { limit: 2000 }), listIncidents(ctx)]);
-  const opts = drivers.map((d) => ({ id: d.id, name: String(d.name) }));
+  const opts = drivers.map((d) => ({ id: d.id, name: String(d.name) })).sort((p, q) => p.name.localeCompare(q.name, "en-US", { numeric: true }));
   const accidents = incidents.filter((i) => i.kind === "accident").map((i) => ({ id: i.id, label: `${day(i.occurredAt)} · ${i.description.slice(0, 60)}` }));
   const quarter = `${now.getUTCFullYear()}-Q${Math.floor(now.getUTCMonth() / 3) + 1}`;
   const pace = (done: number, req: number) => (req === 0 ? "text-faint" : done >= req ? "text-green" : "text-amber");

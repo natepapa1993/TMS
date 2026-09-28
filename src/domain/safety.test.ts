@@ -355,6 +355,20 @@ describe("roadside out-of-service orders take effect (blocker 5)", () => {
     expect(c.hardBlocked).toBe(true);
   });
 
+  it("the registers export for an auditor with full dates: one line per violation with the repair sign-off; the accident register", async () => {
+    const tr = await create(a, "trailer", { unitNumber: "5403" });
+    const i = await S.saveInspection(a, null, { inspectedAt: new Date("2026-09-20T15:00:00Z"), country: "US", jurisdiction: "TX", level: 1, reportNumber: "TX9", driverId: f.d1, truckId: f.t1, trailerId: tr.id, violations: [{ code: "393.47(e)", oos: true, on: "trailer" }, { code: "393.9(a)" }] });
+    await S.signOffRepair(a, i.id, { note: "brakes adjusted, RO 12", at: new Date("2026-09-21T10:00:00Z") });
+    const csv = (await S.inspectionsCsv(a)).split("\n");
+    expect(csv[0]).toMatch(/^Date,Country,State \/ province,CVSA level/);
+    expect(csv).toHaveLength(3);
+    expect(csv[1]).toMatch(/^2026-09-20,US,TX,1,TX9,Daniel Reyes,101,5403,393.47\(e\),Clamp or roto-chamber brake out of adjustment,Vehicle Maintenance,4,yes,,none,,2026-09-21,owner user,"brakes adjusted, RO 12"$/);
+    const { saveIncident } = await import("./compliance");
+    await saveIncident(a, null, { occurredAt: new Date("2026-09-28T11:15:00Z"), kind: "accident", driverId: f.d1, truckId: f.t1, description: "Tow-away, citation", towAway: true, citation: true, location: "Laredo, TX" });
+    const reg = (await S.accidentRegisterCsv(a)).split("\n");
+    expect(reg[1]).toBe("2026-09-28,11:15,accident,yes,\"Laredo, TX\",Daniel Reyes,101,,no,no,yes,yes,,,,open,\"Tow-away, citation\"");
+  });
+
   it("Canadian and Mexican violations save as written, without a BASIC or an SMS weight, and stay out of the measures", async () => {
     const ca = await S.saveInspection(a, null, { inspectedAt: days(-2), country: "CA", jurisdiction: "on", level: 2, driverId: f.d1, violations: [{ code: "NSC 13 s.6", description: "Daily trip inspection report not carried", unit: "vehicle" }] });
     expect(ca.violations[0]).toMatchObject({ basic: null, severity: 0, unit: "vehicle" });

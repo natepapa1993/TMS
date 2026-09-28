@@ -275,6 +275,7 @@ export async function reviewSubjectDocument(ctx: Ctx, documentId: string, decisi
   }
   const expiresAt = input.expiresAt === undefined ? doc.expiresAt : input.expiresAt;
   if ((cred || type!.tracksExpiry) && !expiresAt) throw new ValidationError(`${name} needs an expiry date`, "expiresAt");
+  if (cred) checkCredentialDate(cred.key, expiresAt!);
   const number = input.number === undefined ? doc.number : input.number || null;
   const row = await db.transaction(async (tx) => {
     const same = cred ? eq(s.documents.code, doc.code!) : eq(s.documents.documentTypeId, type!.id);
@@ -325,6 +326,7 @@ export async function uploadCredential(ctx: Ctx, kind: SubjectKind, subjectId: s
   const expiresAt = input.expiresAt ?? (INSPECTION_KEYS.includes(f.key) && input.issuedAt ? inspectionDue(input.issuedAt) : null);
   if (!expiresAt) throw new ValidationError(INSPECTION_KEYS.includes(f.key) ? "the inspection date (or when it expires)" : `${f.label}: when does it expire?`, "expiresAt");
   if (INSPECTION_KEYS.includes(f.key) && input.issuedAt && input.issuedAt.getTime() > Date.now() + 86400_000) throw new ValidationError("the inspection date is in the future", "issuedAt");
+  checkCredentialDate(f.key, expiresAt);
   const table = TABLE[kind];
   const [rec] = await db.select({ id: table.id }).from(table).where(and(eq(table.tenantId, ctx.tenantId), eq(table.id, subjectId))).limit(1);
   if (!rec) throw new NotFoundError(kind, subjectId);
@@ -345,6 +347,11 @@ export async function uploadCredential(ctx: Ctx, kind: SubjectKind, subjectId: s
   });
   if (!pending) await evaluateSubject(ctx, kind, subjectId);
   return doc;
+}
+
+/** A medical examiner's certificate is good for 24 months at most (391.45): a later date is a typo or the wrong card. */
+function checkCredentialDate(key: string, expiresAt: Date) {
+  if (key === "medicalExpires" && expiresAt.getTime() > Date.now() + (2 * 365 + 2) * 86400_000) throw new ValidationError("a medical certificate is good for 24 months at most — check the date on the card", "expiresAt");
 }
 
 /** How a document is called on screen: its rule's name, the credential it shows, or the qualification-file item. */

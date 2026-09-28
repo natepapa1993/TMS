@@ -30,7 +30,8 @@ export default async function DriverSafetyFilePage({ params }: PageProps<"/compl
   if (!f) notFound();
   const canEdit = can(ctx, "compliance.edit");
   const [drivers, trucks, trailers] = await Promise.all([list(ctx, "driver", { limit: 2000 }), list(ctx, "truck", { limit: 2000 }), list(ctx, "trailer", { limit: 2000 })]);
-  const opts = { drivers: drivers.map((d) => ({ id: d.id, name: String(d.name) })), trucks: trucks.map((t) => ({ id: t.id, name: String(t.unitNumber) })), trailers: trailers.map((t) => ({ id: t.id, name: String(t.unitNumber) })) };
+  // pickers in name / unit-number order
+  const opts = { drivers: drivers.map((d) => ({ id: d.id, name: String(d.name) })).sort((p, q) => p.name.localeCompare(q.name, "en-US", { numeric: true })), trucks: trucks.map((t) => ({ id: t.id, name: String(t.unitNumber) })).sort((p, q) => p.name.localeCompare(q.name, "en-US", { numeric: true })), trailers: trailers.map((t) => ({ id: t.id, name: String(t.unitNumber) })).sort((p, q) => p.name.localeCompare(q.name, "en-US", { numeric: true })) };
   const d = f.driver;
   const gaps = f.dq.filter((l) => l.status === "missing" || l.status === "expired").length;
   // one obvious next step: only the first gap gets the primary button

@@ -22,7 +22,7 @@ test("safety director day: a blocking rule, the driver goes red everywhere, the 
   await page.goto("/settings/document-types");
   await page.click("table a:has-text('Medical card')");
   await page.locator("#f-required").check();
-  await page.locator("#f-blocksDispatch").check();
+  await page.locator("#f-blockLevel").selectOption("override");
   await page.click("button:has-text('Save changes')");
   await expect(page.getByRole("status")).toContainText("Saved");
 
@@ -84,7 +84,9 @@ test("safety director day: a blocking rule, the driver goes red everywhere, the 
   await expect(page.locator("#documents")).toContainText("Dispatchable");
   await expect(page.locator("#documents")).toContainText("#MED-77");
   await phone.reload();
-  await expect(phone.getByTestId("own-docs").locator("button:has-text('Send the new one')")).toHaveCount(0); // the card is on file; only the expiring built-in date remains, and that is the office's
+  // the card is on file; what remains is the medical date expiring in 12 days, which the driver can renew from the phone too
+  await expect(phone.getByTestId("own-docs")).not.toContainText("missing · falta");
+  await expect(phone.getByTestId("own-docs").locator("button:has-text('Send the new one')")).toHaveCount(1);
   await phone.close();
   // the office can also upload a renewal from the record (the manual path stays)
   await page.goto("/settings/drivers");
@@ -114,7 +116,7 @@ test("safety director day: a blocking rule, the driver goes red everywhere, the 
   await page.goto("/compliance");
   const r2 = page.locator("tr", { hasText: "Daniel Reyes" });
   await expect(r2).toContainText("dispatchable");
-  await r2.locator("button[title='Snooze this alert']").first().click();
+  await r2.locator("button:has-text('Snooze')").first().click();
   await page.getByRole("dialog").locator("input[type=date]").fill(future(10));
   await page.getByRole("dialog").locator("input[placeholder='renewal in progress']").fill("physical booked");
   await page.getByRole("dialog").locator("button:has-text('Snooze')").click();
