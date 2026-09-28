@@ -865,6 +865,73 @@
         "src/domain/payrun.test.ts",
         "e2e/payrun.spec.ts"
       ]
+    },
+    {
+      "id": "F-31.1",
+      "name": "One clock everywhere: every stop time, window, appointment, ETA, free-at, check call and timeline event on the stop's own clock with its zone name (Tue Sep 29, 8:00 AM CST) — load page, Loads grid, planner, assign dialog, import preview, driver app, partner driver link, tender page, carrier and customer portals, tracking, messages, rate con; the rest on the company's clock, labelled; one shared formatter built from numbers so server and browser agree (no hydration mismatch); border cities (Nuevo Laredo, Reynosa, Piedras Negras, Juárez) keep US daylight time while Mexico's interior stays on CST",
+      "milestone": "M31",
+      "status": "done",
+      "tests": [
+        "src/lib/time.test.ts",
+        "src/domain/handoffs.test.ts"
+      ]
+    },
+    {
+      "id": "F-31.2",
+      "name": "Expired tenders: past the deadline (job and on read) the leg goes back to Needs truck with a red Tender expired flag at the top of the board; tender sent / accepted / declined / expired / withdrawn on the load timeline; the board's Power column says which leg a tender is for",
+      "milestone": "M31",
+      "status": "done",
+      "tests": [
+        "src/domain/handoffs.test.ts"
+      ]
+    },
+    {
+      "id": "F-31.3",
+      "name": "Crossing and legs move together: the packet goes out only with the crossing leg sent (or sends it on the dispatcher's click); border steps only once the caja is picked up; Departed the yard puts the leg en route; Cleared delivers it at the yard on the other side and the next leg sees the freight; the leg that brought the caja closes when the next truck picks it up",
+      "milestone": "M31",
+      "status": "done",
+      "tests": [
+        "src/domain/handoffs.test.ts",
+        "src/domain/crossing.test.ts"
+      ]
+    },
+    {
+      "id": "F-31.4",
+      "name": "A partner transfer carrier runs the crossing leg: its accepted driver, unit, plates and caja feed eligibility, the cross-checks and the carta de retiro (which names the carrier); the caja from the tender and from the partner driver's border-yard drop (caja, seal, photo) lands on the crossing; the offer page is in Spanish for Mexican carriers with the full load details",
+      "milestone": "M31",
+      "status": "done",
+      "tests": [
+        "src/domain/handoffs.test.ts",
+        "src/domain/carrier-portal.test.ts"
+      ]
+    },
+    {
+      "id": "F-31.5",
+      "name": "Stop editing on the load page uses the builder's stop editor and saves only what changed: city, state, coordinates and the stop's time zone stay",
+      "milestone": "M31",
+      "status": "done",
+      "tests": [
+        "src/domain/handoffs.test.ts"
+      ]
+    },
+    {
+      "id": "F-31.6",
+      "name": "Assign changes: a new trailer, co-driver, rate or miles on a sent leg keeps it Sent; a new truck, driver or carrier re-sends it and says so; Change opens on the current truck, driver and trailer; a team truck brings its co-driver",
+      "milestone": "M31",
+      "status": "done",
+      "tests": [
+        "src/domain/handoffs.test.ts"
+      ]
+    },
+    {
+      "id": "F-31.7",
+      "name": "Crossing checks tell the truth: northbound always needs the entry / PAPS and DTOPS (a DTOPS decal on the truck record counts); a check without enough documents is unknown, not green; plates from the Fleet record; a dispatcher can waive a failed check with a reason (audited); the seal typed on the crossing is compared; southbound and Canada crossings ask for no carta de retiro and read in their own words",
+      "milestone": "M31",
+      "status": "done",
+      "tests": [
+        "src/domain/handoffs.test.ts",
+        "src/domain/crossing.test.ts"
+      ]
     }
   ]
 }

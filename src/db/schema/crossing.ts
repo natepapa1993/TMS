@@ -70,6 +70,7 @@ export type Requirement = {
   naReason?: string | null;
   packetOrder: number;
   lastDocument?: boolean; // the "last document" (DODA) that gates awaiting_doda
+  onFile?: string | null; // satisfied by a record, not a document (DTOPS decal on the truck record)
 };
 
 export const CHECK_STATES = ["pending", "pass", "fail", "overridden", "skipped"] as const;

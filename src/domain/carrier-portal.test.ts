@@ -1,10 +1,10 @@
-// Features: F-10 carrier portal — one link per carrier: offers, active loads with steps and driver, rate con PDF, compliance uploads, invoice against the leg, scorecard; tenant and carrier bound F-5.12
+// Features: F-10 carrier portal — one link per carrier: offers, active loads with steps and driver, rate con PDF, compliance uploads, invoice against the leg, scorecard; tenant and carrier bound F-5.12 F-31.4
 import { describe, it, expect, beforeEach } from "vitest";
 import { PDFDocument } from "pdf-lib";
 import { truncateAll, makeTenant } from "@/test/helpers";
 import { create } from "@/data/records";
 import { db } from "@/db/client";
-import { positions } from "@/db/schema";
+import { crossings, positions } from "@/db/schema";
 import { eq } from "drizzle-orm";
 import { newId } from "@/lib/ids";
 import { resolveToken } from "@/lib/tokens";
@@ -143,7 +143,12 @@ describe("carrier portal", () => {
     expect(view.leg.state).toBe("at_delivery");
     await P.portalUploadPod(a.tenantId, f.garza, mx, { fileName: "pod.jpg", mimeType: "image/jpeg", bytes: Buffer.from("x") });
     expect((await P.carrierDriverView(a.tenantId, mx)).podOnFile).toBe(true);
-    await P.carrierDriverStep(a.tenantId, mx, {});
+    // the drop at the border yard for the crossing truck asks for the caja (M18) and it lands on the crossing
+    expect((await P.carrierDriverView(a.tenantId, mx)).handoff).toMatchObject({ kind: "border_yard", crossing: true });
+    await expect(P.carrierDriverStep(a.tenantId, mx, {})).rejects.toThrow(/caja/);
+    await P.carrierDriverStep(a.tenantId, mx, { caja: "caja-7702", seal: "sm-448812" });
+    const [x] = await db.select().from(crossings).where(eq(crossings.orderId, o.order.id));
+    expect([x.trailerNumber, x.sealNumber]).toEqual(["CAJA-7702", "SM-448812"]);
     view = await P.carrierDriverView(a.tenantId, mx);
     expect(view.leg.done).toBe(true);
     expect(view.next).toBeNull();

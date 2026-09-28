@@ -1,5 +1,7 @@
 "use client";
 
+import { useClock, useZone } from "@/components/zone";
+import { fmtWhen, shortDate } from "@/lib/time";
 import { useEffect, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { driverStepAction, driverPingAction, disputeSettlementLineAction, driverPhotoAction, driverRenewalAction, driverMessageAction } from "../../actions";
@@ -14,7 +16,7 @@ import type { LegState } from "@/db/schema";
  */
 
 type Stop = { id: string; name: string; type: string; country: string; address: { line1?: string; city?: string; state?: string } | null; windowStart: string | null; windowEnd: string | null; contact: string | null; notes: string | null; arrivedAt?: string | null; departedAt?: string | null; sealIn?: string | null; sealOut?: string | null };
-type Item = { leg: { id: string; seq: number; type: string; state: LegState }; order: { orderNumber: string; equipment: string; cargoNote: string | null; refs: Record<string, string> }; from: Stop | null; to: Stop | null; mids?: Stop[]; truck: { unitNumber: string } | null; next: { to: LegState; label: string; es: string } | null; crossing: { id: string; state: string; trailerNumber: string | null; packetToken: string | null; nextStep: string | null; stateLabel?: string; steps?: Record<string, { en: string; es: string }> } | null; docs: { pod: boolean; seal: boolean }; sealExpected: string | null };
+type Item = { leg: { id: string; seq: number; type: string; state: LegState }; order: { orderNumber: string; equipment: string; cargoNote: string | null; refs: Record<string, string> }; from: Stop | null; to: Stop | null; mids?: Stop[]; truck: { unitNumber: string } | null; next: { to: LegState; label: string; es: string } | null; crossing: { id: string; state: string; trailerNumber: string | null; packetToken: string | null; nextStep: string | null; wait?: { en: string; es: string } | null; stateLabel?: string; steps?: Record<string, { en: string; es: string }> } | null; docs: { pod: boolean; seal: boolean }; sealExpected: string | null; freightReady?: boolean | null };
 const XSTEP: Record<string, { en: string; es: string }> = { departed_yard: { en: "Departed the yard", es: "Salí del patio" }, at_mx_customs: { en: "At Mexican customs", es: "En aduana mexicana" }, in_us_customs: { en: "At US customs", es: "En aduana americana" }, cleared: { en: "Cleared — US side", es: "Liberado — lado americano" } };
 // the English part of XLABEL, as the server labels a Mexico → US crossing; any other direction uses the server's label
 const XLABEL_EN: Record<string, string> = { packet_sent: "Packet sent", departed_yard: "Departed yard", at_mx_customs: "At MX customs", in_us_customs: "In US customs", cleared: "Cleared", held: "Held", returned: "Returned to MX" };
@@ -41,7 +43,6 @@ function getFix(timeout = 8000): Promise<Fix | null> {
 }
 
 const addr = (s: Stop | null) => (s ? [s.address?.line1, s.address?.city, s.address?.state].filter(Boolean).join(", ") : "");
-const when = (d: string | null) => (d ? new Date(d).toLocaleString("en-US", { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) : null);
 const mapsHref = (s: Stop | null) => (s ? `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent([s.name, addr(s)].filter(Boolean).join(", "))}` : "#");
 
 export function DriverApp({ token, data }: { token: string; data: Data }) {
@@ -115,7 +116,8 @@ export function DriverApp({ token, data }: { token: string; data: Data }) {
       } else setErr(r.error);
     });
   const x = cur?.crossing;
-  const xActive = x && ["packet_sent", "departed_yard", "at_mx_customs", "in_us_customs", "held"].includes(x.state);
+  // the border card once the caja is on the truck: the next border step, or what the driver waits for
+  const xActive = x && (!!x.nextStep || !!x.wait || x.state === "held");
 
   return (
     <div className="driver-app form-roomy">
@@ -146,6 +148,11 @@ export function DriverApp({ token, data }: { token: string; data: Data }) {
           </div>
           <div className="px-5 py-4 space-y-4">
             <Place label="Pickup · Recoger" s={cur.from} active={["accepted", "en_route_to_pickup", "at_pickup"].includes(cur.leg.state)} />
+            {cur.freightReady != null && ["dispatched", "accepted", "en_route_to_pickup", "at_pickup"].includes(cur.leg.state) && (
+              <div className={`text-callout font-semibold ${cur.freightReady ? "text-teal" : "text-amber"}`} data-testid="freight-ready">
+                {cur.freightReady ? "✓ The freight is at the yard · La carga ya está en el patio" : "The freight is not at the yard yet · La carga aún no llega al patio"}
+              </div>
+            )}
             {(cur.mids ?? []).map((m, i) => (
               <Place key={m.id} label={`Stop ${i + 2} · Parada ${i + 2}${m.departedAt ? " · done" : ""}`} s={m} active={cur.leg.state === "en_route" && !m.departedAt && !(cur.mids ?? []).slice(0, i).some((p) => !p.departedAt)} />
             ))}
@@ -166,7 +173,7 @@ export function DriverApp({ token, data }: { token: string; data: Data }) {
                 {pending ? "…" : cur.next.label}
                 {!pending && <span className="text-callout font-semibold opacity-80">{cur.next.es}</span>}
               </button>
-            ) : (
+            ) : x && xActive ? null : (
               <div className="text-center text-muted">Done · Listo</div>
             )}
             {cur.leg.state === "at_delivery" && !cur.docs.pod && <div className="text-callout text-amber font-semibold text-center mt-2">No POD photo yet — the office needs it to bill. · Falta la foto del POD.</div>}
@@ -212,6 +219,7 @@ export function DriverApp({ token, data }: { token: string; data: Data }) {
                 📄 Open packet · Abrir paquete
               </a>
             )}
+            {x!.wait && x!.state !== "held" && <div className="text-callout text-muted text-center">{x!.wait.en} · {x!.wait.es}</div>}
             {x!.state !== "held" && x!.nextStep && (
               <button className="btn btn-primary w-full justify-center flex-col gap-0" style={{ height: 64, fontSize: 17 }} onClick={() => xstep(x!.nextStep)} disabled={pending || holding}>
                 {(x!.steps?.[x!.nextStep] ?? XSTEP[x!.nextStep])?.en}
@@ -287,6 +295,8 @@ export function DriverApp({ token, data }: { token: string; data: Data }) {
 }
 
 function Place({ label, s, active }: { label: string; s: Stop | null; active: boolean }) {
+  // the stop's own clock with its name: a Mexican pickup reads CST even on a phone set to Texas time
+  const clock = useClock();
   return (
     <div className={`rounded-lg border p-3 ${active ? "border-teal bg-teal-soft/40" : "border-line"}`}>
       <div className="text-caption font-bold text-faint">{label}</div>
@@ -294,8 +304,7 @@ function Place({ label, s, active }: { label: string; s: Stop | null; active: bo
       {s && addr(s) && <div className="text-callout text-muted">{addr(s)}</div>}
       {s?.windowStart && (
         <div className="text-callout font-semibold text-teal">
-          {when(s.windowStart)}
-          {s.windowEnd ? ` – ${when(s.windowEnd)}` : ""}
+          {clock.window(s)}
         </div>
       )}
       {s?.notes && <div className="text-callout mt-1">📝 {s.notes}</div>}
@@ -315,7 +324,8 @@ function PayCard({ token, stub, onChanged }: { token: string; stub: PayStub; onC
   const [why, setWhy] = useState("");
   const [err, setErr] = useState<string | null>(null);
   const [pending, start] = useTransition();
-  const d = (s: string) => new Date(s).toLocaleDateString("en-US", { month: "short", day: "numeric" });
+  const zone = useZone();
+  const d = (s: string) => fmtWhen(s, zone, { style: "day" });
   return (
     <div className="rounded-lg border border-line p-3">
       <button type="button" className="w-full flex items-center justify-between text-left" onClick={() => setOpen((o) => !o)} aria-expanded={open}>
@@ -445,13 +455,13 @@ function OwnDoc({ token, item, onDone }: { token: string; item: OwnItem; onDone:
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const ref = useRef<HTMLFormElement>(null);
-  const d = (s: string) => new Date(s).toLocaleDateString("en-US", { month: "short", day: "numeric" });
+  const d = (s: string) => shortDate(s);
   return (
     <li>
       <div className="flex justify-between gap-2">
         <span className="font-semibold">{item.label}</span>
         <span className={item.status === "expired" ? "text-red font-bold" : item.status === "missing" ? "text-amber font-bold" : "text-amber font-semibold"}>
-          {item.status === "expired" ? "EXPIRED · VENCIDO" : item.status === "missing" ? "missing · falta" : `expires ${item.expiresAt ? new Date(item.expiresAt).toLocaleDateString() : ""}`}
+          {item.status === "expired" ? "EXPIRED · VENCIDO" : item.status === "missing" ? "missing · falta" : `expires ${item.expiresAt ? shortDate(item.expiresAt) : ""}`}
         </span>
       </div>
       {item.pending ? (
@@ -514,7 +524,8 @@ function Chat({ token, legId, thread, dispatchPhone, onDone }: { token: string; 
   const [text, setText] = useState("");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
-  const when = (s: string) => new Date(s).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+  const zone = useZone();
+  const when = (s: string) => fmtWhen(s, zone, { style: "short" });
   const send = async () => {
     if (!text.trim()) return;
     setBusy(true);

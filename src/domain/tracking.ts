@@ -86,6 +86,7 @@ export async function driverToday(tenantId: string, driverId: string) {
     db.select({ id: s.trucks.id, unitNumber: s.trucks.unitNumber }).from(s.trucks).where(eq(s.trucks.tenantId, tenantId)),
   ]);
   const crossingLegIds = legs.filter((l) => l.type === "crossing").map((l) => l.id);
+  const legsOfOrders = orderIds.length ? await db.select({ id: s.legs.id, orderId: s.legs.orderId, toStopId: s.legs.toStopId, state: s.legs.state }).from(s.legs).where(inArray(s.legs.orderId, orderIds)) : [];
   const xs = crossingLegIds.length ? await db.select().from(s.crossings).where(inArray(s.crossings.legId, crossingLegIds)) : [];
   const XL = xs.length ? await import("./crossing") : null;
   // photos already on file for these orders (and, on a trip, on its shipments): the app shows a check instead of asking twice
@@ -98,11 +99,17 @@ export async function driverToday(tenantId: string, driverId: string) {
     const to = stops.find((x) => x.id === leg.toStopId) ?? null;
     const truck = trucks.find((t) => t.id === leg.truckId) ?? null;
     const x = xs.find((c) => c.legId === leg.id);
+    // a crossing leg is one ordered flow: the leg's steps to the caja, then the border steps (never both at once)
+    const flow = x ? XL!.crossingDriverNext(leg.state, x.state) : null;
     const crossing = x
-      ? { id: x.id, state: x.state, trailerNumber: x.trailerNumber, packetToken: x.packetSentAt ? x.packetToken : null, packetSentAt: x.packetSentAt, nextStep: ({ packet_sent: "departed_yard", departed_yard: "at_mx_customs", at_mx_customs: "in_us_customs", in_us_customs: "cleared" } as Record<string, string>)[x.state] ?? null, fromCountry: x.fromCountry, toCountry: x.toCountry, stateLabel: XL!.crossingStateLabel(x.state, x), steps: Object.fromEntries((["departed_yard", "at_mx_customs", "in_us_customs", "cleared"] as const).map((k) => [k, XL!.stepLabel(k, x) ?? { en: k, es: k }])) }
+      ? { id: x.id, state: x.state, trailerNumber: x.trailerNumber, packetToken: x.packetSentAt ? x.packetToken : null, packetSentAt: x.packetSentAt, nextStep: flow?.kind === "border" ? flow.to : null, wait: flow?.kind === "wait" ? { en: flow.en, es: flow.es } : null, fromCountry: x.fromCountry, toCountry: x.toCountry, stateLabel: XL!.crossingStateLabel(x.state, x), steps: Object.fromEntries((["departed_yard", "at_mx_customs", "in_us_customs", "cleared"] as const).map((k) => [k, XL!.stepLabel(k, x) ?? { en: k, es: k }])) }
       : null;
     const mid = pendingMidStop(leg, stops.filter((x) => x.orderId === leg.orderId));
-    const next = mid ? { to: leg.state, label: `${mid.which === "arrived" ? "Arrived at" : "Leaving"} ${mid.stop.name}`, es: `${mid.which === "arrived" ? "Llegué a" : "Saliendo de"} ${mid.stop.name}` } : nextStep(leg.state);
+    const plain = mid ? { to: leg.state, label: `${mid.which === "arrived" ? "Arrived at" : "Leaving"} ${mid.stop.name}`, es: `${mid.which === "arrived" ? "Llegué a" : "Saliendo de"} ${mid.stop.name}` } : nextStep(leg.state);
+    const next = !flow ? plain : flow.kind === "leg" ? (flow.to === "loaded" ? { to: "loaded" as LegState, label: "Caja picked up — loaded", es: "Caja enganchada — cargado" } : nextStep(leg.state)) : null;
+    // the freight this leg picks up: is it there yet (the leg that brings it delivered)?
+    const before = legsOfOrders.find((p) => p.orderId === leg.orderId && p.toStopId === leg.fromStopId && p.id !== leg.id);
+    const freightReady = before ? before.state === "completed" : null;
     const mids = midStops(leg, stops.filter((x) => x.orderId === leg.orderId));
     const stopId = currentStopId(leg, mids);
     const orderStops = stops.filter((x) => x.orderId === leg.orderId);
@@ -115,7 +122,7 @@ export async function driverToday(tenantId: string, driverId: string) {
     })();
     const podTargets = photoTargets(order, shipments, stopId);
     const docs = { pod: podTargets.length > 0 && podTargets.every((id) => photos.some((d) => d.subjectId === id && d.code === "POD")), seal: photos.some((d) => d.subjectId === order.id && d.code === "SEAL_PHOTO") };
-    return { leg, order: { id: order.id, orderNumber: order.orderNumber, equipment: order.equipment, cargoNote: order.cargoNote, refs: order.refs, state: order.state }, from, to, mids, truck, next, crossing, docs, sealExpected };
+    return { leg, order: { id: order.id, orderNumber: order.orderNumber, equipment: order.equipment, cargoNote: order.cargoNote, refs: order.refs, state: order.state }, from, to, mids, truck, next, crossing, docs, sealExpected, freightReady };
   });
   // the leg the driver is on = first non-dispatched active leg, else the first offered one
   const current = items.find((i) => i.leg.state !== "dispatched") ?? items[0] ?? null;
@@ -414,10 +421,10 @@ export async function boardEtas(ctx: Ctx, now = new Date()) {
   const legs = await db.select().from(s.legs).where(and(eq(s.legs.tenantId, ctx.tenantId), inArray(s.legs.state, ["accepted", "en_route_to_pickup", "loaded", "en_route"])));
   const orderIds = [...new Set(legs.map((l) => l.orderId))];
   const stops = orderIds.length ? await db.select().from(s.stops).where(and(eq(s.stops.tenantId, ctx.tenantId), inArray(s.stops.orderId, orderIds))).orderBy(s.stops.seq) : [];
-  const out: Record<string, { at: string; stopName: string; miles: number; late: boolean; positionAt: string }> = {};
+  const out: Record<string, { at: string; stopId: string; stopName: string; miles: number; late: boolean; positionAt: string }> = {};
   for (const l of legs) {
     const e = await etaFrom(ctx.tenantId, l, stops.filter((x) => x.orderId === l.orderId), now);
-    if (e) out[l.id] = { at: e.at.toISOString(), stopName: e.stopName, miles: e.miles, late: e.late, positionAt: e.positionAt.toISOString() };
+    if (e) out[l.id] = { at: e.at.toISOString(), stopId: e.stopId, stopName: e.stopName, miles: e.miles, late: e.late, positionAt: e.positionAt.toISOString() };
   }
   return out;
 }

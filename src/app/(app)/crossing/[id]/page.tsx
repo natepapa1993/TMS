@@ -53,8 +53,8 @@ export default async function CrossingPage({ params }: PageProps<"/crossing/[id]
       >
         {p.customer?.name ?? "—"}
         {p.port ? ` · ${p.port.name}` : ""}
-        {p.truck ? ` · unit ${p.truck.unitNumber} (${p.truck.mxPlateClass ?? "no MX"} plates)` : " · no crossing truck yet"}
-        {p.driver ? ` · ${p.driver.name}${p.coDriver ? ` / ${p.coDriver.name}` : ""}` : ""}
+        {p.partner ? ` · ${p.partner.carrier}${p.partner.unitNumber ? ` unit ${p.partner.unitNumber}` : ""}${p.partner.driverName ? ` · ${p.partner.driverName}` : ""}` : p.truck ? ` · unit ${p.truck.unitNumber} · plates US ${p.truck.usPlate ?? "—"}${p.crossing.fromCountry === "MX" || p.crossing.toCountry === "MX" ? ` / MX ${p.truck.mxPlate ?? "—"}` : ""}${p.crossing.fromCountry === "CA" || p.crossing.toCountry === "CA" ? ` / CA ${p.truck.caPlate ?? "—"}` : ""}` : " · no crossing truck yet"}
+        {!p.partner && p.driver ? ` · ${p.driver.name}${p.coDriver ? ` / ${p.coDriver.name}` : ""}` : ""}
       </PageHeader>
       <div className="px-gutter pb-10">
         <CrossingWorkbench
@@ -79,6 +79,8 @@ export default async function CrossingPage({ params }: PageProps<"/crossing/[id]
               stateLabel: Object.fromEntries((Object.keys(CROSSING_LABEL) as CrossingState[]).map((k) => [k, crossingStateLabel(k, p.crossing)])),
               stepLabel: Object.fromEntries((["departed_yard", "at_mx_customs", "in_us_customs", "cleared"] as CrossingState[]).map((k) => [k, stepLabel(k, p.crossing)?.en ?? k])),
               role: ctx.role,
+              yardZone: p.yardZone,
+              partner: p.partner,
             }),
           )}
         />

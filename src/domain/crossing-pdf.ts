@@ -56,6 +56,9 @@ export type SolicitudInput = {
   mxPlate: string;
   orderNumber: string;
   authorizedBy: string;
+  /** where the letter is dated: the yard's city ("Nuevo Laredo, Tamaulipas") and its clock */
+  place?: string | null;
+  zone?: string | null;
 };
 
 /**
@@ -75,8 +78,8 @@ export async function buildSolicitudRetiro(d: SolicitudInput): Promise<Uint8Arra
   page.drawRectangle({ x: 0, y: 742, width: 612, height: 50, color: rgb(0.06, 0.09, 0.16) });
   page.drawText(pdfText(d.companyName), { x: 54, y: 760, size: 18, font: bold, color: rgb(1, 1, 1) });
   page.drawText(pdfText("Transfer / crossing carrier"), { x: 54, y: 748, size: 8, font, color: rgb(0.8, 0.85, 0.9) });
-  const fecha = d.date.toLocaleDateString("es-MX", { day: "numeric", month: "long", year: "numeric", timeZone: "America/Chicago" });
-  page.drawText(`Nuevo Laredo, Tamaulipas, a ${fecha}`, { x: 54, y: 700, size: 11, font, color: ink });
+  const fecha = d.date.toLocaleDateString("es-MX", { day: "numeric", month: "long", year: "numeric", timeZone: d.zone || "America/Matamoros" });
+  page.drawText(pdfText(`${d.place || "Nuevo Laredo, Tamaulipas"}, a ${fecha}`), { x: 54, y: 700, size: 11, font, color: ink });
   page.drawText(pdfText("SOLICITUD DE RETIRO"), { x: 54, y: 660, size: 16, font: bold, color: teal });
   page.drawText(pdfText(`A quien corresponda — ${d.yardName}`), { x: 54, y: 636, size: 11, font: bold, color: ink });
 
