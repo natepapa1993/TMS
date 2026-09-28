@@ -683,8 +683,8 @@ function TrucksPanel(p: {
                         )
                       ) : (
                         p.canPlan && (
-                          <button type="button" className="btn btn-sm btn-ghost whitespace-nowrap" onClick={() => p.onTimeOff(t)} aria-label={`Time off for unit ${t.unit}`}>
-                            Time off
+                          <button type="button" className="text-footnote text-muted hover:text-teal whitespace-nowrap" onClick={() => p.onTimeOff(t)} aria-label={`Time off for unit ${t.unit}`}>
+                            + time off
                           </button>
                         )
                       )}

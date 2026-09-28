@@ -123,7 +123,8 @@ export function DriverApp({ token, data }: { token: string; data: Data }) {
   const x = cur?.crossing;
   const xActive = x && ["packet_sent", "departed_yard", "at_mx_customs", "in_us_customs", "held"].includes(x.state);
   // one big button at a time (m17): on the bridge the border step is the one to press; otherwise the leg's
-  const borderFirst = !!xActive && !!x?.nextStep && x.state !== "held" && !!cur && ["loaded", "en_route"].includes(cur.leg.state);
+  // (accept the load first; then the border steps are the job and the leg's own step waits beside them)
+  const borderFirst = !!xActive && !!x?.nextStep && x.state !== "held" && !!cur && cur.leg.state !== "dispatched";
 
   return (
     <div className="driver-app form-roomy">
@@ -216,7 +217,7 @@ export function DriverApp({ token, data }: { token: string; data: Data }) {
         </div>
       )}
 
-      {cur && xActive && !cur.order.held && cur.leg.state !== "dispatched" && (
+      {cur && xActive && !cur.order.held && (
         <div className="card mt-4 overflow-hidden">
           <div className="px-4 pt-4 pb-3 border-b border-line flex items-center justify-between gap-2">
             <div className="min-w-0">
@@ -568,7 +569,7 @@ function Chat({ token, legId, thread, dispatchPhone, onDone }: { token: string; 
       )}
       <div className="flex gap-2">
         <input className="input flex-1 min-w-0" placeholder="Message dispatch · Mensaje a despacho" value={text} onChange={(e) => setText(e.target.value)} onKeyDown={(e) => e.key === "Enter" && send()} />
-        <button type="button" className="btn btn-primary" disabled={busy || !text.trim()} onClick={send}>
+        <button type="button" className="btn" disabled={busy || !text.trim()} onClick={send}>
           Send
         </button>
       </div>

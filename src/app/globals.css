@@ -1711,8 +1711,37 @@ body {
   padding-block: 5px;
   font-size: 0.875rem;
 }
+/* compact keeps what a dispatcher reads most — customer, pickup and delivery times, the ETA — on one tight line (m3) */
 .trip-compact .trip-row .sub {
+  margin-top: 0;
+  font-size: 0.75rem;
+  line-height: 1.2;
+}
+.trip-compact .trip-row > :nth-child(2) .sub,
+.trip-compact .trip-row > :nth-child(6) .sub,
+.trip-compact .trip-row > :nth-child(8) .sub {
   display: none;
+}
+/* the side panel open beside the board (m1): the columns squeeze instead of scrolling Power, Ping and Rate
+   out of sight; on a 1440 screen the delivery and next-stop columns give way (the panel shows them) */
+@media (min-width: 1024px) {
+  .trip-board.with-panel .trip-row {
+    min-width: 0;
+    grid-template-columns: 96px 128px minmax(110px, 1fr) minmax(110px, 1fr) minmax(130px, 1.1fr) 44px 90px;
+    gap: 10px;
+    padding-inline: 14px;
+  }
+  .trip-board.with-panel .trip-row > :nth-child(5) {
+    display: none;
+  }
+}
+@media (min-width: 1024px) and (max-width: 1599px) {
+  .trip-board.with-panel .trip-row {
+    grid-template-columns: 92px 120px minmax(110px, 1fr) minmax(120px, 1fr) 44px 86px;
+  }
+  .trip-board.with-panel .trip-row > :nth-child(4) {
+    display: none;
+  }
 }
 /* phones: each load is a card — number and rate on top, status, pickup → delivery, the truck; no sideways scroll */
 @media (max-width: 767px) {

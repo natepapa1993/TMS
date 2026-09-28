@@ -423,7 +423,10 @@ describe("dispatch → delivered (T1)", () => {
   it("hold blocks dispatch until release; release recomputes the state", async () => {
     const o = await crossBorderOrder(a);
     await planLeg(a, o.legs[1].id, { kind: "truck", truckId: fleet.t2117, driverId: fleet.benja });
-    await expect(holdOrder(a, o.order.id, "rate con missing")).rejects.toBeInstanceOf(TransitionError); // booked can't be held
+    // a booked load can be held too (M8) and goes back to booked on release
+    expect((await holdOrder(a, o.order.id, "customer re-checking")).state).toBe("exception");
+    await expect(dispatchLeg(a, o.legs[1].id)).rejects.toThrow(/on hold/);
+    expect((await releaseOrder(a, o.order.id)).state).toBe("booked");
     await dispatchLeg(a, o.legs[1].id);
     await planLeg(a, o.legs[2].id, { kind: "truck", truckId: fleet.t2104, driverId: fleet.reyes });
     await holdOrder(a, o.order.id, "rate con missing");

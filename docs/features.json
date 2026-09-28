@@ -865,6 +865,104 @@
         "src/domain/payrun.test.ts",
         "e2e/payrun.spec.ts"
       ]
+    },
+    {
+      "id": "F-30.1",
+      "name": "Planner and assign popup rank trucks by whether they can make the pickup: free-at + empty miles at 50 mph + 30 min + ELD hours (10-h break); a late truck says when it would arrive and sinks; a past pickup is flagged",
+      "milestone": "M30",
+      "status": "done",
+      "tests": [
+        "src/domain/reach.test.ts"
+      ]
+    },
+    {
+      "id": "F-30.2",
+      "name": "Check calls drive the board: the dispatcher's ETA overrides GPS until a newer position and drives Late / At risk; a Breakdown flags the load and takes the truck out of the planner until the flag is cleared",
+      "milestone": "M30",
+      "status": "done",
+      "tests": [
+        "src/domain/reach.test.ts",
+        "e2e/speed.spec.ts"
+      ]
+    },
+    {
+      "id": "F-30.3",
+      "name": "Hold / Release at any stage from booked to in transit; a held load's steps are frozen (dispatcher, driver app); pulling back a carrier-accepted leg confirms and sends the carrier a cancellation; TONU tells the carrier",
+      "milestone": "M30",
+      "status": "done",
+      "tests": [
+        "src/domain/hold.test.ts",
+        "e2e/speed.spec.ts"
+      ]
+    },
+    {
+      "id": "F-30.4",
+      "name": "⌘K finds invoice #, credit memo #, carrier invoice #, payment reference, caja, seal, pedimento and a partner carrier's driver; every search and typeahead is accent-insensitive; people and companies first",
+      "milestone": "M30",
+      "status": "done",
+      "tests": [
+        "src/domain/search.test.ts",
+        "e2e/speed.spec.ts"
+      ]
+    },
+    {
+      "id": "F-30.5",
+      "name": "Driver app fits a 390 px phone, loads in pickup order with the stop's numbers and instructions, one primary button at a time, \"I can't take this load\"; POD (or dispatch's bill-without-POD) before ready to bill; implausible deliveries flagged",
+      "milestone": "M30",
+      "status": "done",
+      "tests": [
+        "src/domain/hold.test.ts",
+        "src/domain/one-click.test.ts",
+        "e2e/speed.spec.ts"
+      ]
+    },
+    {
+      "id": "F-30.6",
+      "name": "Billing queue: one click Create, issue & send for a single load, like the batch run",
+      "milestone": "M30",
+      "status": "done",
+      "tests": [
+        "src/domain/one-click.test.ts",
+        "e2e/speed.spec.ts"
+      ]
+    },
+    {
+      "id": "F-30.7",
+      "name": "Owner Today page as the owner's home: cash in and out per currency, approvals waiting, late / at risk / no truck < 24 h, trucks empty tomorrow, expiring documents, each a link; each role lands on its own home",
+      "milestone": "M30",
+      "status": "done",
+      "tests": [
+        "src/domain/today.test.ts",
+        "e2e/speed.spec.ts"
+      ]
+    },
+    {
+      "id": "F-30.8",
+      "name": "Imports read trucking spreadsheets (CDL #, Cell, Truck, Med Card Exp, short labels, 28%), put drivers on the trucks the file names, one phone per driver; load import and bulk book warn on stop order and a PO already used",
+      "milestone": "M30",
+      "status": "done",
+      "tests": [
+        "src/domain/imports.test.ts"
+      ]
+    },
+    {
+      "id": "F-30.9",
+      "name": "Estimated miles on every leg from stop coordinates or a built-in freight-city list, shown as est.; driver pay, RPM and the P&L use them until miles are typed",
+      "milestone": "M30",
+      "status": "done",
+      "tests": [
+        "src/domain/miles.test.ts"
+      ]
+    },
+    {
+      "id": "F-30.10",
+      "name": "Book again asks for the new pickup and delivery dates and drops the PO / customer load #; portal requests come legged like the customer's usual lane; Split offers border yards and saved locations and renames the legs by country",
+      "milestone": "M30",
+      "status": "done",
+      "tests": [
+        "src/domain/book-again.test.ts",
+        "e2e/dispatch.spec.ts"
+      ]
     }
   ]
 }

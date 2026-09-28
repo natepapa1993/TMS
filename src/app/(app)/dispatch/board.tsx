@@ -91,6 +91,13 @@ const LEG_TYPE_LABEL: Record<string, string> = { mx: "MX", ca: "CA", crossing: "
 const money = (c: number | null, cur = "USD") => (c == null ? "TBD" : new Intl.NumberFormat("en-US", { style: "currency", currency: cur, maximumFractionDigits: 0 }).format(c / 100));
 const place = (st: Stop) => st.name + (st.address?.city ? `, ${st.address.city}` : "") + (st.address?.state ? ` ${st.address.state}` : "");
 
+/** "Today", "Tomorrow" or "Wed": what a dispatcher says (polish). */
+function dayWord(iso: string, now: number) {
+  const d = new Date(iso);
+  const days = Math.round((new Date(d.toDateString()).getTime() - new Date(new Date(now).toDateString()).getTime()) / 86400_000);
+  return days === 0 ? "today" : days === 1 ? "tomorrow" : d.toLocaleDateString("en-US", { weekday: "short" });
+}
+
 function nextLeg(r: Row): Leg | null {
   return r.legs.find((l) => l.state !== "completed" && l.state !== "cancelled") ?? null;
 }
@@ -227,7 +234,7 @@ export function DispatchBoard({ data, initialOrder, initialBucket, initialChip }
             <div className="h1">Dispatch</div>
           </div>
           <div className="flex items-center gap-2 flex-wrap">
-            <input id="board-search" className="input w-60 max-w-full" placeholder="Search order, customer, unit…  /" value={q} onChange={(e) => setQ(e.target.value)} />
+            <input id="board-search" className={`input ${selected ? "w-44" : "w-60"} max-w-full`} placeholder="Search order, customer, unit…  /" value={q} onChange={(e) => setQ(e.target.value)} />
             <Link href="/messages" className="btn" title="What drivers and carriers wrote to the company WhatsApp">
               Messages{data.messages ? <span className="badge">{data.messages}</span> : null}
             </Link>
@@ -292,7 +299,7 @@ export function DispatchBoard({ data, initialOrder, initialBucket, initialChip }
           </label>
         </div>
         <div className="px-gutter pb-10">
-          <div className={`card overflow-x-auto trip-board ${compact ? "trip-compact" : ""}`} data-testid="trip-board">
+          <div className={`card overflow-x-auto trip-board ${compact ? "trip-compact" : ""} ${selected ? "with-panel" : ""}`} data-testid="trip-board">
             <div className="row trip-row trip-head" role="row">
               <div>Load</div>
               <div>Status</div>
@@ -867,7 +874,7 @@ function AssignModal({ leg, order, data, onClose, onDone }: { leg: Leg; order: O
   const [openedAt] = useState(() => Date.now());
   const [carrierId, setCarrierId] = useState(leg.carrierId ?? "");
   const [celig, setCelig] = useState<{ ok: boolean; hardBlocked: boolean; findings: { level: string; message: string }[] } | null>(null);
-  const [cscore, setCscore] = useState<{ score: { days: number; loads: number; answered: number; acceptancePct: number | null; onTimePct: number | null; trackedPct: number | null; billed: number; billedOver: number; overCents: number }; dispatchable: boolean; problems: string[] } | null>(null);
+  const [cscore, setCscore] = useState<{ score: { days: number; loads: number; running?: number; answered: number; acceptancePct: number | null; onTimePct: number | null; trackedPct: number | null; billed: number; billedOver: number; overCents: number }; dispatchable: boolean; problems: string[] } | null>(null);
   const [carrierRate, setCarrierRate] = useState(leg.carrierRateCents != null ? (leg.carrierRateCents / 100).toFixed(2) : "");
   const [lane, setLane] = useState<{ lane: string; rateCents: number; fuelRule: string; fuelValue: number | null; validTo: string | null } | null>(null);
   const [miles, setMiles] = useState(leg.plannedMiles != null ? String(leg.plannedMiles) : "");
@@ -887,11 +894,33 @@ function AssignModal({ leg, order, data, onClose, onDone }: { leg: Leg; order: O
   useEffect(() => {
     A.candidatesAction(leg.id).then((r) => setCands(r.ok ? r.data : []));
   }, [leg.id]);
+  // a carrier already on the leg (a re-tender after a decline): show its record right away
+  useEffect(() => {
+    if (!leg.carrierId) return;
+    let live = true;
+    A.carrierEligibilityAction(leg.id, leg.carrierId).then((r) => live && r.ok && setCelig(r.data as never));
+    A.carrierPickAction(leg.carrierId).then((r) => live && r.ok && setCscore(r.data));
+    return () => {
+      live = false;
+    };
+  }, [leg.id, leg.carrierId]);
+  // trailers already on a load that is out: say so in the list (m11)
+  const trailerBusy = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const r of data.rows) for (const l of r.legs) if (l.trailerId && l.id !== leg.id && ["planned", "dispatched", "accepted", "en_route_to_pickup", "at_pickup", "loaded", "en_route", "at_delivery"].includes(l.state)) m.set(l.trailerId, `${r.order.orderNumber}${["en_route_to_pickup", "at_pickup", "loaded", "en_route", "at_delivery"].includes(l.state) ? ", moving" : ""}`);
+    return m;
+  }, [data.rows, leg.id]);
 
   const rateCents = carrierRate.trim() ? Math.round(Number(carrierRate.replace(/[$,]/g, "")) * 100) : null;
   const go = () =>
     start(async () => {
       setErr(null);
+      // "Assign anyway" needs the reason first — say so instead of silently asking again (m11)
+      if (needsOverride && !needsOverride.hard && !override.trim()) {
+        setErr(needsOverride.safety ? "Type the reason for the override first — it goes on the record." : "Type why it still works (e.g. finishes early, relay) — it goes on the record.");
+        document.getElementById("override-why")?.focus();
+        return;
+      }
       const milesN = miles.trim() ? Number(miles.replace(/[,\s]/g, "")) : null;
       if (milesN != null && (!Number.isFinite(milesN) || milesN < 0)) return setErr("Miles must be a number");
       const opts = { ...(needsOverride && override.trim() ? { override: true, reason: override.trim() } : {}), ...(tab === "truck" ? { plannedMiles: milesN } : {}) };
@@ -960,7 +989,8 @@ function AssignModal({ leg, order, data, onClose, onDone }: { leg: Leg; order: O
             </Link>
           </div>
         ) : (
-          <div className="max-h-[380px] overflow-auto -mx-1">
+          <>
+          <div className="max-h-[340px] overflow-auto -mx-1">
             {cands[0]?.pickupPassed && (
               <div className="mx-1 mb-2 rounded-md bg-red-soft text-red text-callout font-semibold px-3 py-2" role="alert">
                 {cands[0].reach?.message ?? "The pickup time has passed"}
@@ -976,7 +1006,7 @@ function AssignModal({ leg, order, data, onClose, onDone }: { leg: Leg; order: O
                     <div className="text-callout truncate">
                       {c.driverName ?? <span className="text-faint">no driver</span>}
                       <span className="text-muted text-footnote">
-                        {c.freeAt && new Date(c.freeAt).getTime() > openedAt + 15 * 60_000 ? ` · free ${new Date(c.freeAt).toLocaleString("en-US", { weekday: "short", hour: "numeric", minute: "2-digit" })}` : " · free now"}
+                        {c.freeAt && new Date(c.freeAt).getTime() > openedAt + 15 * 60_000 ? ` · free ${dayWord(c.freeAt, openedAt)} ${new Date(c.freeAt).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })}` : " · free now"}
                         {c.freeWhere ? ` at ${c.freeWhere}` : ""}
                         {c.deadheadMi != null ? ` · ${c.deadheadMi} mi empty` : ""}
                       </span>
@@ -991,7 +1021,9 @@ function AssignModal({ leg, order, data, onClose, onDone }: { leg: Leg; order: O
                 </div>
               );
             })}
-            <div className="flex items-center gap-2 px-3 pt-3 mt-1 border-t border-line">
+          </div>
+            {/* trailer and miles sit under the list, never scrolled out of reach (m11) */}
+            <div className="flex items-center gap-2 px-2 pt-3 mt-1 border-t border-line">
               <label className="label m-0" htmlFor="plan-trailer">
                 Trailer
               </label>
@@ -1000,19 +1032,19 @@ function AssignModal({ leg, order, data, onClose, onDone }: { leg: Leg; order: O
                 {data.trailers.map((tr) => (
                   <option key={tr.id} value={tr.id} disabled={tr.status === "oos"}>
                     {tr.unitNumber}
-                    {tr.status === "oos" ? " (out of service)" : ""}
+                    {tr.status === "oos" ? " (out of service)" : trailerBusy.get(tr.id) ? ` (on ${trailerBusy.get(tr.id)})` : ""}
                   </option>
                 ))}
               </select>
             </div>
-            <div className="flex items-center gap-2 px-3 pt-3">
+            <div className="flex items-center gap-2 px-2 pt-3 flex-wrap">
               <label className="label m-0" htmlFor="plan-miles">
                 Planned miles
               </label>
               <input id="plan-miles" className="input w-28" inputMode="numeric" value={miles} onChange={(e) => setMiles(e.target.value)} placeholder={leg.estMiles != null ? `${leg.estMiles} est.` : "for pay & fuel"} />
               <span className="help m-0">Per-mile driver pay and the fuel estimate come from this. Editable later on the order.</span>
             </div>
-          </div>
+          </>
         )
       ) : (
         <div className="space-y-3">
@@ -1055,7 +1087,8 @@ function AssignModal({ leg, order, data, onClose, onDone }: { leg: Leg; order: O
             )}
             {cscore && (
               <div className={`mt-1.5 text-callout rounded-lg border px-3 py-2 ${cscore.dispatchable ? "border-line bg-ground" : "border-red/40 bg-red-soft/40"}`} data-testid="carrier-pick">
-                <span className="font-semibold">Last {cscore.score.days} days:</span> {cscore.score.loads} load{cscore.score.loads === 1 ? "" : "s"}
+                <span className="font-semibold">Last {cscore.score.days} days:</span> {cscore.score.loads} load{cscore.score.loads === 1 ? "" : "s"} delivered
+                {cscore.score.running ? ` · ${cscore.score.running} with them now` : ""}
                 {cscore.score.acceptancePct != null ? ` · ${cscore.score.acceptancePct}% of ${cscore.score.answered} offers accepted` : " · no offers answered yet"}
                 {cscore.score.onTimePct != null ? ` · ${cscore.score.onTimePct}% on time` : ""}
                 {cscore.score.trackedPct != null ? ` · ${cscore.score.trackedPct}% tracked` : ""}
@@ -1138,7 +1171,7 @@ function AssignModal({ leg, order, data, onClose, onDone }: { leg: Leg; order: O
         <div className={`mt-3 px-3 py-2 rounded-lg text-callout ${needsOverride.hard ? "bg-red-soft text-red" : "bg-amber-soft text-amber"}`}>
           <div className="font-bold">{needsOverride.hard ? (needsOverride.safety && !canSafetyOverride ? "Blocked — needs Safety's sign-off (Safety or the owner can override it)." : "Blocked — no override exists for this.") : needsOverride.safety ? "Needs a safety override" : "Schedule conflict — confirm with a reason"}</div>
           <div>{needsOverride.message}</div>
-          {!needsOverride.hard && <input className="input mt-2" placeholder={needsOverride.safety ? "Reason for the override (goes on the driver's and the load's record)" : "Why it still works (e.g. finishes early, relay)"} value={override} onChange={(e) => setOverride(e.target.value)} />}
+          {!needsOverride.hard && <input id="override-why" className="input mt-2" placeholder={needsOverride.safety ? "Reason for the override (goes on the driver's and the load's record)" : "Why it still works (e.g. finishes early, relay)"} value={override} onChange={(e) => setOverride(e.target.value)} />}
         </div>
       )}
       {err && <div className="error mt-2">{err}</div>}

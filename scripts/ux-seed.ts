@@ -68,7 +68,8 @@ async function main() {
   const T = { t101: await truck("101"), t102: await truck("102"), t103: await truck("103"), t104: await truck("104", { usPlateExpires: future(9) }), t105: await truck("105"), t106: await truck("106"), t107: await truck("107") };
   const trailer = async (unit: string) => (await create(a, "trailer", { unitNumber: unit, kind: "53_dry", lengthFt: 53, usPlate: `TR${unit}` })).id;
   const R = { r1: await trailer("5301"), r2: await trailer("5302"), r3: await trailer("5303"), r4: await trailer("5304") };
-  const driver = async (name: string, truckId: string | null, extra: Record<string, unknown> = {}) => (await create(a, "driver", { name, driverType: "CDL", phone: "+1 956 555 0100", licenseExpires: future(400), medicalExpires: future(300), currentTruckId: truckId, payType: "per_mile", payRateCents: 62, ...extra })).id;
+  let phoneSeq = 100; // one phone per driver: WhatsApp replies are matched by number
+  const driver = async (name: string, truckId: string | null, extra: Record<string, unknown> = {}) => (await create(a, "driver", { name, driverType: "CDL", phone: `+1 956 555 0${phoneSeq++}`, licenseExpires: future(400), medicalExpires: future(300), currentTruckId: truckId, payType: "per_mile", payRateCents: 62, ...extra })).id;
   const D = {
     daniel: await driver("Daniel Test Reyes", T.t101),
     maria: await driver("Maria Test Lopez", T.t102),

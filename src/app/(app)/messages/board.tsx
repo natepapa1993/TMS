@@ -91,24 +91,29 @@ export function MessagesBoard({ rows }: { rows: Row[] }) {
             <button className="btn" onClick={() => setReply(null)}>
               Cancel
             </button>
-            <button
-              className="btn btn-primary"
-              disabled={pending || !text.trim()}
-              onClick={() =>
-                start(async () => {
-                  if (!reply) return;
-                  setErr(null);
-                  const x = await replyToDriverAction(reply.m.driverId!, text, reply.m.orderId, reply.m.handledAt ? null : reply.m.id);
-                  if (x.ok) {
-                    setReply(null);
-                    t.ok("Sent — the driver sees it in the app");
-                    router.refresh();
-                  } else setErr(x.error);
-                })
-              }
-            >
-              Send
-            </button>
+            {/* reply and keep it open when there is still something to do (m22) */}
+            {[false, true].map((keepOpen) => (
+              <button
+                key={String(keepOpen)}
+                className={`btn ${keepOpen ? "" : "btn-primary"}`}
+                disabled={pending || !text.trim()}
+                title={keepOpen ? "Send the answer and keep the message in the open list" : "Send the answer and mark the message handled"}
+                onClick={() =>
+                  start(async () => {
+                    if (!reply) return;
+                    setErr(null);
+                    const x = await replyToDriverAction(reply.m.driverId!, text, reply.m.orderId, reply.m.handledAt || keepOpen ? null : reply.m.id);
+                    if (x.ok) {
+                      setReply(null);
+                      t.ok(keepOpen ? "Sent — still open" : "Sent — the driver sees it in the app");
+                      router.refresh();
+                    } else setErr(x.error);
+                  })
+                }
+              >
+                {keepOpen ? "Send, keep open" : "Send"}
+              </button>
+            ))}
           </>
         }
       >

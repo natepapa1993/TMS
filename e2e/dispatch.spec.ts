@@ -1,4 +1,4 @@
-// Features: F-2.1 F-2.3 F-3.1 F-3.2 F-11.1 F-11.2 F-11.3 F-11.4 F-11.5 F-15 (through the real UI) F-2.9 F-1.6
+// Features: F-2.1 F-2.3 F-3.1 F-3.2 F-11.1 F-11.2 F-11.3 F-11.4 F-11.5 F-15 (through the real UI) F-2.9 F-1.6 F-30.10
 import { test, expect, type Page } from "@playwright/test";
 import { signupFresh, quickAdd, future, login, buildLoad, mxToUs, step, confirmStamp } from "./helpers";
 

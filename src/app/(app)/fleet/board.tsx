@@ -36,6 +36,15 @@ export function FleetBoard({ units, drivers }: { units: Unit[]; drivers: Driver[
         t.ok(r.data.url);
       }
     });
+  // the link straight into WhatsApp with the driver's number and a ready message (polish: one step less than copy + paste)
+  const sendApp = (driverId: string) =>
+    start(async () => {
+      const r = await driverLinkAction(driverId);
+      if (!r.ok) return t.err(r.error);
+      const to = (r.data.whatsapp || r.data.phone || "").replace(/\D/g, "");
+      if (!to) return t.err(`${r.data.name} has no phone or WhatsApp on the driver record`);
+      window.open(`https://wa.me/${to}?text=${encodeURIComponent(`${r.data.name}, your loads · tus cargas: ${r.data.url}`)}`, "_blank", "noopener");
+    });
   const shown = units.filter((u) => (filter === "all" ? true : filter === "oos" ? u.status === "oos" : filter === "busy" ? u.loads.length > 0 && u.status !== "oos" : u.loads.length === 0 && u.status !== "oos"));
   return (
     <>
@@ -92,6 +101,9 @@ export function FleetBoard({ units, drivers }: { units: Unit[]; drivers: Driver[
                           <span className="text-faint">{d.driverType}</span>
                           <button className="btn btn-plain btn-sm ml-1" onClick={() => appLink(d.id)} title="Copy this driver's app link">
                             {copied === d.id ? "Copied" : "App link"}
+                          </button>
+                          <button className="btn btn-plain btn-sm" disabled={pending} onClick={() => sendApp(d.id)} title="Open WhatsApp with the driver's app link ready to send">
+                            WhatsApp
                           </button>
                         </div>
                       ))

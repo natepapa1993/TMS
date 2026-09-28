@@ -280,7 +280,7 @@ export default async function OrderPage({ params }: PageProps<"/orders/[id]">) {
                   {legsTable}
                   <div className="card p-5">
                     <div className="text-headline font-extrabold mb-4">Load details</div>
-                    <OrderEditor order={J(order)} customers={customers.map((c) => ({ id: c.id, name: String(c.name), kind: String(c.kind) }))} entities={entities.map((e) => ({ id: e.id, name: String(e.legalName) }))} readOnly={readOnly} />
+                    <OrderEditor order={J(order)} customers={customers.map((c) => ({ id: c.id, name: String(c.name), kind: String(c.kind) })).sort((p, q) => p.name.localeCompare(q.name))} entities={entities.map((e) => ({ id: e.id, name: String(e.legalName) }))} readOnly={readOnly} />
                   </div>
                 </div>
                 <aside className="space-y-4 min-w-0">
