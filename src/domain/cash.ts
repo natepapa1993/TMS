@@ -7,7 +7,8 @@ import { writeAudit } from "@/lib/audit";
 import { NotFoundError, ValidationError } from "./orders";
 import { recordReceipt, creditMemo, disputeInvoice, assertOpenPeriod } from "./billing";
 import { money as fxMoney } from "./fx-rules";
-export { suggest } from "./cash-rules";
+import { suggest } from "./cash-rules";
+export { suggest };
 
 /**
  * Cash application: a check or ACH arrives for several invoices at once, often short of one or two, with a
@@ -19,7 +20,7 @@ const OPEN = ["issued", "sent", "partially_paid", "disputed"] as const;
 const money = (c: number, cur = "USD") => fxMoney(c, cur);
 
 export type Application = { invoiceId: string; amountCents: number; shortPay?: "leave_open" | "write_off" | "dispute"; reason?: string | null };
-export type PaymentInput = { customerId: string; amountCents: number; /** USD, MXN or CAD: only invoices in this currency take it */ currency?: string; receivedAt?: Date; method?: string; reference?: string | null; remittance?: string | null; note?: string | null; applications: Application[] };
+export type PaymentInput = { customerId: string; amountCents: number; /** USD, MXN or CAD: only invoices in this currency take it */ currency?: string; /** MXN / CAD: units per 1 USD the day it arrived ("18.62"); blank = the company rate */ exchangeRate?: number | string | null; receivedAt?: Date; method?: string; reference?: string | null; remittance?: string | null; note?: string | null; applications: Application[] };
 
 /** A customer's open invoices (oldest due first) and the money they have on account. */
 export async function openItems(ctx: Ctx, customerId: string) {
@@ -31,7 +32,17 @@ export async function openItems(ctx: Ctx, customerId: string) {
   ]);
   const orderIds = [...new Set(invs.flatMap((i) => i.orderIds))];
   const orders = orderIds.length ? await db.select({ id: s.orders.id, orderNumber: s.orders.orderNumber, refs: s.orders.refs }).from(s.orders).where(inArray(s.orders.id, orderIds)) : [];
+  // the currency this customer was billed in last: a payment from them most likely came in it
+  const [latest] = await db.select({ currency: s.invoices.currency }).from(s.invoices).where(and(eq(s.invoices.tenantId, ctx.tenantId), eq(s.invoices.customerId, customerId), sql`${s.invoices.issuedAt} is not null`)).orderBy(desc(s.invoices.issuedAt)).limit(1);
+  const { getCompany } = await import("./company");
+  const { zonedDate } = await import("@/lib/time");
+  const company = await getCompany(ctx);
+  const { pickRate } = await import("./fx-rules");
   return {
+    latestCurrency: latest?.currency ?? invs[0]?.currency ?? "USD",
+    /** today in the company's zone (a payment's received date defaults to it) and the company's rates to start the rate box */
+    today: zonedDate(new Date(), company.timeZone),
+    rates: { MXN: (pickRate("MXN", null, company.settings.fx).rateE4 / 10000).toFixed(4), CAD: (pickRate("CAD", null, company.settings.fx).rateE4 / 10000).toFixed(4) } as Record<string, string>,
     invoices: invs
       .map((i) => ({ id: i.id, number: i.number ?? "", state: i.state, currency: i.currency, dueAt: i.dueAt?.toISOString() ?? null, totalCents: i.totalCents, openCents: i.totalCents - i.creditedCents - i.paidCents, loads: orders.filter((o) => i.orderIds.includes(o.id)).map((o) => ({ orderNumber: o.orderNumber, refs: Object.values(o.refs ?? {}).filter(Boolean) as string[] })) }))
       .filter((i) => i.openCents > 0),
@@ -46,11 +57,20 @@ export async function applyPayment(ctx: Ctx, input: PaymentInput) {
   if (!Number.isInteger(input.amountCents) || input.amountCents <= 0) throw new ValidationError("the payment amount", "amountCents");
   const [cust] = await db.select().from(s.customers).where(and(eq(s.customers.tenantId, ctx.tenantId), eq(s.customers.id, input.customerId))).limit(1);
   if (!cust) throw new NotFoundError("customer", input.customerId);
-  const apps = input.applications.filter((a) => a.amountCents > 0 || a.shortPay === "write_off" || a.shortPay === "dispute");
+  let apps = input.applications.filter((a) => a.amountCents > 0 || a.shortPay === "write_off" || a.shortPay === "dispute");
   const { invoices } = await openItems(ctx, input.customerId);
   // a payment has one currency: the one it arrived in (or, from older callers, the invoices it pays)
   let currency: string | null = input.currency ? input.currency.toUpperCase() : null;
   if (currency && !["USD", "MXN", "CAD"].includes(currency)) throw new ValidationError("the payment's currency: USD, MXN or CAD", "currency");
+  // nothing matched by hand but the remittance (or the reference) names open invoices: pay those, not "on account"
+  let autoMatched = false;
+  if (!apps.length) {
+    const auto = autoMatch(invoices, input.amountCents, [input.remittance, input.reference, input.note].filter(Boolean).join(" "), currency ?? undefined);
+    if (auto.length) {
+      apps = auto;
+      autoMatched = true;
+    }
+  }
   let total = 0;
   for (const a of apps) {
     const inv = invoices.find((i) => i.id === a.invoiceId);
@@ -70,14 +90,16 @@ export async function applyPayment(ctx: Ctx, input: PaymentInput) {
   if (total > input.amountCents) throw new ValidationError(`applied ${money(total, currency ?? "USD")} is more than the ${money(input.amountCents, currency ?? "USD")} received`, "applications");
   const receivedAt = input.receivedAt ?? new Date();
   await assertOpenPeriod(ctx, receivedAt);
+  await assertNotFuture(ctx, receivedAt);
   const method = input.method ?? "ach";
-  const [pay] = await db.insert(s.payments).values({ id: newId(), tenantId: ctx.tenantId, customerId: cust.id, receivedAt, amountCents: input.amountCents, currency: currency ?? "USD", method, reference: input.reference?.trim() || null, remittance: input.remittance?.trim() || null, note: input.note?.trim() || null, appliedCents: 0, createdBy: ctx.userId }).returning();
+  const exchangeRate = await receiptRate(ctx, currency ?? "USD", input.exchangeRate);
+  const [pay] = await db.insert(s.payments).values({ id: newId(), tenantId: ctx.tenantId, customerId: cust.id, receivedAt, amountCents: input.amountCents, currency: currency ?? "USD", exchangeRate, method, reference: input.reference?.trim() || null, remittance: input.remittance?.trim() || null, note: input.note?.trim() || null, appliedCents: 0, createdBy: ctx.userId }).returning();
   const done: { invoiceId: string; number: string; appliedCents: number; after: string }[] = [];
   let applied = 0;
   for (const a of apps) {
     const inv = invoices.find((i) => i.id === a.invoiceId)!;
     if (a.amountCents > 0) {
-      await recordReceipt(ctx, inv.id, { amountCents: a.amountCents, receivedAt, method, reference: pay.reference, note: `payment ${pay.reference ?? pay.id}`, paymentId: pay.id });
+      await recordReceipt(ctx, inv.id, { amountCents: a.amountCents, receivedAt, method, reference: pay.reference, note: `payment ${pay.reference ?? pay.id}`, paymentId: pay.id, exchangeRate });
       applied += a.amountCents;
       await db.update(s.payments).set({ appliedCents: applied }).where(eq(s.payments.id, pay.id));
     }
@@ -93,7 +115,45 @@ export async function applyPayment(ctx: Ctx, input: PaymentInput) {
     done.push({ invoiceId: inv.id, number: inv.number, appliedCents: a.amountCents, after });
   }
   await writeAudit(db, ctx, "payment", pay.id, "create", undefined, `${method} ${pay.reference ?? ""} ${money(input.amountCents, pay.currency)}: ${done.map((d) => `${d.number} ${money(d.appliedCents, pay.currency)}`).join(", ")}${input.amountCents - applied ? `; ${money(input.amountCents - applied, pay.currency)} on account` : ""}`.trim());
-  return { paymentId: pay.id, applied: done, onAccountCents: input.amountCents - applied };
+  return { paymentId: pay.id, applied: done, onAccountCents: input.amountCents - applied, autoMatched };
+}
+
+/**
+ * Pure: when nobody split a payment by hand, what the remittance says to pay. It applies only when the text
+ * names open invoices in the payment's currency (invoice number, load number or a load reference) and either
+ * names exactly one, or the amount is exactly what the named invoices have open. Otherwise nothing (on account).
+ */
+export function autoMatch(invoices: { id: string; number: string; openCents: number; currency: string; loads: { orderNumber: string; refs: string[] }[] }[], amountCents: number, text: string, currency?: string): Application[] {
+  if (!text.trim()) return [];
+  const plan = suggest(invoices, amountCents, text, currency ?? invoices[0]?.currency);
+  const named = plan.filter((p) => p.named);
+  if (!named.length) return [];
+  const open = named.reduce((a, p) => a + p.openCents, 0);
+  if (named.length > 1 && open !== amountCents) return [];
+  return named.filter((p) => p.applyCents > 0).map((p) => ({ invoiceId: p.invoiceId, amountCents: p.applyCents }));
+}
+
+/** A MXN / CAD receipt's rate: what was typed, else the company's latest. USD has none. */
+async function receiptRate(ctx: Ctx, currency: string, typed: number | string | null | undefined) {
+  if (currency === "USD") return null;
+  const { parseRate, pickRate } = await import("./fx-rules");
+  if (typed != null && String(typed).trim()) {
+    try {
+      return typeof typed === "number" && typed > 1000 ? Math.round(typed) : parseRate(typed, currency);
+    } catch (e) {
+      throw new ValidationError((e as Error).message, "exchangeRate");
+    }
+  }
+  const { getCompany } = await import("./company");
+  return pickRate(currency, null, (await getCompany(ctx)).settings.fx).rateE4;
+}
+
+/** Money can't be received tomorrow: a date after today in the company's zone is refused. */
+export async function assertNotFuture(ctx: Ctx, at: Date, now = new Date()) {
+  const { getCompany } = await import("./company");
+  const { zonedDate } = await import("@/lib/time");
+  const tz = (await getCompany(ctx)).timeZone;
+  if (zonedDate(at, tz) > zonedDate(now, tz)) throw new ValidationError(`that date is in the future — money received today is dated ${zonedDate(now, tz)}`, "receivedAt");
 }
 
 /** Use money on account against an invoice (the next invoice after an overpayment, a deposit). */
@@ -110,7 +170,7 @@ export async function applyOnAccount(ctx: Ctx, paymentId: string, invoiceId: str
   if (inv.customerId !== pay.customerId) throw new ValidationError("that invoice is for another customer");
   if (inv.currency !== pay.currency) throw new ValidationError(`this money on account is ${pay.currency} and ${inv.number} is a ${inv.currency} invoice: it only pays ${pay.currency} invoices`);
   // applied today: money on account from a closed month can still pay a new invoice
-  await recordReceipt(ctx, inv.id, { amountCents, receivedAt: new Date(), method: pay.method, reference: pay.reference, note: `from money on account (${pay.reference ?? pay.id})`, paymentId: pay.id });
+  await recordReceipt(ctx, inv.id, { amountCents, receivedAt: new Date(), method: pay.method, reference: pay.reference, note: `from money on account (${pay.reference ?? pay.id})`, paymentId: pay.id, exchangeRate: pay.exchangeRate });
   await db.update(s.payments).set({ appliedCents: pay.appliedCents + amountCents }).where(eq(s.payments.id, pay.id));
   await writeAudit(db, ctx, "payment", pay.id, "update", { appliedCents: { from: pay.appliedCents, to: pay.appliedCents + amountCents } }, `to ${inv.number}`);
   return { unappliedCents: left - amountCents };

@@ -21,7 +21,7 @@ export type Today = {
   cashOut: { carrierBills: MoneyLine[]; driverPay: MoneyLine[] } | null;
   approvals: { accessorials: number; overrides: number; renewals: number };
   loads: { late: number; atRisk: number; noTruckSoon: number; flagged: number };
-  billing: { readyToBill: number; missingPod: number } | null;
+  billing: { readyToBill: number; missingPod: number; /** issued, and every "send" only went to the log (no email provider) */ notEmailed: number } | null;
   trucksEmptyTomorrow: number;
   documents: { expiring: number; expired: number };
 };
@@ -119,7 +119,8 @@ export async function ownerToday(ctx: Ctx, now = new Date()): Promise<Today> {
     const pods = delivered.length ? await db.select({ subjectId: s.documents.subjectId }).from(s.documents).where(and(eq(s.documents.tenantId, T), eq(s.documents.subjectKind, "order"), eq(s.documents.code, "POD"), inArray(s.documents.subjectId, delivered.map((d) => d.id)), inArray(s.documents.status, ["present", "verified"]))) : [];
     const has = new Set(pods.map((p) => p.subjectId));
     const missing = delivered.filter((d) => !d.tonu && !has.has(d.id) && !(d.custom as { podWaived?: unknown } | null)?.podWaived).length;
-    billingNums = { readyToBill: delivered.length - missing, missingPod: missing };
+    const [ne] = await db.select({ n: sql<number>`count(*)` }).from(s.invoices).where(and(eq(s.invoices.tenantId, T), inArray(s.invoices.state, ["issued", "partially_paid", "disputed"]), isNull(s.invoices.sentAt), sql`${s.invoices.deliveries} @> '[{"logged": true}]'::jsonb`));
+    billingNums = { readyToBill: delivered.length - missing, missingPod: missing, notEmailed: Number(ne?.n ?? 0) };
   }
 
   // ---- trucks with nothing to do by the end of tomorrow

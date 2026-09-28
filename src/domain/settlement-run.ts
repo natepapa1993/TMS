@@ -6,6 +6,7 @@ import { NotFoundError, ValidationError } from "./orders";
 import { buildSettlement, settlementTransition, approvalBlockers } from "./billing";
 import { buildSettlementPdf } from "./billing-pdf";
 import { getCompany } from "./company";
+import { zonedDate } from "@/lib/time";
 
 /**
  * The weekly pay run: every driver who ran a leg that week (or has a pay item due) gets a statement in one go;
@@ -115,10 +116,24 @@ async function pdfFor(ctx: Ctx, st: typeof s.settlements.$inferSelect) {
   const company = await getCompany(ctx);
   const year = st.periodStart.getUTCFullYear();
   const yearRows = await db.select().from(s.settlements).where(and(eq(s.settlements.tenantId, ctx.tenantId), eq(s.settlements.driverId, st.driverId), gte(s.settlements.periodStart, new Date(Date.UTC(year, 0, 1))), lt(s.settlements.periodStart, new Date(st.periodStart.getTime() + 1))));
-  // the year to date counts paid statements and this one
-  const counted = yearRows.filter((r) => r.state === "paid" || r.id === st.id);
+  // the year to date counts paid statements, and this one once it is approved (an open one can still change)
+  const counted = yearRows.filter((r) => r.state === "paid" || (r.id === st.id && r.state === "approved"));
   const ytd = counted.reduce((a, r) => ({ grossCents: a.grossCents + r.grossCents, deductionsCents: a.deductionsCents + r.deductionsCents, netCents: a.netCents + r.netCents }), { grossCents: 0, deductionsCents: 0, netCents: 0 });
-  return buildSettlementPdf({ company: company.name, driver: driver?.name ?? "Driver", periodStart: st.periodStart, periodEnd: st.periodEnd, state: st.state, lines: st.lines, grossCents: st.grossCents, deductionsCents: st.deductionsCents, netCents: st.netCents, paidAt: st.paidAt, method: st.method, reference: st.reference, ytd, timeZone: company.timeZone });
+  // what the driver still owes and what is held for them, after this statement
+  const items = await db.select().from(s.payItems).where(and(eq(s.payItems.tenantId, ctx.tenantId), eq(s.payItems.driverId, st.driverId)));
+  const taken = (id: string) => (st.state === "paid" ? 0 : -st.lines.filter((l) => l.payItemId === id && l.kind === "deduction").reduce((x, l) => x + l.amountCents, 0));
+  const balances = [
+    ...items.filter((it) => (it.kind === "advance" || (it.kind === "deduction" && it.originalCents != null)) && it.remainingCents != null && it.remainingCents - taken(it.id) > 0).map((it) => ({ label: `${it.description} — left to recover`, cents: it.remainingCents! - taken(it.id) })),
+    ...items.filter((it) => it.kind === "escrow" && (it.balanceCents ?? 0) + taken(it.id) > 0).map((it) => ({ label: `${it.description} — escrow held for you`, cents: (it.balanceCents ?? 0) + taken(it.id) })),
+  ];
+  const bytes = await buildSettlementPdf({ company: company.name, driver: driver?.name ?? "Driver", periodStart: st.periodStart, periodEnd: st.periodEnd, state: st.state, lines: st.lines, grossCents: st.grossCents, deductionsCents: st.deductionsCents, netCents: st.netCents, paidAt: st.paidAt, method: st.method, reference: st.reference, ytd, ytdIncludesThis: counted.some((r) => r.id === st.id), balances, timeZone: company.timeZone });
+  return Object.assign(bytes, { fileName: settlementFileName(driver?.name ?? "Driver", st.periodStart, company.timeZone) });
+}
+
+/** "Pay statement - Hector Salazar - week of 2026-09-20.pdf" (plain letters, safe in a download header). */
+export function settlementFileName(driver: string, periodStart: Date, timeZone: string) {
+  const plain = driver.normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^A-Za-z0-9 .'-]+/g, " ").replace(/\s+/g, " ").trim() || "Driver";
+  return `Pay statement - ${plain} - week of ${zonedDate(periodStart, timeZone)}.pdf`;
 }
 
 /** The statement PDF for the office. */

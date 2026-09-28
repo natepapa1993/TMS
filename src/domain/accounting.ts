@@ -1,4 +1,4 @@
-import { and, eq, gte, lt, inArray, isNull, desc } from "drizzle-orm";
+import { and, eq, gte, lt, inArray, isNull, desc, sql } from "drizzle-orm";
 import type { PgColumn } from "drizzle-orm/pg-core";
 import { db } from "@/db/client";
 import * as s from "@/db/schema";
@@ -29,7 +29,14 @@ import { CHARGE_LABEL } from "./billing";
  *   customer payment here: the funding journal already took the invoice off Receivables.
  * - Driver statements are bills to the driver: earnings to Driver pay, per diem and reimbursements to
  *   Driver reimbursements, advances recovered to Driver advances (an asset), escrow to Driver escrow (a
- *   liability), other deductions to Driver deductions. A statement never has a negative total.
+ *   liability; escrow paid back comes out of it too), other deductions to Driver deductions. A statement
+ *   never has a negative total. An advance is exported when it is paid out (Driver advances from the bank),
+ *   so recovering it brings the asset back to zero.
+ * - A credit memo, and money on account used on a later invoice, go out as $0 payments that apply the
+ *   credit to the invoice. A MXN / CAD receipt goes to the bank at the day's rate; the difference from the
+ *   invoice's rate is the realized exchange gain or loss.
+ * - "Only new" takes everything never exported up to the end date, whatever its date.
+ * - The IIF is written in Windows-1252, the encoding QuickBooks Desktop reads.
  * - The IIF starts with the accounts (!ACCNT) and items (!INVITEM) it uses, so a fresh company file takes it.
  */
 
@@ -41,11 +48,17 @@ export type ExportData = {
   timeZone: string;
   invoices: { id: string; number: string; issuedAt: Date; dueAt: Date; termsDays: number; customer: string; currency: string; totalCents: number; memo: string; lines: { description: string; kind: string; qty: number; unit: string; rateCents: number; amountCents: number }[] }[];
   /** one deposit per payment received, with the invoices it paid (amounts in USD) */
-  payments: { id: string; receivedAt: Date; customer: string; amountCents: number; method: string; reference: string | null; memo: string; applications: { invoiceNumber: string; amountCents: number }[]; onAccountCents: number }[];
+  payments: { id: string; receivedAt: Date; customer: string; amountCents: number; method: string; reference: string | null; memo: string; applications: { invoiceNumber: string; amountCents: number }[]; onAccountCents: number; /** realized exchange gain (+) or loss (−): the bank got more (less) dollars than Receivables carried */ fxCents?: number }[];
   credits: { id: string; number: string; issuedAt: Date; customer: string; invoiceNumber: string; amountCents: number; reason: string; currency: string }[];
   bills: { id: string; kind: "carrier" | "driver"; vendor: string; date: Date; dueAt: Date | null; number: string; memo: string; currency: string; lines: { account: string; description: string; amountCents: number }[]; paidAt: Date | null; paidCents: number | null; paidRef: string | null }[];
-  /** factoring as journal entries: debits positive, credits negative, each entry balances */
+  /** factoring (and advances paid out) as journal entries: debits positive, credits negative, each entry balances */
   journals: { id: string; date: Date; number: string; memo: string; lines: { account: string; name: string | null; amountCents: number; memo: string }[] }[];
+  /**
+   * Money already on the customer's account used on an invoice: a credit memo against its invoice, or money
+   * on account from an earlier payment applied later. In QuickBooks it is a $0 payment that takes the credit
+   * off one side and the invoice off the other, so the invoice and the credit don't sit open side by side.
+   */
+  applications: { id: string; date: Date; customer: string; invoiceNumber: string; amountCents: number; source: "credit_memo" | "on_account"; sourceRef: string; memo: string }[];
 };
 void (null as unknown as Money);
 
@@ -63,6 +76,7 @@ const incomeFor = (qb: QbAccounts, kind: string) => (kind === "linehaul" ? qb.in
 
 /** Where a driver statement line posts. */
 export function settlementAccount(qb: QbAccounts, l: { kind: string; amountCents: number; source: string }) {
+  if (l.kind === "reimbursement" && l.source === "escrow release") return qb.escrowAccount; // the escrow held comes back to the driver
   if (l.kind === "reimbursement") return qb.reimbursementAccount;
   if (l.amountCents >= 0) return qb.driverPayAccount;
   if (l.source === "advance") return qb.advanceAccount;
@@ -72,7 +86,7 @@ export function settlementAccount(qb: QbAccounts, l: { kind: string; amountCents
 
 // ---------- collect ----------
 
-type Ids = { invoices: string[]; receipts: string[]; bills: string[]; settlements: string[]; credits?: string[]; payments?: string[]; factor?: string[] };
+type Ids = { invoices: string[]; receipts: string[]; bills: string[]; settlements: string[]; credits?: string[]; payments?: string[]; factor?: string[]; applications?: string[]; advances?: string[] };
 
 async function collect(ctx: Ctx, opts: { from: string; to: string; onlyNew: boolean; ids?: Ids }): Promise<ExportData & { ids: Ids }> {
   const company = await getCompany(ctx);
@@ -81,7 +95,9 @@ async function collect(ctx: Ctx, opts: { from: string; to: string; onlyNew: bool
   const qb = company.settings.qb;
   const from = zonedMidnight(opts.from, tz);
   const toExclusive = new Date(zonedMidnight(opts.to, tz).getTime() + 86400_000);
-  const inWindow = (col: PgColumn) => and(gte(col, from), lt(col, toExclusive));
+  // "only new" is everything never exported up to the end date, whatever its date: an invoice issued before the
+  // window, or a payment typed in with last month's date after last month went out, is never skipped
+  const inWindow = (col: PgColumn) => (opts.onlyNew ? lt(col, toExclusive) : and(gte(col, from), lt(col, toExclusive)));
   const pick = <T,>(ids: string[] | undefined, q: () => Promise<T[]>, byIds: (ids: string[]) => Promise<T[]>) => (opts.ids ? (ids?.length ? byIds(ids) : Promise.resolve([] as T[])) : q());
 
   const [customers, carriers, drivers] = await Promise.all([
@@ -121,22 +137,29 @@ async function collect(ctx: Ctx, opts: { from: string; to: string; onlyNew: bool
   const rcInv = touchedInv.length ? await db.select({ id: s.invoices.id, number: s.invoices.number, customerId: s.invoices.customerId, currency: s.invoices.currency, exchangeRate: s.invoices.exchangeRate }).from(s.invoices).where(inArray(s.invoices.id, touchedInv)) : [];
   const payments: ExportData["payments"] = [
     ...payRows.map((p) => {
-      const apps = payRcpts.filter((r) => r.paymentId === p.id && !/^from money on account/.test(r.note ?? "") && r.receivedAt.getTime() === p.receivedAt.getTime());
+      // the deposit shows the payment as it stands at export time: every invoice it paid, including money on
+      // account used on a later invoice before this export
+      const apps = payRcpts.filter((r) => r.paymentId === p.id);
+      // MXN / CAD: the bank got the money at the day's rate; Receivables comes off at the invoice's rate; the
+      // difference is the realized exchange gain or loss
+      const atReceipt = pickRate(p.currency, p.exchangeRate, fx).rateE4;
       const applied = apps.map((r) => {
         const inv = rcInv.find((i) => i.id === r.invoiceId);
-        return { invoiceNumber: inv?.number ?? "", amountCents: inv ? invUsd(r.amountCents, inv) : r.amountCents, orig: r.amountCents };
+        return { invoiceNumber: inv?.number ?? "", amountCents: inv ? invUsd(r.amountCents, inv) : r.amountCents, bankCents: toHome(r.amountCents, p.currency, r.exchangeRate ?? atReceipt) };
       });
       const onAcctOrig = p.amountCents - apps.reduce((a, r) => a + r.amountCents, 0);
-      const onAccount = toHome(onAcctOrig, p.currency, pickRate(p.currency, null, fx).rateE4);
-      const total = applied.reduce((a, x) => a + x.amountCents, 0) + onAccount;
-      return { id: p.id, receivedAt: p.receivedAt, customer: cname(p.customerId), amountCents: total, method: p.method, reference: p.reference, memo: `${p.method}${p.reference ? ` ${p.reference}` : ""}${p.currency !== HOME_CURRENCY ? ` · ${fxMoney(p.amountCents, p.currency, { code: true })} converted at each invoice's rate` : ""}${onAccount ? ` · ${dollars(onAccount)} on account` : ""}`, applications: applied.map(({ invoiceNumber, amountCents }) => ({ invoiceNumber, amountCents })), onAccountCents: onAccount };
+      const onAccount = toHome(onAcctOrig, p.currency, atReceipt);
+      const total = applied.reduce((a, x) => a + x.bankCents, 0) + onAccount;
+      const fxCents = applied.reduce((a, x) => a + x.bankCents - x.amountCents, 0);
+      return { id: p.id, receivedAt: p.receivedAt, customer: cname(p.customerId), amountCents: total, method: p.method, reference: p.reference, memo: `${p.method}${p.reference ? ` ${p.reference}` : ""}${p.currency !== HOME_CURRENCY ? ` · ${fxMoney(p.amountCents, p.currency, { code: true })} at ${(atReceipt / 10000).toFixed(4)} the day it arrived` : ""}${onAccount ? ` · ${dollars(onAccount)} on account` : ""}`, applications: applied.map(({ invoiceNumber, amountCents }) => ({ invoiceNumber, amountCents })), onAccountCents: onAccount, fxCents };
     }),
     ...rcRows
       .filter((r) => !(r.method === "factoring" && fundedIds.has(r.invoiceId)))
       .map((r) => {
         const inv = rcInv.find((i) => i.id === r.invoiceId);
         const usd = inv ? invUsd(r.amountCents, inv) : r.amountCents;
-        return { id: r.id, receivedAt: r.receivedAt, customer: inv ? cname(inv.customerId) : "Customer", amountCents: usd, method: r.method, reference: r.reference, memo: `${r.method} for ${inv?.number ?? ""}${inv ? origNote(r.amountCents, inv) : ""}`, applications: [{ invoiceNumber: inv?.number ?? "", amountCents: usd }], onAccountCents: 0 };
+        const bank = inv && r.exchangeRate ? toHome(r.amountCents, inv.currency, r.exchangeRate) : usd;
+        return { id: r.id, receivedAt: r.receivedAt, customer: inv ? cname(inv.customerId) : "Customer", amountCents: bank, method: r.method, reference: r.reference, memo: `${r.method} for ${inv?.number ?? ""}${inv ? origNote(r.amountCents, inv) : ""}${inv && r.exchangeRate ? ` · ${(r.exchangeRate / 10000).toFixed(4)} the day it arrived` : ""}`, applications: [{ invoiceNumber: inv?.number ?? "", amountCents: usd }], onAccountCents: 0, fxCents: bank - usd };
       }),
   ];
 
@@ -225,6 +248,38 @@ async function collect(ctx: Ctx, opts: { from: string; to: string; onlyNew: bool
       ].filter((l) => l.amountCents !== 0) });
     }
   }
+  // advances paid out to drivers: money out of the bank into Driver Advances; statements recover them later, so
+  // the asset comes back to zero
+  const advRows = await pick(opts.ids?.advances, () => db.select().from(s.payItems).where(and(eq(s.payItems.tenantId, ctx.tenantId), eq(s.payItems.kind, "advance"), inWindow(s.payItems.createdAt), ...(opts.onlyNew ? [isNull(s.payItems.exportedAt)] : []))), (ids) => db.select().from(s.payItems).where(and(eq(s.payItems.tenantId, ctx.tenantId), inArray(s.payItems.id, ids))));
+  for (const it of advRows) {
+    const out = it.originalCents ?? it.remainingCents ?? it.amountCents;
+    if (!out) continue;
+    const who = dname(it.driverId);
+    journals.push({ id: it.id, date: it.createdAt, number: `ADV-${iso(it.createdAt, tz)}`, memo: `advance to ${who}: ${it.description}`, lines: [
+      { account: qb.advanceAccount, name: who, amountCents: out, memo: `advance to ${who} (recovered from statements)` },
+      { account: qb.bankAccount, name: null, amountCents: -out, memo: `paid to ${who}` },
+    ] });
+  }
+
+  // money on the customer's account used on an invoice: each credit memo on its invoice, and money on account
+  // from a payment exported earlier, applied since
+  const applications: ExportData["applications"] = credits.map((c) => ({ id: c.id, date: c.issuedAt, customer: c.customer, invoiceNumber: c.invoiceNumber, amountCents: c.amountCents, source: "credit_memo" as const, sourceRef: c.number, memo: `credit memo ${c.number} applied to ${c.invoiceNumber}` }));
+  const exportedNow = new Set(payRows.map((p) => p.id));
+  const laterRows = await pick(
+    opts.ids?.applications,
+    () => db.select({ r: s.receipts, p: s.payments }).from(s.receipts).innerJoin(s.payments, eq(s.payments.id, s.receipts.paymentId)).where(and(eq(s.receipts.tenantId, ctx.tenantId), inWindow(s.receipts.receivedAt), ...(opts.onlyNew ? [isNull(s.receipts.exportedAt), sql`${s.payments.exportedAt} is not null`] : []))),
+    (ids) => db.select({ r: s.receipts, p: s.payments }).from(s.receipts).innerJoin(s.payments, eq(s.payments.id, s.receipts.paymentId)).where(and(eq(s.receipts.tenantId, ctx.tenantId), inArray(s.receipts.id, ids))),
+  );
+  // (a payment going out in this run carries its own applications in its deposit)
+  const later = laterRows.filter((x) => !exportedNow.has(x.p.id));
+  const laterInv = later.length ? await db.select({ id: s.invoices.id, number: s.invoices.number, customerId: s.invoices.customerId, currency: s.invoices.currency, exchangeRate: s.invoices.exchangeRate }).from(s.invoices).where(inArray(s.invoices.id, [...new Set(later.map((x) => x.r.invoiceId))])) : [];
+  for (const { r, p } of later) {
+    const inv = laterInv.find((i) => i.id === r.invoiceId);
+    if (!inv) continue;
+    const ref = p.reference || `payment of ${iso(p.receivedAt, tz)}`;
+    applications.push({ id: r.id, date: r.receivedAt, customer: cname(inv.customerId), invoiceNumber: inv.number ?? "", amountCents: invUsd(r.amountCents, inv), source: "on_account", sourceRef: ref, memo: `money on account (${p.method} ${ref}) applied to ${inv.number}${origNote(r.amountCents, inv)}` });
+  }
+
   return {
     qb,
     timeZone: tz,
@@ -233,11 +288,39 @@ async function collect(ctx: Ctx, opts: { from: string; to: string; onlyNew: bool
     credits,
     bills,
     journals,
-    ids: { invoices: invoices.map((i) => i.id), receipts: rcRows.map((r) => r.id), bills: cbRows.map((b) => b.id), settlements: stRows.map((x) => x.id), credits: credits.map((c) => c.id), payments: payRows.map((p) => p.id), factor: feRows.map((e) => e.id) },
+    applications,
+    ids: { invoices: invoices.map((i) => i.id), receipts: rcRows.map((r) => r.id), bills: cbRows.map((b) => b.id), settlements: stRows.map((x) => x.id), credits: credits.map((c) => c.id), payments: payRows.map((p) => p.id), factor: feRows.map((e) => e.id), applications: later.map((x) => x.r.id), advances: advRows.map((x) => x.id) },
   };
 }
 
 // ---------- IIF (QuickBooks Desktop) ----------
+
+/** Windows-1252 bytes 0x80–0x9F that are not Latin-1 control codes. */
+const CP1252: Record<string, number> = { "€": 0x80, "‚": 0x82, "ƒ": 0x83, "„": 0x84, "…": 0x85, "†": 0x86, "‡": 0x87, "ˆ": 0x88, "‰": 0x89, "Š": 0x8a, "‹": 0x8b, "Œ": 0x8c, "Ž": 0x8e, "‘": 0x91, "’": 0x92, "“": 0x93, "”": 0x94, "•": 0x95, "–": 0x96, "—": 0x97, "˜": 0x98, "™": 0x99, "š": 0x9a, "›": 0x9b, "œ": 0x9c, "ž": 0x9e, "Ÿ": 0x9f };
+
+/** Letters with no accent to drop (NFD doesn't split them). */
+const FOLD: Record<string, string> = { "Ł": "L", "ł": "l", "Đ": "D", "đ": "d", "Ħ": "H", "ħ": "h", "ı": "i" };
+
+/**
+ * Text as Windows-1252 bytes (what QuickBooks Desktop expects in an IIF). Accented Spanish and French letters,
+ * ñ, ü, €, dashes and curly quotes map directly; anything else is spelled without its accent, else "?". Pure.
+ */
+export function toWindows1252(text: string): Uint8Array {
+  const out: number[] = [];
+  for (const ch of text) {
+    const c = ch.codePointAt(0)!;
+    if (c < 0x80 || (c >= 0xa0 && c <= 0xff)) out.push(c);
+    else if (CP1252[ch] != null) out.push(CP1252[ch]);
+    else {
+      const plain = (FOLD[ch] ?? ch).normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+      for (const p of plain) {
+        const q = p.codePointAt(0)!;
+        out.push(q < 0x80 || (q >= 0xa0 && q <= 0xff) ? q : CP1252[p] ?? 0x3f);
+      }
+    }
+  }
+  return Uint8Array.from(out);
+}
 
 const tsv = (cells: (string | number)[]) => cells.map((c) => String(c).replace(/[\t\r\n]+/g, " ")).join("\t");
 
@@ -260,13 +343,15 @@ export function accountsUsed(d: ExportData): [string, string][] {
     [q.escrowAccount, "OCLIAB"],
     [q.factorReserveAccount, "OCASSET"],
     [q.factoringFeeAccount, "EXP"],
+    [q.fxGainLossAccount, "EXEXP"],
   ];
   const used = new Set<string>([
-    ...(d.invoices.length || d.payments.length || d.credits.length || d.journals.length ? [q.arAccount] : []),
+    ...(d.invoices.length || d.payments.length || d.credits.length || d.journals.length || d.applications.length ? [q.arAccount] : []),
     ...(d.bills.length ? [q.apAccount] : []),
     ...d.invoices.flatMap((i) => i.lines.map((l) => incomeFor(q, l.kind))),
     ...(d.credits.length ? [q.incomeAccount] : []),
-    ...(d.payments.length ? [q.depositAccount] : []),
+    ...(d.payments.length || d.applications.length ? [q.depositAccount] : []),
+    ...(d.payments.some((p) => p.fxCents) ? [q.fxGainLossAccount] : []),
     ...(d.bills.some((b) => b.paidAt) ? [q.bankAccount] : []),
     ...d.bills.flatMap((b) => b.lines.map((l) => l.account)),
     ...d.journals.flatMap((j) => j.lines.map((l) => l.account)),
@@ -304,12 +389,21 @@ export function buildIif(d: ExportData): string {
     out.push(tsv(["TRNS", "", "PAYMENT", date, d.qb.depositAccount, p.customer, "", dollars(p.amountCents), p.reference ?? "", p.memo, "N", "", ""]));
     for (const a of p.applications) out.push(tsv(["SPL", "", "PAYMENT", date, d.qb.arAccount, p.customer, "", dollars(-a.amountCents), a.invoiceNumber, `applied to ${a.invoiceNumber}`, "", "", ""]));
     if (p.onAccountCents) out.push(tsv(["SPL", "", "PAYMENT", date, d.qb.arAccount, p.customer, "", dollars(-p.onAccountCents), "", "on account (unapplied)", "", "", ""]));
+    if (p.fxCents) out.push(tsv(["SPL", "", "PAYMENT", date, d.qb.fxGainLossAccount, "", "", dollars(-p.fxCents), p.reference ?? "", p.fxCents > 0 ? "realized exchange gain" : "realized exchange loss", "", "", ""]));
     out.push("ENDTRNS");
   }
   for (const c of d.credits) {
     const date = mdy(c.issuedAt, tz);
     out.push(tsv(["TRNS", "", "CREDIT MEMO", date, d.qb.arAccount, c.customer, "", dollars(-c.amountCents), c.number, `credit on ${c.invoiceNumber}: ${c.reason}`, "N", "", ""]));
     out.push(tsv(["SPL", "", "CREDIT MEMO", date, d.qb.incomeAccount, c.customer, "", dollars(c.amountCents), c.number, c.reason, "", "", "Credit"]));
+    out.push("ENDTRNS");
+  }
+  // a $0 payment moves the customer's credit (a credit memo, money on account) onto the invoice it pays
+  for (const x of d.applications) {
+    const date = mdy(x.date, tz);
+    out.push(tsv(["TRNS", "", "PAYMENT", date, d.qb.depositAccount, x.customer, "", "0.00", x.sourceRef, x.memo, "N", "", ""]));
+    out.push(tsv(["SPL", "", "PAYMENT", date, d.qb.arAccount, x.customer, "", dollars(-x.amountCents), x.invoiceNumber, `applied to ${x.invoiceNumber}`, "", "", ""]));
+    out.push(tsv(["SPL", "", "PAYMENT", date, d.qb.arAccount, x.customer, "", dollars(x.amountCents), x.sourceRef, x.source === "credit_memo" ? `credit memo ${x.sourceRef} used` : `money on account used (${x.sourceRef})`, "", "", ""]));
     out.push("ENDTRNS");
   }
   for (const b of d.bills) {
@@ -343,7 +437,7 @@ const csvCell = (v: string | number) => {
 };
 const csv = (rows: (string | number)[][]) => rows.map((r) => r.map(csvCell).join(",")).join("\r\n") + "\r\n";
 
-export function buildQboCsv(d: ExportData): { invoices: string; bills: string; payments: string; credits: string; journal: string } {
+export function buildQboCsv(d: ExportData): { invoices: string; bills: string; payments: string; credits: string; journal: string; applications: string } {
   const tz = d.timeZone;
   const inv: (string | number)[][] = [["InvoiceNo", "Customer", "InvoiceDate", "DueDate", "Terms", "Memo", "Item(Product/Service)", "ItemDescription", "ItemQuantity", "ItemRate", "ItemAmount", "Currency"]];
   for (const i of d.invoices)
@@ -356,14 +450,26 @@ export function buildQboCsv(d: ExportData): { invoices: string; bills: string; p
   // one row per invoice a payment paid; rows with the same ReferenceNo are one deposit
   const pay: (string | number)[][] = [["PaymentDate", "Customer", "InvoiceNo", "Amount", "PaymentMethod", "ReferenceNo", "DepositTo", "PaymentTotal"]];
   for (const p of d.payments) {
-    for (const a of p.applications) pay.push([mdy(p.receivedAt, tz), p.customer, a.invoiceNumber, dollars(a.amountCents), p.method, p.reference ?? "", d.qb.depositAccount, dollars(p.amountCents)]);
-    if (p.onAccountCents) pay.push([mdy(p.receivedAt, tz), p.customer, "", dollars(p.onAccountCents), p.method, p.reference ?? "", d.qb.depositAccount, dollars(p.amountCents)]);
+    // the payment at the invoices' rates; the exchange difference goes in the journal file
+    const total = p.amountCents - (p.fxCents ?? 0);
+    for (const a of p.applications) pay.push([mdy(p.receivedAt, tz), p.customer, a.invoiceNumber, dollars(a.amountCents), p.method, p.reference ?? "", d.qb.depositAccount, dollars(total)]);
+    if (p.onAccountCents) pay.push([mdy(p.receivedAt, tz), p.customer, "", dollars(p.onAccountCents), p.method, p.reference ?? "", d.qb.depositAccount, dollars(total)]);
   }
   const cm: (string | number)[][] = [["CreditMemoNo", "Customer", "CreditMemoDate", "AppliesToInvoice", "Item(Product/Service)", "ItemDescription", "ItemAmount", "Currency"]];
   for (const c of d.credits) cm.push([c.number, c.customer, mdy(c.issuedAt, tz), c.invoiceNumber, "Credit", c.reason, dollars(c.amountCents), c.currency]);
   const jr: (string | number)[][] = [["JournalNo", "JournalDate", "AccountName", "Debits", "Credits", "Description", "Name", "Currency"]];
   for (const j of d.journals) for (const l of j.lines) jr.push([j.number, mdy(j.date, tz), l.account, l.amountCents > 0 ? dollars(l.amountCents) : "", l.amountCents < 0 ? dollars(-l.amountCents) : "", `${j.memo} — ${l.memo}`, l.name ?? "", HOME_CURRENCY]);
-  return { invoices: csv(inv), bills: csv(bills), payments: csv(pay), credits: csv(cm), journal: csv(jr) };
+  // realized exchange gain or loss on MXN / CAD receipts: the deposit held more (or fewer) dollars than the invoices
+  for (const p of d.payments.filter((x) => x.fxCents)) {
+    const fx = p.fxCents!;
+    const no = `FX-${p.reference || mdy(p.receivedAt, tz)}`;
+    const why = `${fx > 0 ? "realized exchange gain" : "realized exchange loss"} on ${p.method} ${p.reference ?? ""}`.trim();
+    jr.push([no, mdy(p.receivedAt, tz), d.qb.depositAccount, fx > 0 ? dollars(fx) : "", fx < 0 ? dollars(-fx) : "", why, p.customer, HOME_CURRENCY]);
+    jr.push([no, mdy(p.receivedAt, tz), d.qb.fxGainLossAccount, fx < 0 ? dollars(-fx) : "", fx > 0 ? dollars(fx) : "", why, "", HOME_CURRENCY]);
+  }
+  const ap: (string | number)[][] = [["Date", "Customer", "InvoiceNo", "Amount", "From", "FromRef", "Memo", "Currency"]];
+  for (const x of d.applications) ap.push([mdy(x.date, tz), x.customer, x.invoiceNumber, dollars(x.amountCents), x.source === "credit_memo" ? "Credit memo" : "Money on account", x.sourceRef, x.memo, HOME_CURRENCY]);
+  return { invoices: csv(inv), bills: csv(bills), payments: csv(pay), credits: csv(cm), journal: csv(jr), applications: csv(ap) };
 }
 
 // ---------- runs ----------
@@ -374,7 +480,12 @@ export async function previewExport(ctx: Ctx, opts: { from: string; to: string; 
   validatePeriod(opts);
   const d = await collect(ctx, opts);
   const sum = (kind: "carrier" | "driver") => d.bills.filter((b) => b.kind === kind).reduce((a, b) => a + b.lines.reduce((x, l) => x + l.amountCents, 0), 0);
-  return { invoices: d.invoices.length, receipts: d.payments.length, credits: d.credits.length, creditedCents: d.credits.reduce((a, c) => a + c.amountCents, 0), carrierBills: d.ids.bills.length, settlements: d.bills.filter((b) => b.kind === "driver").length, invoicedCents: d.invoices.reduce((a, i) => a + i.totalCents, 0), receivedCents: d.payments.reduce((a, r) => a + r.amountCents, 0), billsCents: sum("carrier") + sum("driver"), carrierBillsCents: sum("carrier"), settlementsCents: sum("driver"), factorEntries: d.journals.length };
+  // "only new" reaches back past the from date: say how many never-exported records that brought in
+  const tz = d.timeZone;
+  const before = (x: Date) => zonedDate(x, tz) < opts.from;
+  const older = opts.onlyNew ? [...d.invoices.map((i) => i.issuedAt), ...d.payments.map((p) => p.receivedAt), ...d.credits.map((c) => c.issuedAt), ...d.bills.map((b) => b.date), ...d.journals.map((j) => j.date), ...d.applications.filter((x) => x.source === "on_account").map((x) => x.date)].filter(before).length : 0;
+  const advances = d.ids.advances?.length ?? 0;
+  return { invoices: d.invoices.length, receipts: d.payments.length, credits: d.credits.length, creditedCents: d.credits.reduce((a, c) => a + c.amountCents, 0), carrierBills: d.ids.bills.length, settlements: d.bills.filter((b) => b.kind === "driver").length, invoicedCents: d.invoices.reduce((a, i) => a + i.totalCents, 0), receivedCents: d.payments.reduce((a, r) => a + r.amountCents, 0), billsCents: sum("carrier") + sum("driver"), carrierBillsCents: sum("carrier"), settlementsCents: sum("driver"), factorEntries: d.journals.length - advances, advances, advancesCents: d.journals.filter((j) => d.ids.advances?.includes(j.id)).reduce((a, j) => a + (j.lines[0]?.amountCents ?? 0), 0), applications: d.applications.length, fxCents: d.payments.reduce((a, p) => a + (p.fxCents ?? 0), 0), older };
 }
 
 function validatePeriod(opts: { from: string; to: string }) {
@@ -388,13 +499,15 @@ export async function createExport(ctx: Ctx, opts: { format: ExportFormat; from:
   requirePermission(ctx, "billing.issue");
   validatePeriod(opts);
   const d = await collect(ctx, opts);
-  const total = d.invoices.length + d.payments.length + d.bills.length + d.credits.length + d.journals.length + d.ids.receipts.length + (d.ids.payments?.length ?? 0) + (d.ids.factor?.length ?? 0);
+  const total = d.invoices.length + d.payments.length + d.bills.length + d.credits.length + d.journals.length + d.ids.receipts.length + (d.ids.payments?.length ?? 0) + (d.ids.factor?.length ?? 0) + (d.ids.applications?.length ?? 0);
   if (!total) throw new ValidationError(opts.onlyNew ? "nothing new in that period — untick “only new” to export it again" : "nothing in that period");
   const id = newId();
   const now = new Date();
   const fileName = `crossline-${opts.format}-${opts.from}-to-${opts.to}`;
   await db.transaction(async (tx) => {
-    await tx.insert(s.accountingExports).values({ id, tenantId: ctx.tenantId, format: opts.format, fromDate: opts.from, toDate: opts.to, onlyNew: opts.onlyNew, counts: { invoices: d.invoices.length, receipts: d.payments.length, carrierBills: d.ids.bills.length, settlements: d.ids.settlements.length, credits: d.credits.length, factor: d.journals.length }, recordIds: d.ids, fileName, createdBy: ctx.userId });
+    await tx.insert(s.accountingExports).values({ id, tenantId: ctx.tenantId, format: opts.format, fromDate: opts.from, toDate: opts.to, onlyNew: opts.onlyNew, counts: { invoices: d.invoices.length, receipts: d.payments.length, carrierBills: d.ids.bills.length, settlements: d.ids.settlements.length, credits: d.credits.length, factor: d.journals.length - (d.ids.advances?.length ?? 0), advances: d.ids.advances?.length ?? 0, applications: d.applications.length }, recordIds: d.ids, fileName, createdBy: ctx.userId });
+    if (d.ids.applications?.length) await tx.update(s.receipts).set({ exportedAt: now }).where(inArray(s.receipts.id, d.ids.applications));
+    if (d.ids.advances?.length) await tx.update(s.payItems).set({ exportedAt: now }).where(inArray(s.payItems.id, d.ids.advances));
     if (d.ids.invoices.length) await tx.update(s.invoices).set({ exportedAt: now }).where(inArray(s.invoices.id, d.ids.invoices));
     if (d.ids.receipts.length) await tx.update(s.receipts).set({ exportedAt: now }).where(inArray(s.receipts.id, d.ids.receipts));
     if (d.ids.credits?.length) await tx.update(s.creditMemos).set({ exportedAt: now }).where(inArray(s.creditMemos.id, d.ids.credits));
@@ -417,7 +530,14 @@ export async function exportFiles(ctx: Ctx, runId: string) {
   const [run] = await db.select().from(s.accountingExports).where(and(eq(s.accountingExports.tenantId, ctx.tenantId), eq(s.accountingExports.id, runId))).limit(1);
   if (!run) throw new NotFoundError("export", runId);
   const d = await collect(ctx, { from: run.fromDate, to: run.toDate, onlyNew: false, ids: run.recordIds });
-  const files: { name: string; mime: string; body: string }[] = run.format === "iif" ? [{ name: `${run.fileName}.iif`, mime: "application/octet-stream", body: buildIif(d) }] : Object.entries(buildQboCsv(d)).map(([k, body]) => ({ name: `${run.fileName}-${k}.csv`, mime: "text/csv", body }));
+  // QuickBooks Desktop reads an IIF as Windows-1252 ("ANSI"): written that way, "Héctor" and "Cantú" arrive intact
+  const files: { name: string; mime: string; body: string; bytes?: Uint8Array; charset: string }[] =
+    run.format === "iif"
+      ? (() => {
+          const body = buildIif(d);
+          return [{ name: `${run.fileName}.iif`, mime: "application/octet-stream", body, bytes: toWindows1252(body), charset: "windows-1252" }];
+        })()
+      : Object.entries(buildQboCsv(d)).map(([k, body]) => ({ name: `${run.fileName}-${k}.csv`, mime: "text/csv", body, charset: "utf-8" }));
   return { run, files };
 }
 
@@ -444,6 +564,8 @@ export async function reopenExport(ctx: Ctx, runId: string) {
       await tx.update(s.receipts).set({ exportedAt: null }).where(inArray(s.receipts.paymentId, c.payments));
     }
     if (c.factor?.length) await tx.update(s.factorEntries).set({ exportedAt: null }).where(inArray(s.factorEntries.id, c.factor));
+    if (c.applications?.length) await tx.update(s.receipts).set({ exportedAt: null }).where(inArray(s.receipts.id, c.applications));
+    if (c.advances?.length) await tx.update(s.payItems).set({ exportedAt: null }).where(inArray(s.payItems.id, c.advances));
     if (c.bills.length) await tx.update(s.carrierBills).set({ exportedAt: null }).where(inArray(s.carrierBills.id, c.bills));
     if (c.settlements.length) await tx.update(s.settlements).set({ exportedAt: null }).where(inArray(s.settlements.id, c.settlements));
     await tx.update(s.accountingExports).set({ reopenedAt: new Date() }).where(eq(s.accountingExports.id, runId));

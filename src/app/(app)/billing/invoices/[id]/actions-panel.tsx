@@ -5,6 +5,7 @@ import { localDay } from "@/lib/time";
 import { useRouter } from "next/navigation";
 import { Confirm, Modal, Toast, useToast } from "@/components/ui";
 import { formatCents } from "@/data/fields";
+import { NOT_EMAILED, sendOutcome } from "@/domain/delivery-rules";
 import { issueInvoiceAction, deliverInvoiceAction, receiptAction, voidInvoiceAction, creditMemoAction, disputeInvoiceAction, promiseToPayAction, rebillAction, resolveDisputeAction, sendCreditMemoAction, sendCorrectedInvoiceAction } from "../../actions";
 
 type Inv = { id: string; state: string; currency: string; openCents: number; paidCents: number; creditedCents: number; billingEmail: string | null; promiseToPayAt: string | null; payWhenPaid: boolean; number: string | null; method: string; portalUrl: string | null; factorName: string | null; factorEmail: string | null; suggestedRate: string; needsCorrected: boolean; hasCreditMemo: boolean };
@@ -24,7 +25,8 @@ export function SendCreditMemo({ id, sent }: { id: string; sent: boolean }) {
           start(async () => {
             const r = await sendCreditMemoAction(id);
             if (!r.ok) return t.err(r.error);
-            t.ok(`Credit memo sent to ${r.data.sentTo}`);
+            if (r.data.logged) t.err(`Credit memo ${r.data.message}`);
+            else t.ok(r.data.message);
             router.refresh();
           })
         }
@@ -41,7 +43,7 @@ export function InvoiceActions({ inv, role }: { inv: Inv; role: string }) {
   const t = useToast();
   const [pending, start] = useTransition();
   const [popup, setPopup] = useState<null | "receipt" | "credit" | "void" | "dispute" | "send" | "issue" | "rebill" | "resolve">(null);
-  const fresh = () => ({ amount: "", receivedAt: localDay(), method: "ach", reference: "", note: "", to: inv.billingEmail ?? "", rate: inv.suggestedRate, dmethod: inv.method, ptp: inv.promiseToPayAt?.slice(0, 10) ?? "", outcome: "customer_pays" });
+  const fresh = () => ({ amount: "", receivedAt: localDay(), method: "ach", reference: "", note: "", to: inv.billingEmail ?? "", rate: inv.suggestedRate, rxRate: inv.suggestedRate, dmethod: inv.method, ptp: inv.promiseToPayAt?.slice(0, 10) ?? "", outcome: "customer_pays" });
   const [f, setF] = useState(fresh);
   // every dialog starts clean: nothing typed in one carries into another
   const openPopup = (p: NonNullable<typeof popup>) => {
@@ -50,12 +52,15 @@ export function InvoiceActions({ inv, role }: { inv: Inv; role: string }) {
   };
   const canVoid = role === "owner";
   const can = ["owner", "billing"].includes(role);
-  const run = (label: string, fn: () => Promise<{ ok: boolean; error?: string }>) =>
+  const run = <D,>(label: string | ((data: D) => string), fn: () => Promise<{ ok: true; data: D } | { ok: false; error?: string }>) =>
     start(async () => {
       const r = await fn();
       setPopup(null);
       if (r.ok) {
-        t.ok(label);
+        const msg = typeof label === "function" ? label(r.data) : label;
+        // an email that only went to the log is not good news: say it plainly, in amber
+        if (msg === NOT_EMAILED) t.err(msg);
+        else t.ok(msg);
         router.refresh();
       } else t.err(r.error ?? "Could not do that");
     });
@@ -72,7 +77,7 @@ export function InvoiceActions({ inv, role }: { inv: Inv; role: string }) {
         </button>
       )}
       {inv.needsCorrected && (
-        <button className="btn btn-primary w-full justify-center" data-testid="send-corrected" disabled={pending} title="Charged back: the customer's copy still says to pay the factor" onClick={() => run("Corrected invoice sent — remit to you", () => sendCorrectedInvoiceAction(inv.id))}>
+        <button className="btn btn-primary w-full justify-center" data-testid="send-corrected" disabled={pending} title="Charged back: the customer's copy still says to pay the factor" onClick={() => run((d) => sendOutcome(d as never, "Corrected invoice sent — remit to you"), () => sendCorrectedInvoiceAction(inv.id))}>
           Send corrected invoice (remit to us)
         </button>
       )}
@@ -125,7 +130,7 @@ export function InvoiceActions({ inv, role }: { inv: Inv; role: string }) {
       )}
       {inv.payWhenPaid && <div className="text-footnote text-amber">Pay-when-paid: carrier bills on these orders wait for this invoice.</div>}
 
-      <Modal open={popup === "receipt"} onClose={() => setPopup(null)} title="Record receipt" footer={<><button className="btn" onClick={() => setPopup(null)}>Cancel</button><button className="btn btn-primary" disabled={pending} onClick={() => run("Receipt recorded", () => receiptAction(inv.id, f))}>Record</button></>}>
+      <Modal open={popup === "receipt"} onClose={() => setPopup(null)} title="Record receipt" footer={<><button className="btn" onClick={() => setPopup(null)}>Cancel</button><button className="btn btn-primary" disabled={pending} onClick={() => run("Receipt recorded", () => receiptAction(inv.id, { ...f, exchangeRate: inv.currency !== "USD" ? f.rxRate : "" }))}>Record</button></>}>
         <div className="grid grid-cols-2 gap-2">
           <div>
             <label className="label">Amount ({inv.currency}) · open {formatCents(inv.openCents, inv.currency)}</label>
@@ -138,8 +143,10 @@ export function InvoiceActions({ inv, role }: { inv: Inv; role: string }) {
           <div>
             <label className="label">Method</label>
             <select className="select" value={f.method} onChange={(e) => setF({ ...f, method: e.target.value })}>
-              {["ach", "check", "wire", "card", "factoring", "other"].map((m) => (
-                <option key={m}>{m}</option>
+              {[["ach", "ACH"], ["check", "Check"], ["wire", "Wire"], ["card", "Card"], ["factoring", "Factoring"], ["other", "Other"]].map(([m, l]) => (
+                <option key={m} value={m}>
+                  {l}
+                </option>
               ))}
             </select>
           </div>
@@ -147,6 +154,13 @@ export function InvoiceActions({ inv, role }: { inv: Inv; role: string }) {
             <label className="label">Reference</label>
             <input className="input" value={f.reference} onChange={(e) => setF({ ...f, reference: e.target.value })} />
           </div>
+          {inv.currency !== "USD" && f.method !== "factoring" && (
+            <div className="col-span-2">
+              <label className="label">Rate the day it arrived ({inv.currency} per USD)</label>
+              <input className="input" inputMode="decimal" value={f.rxRate} onChange={(e) => setF({ ...f, rxRate: e.target.value })} placeholder={inv.currency === "CAD" ? "1.3700" : "18.4500"} data-testid="receipt-rate" />
+              <div className="help">Against the invoice&rsquo;s rate this is the exchange gain or loss (reports and the QuickBooks export).</div>
+            </div>
+          )}
           <div className="col-span-2">
             <label className="label">Note</label>
             <input className="input" value={f.note} onChange={(e) => setF({ ...f, note: e.target.value })} placeholder="one check for two invoices: record the rest on the other one" />
@@ -163,7 +177,7 @@ export function InvoiceActions({ inv, role }: { inv: Inv; role: string }) {
             <button className="btn" onClick={() => setPopup(null)}>
               Cancel
             </button>
-            <button className="btn btn-primary" disabled={pending} onClick={() => run(f.dmethod === "portal" || f.dmethod === "mail" ? "Recorded" : "Sent", () => deliverInvoiceAction(inv.id, { method: f.dmethod, to: f.dmethod === "email" || f.dmethod === "portal" ? f.to : "", reference: f.reference }))}>
+            <button className="btn btn-primary" disabled={pending} onClick={() => run((d) => (f.dmethod === "portal" || f.dmethod === "mail" ? "Recorded" : sendOutcome(d as never)), () => deliverInvoiceAction(inv.id, { method: f.dmethod, to: f.dmethod === "email" || f.dmethod === "portal" ? f.to : "", reference: f.reference }))}>
               {f.dmethod === "portal" || f.dmethod === "mail" ? "Record" : "Send"}
             </button>
           </>

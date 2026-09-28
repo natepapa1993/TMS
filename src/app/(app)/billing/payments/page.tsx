@@ -16,7 +16,8 @@ export default async function PaymentsPage({ searchParams }: PageProps<"/billing
   const ctx = await requireCtx();
   const sp = await searchParams;
   const customerId = typeof sp.customer === "string" ? sp.customer : undefined;
-  const [pays, customers] = await Promise.all([listPayments(ctx, { customerId }), list(ctx, "customer", { limit: 2000 })]);
+  const [pays, customers, company] = await Promise.all([listPayments(ctx, { customerId }), list(ctx, "customer", { limit: 2000 }), import("@/domain/company").then((m) => m.getCompany(ctx))]);
+  const today = (await import("@/lib/time")).zonedDate(new Date(), company.timeZone);
   const canBill = ["owner", "billing"].includes(ctx.role);
   // for money still on account: the customer's open invoices to use it on
   const withMoney = [...new Set(pays.filter((p) => p.unappliedCents > 0).map((p) => p.customerId))];
@@ -25,7 +26,7 @@ export default async function PaymentsPage({ searchParams }: PageProps<"/billing
   const anyOnAccount = Object.values(onAccount).some((v) => v);
   return (
     <div>
-      <PageHeader eyebrow="Billing" title="Payments" actions={canBill ? <ApplyPaymentButton customers={customers.map((c) => ({ id: c.id, name: String(c.name) }))} customerId={customerId} role={ctx.role} /> : undefined}>
+      <PageHeader eyebrow="Billing" title="Payments" actions={canBill ? <ApplyPaymentButton customers={customers.map((c) => ({ id: c.id, name: String(c.name) }))} customerId={customerId} role={ctx.role} today={today} /> : undefined}>
         Each check or ACH as it came in, the invoices it paid, and what&rsquo;s left on account. {anyOnAccount ? <b>{formatTotals(onAccount)} on account.</b> : null} A payment is in one currency and only pays invoices in that currency.
       </PageHeader>
       <BillingNav />

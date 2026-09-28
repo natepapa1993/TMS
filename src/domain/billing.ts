@@ -11,7 +11,7 @@ import { enqueue } from "@/lib/outbox";
 import { NotFoundError, ValidationError } from "./orders";
 import { assertOrderTransition, TransitionError } from "./states";
 import { getCompany, setFxRate } from "./company";
-import { zonedDate, stopZone } from "@/lib/time";
+import { zonedDate, zonedMidnight, stopZone } from "@/lib/time";
 import { buildInvoicePdf, buildStatementPdf, buildCreditMemoPdf } from "./billing-pdf";
 import { money, parseRate, pickRate, toHome, HOME_CURRENCY, type FxRates } from "./fx-rules";
 
@@ -404,21 +404,35 @@ async function closedThrough(ctx: Ctx) {
   return v ? new Date(String(v)) : null;
 }
 
-/** Month-end close (persona: head of billing). Nothing dated on or before this can be issued, voided or credited. */
-export async function closePeriod(ctx: Ctx, through: Date) {
+/**
+ * Month-end close (persona: head of billing). Nothing dated on or before the day can be issued, voided,
+ * credited, received or paid afterwards. The day is a calendar day in the company's zone and must have
+ * ended: today and any later day are refused (a typo of 12/31 would lock every receipt until then), and a
+ * close never moves back.
+ */
+export async function closePeriod(ctx: Ctx, through: Date | string, now = new Date()) {
   assertCtx(ctx);
   requirePermission(ctx, "billing.void");
   const [t] = await db.select().from(s.tenants).where(eq(s.tenants.id, ctx.tenantId)).limit(1);
+  const tz = t.timeZone;
+  const day = typeof through === "string" ? through : zonedDate(through, tz);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) throw new ValidationError("pick the last day to close", "through");
+  const today = zonedDate(now, tz);
+  if (day >= today) throw new ValidationError(day === today ? `today (${day}) hasn't ended yet: close through yesterday at the latest` : `${day} is in the future: the books can only be closed through a day that has ended (yesterday, ${zonedDate(new Date(zonedMidnight(today, tz).getTime() - 1), tz)}, at the latest)`, "through");
   const prev = await closedThrough(ctx);
-  if (prev && through.getTime() < prev.getTime()) throw new ValidationError("a period cannot be re-opened from here");
-  await db.update(s.tenants).set({ settings: { ...(t.settings ?? {}), closedThrough: through.toISOString() } }).where(eq(s.tenants.id, ctx.tenantId));
-  await writeAudit(db, ctx, "tenant", ctx.tenantId, "update", { closedThrough: { from: prev?.toISOString() ?? null, to: through.toISOString() } }, "period closed");
+  // the end of that day in the company's zone
+  const next = new Date(Date.UTC(Number(day.slice(0, 4)), Number(day.slice(5, 7)) - 1, Number(day.slice(8, 10)) + 1)).toISOString().slice(0, 10);
+  const end = new Date(zonedMidnight(next, tz).getTime() - 1);
+  if (prev && end.getTime() < prev.getTime()) throw new ValidationError("a period cannot be re-opened from here");
+  await db.update(s.tenants).set({ settings: { ...(t.settings ?? {}), closedThrough: end.toISOString() } }).where(eq(s.tenants.id, ctx.tenantId));
+  await writeAudit(db, ctx, "tenant", ctx.tenantId, "update", { closedThrough: { from: prev?.toISOString() ?? null, to: end.toISOString() } }, `period closed through ${day}`);
+  return { through: day };
 }
 
 /** Nothing dated on or before the close can be recorded: receipts, payments, factor entries, bill and settlement payments. */
 export async function assertOpenPeriod(ctx: Ctx, date: Date) {
   const c = await closedThrough(ctx);
-  if (c && date.getTime() <= c.getTime()) throw new ValidationError(`the books are closed through ${c.toISOString().slice(0, 10)}: date it after that (the owner closes periods; they can't be reopened)`);
+  if (c && date.getTime() <= c.getTime()) throw new ValidationError(`the books are closed through ${zonedDate(c, (await getCompany(ctx)).timeZone)}: date it after that (the owner closes periods; they can't be reopened)`);
 }
 
 export async function createInvoice(ctx: Ctx, orderIds: string[], opts: { entityId?: string | null; consolidate?: boolean; withoutPending?: boolean; rebillOf?: string | null } = {}) {
@@ -656,7 +670,7 @@ export async function invoiceByToken(token: string) {
   return b ? { invoice: inv, blob: b } : null;
 }
 
-export async function recordReceipt(ctx: Ctx, invoiceId: string, r: { amountCents: number; receivedAt?: Date; method?: string; reference?: string | null; note?: string | null; paymentId?: string | null }) {
+export async function recordReceipt(ctx: Ctx, invoiceId: string, r: { amountCents: number; receivedAt?: Date; method?: string; reference?: string | null; note?: string | null; paymentId?: string | null; /** MXN / CAD: the rate the day it arrived (× 10,000, or typed "18.62"); blank = the company's */ exchangeRate?: number | string | null }) {
   assertCtx(ctx);
   requirePermission(ctx, "billing.issue");
   if (!Number.isFinite(r.amountCents) || r.amountCents <= 0) throw new ValidationError("amount must be positive", "amountCents");
@@ -665,8 +679,22 @@ export async function recordReceipt(ctx: Ctx, invoiceId: string, r: { amountCent
   const open = inv.totalCents - inv.creditedCents - inv.paidCents;
   if (r.amountCents > open) throw new ValidationError(`over-payment: ${(r.amountCents / 100).toFixed(2)} is more than the ${(open / 100).toFixed(2)} open. Record the remainder as unapplied credit on another invoice.`, "amountCents");
   await assertOpenPeriod(ctx, r.receivedAt ?? new Date());
+  const { assertNotFuture } = await import("./cash");
+  if (!r.paymentId) await assertNotFuture(ctx, r.receivedAt ?? new Date());
+  // foreign money: keep the rate it arrived at (the invoice's rate vs this one is the realized exchange gain/loss)
+  let rateE4: number | null = null;
+  if (inv.currency !== HOME_CURRENCY && r.method !== "factoring") {
+    if (typeof r.exchangeRate === "number") rateE4 = r.exchangeRate;
+    else if (r.exchangeRate != null && String(r.exchangeRate).trim()) {
+      try {
+        rateE4 = parseRate(r.exchangeRate, inv.currency);
+      } catch (e) {
+        throw new ValidationError((e as Error).message, "exchangeRate");
+      }
+    } else rateE4 = pickRate(inv.currency, null, (await getCompany(ctx)).settings.fx).rateE4;
+  }
   return db.transaction(async (tx) => {
-    await tx.insert(s.receipts).values({ id: newId(), tenantId: ctx.tenantId, invoiceId, amountCents: r.amountCents, receivedAt: r.receivedAt ?? new Date(), method: r.method ?? "ach", reference: r.reference ?? null, note: r.note ?? null, paymentId: r.paymentId ?? null, createdBy: ctx.userId });
+    await tx.insert(s.receipts).values({ id: newId(), tenantId: ctx.tenantId, invoiceId, amountCents: r.amountCents, receivedAt: r.receivedAt ?? new Date(), method: r.method ?? "ach", reference: r.reference ?? null, note: r.note ?? null, paymentId: r.paymentId ?? null, exchangeRate: rateE4, createdBy: ctx.userId });
     const paid = inv.paidCents + r.amountCents;
     const full = paid >= inv.totalCents - inv.creditedCents;
     const [after] = await tx.update(s.invoices).set({ paidCents: paid, state: full ? "paid" : "partially_paid", paidAt: full ? (r.receivedAt ?? new Date()) : null, updatedAt: new Date(), updatedBy: ctx.userId }).where(eq(s.invoices.id, invoiceId)).returning();
@@ -780,11 +808,18 @@ export async function sendCreditMemo(ctx: Ctx, memoId: string, to?: string | nul
   const open = inv.totalCents - inv.creditedCents - inv.paidCents;
   const body = [`${customer?.name},`, ``, `Attached is credit memo ${memo.number} from ${entity?.legalName} for ${money(memo.amountCents, inv.currency, { code: true })}, applied to invoice ${inv.number}.`, `Reason: ${memo.reason}`, ``, open > 0 ? `Invoice ${inv.number} now has ${money(open, inv.currency, { code: true })} open.` : `Invoice ${inv.number} is now settled.`, ``, `Reference: ${memo.number}`].join("\n");
   await enqueue(ctx, { channel: "email", to: dest, subject: `Credit memo ${memo.number} · invoice ${inv.number} · ${entity?.dba || entity?.legalName}`, body, subjectKind: "credit_memo", subjectId: memo.id, meta: { kind: "invoice", attachments: [{ fileName: `Credit memo ${memo.number}.pdf`, storageKey: key }] } });
-  const { deliverQueued } = await import("@/lib/outbox");
+  const { deliverQueued, canSendEmail } = await import("@/lib/outbox");
   await deliverQueued().catch(() => null);
+  // with no email provider connected the email only went to the log: say so, never "sent"
+  if (!(await canSendEmail(ctx.tenantId))) {
+    const { NOT_EMAILED } = await import("./invoicing");
+    await db.update(s.creditMemos).set({ pdfStorageKey: key }).where(eq(s.creditMemos.id, memo.id));
+    await writeAudit(db, ctx, "invoice", inv.id, "update", undefined, `credit memo ${memo.number} for ${dest}: ${NOT_EMAILED}`);
+    return { sentTo: null as string | null, logged: true, message: NOT_EMAILED };
+  }
   await db.update(s.creditMemos).set({ sentAt: new Date(), sentTo: dest, pdfStorageKey: key }).where(eq(s.creditMemos.id, memo.id));
   await writeAudit(db, ctx, "invoice", inv.id, "update", undefined, `credit memo ${memo.number} emailed to ${dest}`);
-  return { sentTo: dest };
+  return { sentTo: dest as string | null, logged: false, message: `Credit memo sent to ${dest}` };
 }
 
 export const DISPUTE_OUTCOMES = { customer_pays: "Resolved in our favor — the customer will pay", credited: "Resolved with a credit memo", paid: "The customer paid", other: "Other (see note)" } as const;
@@ -829,7 +864,7 @@ export async function setPromiseToPay(ctx: Ctx, invoiceId: string, at: Date | nu
   await db.update(s.invoices).set({ promiseToPayAt: at, updatedAt: new Date(), updatedBy: ctx.userId }).where(and(eq(s.invoices.tenantId, ctx.tenantId), eq(s.invoices.id, invoiceId)));
 }
 
-export type InvoiceFilter = { states?: string[]; customerId?: string; q?: string; view?: "open" | "overdue" | "unsent" | "factored" | "credits" | ""; from?: string; to?: string; kind?: string };
+export type InvoiceFilter = { states?: string[]; customerId?: string; q?: string; view?: "open" | "overdue" | "unsent" | "not_emailed" | "factored" | "credits" | ""; from?: string; to?: string; kind?: string };
 
 /** Invoices with the filters billing actually uses: who, what state, overdue, not sent yet, factored, dates, and a search over invoice #, load #, any load reference and the customer. */
 export async function listInvoices(ctx: Ctx, opts: InvoiceFilter = {}) {
@@ -843,6 +878,8 @@ export async function listInvoices(ctx: Ctx, opts: InvoiceFilter = {}) {
   if (opts.view === "open") conds.push(inArray(s.invoices.state, open as never));
   if (opts.view === "overdue") conds.push(inArray(s.invoices.state, open as never), lt(s.invoices.dueAt, new Date()));
   if (opts.view === "unsent") conds.push(eq(s.invoices.state, "issued"));
+  // "sent" with no email provider: only written to the log — the customer never got it
+  if (opts.view === "not_emailed") conds.push(inArray(s.invoices.state, open as never), isNull(s.invoices.sentAt), sql`${s.invoices.deliveries} @> '[{"logged": true}]'::jsonb`);
   if (opts.view === "factored") conds.push(eq(s.invoices.factored, true));
   if (opts.from) conds.push(gte(s.invoices.issuedAt, new Date(`${opts.from}T00:00:00Z`)));
   if (opts.to) conds.push(lt(s.invoices.issuedAt, new Date(new Date(`${opts.to}T00:00:00Z`).getTime() + 86400_000)));
@@ -1168,7 +1205,8 @@ export async function buildSettlement(ctx: Ctx, driverId: string, periodStart: D
   const due = items.filter((it) => !(it.endsAt && it.endsAt.getTime() < periodStart.getTime()) && !(it.recurring && it.startsAt.getTime() > periodEnd.getTime() + 7 * 86400_000));
   for (const it of due.filter((x) => x.kind === "reimbursement")) {
     if (!it.recurring && held.has(it.id)) continue;
-    lines.push({ id: newId(), kind: "reimbursement", description: it.description, qty: 1, unit: "flat", rateCents: it.amountCents, amountCents: it.amountCents, source: it.recurring ? "recurring" : "one-off", payItemId: it.id });
+    // escrow paid back is the driver's own money coming out of the escrow liability, not a reimbursement expense
+    lines.push({ id: newId(), kind: "reimbursement", description: it.description, qty: 1, unit: "flat", rateCents: it.amountCents, amountCents: it.amountCents, source: it.description.startsWith("Escrow release") ? "escrow release" : it.recurring ? "recurring" : "one-off", payItemId: it.id });
   }
   // lines a person added to the open statement (a layover, a bonus, a one-off deduction) survive a rebuild
   const manual = (existing?.lines ?? []).filter((l) => l.source === "manual");

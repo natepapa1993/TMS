@@ -213,7 +213,7 @@ describe("report tables add up to the tiles", () => {
     const lone = (await db.select().from((await import("@/db/schema")).carriers)).find((c) => c.name === "Lone Star Freight")!;
     await planLeg(a, solo.legs[0].id, { kind: "carrier", carrierId: lone.id, carrierRateCents: 50000, carrierRateCurrency: "USD" });
     await finish(solo.legs[0].id, "carrier");
-    const period = R.defaultPeriod(new Date(), "America/Chicago");
+    const period = R.defaultPeriod(new Date(), "America/Detroit");
     const dash = await R.dashboard(a, period);
     for (const by of ["truck", "driver", "carrier", "customer", "lane", "week"] as const) {
       const rows = await R.breakdown(a, by, period);

@@ -7,7 +7,7 @@ import { issueToken, publicUrl, revokeTokensFor } from "@/lib/tokens";
 import { newId } from "@/lib/ids";
 import { writeAudit } from "@/lib/audit";
 import { createOrder, NotFoundError, ValidationError, type StopInput } from "./orders";
-import { LEG_LABEL } from "./states";
+import { LEG_LABEL, LEG_LABEL_ES } from "./states";
 
 /**
  * Customer portal (spec Phase 3 "customer portal entry"): one persistent link per customer or broker —
@@ -17,11 +17,25 @@ import { LEG_LABEL } from "./states";
  * driver phones, or other customers ever leaves here.
  */
 
+/** Lo mismo, en español. */
+export const CUSTOMER_STATE_ES: Record<s.OrderState, string> = {
+  draft: "Solicitado",
+  booked: "Reservado",
+  dispatched: "Asignado",
+  in_transit: "En tránsito",
+  exception: "Detenido",
+  delivered: "Entregado",
+  ready_to_bill: "Entregado",
+  invoiced: "Entregado",
+  paid: "Entregado",
+  cancelled: "Cancelado",
+};
+
 /** What the customer reads for each order state. */
 export const CUSTOMER_STATE: Record<s.OrderState, string> = {
   draft: "Requested",
   booked: "Booked",
-  dispatched: "Driver assigned",
+  dispatched: "Assigned", // a truck or a carrier is on it — not "driver assigned" when only a carrier has the tender
   in_transit: "In transit",
   exception: "On hold",
   delivered: "Delivered",
@@ -102,7 +116,9 @@ export async function customerPortalView(tenantId: string, customerId: string, n
       orderNumber: o.orderNumber,
       state: o.state,
       stateLabel: CUSTOMER_STATE[o.state],
+      stateLabelEs: CUSTOMER_STATE_ES[o.state],
       step: current ? LEG_LABEL[current.state] : null,
+      stepEs: current ? LEG_LABEL_ES[current.state] : null,
       equipment: o.equipment,
       refs: { po: o.refs.po ?? null, shipment: o.refs.shipment ?? null, reference: o.refs.reference ?? null, rate_con: o.refs.rate_con ?? null },
       cargoNote: o.cargoNote,
@@ -112,7 +128,7 @@ export async function customerPortalView(tenantId: string, customerId: string, n
       source: o.source,
       trackingUrl: trackingByOrder.has(o.id) ? publicUrl(`/track/${trackingByOrder.get(o.id)}`) : null,
       docs: docs.filter((d) => d.subjectId === o.id && d.code && CUSTOMER_DOC_CODES.includes(d.code)).map((d) => ({ id: d.id, code: d.code!, fileName: d.fileName, createdAt: d.createdAt })),
-      invoice: inv ? { id: inv.id, number: inv.number, state: inv.state, totalCents: inv.totalCents, url: inv.token && inv.pdfStorageKey ? publicUrl(`/i/${inv.token}`) : null } : null,
+      invoice: inv ? { id: inv.id, number: inv.number, state: inv.state, totalCents: inv.totalCents, currency: inv.currency, url: inv.token && inv.pdfStorageKey ? publicUrl(`/i/${inv.token}`) : null } : null,
     };
   });
   const invoiceRows = invoices.map((i) => {
@@ -120,8 +136,16 @@ export async function customerPortalView(tenantId: string, customerId: string, n
     const pastDue = open > 0 && !!i.dueAt && i.dueAt.getTime() < now.getTime() ? Math.round((now.getTime() - i.dueAt.getTime()) / 86400_000) : 0;
     return { id: i.id, number: i.number, state: i.state, issuedAt: i.issuedAt, dueAt: i.dueAt, totalCents: i.totalCents, openCents: open, pastDueDays: pastDue, currency: i.currency, orders: orders.filter((o) => i.orderIds.includes(o.id)).map((o) => o.orderNumber), url: i.token && i.pdfStorageKey ? publicUrl(`/i/${i.token}`) : null };
   });
-  const openCents = invoiceRows.reduce((a, r) => a + r.openCents, 0);
-  const pastDueCents = invoiceRows.filter((r) => r.pastDueDays > 0).reduce((a, r) => a + r.openCents, 0);
+  // what they owe, per currency: pesos are never added to dollars (USD first, then MXN, then CAD)
+  const order = ["USD", "MXN", "CAD"];
+  const balances = [...new Set(invoiceRows.map((r) => r.currency))]
+    .sort((p, q) => (order.indexOf(p) + 99) % 99 - (order.indexOf(q) + 99) % 99)
+    .map((currency) => {
+      const rows = invoiceRows.filter((r) => r.currency === currency);
+      return { currency, openCents: rows.reduce((a, r) => a + r.openCents, 0), pastDueCents: rows.filter((r) => r.pastDueDays > 0).reduce((a, r) => a + r.openCents, 0) };
+    })
+    .filter((b) => b.openCents > 0);
+  const home = balances.find((b) => b.currency === "USD") ?? balances[0] ?? { currency: invoiceRows[0]?.currency ?? "USD", openCents: 0, pastDueCents: 0 };
   return {
     company: tenant?.name ?? "",
     customer: { id: customer.id, name: customer.name, kind: customer.kind, termsDays: customer.termsDays, country: customer.country },
@@ -130,7 +154,9 @@ export async function customerPortalView(tenantId: string, customerId: string, n
     delivered: loads.filter((l) => ["delivered", "ready_to_bill", "invoiced", "paid"].includes(l.state)),
     cancelled: loads.filter((l) => l.state === "cancelled"),
     invoices: invoiceRows,
-    balance: { openCents, pastDueCents, currency: invoiceRows[0]?.currency ?? "USD" },
+    /** one currency's balance (USD first) — kept for older readers; the page shows `balances` */
+    balance: { openCents: home.openCents, pastDueCents: home.pastDueCents, currency: home.currency },
+    balances,
   };
 }
 

@@ -10,5 +10,5 @@ export async function GET(_req: Request, { params }: RouteContext<"/d/[token]/st
   if (!t) return new Response("this link no longer works", { status: 404 });
   const pdf = await driverSettlementPdf(t.ctx.tenantId, t.subjectId, id);
   if (!pdf) return new Response("not found", { status: 404 });
-  return new Response(new Uint8Array(pdf), { headers: { "Content-Type": "application/pdf", "Content-Disposition": `inline; filename="pay-statement.pdf"`, "Cache-Control": "private, no-store" } });
+  return new Response(new Uint8Array(pdf), { headers: { "Content-Type": "application/pdf", "Content-Disposition": `inline; filename="${pdf.fileName}"`, "Cache-Control": "private, no-store" } });
 }

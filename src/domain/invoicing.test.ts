@@ -1,7 +1,7 @@
 // Features: F-21.4
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { PDFDocument } from "pdf-lib";
-import { truncateAll, makeTenant } from "@/test/helpers";
+import { truncateAll, makeTenant, connectEmail } from "@/test/helpers";
 import { create, update } from "@/data/records";
 import { db } from "@/db/client";
 import { orders as ordersT, outbox, invoices, invoiceBatches } from "@/db/schema";
@@ -14,9 +14,11 @@ let a: Awaited<ReturnType<typeof makeTenant>>;
 let f: { entity: string; acme: string; rxo: string; portal: string };
 let pdf: Buffer;
 
+afterEach(() => vi.unstubAllGlobals());
 beforeEach(async () => {
   await truncateAll();
   a = await makeTenant("Batch Carrier");
+  await connectEmail(a); // these runs really send: an email provider is connected
   const doc = await PDFDocument.create();
   doc.addPage([200, 200]);
   pdf = Buffer.from(await doc.save());

@@ -91,8 +91,8 @@ export async function sendInvoiceAction(id: string, to?: string) {
   if (r.ok) touch(id);
   return r;
 }
-export async function receiptAction(id: string, v: { amount: string; receivedAt: string; method: string; reference: string; note: string }) {
-  const r = await act((ctx) => B.recordReceipt(ctx, id, { amountCents: Math.round(Number(v.amount.replace(/[$,]/g, "")) * 100), receivedAt: v.receivedAt ? dayOf(v.receivedAt) : undefined, method: v.method, reference: v.reference || null, note: v.note || null }));
+export async function receiptAction(id: string, v: { amount: string; receivedAt: string; method: string; reference: string; note: string; exchangeRate?: string }) {
+  const r = await act((ctx) => B.recordReceipt(ctx, id, { amountCents: Math.round(Number(v.amount.replace(/[$,]/g, "")) * 100), receivedAt: v.receivedAt ? dayOf(v.receivedAt) : undefined, method: v.method, reference: v.reference || null, note: v.note || null, exchangeRate: v.exchangeRate || null }));
   if (r.ok) touch(id);
   return r;
 }
@@ -127,7 +127,7 @@ export async function promiseToPayAction(id: string, at: string) {
   return r;
 }
 export async function closePeriodAction(through: string) {
-  const r = await act((ctx) => B.closePeriod(ctx, new Date(through + "T23:59:59Z")));
+  const r = await act((ctx) => B.closePeriod(ctx, through));
   if (r.ok) touch();
   return r;
 }
@@ -401,13 +401,14 @@ export async function openItemsAction(customerId: string) {
   const { openItems } = await import("@/domain/cash");
   return act((ctx) => openItems(ctx, customerId));
 }
-export async function applyPaymentAction(v: { customerId: string; amount: string; currency?: string; receivedAt: string; method: string; reference: string; remittance: string; note: string; applications: { invoiceId: string; amount: string; shortPay: string; reason: string }[] }) {
+export async function applyPaymentAction(v: { customerId: string; amount: string; currency?: string; exchangeRate?: string; receivedAt: string; method: string; reference: string; remittance: string; note: string; applications: { invoiceId: string; amount: string; shortPay: string; reason: string }[] }) {
   const { applyPayment } = await import("@/domain/cash");
   const r = await act((ctx) =>
     applyPayment(ctx, {
       customerId: v.customerId,
       amountCents: cents(v.amount),
       currency: v.currency,
+      exchangeRate: v.exchangeRate || null,
       receivedAt: v.receivedAt ? dayOf(v.receivedAt) : undefined,
       method: v.method,
       reference: v.reference,

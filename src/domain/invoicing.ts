@@ -7,7 +7,7 @@ import { newId } from "@/lib/ids";
 import { assertCtx, requirePermission, type Ctx } from "@/lib/context";
 import { writeAudit } from "@/lib/audit";
 import { publicUrl } from "@/lib/tokens";
-import { enqueue, deliverQueued } from "@/lib/outbox";
+import { enqueue, deliverQueued, canSendEmail } from "@/lib/outbox";
 import { ValidationError } from "./orders";
 import { TransitionError } from "./states";
 import { billingQueue, createInvoice, issueInvoice, invoiceById, type QueueRow } from "./billing";
@@ -149,6 +149,7 @@ export async function runBatch(ctx: Ctx, orderIds: string[], opts: { issue?: boo
       }
       const sent = await deliverInvoice(ctx, inv.id, { method: g.method, batchId });
       r.state = sent.state;
+      if (sent.deliveries.at(-1)?.logged) r.note = NOT_EMAILED;
     } catch (e) {
       r.ok = false;
       r.note = (e as Error).message;
@@ -159,7 +160,8 @@ export async function runBatch(ctx: Ctx, orderIds: string[], opts: { issue?: boo
     try {
       const sch = await sendFactorSchedule(ctx, toFactor);
       schedule = { id: sch.id, number: sch.number, count: toFactor.length };
-      for (const r of results) if (r.invoiceId && toFactor.includes(r.invoiceId)) r.state = "sent";
+      const live = await canSendEmail(ctx.tenantId);
+      for (const r of results) if (r.invoiceId && toFactor.includes(r.invoiceId)) Object.assign(r, live ? { state: "sent" } : { note: `to the factor: ${NOT_EMAILED}` });
     } catch (e) {
       for (const r of results) if (r.invoiceId && toFactor.includes(r.invoiceId)) Object.assign(r, { ok: false, note: `to the factor: ${(e as Error).message}` });
     }
@@ -219,13 +221,21 @@ export async function invoicePacket(ctx: Ctx, invoiceId: string) {
 
 const fmt = (c: number, cur: string) => (c / 100).toLocaleString("en-US", { style: "currency", currency: cur });
 
+import { NOT_EMAILED } from "./delivery-rules";
+export { NOT_EMAILED };
+
 async function recordDelivery(ctx: Ctx, invoiceId: string, d: Omit<InvoiceDelivery, "at" | "by">) {
   const [inv] = await db.select().from(s.invoices).where(eq(s.invoices.id, invoiceId)).limit(1);
   const deliveries = [...(inv.deliveries ?? []), { ...d, at: new Date().toISOString(), by: ctx.userId }];
-  const [after] = await db.update(s.invoices).set({ state: inv.state === "issued" ? "sent" : inv.state, sentAt: new Date(), sentTo: d.to ?? d.method, deliveries, updatedAt: new Date(), updatedBy: ctx.userId }).where(eq(s.invoices.id, inv.id)).returning();
-  await writeAudit(db, ctx, "invoice", inv.id, "transition", inv.state !== after.state ? { state: { from: inv.state, to: after.state } } : undefined, `${DELIVERY_LABEL[d.method as DeliveryMethod] ?? d.method}${d.to ? ` to ${d.to}` : ""}${d.reference ? ` · ${d.reference}` : ""}`);
+  // an email that never left (no provider) is logged, not sent: the invoice stays issued and says so
+  const patch = d.logged ? { deliveries } : { state: inv.state === "issued" ? ("sent" as const) : inv.state, sentAt: new Date(), sentTo: d.to ?? d.method, deliveries };
+  const [after] = await db.update(s.invoices).set({ ...patch, updatedAt: new Date(), updatedBy: ctx.userId }).where(eq(s.invoices.id, inv.id)).returning();
+  await writeAudit(db, ctx, "invoice", inv.id, d.logged ? "update" : "transition", inv.state !== after.state ? { state: { from: inv.state, to: after.state } } : undefined, `${DELIVERY_LABEL[d.method as DeliveryMethod] ?? d.method}${d.to ? ` to ${d.to}` : ""}${d.reference ? ` · ${d.reference}` : ""}`);
   return after;
 }
+
+/** Whether an invoice has actually reached the customer: sent by email, EDI, the factor, or recorded as mailed / uploaded. */
+export const reachedCustomer = (inv: { sentAt: Date | string | null }) => !!inv.sentAt;
 
 /**
  * Send (or record) the invoice. Email and factor attach the packet; EDI sends the 210; portal and mail
@@ -271,7 +281,8 @@ export async function deliverInvoice(ctx: Ctx, invoiceId: string, opts: { method
     .join("\n");
   await enqueue(ctx, { channel: "email", to, subject: `Invoice ${inv.number} · ${entity?.dba || entity?.legalName}`, body, subjectKind: "invoice", subjectId: inv.id, meta: { kind: "invoice", attachments: [{ fileName: packet.fileName, storageKey }], cc } });
   await deliverQueued().catch(() => null);
-  return recordDelivery(ctx, invoiceId, { method: "email", to: [to, ...cc].join(", "), reference: packet.missing.length ? `sent without ${packet.missing.join(", ")}` : null, batchId: opts.batchId ?? null });
+  const live = await canSendEmail(ctx.tenantId);
+  return recordDelivery(ctx, invoiceId, { method: "email", to: [to, ...cc].join(", "), reference: [!live ? NOT_EMAILED : null, packet.missing.length ? `${live ? "sent" : "written"} without ${packet.missing.join(", ")}` : null].filter(Boolean).join(" · ") || null, batchId: opts.batchId ?? null, ...(live ? {} : { logged: true }) });
 }
 
 /**
@@ -306,9 +317,10 @@ export async function sendFactorSchedule(ctx: Ctx, invoiceIds: string[]) {
   const body = [`${entity.factorName},`, ``, `Schedule of accounts #${number} from ${entity.legalName}: ${rows.length} invoice${rows.length === 1 ? "" : "s"} totalling ${fmt(total, invs[0].currency)}.`, ``, ...rows.map((r) => `${r.number}  ${r.customer}  ${fmt(r.amountCents, invs[0].currency)}`), ``, `The schedule, the invoices and their documents are attached.`].join("\n");
   await enqueue(ctx, { channel: "email", to: entity.factorEmail, subject: `Schedule #${number} · ${entity.legalName} · ${fmt(total, invs[0].currency)}`, body, subjectKind: "invoice_batch", subjectId: id, meta: { kind: "invoice", attachments: [{ fileName: `Schedule ${number} - ${entity.legalName}.pdf`, storageKey }] } });
   await deliverQueued().catch(() => null);
+  const live = await canSendEmail(ctx.tenantId);
   for (const i of invs) {
     if (!i.factored) await db.update(s.invoices).set({ factored: true }).where(eq(s.invoices.id, i.id));
-    await recordDelivery(ctx, i.id, { method: "factor", to: entity.factorEmail, reference: `schedule #${number}`, batchId: id });
+    await recordDelivery(ctx, i.id, { method: "factor", to: entity.factorEmail, reference: `schedule #${number}${live ? "" : ` · ${NOT_EMAILED}`}`, batchId: id, ...(live ? {} : { logged: true }) });
   }
   await writeAudit(db, ctx, "invoice_batch", id, "create", undefined, `schedule #${number} to ${entity.factorName}: ${rows.length} invoice(s)`);
   return { id, number, totalCents: total };

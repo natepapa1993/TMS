@@ -37,6 +37,8 @@ export type Dashboard = {
   fxNote: string;
   /** credit memos taken off the revenue */
   creditedCents: number;
+  /** realized exchange gain (+) or loss (−) on MXN / CAD money received in the period: the day's rate vs the invoice's */
+  fxRealizedCents: number;
 };
 
 function window(period: Period, tz: string) {
@@ -170,6 +172,10 @@ export async function dashboard(ctx: Ctx, period: Period, entityId: string | nul
   const expired = compliance.reduce((a, c) => a + c.expired.length, 0);
   const expiring = compliance.reduce((a, c) => a + c.expiring.length, 0);
   const missing = compliance.reduce((a, c) => a + c.missing.length, 0);
+  // money received in pesos or Canadian dollars at another rate than its invoice's
+  const { from: pFrom, to: pTo } = window(period, tz);
+  const fxRows = await db.select({ amountCents: s.receipts.amountCents, rx: s.receipts.exchangeRate, currency: s.invoices.currency, invRate: s.invoices.exchangeRate }).from(s.receipts).innerJoin(s.invoices, eq(s.invoices.id, s.receipts.invoiceId)).where(and(eq(s.receipts.tenantId, ctx.tenantId), gte(s.receipts.receivedAt, pFrom), lt(s.receipts.receivedAt, pTo), sql`${s.receipts.exchangeRate} is not null`, sql`${s.invoices.currency} <> 'USD'`, ...(entityId ? [eq(s.invoices.entityId, entityId)] : [])));
+  const fxRealizedCents = fxRows.reduce((a, r) => a + toHome(r.amountCents, r.currency, r.rx) - toHome(r.amountCents, r.currency, pickRate(r.currency, r.invRate, company.settings.fx).rateE4), 0);
   const arOpenCents = ar.home.openCents;
   const arOverdueCents = ar.home.overdueCents;
   return {
@@ -189,6 +195,7 @@ export async function dashboard(ctx: Ctx, period: Period, entityId: string | nul
     arOverdueCents,
     fxNote: fxNote([...costed.flatMap((c) => (c.fx ? [c.fx] : [])), ...ar.home.rates]),
     creditedCents: costed.reduce((a, c) => a + c.credited, 0),
+    fxRealizedCents,
   };
 }
 

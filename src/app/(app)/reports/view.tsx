@@ -104,6 +104,7 @@ export function ReportsView({ dash, rows, by, preset, period, entityId, entities
       </div>
       <div className="text-footnote text-muted mb-3" data-testid="reports-fx">
         All figures in US dollars{dash.fxNote ? ` — converted: ${dash.fxNote}` : ""}. Revenue is net of credit memos{dash.creditedCents ? ` (${formatCents(dash.creditedCents)} credited)` : ""}.
+        {dash.fxRealizedCents ? ` Realized exchange ${dash.fxRealizedCents > 0 ? "gain" : "loss"} on pesos / Canadian dollars received: ${formatCents(Math.abs(dash.fxRealizedCents))} (the day's rate against the invoice's; not in the margin).` : ""}
       </div>
       {dash.arOpenCents > 0 && (
         <div className="text-callout text-muted mb-4">
@@ -217,7 +218,7 @@ export function ReportsView({ dash, rows, by, preset, period, entityId, entities
               </tbody>
             </table>
           )}
-          <div className="help mt-2">Driver pay is what the statement paid, or — until one has — an estimate from the driver's pay rule (a percent is of the leg's share of the load). Fuel is the miles on our trucks (typed, else estimated from the stops) × the company cost per mile. Carrier cost is the bill (or the tender rate until one exists). A load split between trucks, drivers or carriers is shared by its legs' miles, so every table adds up to the tiles.</div>
+          <div className="help mt-2">Driver pay is what the statement paid, or — until one has — an estimate from the driver&rsquo;s pay rule (a percent is of the leg&rsquo;s share of the load). Fuel is the miles on our trucks (typed, else estimated from the stops) × the company cost per mile. Carrier cost is the bill (or the tender rate until one exists). A load split between trucks, drivers or carriers is shared by its legs&rsquo; miles, so every table adds up to the tiles.</div>
         </Modal>
       )}
     </>

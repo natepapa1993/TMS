@@ -37,6 +37,7 @@ const QB_FIELDS: [string, string, string][] = [
   ["escrowAccount", "Driver escrow (liability)", "escrow held for drivers"],
   ["factorReserveAccount", "Factor reserve (asset)", "the part of factored invoices the factor holds until the customer pays"],
   ["factoringFeeAccount", "Factoring fees (expense)", "the factor's fees"],
+  ["fxGainLossAccount", "Exchange gain or loss", "pesos or Canadian dollars received at a different rate than the invoice's"],
 ];
 
 export function CompanyForm({ initial, canEdit }: { initial: { name: string; timeZone: string; fuelCostPerMile: string; closedThrough: string | null; qb: Record<string, string>; dispatchPhone: string; fx: Record<string, string>; fxAt: Record<string, string> }; canEdit: boolean }) {

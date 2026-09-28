@@ -6,15 +6,17 @@ import { ZoneProvider, useClock } from "@/components/zone";
 import { useRouter } from "next/navigation";
 import { Pill } from "@/components/ui";
 import { portalRequestLoadAction } from "../../actions";
+import { money as fxMoney } from "@/domain/fx-rules";
 
 /** The customer's page: their loads with live tracking, delivered loads with the POD, invoices and balance, and a load request form. */
 
 type Stop = { id: string; seq: number; type: string; name: string; city: string | null; state: string | null; country: string; windowStart: string | null; windowEnd: string | null; arrivedAt: string | null; departedAt: string | null };
-type Load = { eta: { at: string; stopName: string; late: boolean } | null; id: string; orderNumber: string; state: string; stateLabel: string; step: string | null; equipment: string; refs: { po: string | null; shipment: string | null; reference: string | null; rate_con: string | null }; cargoNote: string | null; stops: Stop[]; deliveredAt: string | null; createdAt: string; source: string; trackingUrl: string | null; docs: { id: string; code: string; fileName: string; createdAt: string }[]; invoice: { id: string; number: string | null; state: string; totalCents: number; url: string | null } | null };
+type Load = { eta: { at: string; stopName: string; late: boolean } | null; id: string; orderNumber: string; state: string; stateLabel: string; stateLabelEs?: string; step: string | null; stepEs?: string | null; equipment: string; refs: { po: string | null; shipment: string | null; reference: string | null; rate_con: string | null }; cargoNote: string | null; stops: Stop[]; deliveredAt: string | null; createdAt: string; source: string; trackingUrl: string | null; docs: { id: string; code: string; fileName: string; createdAt: string }[]; invoice: { id: string; number: string | null; state: string; totalCents: number; url: string | null } | null };
 type Invoice = { id: string; number: string | null; state: string; issuedAt: string | null; dueAt: string | null; totalCents: number; openCents: number; pastDueDays: number; currency: string; orders: string[]; url: string | null };
-type Data = { company: string; customer: { id: string; name: string; kind: string; termsDays: number | null; country?: string }; active: Load[]; requested: Load[]; delivered: Load[]; cancelled: Load[]; invoices: Invoice[]; balance: { openCents: number; pastDueCents: number; currency: string } };
+type Data = { company: string; customer: { id: string; name: string; kind: string; termsDays: number | null; country?: string }; active: Load[]; requested: Load[]; delivered: Load[]; cancelled: Load[]; invoices: Invoice[]; balance: { openCents: number; pastDueCents: number; currency: string }; balances?: { currency: string; openCents: number; pastDueCents: number }[] };
 
-const money = (c: number, cur = "USD") => `${cur === "USD" ? "$" : cur + " "}${(c / 100).toLocaleString("en-US", { minimumFractionDigits: 2 })}`;
+// "$2,450.00", "MX$53,000.00", "CA$1,950.00": every amount in its own currency, never added across
+const money = (c: number, cur = "USD") => fxMoney(c, cur);
 const day = (d: string | null | undefined) => (d ? shortDate(d) : "—");
 const placeOf = (s: Stop) => `${s.name}${s.city ? ` · ${s.city}` : ""}${s.state ? `, ${s.state}` : ""}`;
 const TONE: Record<string, "slate" | "teal" | "amber" | "red" | "green" | "blue"> = { draft: "blue", booked: "slate", dispatched: "teal", in_transit: "teal", exception: "red", delivered: "green", ready_to_bill: "green", invoiced: "green", paid: "green", cancelled: "slate" };
@@ -33,6 +35,9 @@ const STR = {
     reqReceived: "Request received", reqIs: (n: string, c: string) => `It is ${n} with ${c}. Dispatch will price it and confirm with you before it moves.`, seeLoads: "See your loads", reqTitle: "Request a load", reqIntro: (c: string) => `Two ends and what it is. ${c} prices it and confirms with you; nothing moves until then.`,
     pickup: "Pickup", shipper: "Shipper / location", city: "City", state: "State", country: "Country", readyWhen: "Ready when", delivery: "Delivery", consignee: "Consignee / location", deliverBy: "Deliver by", theLoad: "The load", equipment: "Equipment", po: "PO #", yourRef: "Your reference", whoToCall: "Who to call", whatIsIt: "What is it", sending: "Sending…", send: "Send the request",
     doc: { POD: "Proof of delivery", BOL: "Bill of lading", RATE_CON: "Rate confirmation", carta_porte: "Carta porte", invoice: "Commercial invoice", packing_list: "Packing list" } as Record<string, string>,
+    invState: { issued: "Issued", sent: "Sent", partially_paid: "Partly paid", paid: "Paid", closed: "Paid", void: "Void", disputed: "Disputed" } as Record<string, string>,
+    stopType: { pickup: "pickup", delivery: "delivery", border_yard: "border yard", yard: "yard", transload: "transload", terminal: "terminal", stop: "stop" } as Record<string, string>,
+    and: "and",
   },
   es: {
     lang: "es" as Lang,
@@ -43,6 +48,9 @@ const STR = {
     reqReceived: "Solicitud recibida", reqIs: (n: string, c: string) => `Es la ${n} con ${c}. Despacho la cotiza y te confirma antes de moverla.`, seeLoads: "Ver tus embarques", reqTitle: "Solicitar un embarque", reqIntro: (c: string) => `Origen, destino y qué es. ${c} lo cotiza y te confirma; nada se mueve hasta entonces.`,
     pickup: "Recolección", shipper: "Remitente / lugar", city: "Ciudad", state: "Estado", country: "País", readyWhen: "Listo cuándo", delivery: "Entrega", consignee: "Destinatario / lugar", deliverBy: "Entregar antes de", theLoad: "La carga", equipment: "Equipo", po: "No. de PO", yourRef: "Tu referencia", whoToCall: "A quién llamar", whatIsIt: "Qué es", sending: "Enviando…", send: "Enviar la solicitud",
     doc: { POD: "Comprobante de entrega", BOL: "Bill of lading", RATE_CON: "Confirmación de tarifa", carta_porte: "Carta porte", invoice: "Factura comercial", packing_list: "Lista de empaque" } as Record<string, string>,
+    invState: { issued: "Emitida", sent: "Enviada", partially_paid: "Pago parcial", paid: "Pagada", closed: "Pagada", void: "Cancelada", disputed: "En disputa" } as Record<string, string>,
+    stopType: { pickup: "recolección", delivery: "entrega", border_yard: "patio fronterizo", yard: "patio", transload: "transbordo", terminal: "terminal", stop: "parada" } as Record<string, string>,
+    and: "y",
   },
 };
 
@@ -59,6 +67,10 @@ function CustomerPortalBody({ token, data }: { token: string; data: Data }) {
   const [lang, setLang] = useState<Lang>(data.customer.country === "MX" ? "es" : "en");
   const s = STR[lang];
   const counts = { loads: data.active.length + data.requested.length, delivered: data.delivered.length, invoices: data.invoices.filter((i) => i.openCents > 0).length, request: 0 };
+  // per currency: "MX$53,000.00 · $2,450.00", never one number that adds pesos to dollars
+  const balances = data.balances ?? (data.balance.openCents ? [data.balance] : []);
+  const pastDue = balances.filter((b) => b.pastDueCents > 0);
+  const list = (xs: string[]) => (xs.length <= 1 ? xs.join("") : `${xs.slice(0, -1).join(", ")} ${s.and} ${xs[xs.length - 1]}`);
   return (
     <div>
       <div className="flex items-start justify-between gap-3">
@@ -70,7 +82,17 @@ function CustomerPortalBody({ token, data }: { token: string; data: Data }) {
           <div className="text-callout text-muted mt-0.5">{s.intro(data.company)}</div>
         </div>
         <div className="flex flex-col items-end gap-1.5 shrink-0">
-          {data.balance.pastDueCents > 0 ? <Pill tone="red">{money(data.balance.pastDueCents, data.balance.currency)} {s.pastDue}</Pill> : data.balance.openCents > 0 ? <Pill tone="amber">{money(data.balance.openCents, data.balance.currency)} {s.open}</Pill> : <Pill tone="green">{s.nothingOwed}</Pill>}
+          {pastDue.length > 0 ? (
+            <Pill tone="red">
+              {list(pastDue.map((b) => money(b.pastDueCents, b.currency)))} {s.pastDue}
+            </Pill>
+          ) : balances.length > 0 ? (
+            <Pill tone="amber">
+              {list(balances.map((b) => money(b.openCents, b.currency)))} {s.open}
+            </Pill>
+          ) : (
+            <Pill tone="green">{s.nothingOwed}</Pill>
+          )}
           <button className="text-footnote font-semibold text-teal" onClick={() => setLang(lang === "en" ? "es" : "en")} data-testid="lang">
             {lang === "en" ? "Español" : "English"}
           </button>
@@ -125,11 +147,17 @@ function CustomerPortalBody({ token, data }: { token: string; data: Data }) {
           <div className="card p-4 flex items-center justify-between gap-3 flex-wrap">
             <div>
               <div className="eyebrow">{s.balance}</div>
-              <div className="text-title2 font-extrabold mono">{money(data.balance.openCents, data.balance.currency)}</div>
-              <div className="text-footnote text-muted">
-                {data.balance.pastDueCents > 0 ? `${money(data.balance.pastDueCents, data.balance.currency)} ${s.ofItPastDue}` : s.nothingPastDue}
-                {data.customer.termsDays ? ` · ${s.terms} ${data.customer.termsDays}` : ""}
-              </div>
+              {balances.length === 0 ? (
+                <div className="text-title2 font-extrabold mono">{money(0, data.balance.currency)}</div>
+              ) : (
+                balances.map((b) => (
+                  <div key={b.currency} data-testid="portal-balance">
+                    <span className="text-title2 font-extrabold mono">{money(b.openCents, b.currency)}</span>
+                    <span className="text-footnote text-muted"> {b.pastDueCents > 0 ? `· ${money(b.pastDueCents, b.currency)} ${s.ofItPastDue}` : `· ${s.nothingPastDue}`}</span>
+                  </div>
+                ))
+              )}
+              {data.customer.termsDays ? <div className="text-footnote text-muted">{`${s.terms} ${data.customer.termsDays}`}</div> : null}
             </div>
           </div>
           <div className="card mt-3 overflow-x-auto">
@@ -153,7 +181,7 @@ function CustomerPortalBody({ token, data }: { token: string; data: Data }) {
                     <tr key={i.id}>
                       <td>
                         <div className="font-bold mono">{i.number ?? "—"}</div>
-                        <Pill tone={INV_TONE[i.state] ?? "slate"}>{i.state === "partially_paid" ? s.partlyPaid : i.state}</Pill>
+                        <Pill tone={INV_TONE[i.state] ?? "slate"}>{s.invState[i.state] ?? i.state}</Pill>
                       </td>
                       <td className="text-callout mono">{i.orders.join(", ")}</td>
                       <td className="text-callout">{day(i.issuedAt)}</td>
@@ -201,8 +229,8 @@ function LoadCard({ l, token, s }: { l: Load; token: string; s: Strings }) {
         <div className="min-w-0">
           <div className="flex items-center gap-2 flex-wrap">
             <span className="font-extrabold mono">{l.orderNumber}</span>
-            <Pill tone={TONE[l.state] ?? "slate"}>{l.stateLabel}</Pill>
-            {l.step && ["dispatched", "in_transit", "exception"].includes(l.state) && <span className="text-footnote text-muted">{l.step}</span>}
+            <Pill tone={TONE[l.state] ?? "slate"}>{s.lang === "es" ? (l.stateLabelEs ?? l.stateLabel) : l.stateLabel}</Pill>
+            {l.step && ["dispatched", "in_transit", "exception"].includes(l.state) && <span className="text-footnote text-muted">{s.lang === "es" ? (l.stepEs ?? l.step) : l.step}</span>}
           </div>
           <div className="font-bold text-body mt-1 truncate">
             {first ? placeOf(first) : "—"} → {last ? placeOf(last) : "—"}
@@ -249,7 +277,7 @@ function LoadCard({ l, token, s }: { l: Load; token: string; s: Strings }) {
               <span className="mono text-faint w-4">{i + 1}</span>
               <div>
                 <div className="font-semibold">
-                  {placeOf(st)} <span className="text-faint font-normal">· {st.type.replace("_", " ")}</span>
+                  {placeOf(st)} <span className="text-faint font-normal">· {s.stopType[st.type] ?? st.type.replace("_", " ")}</span>
                 </div>
                 <div className="text-footnote text-muted">
                   {st.windowStart ? `${s.window} ${win(st)}` : ""}

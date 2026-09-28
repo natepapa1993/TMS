@@ -1,3 +1,5 @@
+import { zonedDate } from "@/lib/time";
+import { NOT_EMAILED, notEmailed } from "@/domain/delivery-rules";
 import Link from "next/link";
 import { requireCtx } from "@/lib/auth";
 import { listInvoices, listCreditMemos, type InvoiceFilter } from "@/domain/billing";
@@ -46,7 +48,7 @@ export default async function InvoicesPage({ searchParams }: PageProps<"/billing
   const [waiting, batches] = factors.length ? await Promise.all([awaitingFactor(ctx), listBatches(ctx)]) : [[], []];
   return (
     <div>
-      <PageHeader eyebrow="Billing" title="Invoices" actions={["owner", "billing"].includes(ctx.role) ? <CloseButton canClose={can(ctx, "billing.void")} closedThrough={company.settings.closedThrough} /> : null}>
+      <PageHeader eyebrow="Billing" title="Invoices" actions={["owner", "billing"].includes(ctx.role) ? <CloseButton canClose={can(ctx, "billing.void")} closedThrough={company.settings.closedThrough} today={zonedDate(new Date(), company.timeZone)} timeZone={company.timeZone} /> : null}>
         Numbers come from the billing entity and are never reused. An issued invoice is a locked snapshot.
       </PageHeader>
       <BillingNav />
@@ -111,6 +113,7 @@ export default async function InvoicesPage({ searchParams }: PageProps<"/billing
             ["open", "Open"],
             ["overdue", "Overdue"],
             ["unsent", "Issued, not sent"],
+            ["not_emailed", "Not emailed"],
             ["factored", "Factored"],
             ["credits", "Credit memos"],
           ].map(([v, l]) => (
@@ -190,6 +193,11 @@ export default async function InvoicesPage({ searchParams }: PageProps<"/billing
                     <td className="mono font-semibold">{["paid", "void"].includes(i.state) ? "—" : formatCents(i.totalCents - i.creditedCents - i.paidCents, i.currency)}</td>
                     <td>
                       <Pill tone={TONE[i.state]}>{i.state.replace("_", " ")}</Pill>
+                      {notEmailed(i) && (
+                        <Pill tone="amber" title={NOT_EMAILED}>
+                          not emailed
+                        </Pill>
+                      )}
                     </td>
                   </tr>
                 ))}

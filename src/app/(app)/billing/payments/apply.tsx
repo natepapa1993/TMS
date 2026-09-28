@@ -14,14 +14,16 @@ const cents = (v: string) => Math.round(Number(String(v).replace(/[$,\s]/g, ""))
 const dollars = (c: number) => (c / 100).toFixed(2);
 
 /** One check or ACH over many invoices: who paid, how much, what it pays, what to do with each short pay; the rest goes on account. */
-export function ApplyPaymentButton({ customers, customerId, role, label = "Record a payment" }: { customers: { id: string; name: string }[]; customerId?: string; role: string; label?: string }) {
+export function ApplyPaymentButton({ customers, customerId, role, label = "Record a payment", today }: { customers: { id: string; name: string }[]; customerId?: string; role: string; label?: string; /** today in the company's zone */ today?: string }) {
   const router = useRouter();
   const t = useToast();
   const [open, setOpen] = useState(false);
-  const [f, setF] = useState({ customerId: customerId ?? "", amount: "", currency: "USD", receivedAt: localDay(), method: "check", reference: "", remittance: "", note: "" });
+  const blank = (day = today ?? localDay()) => ({ customerId: customerId ?? "", amount: "", currency: "USD", exchangeRate: "", receivedAt: day, method: "check", reference: "", remittance: "", note: "" });
+  const [f, setF] = useState(blank());
+  const [rates, setRates] = useState<Record<string, string>>({});
   const [invs, setInvs] = useState<Inv[]>([]);
   const [lines, setLines] = useState<Record<string, Line>>({});
-  const [result, setResult] = useState<{ applied: { number: string; appliedCents: number; after: string }[]; onAccountCents: number } | null>(null);
+  const [result, setResult] = useState<{ applied: { number: string; appliedCents: number; after: string }[]; onAccountCents: number; autoMatched?: boolean } | null>(null);
   const [pending, start] = useTransition();
   const canWriteOff = role === "owner";
 
@@ -33,8 +35,11 @@ export function ApplyPaymentButton({ customers, customerId, role, label = "Recor
       const r = await openItemsAction(cid);
       if (!r.ok) return t.err(r.error);
       setInvs(r.data.invoices);
-      // the payment's currency starts as the oldest open invoice's; change it if the money came in another
-      setF((x) => ({ ...x, currency: r.data.invoices[0]?.currency ?? "USD" }));
+      setRates(r.data.rates);
+      // the payment's currency starts as the one this customer was billed in last; change it if the money came in another
+      // (received today in the company's zone, and the company's rate for pesos / Canadian dollars to start with)
+      const cur = r.data.latestCurrency ?? r.data.invoices[0]?.currency ?? "USD";
+      setF((x) => ({ ...x, currency: cur, exchangeRate: cur === "USD" ? "" : (r.data.rates[cur] ?? ""), receivedAt: x.receivedAt || r.data.today }));
       setLines(Object.fromEntries(r.data.invoices.map((i) => [i.id, { invoiceId: i.id, amount: "", shortPay: "leave_open", reason: "" }])));
     });
   const auto = () => {
@@ -56,7 +61,7 @@ export function ApplyPaymentButton({ customers, customerId, role, label = "Recor
         data-testid="record-payment"
         onClick={() => {
           setResult(null);
-          setF({ customerId: customerId ?? "", amount: "", currency: "USD", receivedAt: localDay(), method: "check", reference: "", remittance: "", note: "" });
+          setF(blank());
           setOpen(true);
           if (customerId) load(customerId);
         }}
@@ -79,6 +84,8 @@ export function ApplyPaymentButton({ customers, customerId, role, label = "Recor
                 <span className={`mr-auto text-callout font-semibold ${left < 0 ? "text-red" : ""}`} data-testid="payment-balance">
                   Applied {formatCents(applied, cur)} of {formatCents(cents(f.amount), cur)}
                   {left > 0 ? ` · ${formatCents(left, cur)} goes on account` : left < 0 ? " · more than received" : ""}
+                  {left > 0 && applied === 0 && f.remittance.trim() ? " unless the remittance names an open invoice" : ""}
+                  {left > 0 && left > shown.reduce((x, i) => x + i.openCents, 0) && shown.length > 0 ? <span className="text-amber"> · more than everything open in {cur}: is the currency right?</span> : null}
                 </span>
                 <button className="btn" onClick={() => setOpen(false)}>
                   Cancel
@@ -90,7 +97,7 @@ export function ApplyPaymentButton({ customers, customerId, role, label = "Recor
                     start(async () => {
                       const r = await applyPaymentAction({ ...f, applications: shown.map((i) => lines[i.id]).filter((l) => l && (cents(l.amount) > 0 || l.shortPay !== "leave_open")) });
                       if (!r.ok) return t.err(r.error);
-                      setResult({ applied: r.data.applied, onAccountCents: r.data.onAccountCents });
+                      setResult({ applied: r.data.applied, onAccountCents: r.data.onAccountCents, autoMatched: r.data.autoMatched });
                       router.refresh();
                     })
                   }
@@ -103,6 +110,7 @@ export function ApplyPaymentButton({ customers, customerId, role, label = "Recor
         >
           {result ? (
             <div className="text-body space-y-1" data-testid="payment-result">
+              {result.autoMatched && <div className="text-callout text-muted">Applied to what the remittance names.</div>}
               {result.applied.map((a) => (
                 <div key={a.number}>
                   <b className="mono">{a.number}</b> {formatCents(a.appliedCents, cur)} — {a.after}
@@ -140,7 +148,7 @@ export function ApplyPaymentButton({ customers, customerId, role, label = "Recor
                   </label>
                   <div className="flex gap-1">
                     <input id="p-amount" className="input" inputMode="decimal" value={f.amount} onChange={(e) => setF({ ...f, amount: e.target.value })} placeholder="0.00" />
-                    <select className="select w-24" aria-label="Payment currency" data-testid="payment-currency" value={f.currency} onChange={(e) => setF({ ...f, currency: e.target.value })}>
+                    <select className="select w-24 shrink-0" aria-label="Payment currency" data-testid="payment-currency" value={f.currency} onChange={(e) => setF({ ...f, currency: e.target.value, exchangeRate: e.target.value === "USD" ? "" : (rates[e.target.value] ?? f.exchangeRate) })}>
                       <option>USD</option>
                       <option>MXN</option>
                       <option>CAD</option>
@@ -166,7 +174,16 @@ export function ApplyPaymentButton({ customers, customerId, role, label = "Recor
                     <option value="other">Other</option>
                   </select>
                 </div>
-                <div className="col-span-2">
+                {f.currency !== "USD" && (
+                  <div className="col-span-2">
+                    <label className="label" htmlFor="p-rate">
+                      Rate the day it arrived ({f.currency} per USD)
+                    </label>
+                    <input id="p-rate" className="input" inputMode="decimal" value={f.exchangeRate} onChange={(e) => setF({ ...f, exchangeRate: e.target.value })} placeholder={f.currency === "CAD" ? "1.37" : "18.45"} data-testid="payment-rate" />
+                    <div className="help">The bank got dollars at this rate; against the invoice&rsquo;s rate it is the exchange gain or loss.</div>
+                  </div>
+                )}
+                <div className={f.currency !== "USD" ? "col-span-1" : "col-span-2"}>
                   <label className="label" htmlFor="p-ref">
                     Check # / ACH trace
                   </label>

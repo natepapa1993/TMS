@@ -1,7 +1,7 @@
 // Features: F-7.20 F-7.21 F-7.22 F-7.23 F-7.24 F-7.25 F-7.26 F-7.27 money in three currencies — rates, payments, receivables, reports, carrier rates, rate-con charges, driver pay safety, QuickBooks, factoring, closed period, credit memos
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { eq } from "drizzle-orm";
-import { truncateAll, makeTenant } from "@/test/helpers";
+import { truncateAll, makeTenant, connectEmail } from "@/test/helpers";
 import { create, update } from "@/data/records";
 import { db } from "@/db/client";
 import { outbox, payItems, settlements as settlementsT } from "@/db/schema";
@@ -25,6 +25,7 @@ const afterWeek = new Date(Date.now() + 8 * 86400_000);
 let a: Awaited<ReturnType<typeof makeTenant>>;
 let f: { entity: string; usCust: string; mxCust: string; caCust: string; garza: string; lone: string; t1: string; reyes: string };
 
+afterEach(() => vi.unstubAllGlobals());
 beforeEach(async () => {
   await truncateAll();
   a = await makeTenant("Frontera");
@@ -426,6 +427,7 @@ describe("factoring: remit-to required, chargeback, corrected invoice", () => {
     expect(l.rows[0]).toMatchObject({ status: "charged_back", reserveBackToArCents: 6593, needsCorrectedInvoice: true });
     expect(l.totals.reserveBackToAr).toBe(6593);
     expect((await B.aging(a)).totals.USD.total).toBe(263750);
+    await connectEmail(a);
     const sent = await B.sendCorrectedInvoice(a, inv.id);
     expect(sent.state).toBe("sent");
     const after = (await B.invoiceById(a, inv.id)).invoice;
@@ -467,6 +469,10 @@ describe("credit memos and disputes", () => {
     expect(i2.number).toBe("FF-002402"); // the credit took no invoice number
     const { bytes } = await B.creditMemoPdf(a, cm.id);
     expect(Buffer.from(bytes).subarray(0, 4).toString()).toBe("%PDF");
+    // no email provider: logged, never "sent"
+    expect(await B.sendCreditMemo(a, cm.id)).toMatchObject({ sentTo: null, logged: true, message: "Logged — not emailed (connect email in Settings → Integrations)" });
+    expect((await B.listCreditMemos(a))[0].memo.sentAt).toBeNull();
+    await connectEmail(a);
     const sent = await B.sendCreditMemo(a, cm.id);
     expect(sent.sentTo).toBe("ap@summit.test");
     const [mail] = await db.select().from(outbox).where(eq(outbox.subjectKind, "credit_memo"));
@@ -476,7 +482,7 @@ describe("credit memos and disputes", () => {
     const inv = (await B.invoiceById(a, i1.id)).invoice;
     expect(inv.pdfStorageKey).not.toBe(i1.pdfStorageKey); // re-drawn with the credit
     const r = await B.resolveDispute(a, i1.id, { outcome: "credited", note: "credit FF-CM-000001 agreed with Sam at Summit" });
-    expect(r.state).toBe("sent");
+    expect(r.state).toBe("issued"); // its only "send" was logged before email was connected: it never reached them
     expect(r.disputeResolution).toMatch(/^Resolved with a credit memo: credit FF-CM-000001/);
     await expect(B.resolveDispute(a, i1.id, { outcome: "other", note: "x" })).rejects.toThrow(/only a disputed invoice/);
   });
