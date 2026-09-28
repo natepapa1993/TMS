@@ -1199,6 +1199,15 @@
         "src/domain/flow2.test.ts",
         "src/domain/ratecon-reader.test.ts"
       ]
+    },
+    {
+      "id": "F-34.7",
+      "name": "Board hygiene: a stale Tender expired flag clears itself once the leg is covered; a driver's message lands on the leg they are on; a drop at a (border) yard reads Dropped, not Delivered — empty; import with Book now leaves loads with stops out of order as drafts (and bulk book skips them)",
+      "milestone": "M34",
+      "status": "done",
+      "tests": [
+        "src/domain/flow2.test.ts"
+      ]
     }
   ]
 }

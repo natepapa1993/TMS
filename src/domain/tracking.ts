@@ -6,6 +6,7 @@ import { newId } from "@/lib/ids";
 import { assertCtx, requirePermission, systemCtx, type Ctx } from "@/lib/context";
 import { advanceLeg, acceptLeg, declineLeg, midStops, pendingMidStop, stampStop, NotFoundError, ValidationError } from "./orders";
 import { LEG_FORWARD } from "./states";
+import { handoffStep } from "./zones";
 import { coords, roadMiles } from "@/lib/geo";
 
 /**
@@ -112,7 +113,10 @@ export async function driverToday(tenantId: string, driverId: string) {
       : null;
     const mid = pendingMidStop(leg, stops.filter((x) => x.orderId === leg.orderId));
     const plain = mid ? { to: leg.state, label: `${mid.which === "arrived" ? "Arrived at" : "Leaving"} ${mid.stop.name}`, es: `${mid.which === "arrived" ? "Llegué a" : "Saliendo de"} ${mid.stop.name}` } : nextStep(leg.state);
-    const next = !flow ? plain : flow.kind === "leg" ? nextStep(leg.state) : null;
+    // a leg that ends at a yard or border yard drops the trailer there: the buttons say so (owner #27)
+    const drop = !mid ? handoffStep(leg.state, to?.type) : null;
+    const named = (n: ReturnType<typeof nextStep>) => (n && drop ? { ...n, label: drop.en, es: drop.es } : n);
+    const next = named(!flow ? plain : flow.kind === "leg" ? nextStep(leg.state) : null);
     // the freight this leg picks up: is it there yet (the leg that brings it delivered)?
     const before = legsOfOrders.find((p) => p.orderId === leg.orderId && p.toStopId === leg.fromStopId && p.id !== leg.id);
     const freightReady = before ? before.state === "completed" : null;
@@ -262,6 +266,17 @@ export async function driverUploadPhoto(tenantId: string, driverId: string, legI
   return rows;
 }
 
+/** The leg a driver is on now (M22): the one rolling, else the one sent to them most recently. */
+export async function activeLegOf(tenantId: string, driverId: string): Promise<{ id: string; orderId: string } | null> {
+  const rows = await db
+    .select({ id: s.legs.id, orderId: s.legs.orderId, state: s.legs.state, dispatchedAt: s.legs.dispatchedAt })
+    .from(s.legs)
+    .where(and(eq(s.legs.tenantId, tenantId), inArray(s.legs.state, ACTIVE), or(eq(s.legs.driverId, driverId), eq(s.legs.coDriverId, driverId))));
+  const rank = (st: LegState) => (MOVING.includes(st) ? 0 : 1);
+  const best = rows.sort((p, q) => rank(p.state) - rank(q.state) || (q.dispatchedAt?.getTime() ?? 0) - (p.dispatchedAt?.getTime() ?? 0))[0];
+  return best ? { id: best.id, orderId: best.orderId } : null;
+}
+
 /** The driver writes to dispatch from the app. Lands in Messages like a WhatsApp reply, on the leg they are on. */
 export async function driverMessage(tenantId: string, driverId: string, legId: string | null, body: string) {
   const text = body?.trim();
@@ -274,6 +289,7 @@ export async function driverMessage(tenantId: string, driverId: string, legId: s
     const [l] = await db.select({ id: s.legs.id, orderId: s.legs.orderId, driverId: s.legs.driverId, coDriverId: s.legs.coDriverId }).from(s.legs).where(and(eq(s.legs.tenantId, tenantId), eq(s.legs.id, legId))).limit(1);
     if (l && (l.driverId === driverId || l.coDriverId === driverId)) leg = l;
   }
+  if (!leg) leg = await activeLegOf(tenantId, driverId);
   const [row] = await db.insert(s.inboundMessages).values({ id: newId(), tenantId, channel: "driver_app", from: driver.phone?.replace(/[^\d]/g, "") || driver.id, fromName: driver.name, body: text, driverId, legId: leg?.id ?? null, orderId: leg?.orderId ?? null }).returning();
   if (leg) await db.insert(s.legEvents).values({ id: newId(), tenantId, legId: leg.id, orderId: leg.orderId, kind: "message", source: "driver_app", verified: false, note: `${driver.name}: ${text}` });
   return row;

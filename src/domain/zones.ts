@@ -53,6 +53,21 @@ export function legZone(leg: { type: LegType; fromStopId: string | null; toStopI
 /** Stop types where the trailer changes hands: a leg ends there and the next begins. */
 export const HANDOFF: StopType[] = ["yard", "border_yard", "transload", "terminal"];
 
+const HANDOFF_WORDS: Record<string, { en: string; es: string }> = { border_yard: { en: "the border yard", es: "el patio" }, yard: { en: "the yard", es: "el patio" }, transload: { en: "the transload", es: "el transbordo" }, terminal: { en: "the terminal", es: "la terminal" } };
+/**
+ * The last two steps of a leg that ends at a hand-off say what happens there (owner #27): "Arrived at the border
+ * yard" and "Dropped at the border yard" — not "Arrived at delivery" and "Delivered — empty", which read as the
+ * customer's delivery. Null for a real delivery (the usual words apply). Pure.
+ */
+export function handoffStep(state: string, toStopType: string | null | undefined): { en: string; es: string } | null {
+  const w = toStopType && HANDOFF.includes(toStopType as StopType) ? HANDOFF_WORDS[toStopType] : null;
+  if (!w) return null;
+  if (state === "loaded") return { en: `En route to ${w.en}`, es: `En ruta a ${w.es}` };
+  if (state === "en_route") return { en: `Arrived at ${w.en}`, es: `Llegué a ${w.es}` };
+  if (state === "at_delivery") return { en: `Dropped at ${w.en}`, es: `Dejé la caja en ${w.es}` };
+  return null;
+}
+
 /**
  * Cut legs from stops: a new leg starts at every hand-off stop (a yard, a border yard, a transload,
  * a terminal). A leg whose ends are in different countries is the crossing; the others are named by

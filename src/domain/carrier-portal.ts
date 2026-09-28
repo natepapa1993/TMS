@@ -14,7 +14,7 @@ import { respondToTender, type TenderResponse } from "./tenders";
 import { statusFor, subjectDocuments, uploadSubjectDocument } from "./compliance";
 import { uploadOrderDocument, receiveCarrierBill, syncCarrierBills } from "./billing";
 import { LEG_LABEL } from "./states";
-import { HANDOFF } from "./zones";
+import { HANDOFF, handoffStep } from "./zones";
 
 /**
  * Carrier portal (spec Module 10): one persistent link per partner carrier — their offers, the loads they
@@ -249,7 +249,10 @@ export async function carrierDriverView(tenantId: string, legId: string) {
   const flow = await partnerFlow(l);
   const mid = pendingMidStop(l, stops);
   const done = ["completed", "cancelled", "unassigned", "planned", "declined"].includes(l.state);
-  const next = done ? null : flow ? flowNext(flow) : mid ? { to: l.state, en: `${mid.which === "arrived" ? "Arrived at" : "Leaving"} ${mid.stop.name}`, es: `${mid.which === "arrived" ? "Llegué a" : "Saliendo de"} ${mid.stop.name}` } : (NEXT[l.state] ?? null);
+  const next0 = done ? null : flow ? flowNext(flow) : mid ? { to: l.state, en: `${mid.which === "arrived" ? "Arrived at" : "Leaving"} ${mid.stop.name}`, es: `${mid.which === "arrived" ? "Llegué a" : "Saliendo de"} ${mid.stop.name}` } : (NEXT[l.state] ?? null);
+  // a drop at the border yard (a partner's driver leaving the caja for the crossing truck) is not a delivery (owner #27)
+  const drop = !mid && next0 && !("border" in next0 && next0.border) ? handoffStep(l.state, stops.find((x) => x.id === l.toStopId)?.type) : null;
+  const next = next0 && drop ? { ...next0, en: drop.en, es: drop.es } : next0;
   const stop = (id: string | null) => {
     const x = stops.find((st) => st.id === id);
     return x ? { id: x.id, name: x.name, type: x.type, country: x.country, address: x.address, windowStart: x.windowStart, windowEnd: x.windowEnd, contact: x.contact, notes: x.notes, arrivedAt: x.arrivedAt, departedAt: x.departedAt, refs: x.refs } : null;

@@ -236,7 +236,7 @@ export async function previewLoads(ctx: Ctx, table: Table): Promise<{ layout: "p
 /** Create the loads that passed the preview; the rest are reported. */
 export async function importLoads(ctx: Ctx, table: Table, opts: { book?: boolean; fileName?: string } = {}) {
   const { loads } = await previewLoads(ctx, table);
-  const created: { key: string; orderNumber: string; orderId: string; warnings: string[] }[] = [];
+  const created: { key: string; orderNumber: string; orderId: string; warnings: string[]; draftWhy: string | null }[] = [];
   const skipped: { key: string; errors: string[] }[] = [];
   for (const l of loads) {
     if (l.errors.length) {
@@ -244,8 +244,11 @@ export async function importLoads(ctx: Ctx, table: Table, opts: { book?: boolean
       continue;
     }
     try {
-      const o = await createOrder(ctx, { customerId: l.customerId, rateCents: l.rateCents, rateTbd: l.rateCents == null, currency: l.currency, equipment: l.equipment, refs: l.refs, freight: l.freight, cargoNote: l.cargoNote, stops: l.stops, book: !!opts.book && l.rateCents != null, source: "import" });
-      created.push({ key: l.key, orderNumber: o.order.orderNumber, orderId: o.order.id, warnings: l.warnings });
+      // stops out of order (a delivery before its pickup) stay a draft even with "Book them now": fix, then book (M12)
+      const outOfOrder = stopTimeProblems(l.stops).length > 0;
+      const book = !!opts.book && l.rateCents != null && !outOfOrder;
+      const o = await createOrder(ctx, { customerId: l.customerId, rateCents: l.rateCents, rateTbd: l.rateCents == null, currency: l.currency, equipment: l.equipment, refs: l.refs, freight: l.freight, cargoNote: l.cargoNote, stops: l.stops, book, source: "import" });
+      created.push({ key: l.key, orderNumber: o.order.orderNumber, orderId: o.order.id, warnings: l.warnings, draftWhy: opts.book && !book ? (outOfOrder ? "left as a draft: the stops are out of order — fix the times, then book" : "left as a draft: no rate") : null });
     } catch (e) {
       skipped.push({ key: l.key, errors: [e instanceof Error ? e.message : String(e)] });
     }

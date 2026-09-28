@@ -91,7 +91,8 @@ test("carrier's day: one link, accept the offer, run the load, get paid, keep do
   await expect(driver.locator("body")).toContainText("Transportes Garza");
   await expect(driver.locator("span.pill", { hasText: "GPS on" })).toBeVisible({ timeout: 10000 });
   const big = driver.locator("button.btn-primary").first();
-  for (const label of ["Loaded — leaving", "En route to delivery", "Arrived at delivery"]) {
+  // the drop is at the border yard, not a delivery: the buttons say so (owner #27)
+  for (const label of ["Loaded — leaving", "En route to the border yard", "Arrived at the border yard"]) {
     await expect(big).toContainText(label);
     await big.click();
     await driver.waitForTimeout(400);
@@ -99,6 +100,7 @@ test("carrier's day: one link, accept the offer, run the load, get paid, keep do
   // the drop at the border yard for the crossing truck: the caja number, the seal and a photo (M18), no POD
   const drop = driver.getByTestId("caja-drop");
   await expect(drop).toContainText("Leaving the caja at Border yard (MX)");
+  await expect(big).toContainText("Dropped at the border yard");
   await driver.getByTestId("photo-POD").locator("input[type=file]").setInputFiles(path.join(__dirname, "fixtures", "bol.pdf"));
   await expect(driver.getByTestId("photo-POD")).toContainText("✓ POD on file", { timeout: 10000 });
   await big.click();

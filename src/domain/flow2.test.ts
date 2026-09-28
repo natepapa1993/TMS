@@ -1,4 +1,4 @@
-// Features: F-34.1 F-34.2 F-34.3 F-34.4 F-34.5 F-34.6
+// Features: F-34.1 F-34.2 F-34.3 F-34.4 F-34.5 F-34.6 F-34.7
 import { describe, it, expect, beforeEach } from "vitest";
 import { and, eq } from "drizzle-orm";
 import { truncateAll, makeTenant } from "@/test/helpers";
@@ -6,7 +6,11 @@ import { create } from "@/data/records";
 import { db } from "@/db/client";
 import * as s from "@/db/schema";
 import { createOrder, planLeg, dispatchLeg, advanceLeg, sendLeg, holdOrder } from "./orders";
-import { sendTender } from "./tenders";
+import { sendTender, expireTenders } from "./tenders";
+import { board } from "./orders";
+import { driverMessage, driverToday } from "./tracking";
+import { handoffStep } from "./zones";
+import { readTable, importLoads } from "./load-import";
 import { plannerData, rankForLeg } from "./planner";
 import { trackingView, recordPosition, mergedOrderEtas } from "./tracking";
 import { addCheckCall } from "./check-calls";
@@ -380,5 +384,71 @@ describe("a rate con with the AI reader off (F-34.6, dispatch M26)", () => {
     await attachDraftRateCon(a, d.documentId, o.order.id);
     const [doc] = await db.select().from(s.documents).where(eq(s.documents.id, d.documentId));
     expect([doc.subjectKind, doc.subjectId, doc.code]).toEqual(["order", o.order.id, "RATE_CON"]);
+  });
+});
+
+describe("board hygiene, messages, hand-off words, import guard (F-34.7, dispatch N9, M22, M12, owner #27)", () => {
+  const usStops = () => [
+    { type: "pickup" as const, name: "Laredo Yard", country: "US", address: { city: "Laredo", state: "TX" }, windowStart: day(1) },
+    { type: "delivery" as const, name: "Dallas DC", country: "US", address: { city: "Dallas", state: "TX" }, windowStart: day(2) },
+  ];
+
+  it("a Tender expired flag goes by itself once the leg is covered again (a truck, or a flag left from before)", async () => {
+    const lone = (await create(a, "carrier", { name: "Lone Star", country: "US", mcNumber: "MC9", dispatchEmail: "d@ls.test" })).id;
+    const o = await createOrder(a, { customerId: f.cust, rateCents: 150000, stops: usStops(), book: true });
+    const t = await sendTender(a, o.legs[0].id, { carrierId: lone, rateCents: 90000, expiresInMinutes: 30 });
+    await db.update(s.tenders).set({ expiresAt: new Date(Date.now() - 60_000) }).where(eq(s.tenders.id, t.tender.id));
+    await expireTenders(new Date(), { tenantId: a.tenantId });
+    const open = async () => (await board(a)).find((r) => r.order.id === o.order.id)!.openFlags.map((x) => x.code);
+    expect(await open()).toEqual(["tender_expired"]);
+    await planLeg(a, o.legs[0].id, { kind: "truck", truckId: f.t211, driverId: f.ramiro });
+    expect(await open()).toEqual([]);
+    // a flag some older path left behind on a covered leg is swept on read
+    await db.insert(s.flags).values({ id: "stale-flag", tenantId: a.tenantId, orderId: o.order.id, legId: o.legs[0].id, code: "tender_expired", level: "red", title: "Tender expired — old", owner: "dispatch" });
+    expect(await open()).toEqual([]);
+  });
+
+  it("a driver's message with no leg picked lands on the leg they are on", async () => {
+    const o = await createOrder(a, { customerId: f.cust, rateCents: 150000, stops: usStops(), book: true });
+    await planLeg(a, o.legs[0].id, { kind: "truck", truckId: f.t211, driverId: f.ramiro });
+    await dispatchLeg(a, o.legs[0].id);
+    await advanceLeg(a, o.legs[0].id, "accepted");
+    const m = await driverMessage(a.tenantId, f.ramiro, null, "Still on the door at Trinity, 1 more hour");
+    expect([m.legId, m.orderId]).toEqual([o.legs[0].id, o.order.id]);
+    const other = await driverMessage(a.tenantId, f.arturo, null, "En la fila del puente");
+    expect(other.legId).toBeNull(); // not on a load: stays unattached
+  });
+
+  it("a drop at the border yard says Dropped, not Delivered — empty; a real delivery keeps its words", async () => {
+    expect(handoffStep("at_delivery", "border_yard")).toEqual({ en: "Dropped at the border yard", es: "Dejé la caja en el patio" });
+    expect(handoffStep("en_route", "yard")?.en).toBe("Arrived at the yard");
+    expect(handoffStep("at_delivery", "delivery")).toBeNull();
+    const o = await createOrder(a, { customerId: f.cust, rateCents: 295000, book: true, stops: [
+      { type: "pickup", name: "Maquila Nuevo Laredo", country: "MX", address: { city: "Nuevo Laredo", state: "TAMPS" }, windowStart: day(1) },
+      { type: "border_yard", name: "Patio Nuevo Laredo", country: "MX", address: { city: "Nuevo Laredo", state: "TAMPS" } },
+      { type: "delivery", name: "Dallas DC", country: "US", address: { city: "Dallas", state: "TX" }, windowStart: day(2) },
+    ] });
+    const mx = o.legs[0];
+    await db.update(s.trucks).set({ mxPlateClass: "blue" }).where(eq(s.trucks.id, f.t212)); // federal plates: may run the MX leg
+    await planLeg(a, mx.id, { kind: "truck", truckId: f.t212, driverId: f.arturo });
+    await dispatchLeg(a, mx.id);
+    for (const st of ["accepted", "en_route_to_pickup", "at_pickup", "loaded", "en_route", "at_delivery"] as const) await advanceLeg(a, mx.id, st, { source: "driver_app" });
+    const today = await driverToday(a.tenantId, f.arturo);
+    const item = today.items.find((i) => i.leg.id === mx.id)!;
+    expect(item.next).toMatchObject({ to: "completed", label: "Dropped at the border yard" });
+  });
+
+  it("import with Book them now: a load with its stops out of order is warned about AND left a draft", async () => {
+    const csv = [
+      "Customer,Rate,PO,Pickup Name,Pickup City,Pickup State,Pickup Date,Pickup Time,Delivery Name,Delivery City,Delivery State,Delivery Date,Delivery Time",
+      "Linamar,1200,P-1,Plant,Laredo,TX,2026-11-03,08:00,DC,Dallas,TX,2026-11-04,08:00",
+      "Linamar,1300,P-2,Plant,Laredo,TX,2026-11-05,08:00,DC,Dallas,TX,2026-11-04,08:00",
+    ].join("\n");
+    const r = await importLoads(a, await readTable({ fileName: "plan.csv", bytes: Buffer.from(csv) }), { book: true });
+    const states = await Promise.all(r.created.map(async (c) => (await db.select({ state: s.orders.state }).from(s.orders).where(eq(s.orders.id, c.orderId)))[0].state));
+    expect(states).toEqual(["booked", "draft"]);
+    expect(r.created[1].warnings.join("; ")).toMatch(/scheduled before stop 1/);
+    expect(r.created[1].draftWhy).toMatch(/left as a draft: the stops are out of order/);
+    expect(r.created[0].draftWhy).toBeNull();
   });
 });

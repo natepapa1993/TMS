@@ -1119,8 +1119,8 @@ export async function planLeg(ctx: Ctx, legId: string, a: Assignment, opts: Plan
       after = await setLegState(tx, ctx, leg, "planned", { source: "dispatcher", note: opts.reason }, extra);
       await writeAudit(tx, ctx, "leg", leg.id, "assign", diff({}, assignment as Record<string, unknown>));
     }
-    // the leg has someone again: "declined" and "truck removed" are answered
-    await tx.update(s.flags).set({ clearedAt: new Date(), clearedBy: ctx.userId ?? "system" }).where(and(eq(s.flags.tenantId, ctx.tenantId), eq(s.flags.legId, leg.id), inArray(s.flags.code, ["declined", "truck_removed"]), isNull(s.flags.clearedAt)));
+    // the leg has someone again: "declined", "truck removed" and "tender expired" are answered (N9)
+    await tx.update(s.flags).set({ clearedAt: new Date(), clearedBy: ctx.userId ?? "system" }).where(and(eq(s.flags.tenantId, ctx.tenantId), eq(s.flags.legId, leg.id), inArray(s.flags.code, ["declined", "truck_removed", "tender_expired"]), isNull(s.flags.clearedAt)));
     await recomputeOrder(tx, ctx, order.id);
     return { leg: after, findings: elig.findings, kept: false };
   });

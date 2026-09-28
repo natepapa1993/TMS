@@ -20,7 +20,7 @@ export function ImportLoads() {
   const [preview, setPreview] = useState<Preview | null>(null);
   const [book, setBook] = useState(false);
   const [err, setErr] = useState<string | null>(null);
-  const [done, setDone] = useState<{ created: { key: string; orderNumber: string; orderId: string; warnings: string[] }[]; skipped: { key: string; errors: string[] }[]; booked: boolean } | null>(null);
+  const [done, setDone] = useState<{ created: { key: string; orderNumber: string; orderId: string; warnings: string[]; draftWhy: string | null }[]; skipped: { key: string; errors: string[] }[]; booked: boolean } | null>(null);
   const [pending, start] = useTransition();
   const input = useRef<HTMLInputElement>(null);
   const read = (f: File) =>
@@ -141,13 +141,13 @@ export function ImportLoads() {
               </Link>
             ))}
           </div>
-          {done.created.some((c) => c.warnings.length) && (
+          {done.created.some((c) => c.warnings.length || c.draftWhy) && (
             <ul className="mt-3 text-callout text-amber space-y-1" data-testid="import-warnings">
               {done.created
-                .filter((c) => c.warnings.length)
+                .filter((c) => c.warnings.length || c.draftWhy)
                 .map((c) => (
                   <li key={c.orderId}>
-                    {c.orderNumber}: {c.warnings.join("; ")}
+                    {c.orderNumber}: {[...c.warnings, ...(c.draftWhy ? [c.draftWhy] : [])].join("; ")}
                   </li>
                 ))}
             </ul>

@@ -268,7 +268,14 @@ export async function bulkBookAction(orderIds: string[]) {
     const live = picked.filter((x): x is NonNullable<typeof x> => !!x);
     const warn = await loadWarnings(ctx, live.map((x) => ({ key: x.order.orderNumber, customerId: x.order.customerId, refs: x.order.refs ?? {}, stops: x.stops, orderId: x.order.id })));
     const warnings = [...warn].flatMap(([k, ws]) => ws.map((w) => `${k}: ${w}`));
+    const { stopTimeProblems } = await import("@/domain/zones");
     for (const id of orderIds.slice(0, 500)) {
+      // stops out of order are not booked from the bulk action: open the load, fix the times, book it there
+      const x = live.find((p) => p.order.id === id);
+      if (x && x.order.state === "draft" && stopTimeProblems(x.stops).length) {
+        failed.push(`${x.order.orderNumber}: the stops are out of order — fix the times on the load, then book`);
+        continue;
+      }
       try {
         await O.bookOrder(ctx, id);
         booked++;

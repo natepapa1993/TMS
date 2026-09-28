@@ -180,7 +180,7 @@ export function DriverApp({ token, data }: { token: string; data: Data }) {
             {(cur.mids ?? []).map((m, i) => (
               <Place key={m.id} label={`Stop ${i + 2} · Parada ${i + 2}${m.departedAt ? " · done" : ""}`} s={m} active={cur.leg.state === "en_route" && !m.departedAt && !(cur.mids ?? []).slice(0, i).some((p) => !p.departedAt)} />
             ))}
-            <Place label="Deliver · Entregar" s={cur.to} active={["loaded", "at_delivery"].includes(cur.leg.state) || (cur.leg.state === "en_route" && !(cur.mids ?? []).some((m) => !m.departedAt))} />
+            <Place label={["yard", "border_yard", "transload", "terminal"].includes(cur.to?.type ?? "") ? "Drop at · Dejar en" : "Deliver · Entregar"} s={cur.to} active={["loaded", "at_delivery"].includes(cur.leg.state) || (cur.leg.state === "en_route" && !(cur.mids ?? []).some((m) => !m.departedAt))} />
             {cur.order.cargoNote && <div className="text-callout text-muted">📦 {cur.order.cargoNote}</div>}
           </div>
           <div className="px-4 pb-5">

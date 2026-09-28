@@ -308,5 +308,12 @@ export async function expireTenders(now = new Date(), opts: { tenantId?: string 
     }
     expired++;
   }
-  return { expired };
+  // a "tender expired" flag whose leg has been covered since (a truck, a carrier by any route) is stale: it goes (N9)
+  const stale = await db
+    .select({ id: s.flags.id })
+    .from(s.flags)
+    .innerJoin(s.legs, eq(s.legs.id, s.flags.legId))
+    .where(and(eq(s.flags.code, "tender_expired"), sql`${s.flags.clearedAt} is null`, sql`${s.legs.state} not in ('unassigned', 'declined')`, opts.tenantId ? eq(s.flags.tenantId, opts.tenantId) : sql`true`));
+  if (stale.length) await db.update(s.flags).set({ clearedAt: now, clearedBy: "system" }).where(inArray(s.flags.id, stale.map((x) => x.id)));
+  return { expired, cleared: stale.length };
 }
