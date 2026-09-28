@@ -1,4 +1,4 @@
-// Features: F-34.1 F-34.2 F-34.3
+// Features: F-34.1 F-34.2 F-34.3 F-34.4
 import { describe, it, expect, beforeEach } from "vitest";
 import { and, eq } from "drizzle-orm";
 import { truncateAll, makeTenant } from "@/test/helpers";
@@ -8,6 +8,10 @@ import * as s from "@/db/schema";
 import { createOrder, planLeg, dispatchLeg, advanceLeg, sendLeg, holdOrder } from "./orders";
 import { sendTender } from "./tenders";
 import { plannerData, rankForLeg } from "./planner";
+import { trackingView, recordPosition, mergedOrderEtas } from "./tracking";
+import { addCheckCall } from "./check-calls";
+import { customerPortalView } from "./customer-portal";
+import { draftStatusReply } from "./mail";
 import { availability, gapFor, type Booking } from "./planner-rules";
 import * as X from "./crossing";
 import { clearedCompletesLeg, crossingDriverNext } from "./crossing";
@@ -266,5 +270,43 @@ describe("availability as time windows; ranking by fit, then empty miles (F-34.3
     expect(r220.nextLoad).toMatchObject({ orderNumber: nx.order.orderNumber, makes: false });
     expect(r220.reason).toMatch(/^Can't make its next load/);
     expect(ranked.find((c) => c.unitNumber === "207")!.reason).toMatch(/^Free now/);
+  });
+});
+
+describe("one ETA everywhere (F-34.4, dispatch N4)", () => {
+  it("the check-call ETA beats GPS on the tracking page, the customer portal and the status reply — until a newer GPS position", async () => {
+    const H = 3600_000;
+    const due = new Date(Date.now() + 10 * H);
+    const o = await createOrder(a, { customerId: f.cust, rateCents: 150000, book: true, stops: [
+      { type: "pickup", name: "Laredo Yard", country: "US", address: { city: "Laredo", state: "TX" }, windowStart: new Date(Date.now() - 4 * H) },
+      { type: "delivery", name: "Dallas DC", country: "US", address: { city: "Dallas", state: "TX" }, windowStart: due, windowEnd: due },
+    ] });
+    await db.update(s.stops).set({ lat: "32.7767", lng: "-96.7970" }).where(eq(s.stops.id, o.stops[1].id));
+    const leg = o.legs[0].id;
+    await planLeg(a, leg, { kind: "truck", truckId: f.t211, driverId: f.ramiro });
+    await dispatchLeg(a, leg);
+    for (const st of ["accepted", "en_route_to_pickup", "at_pickup", "loaded", "en_route"] as const) await advanceLeg(a, leg, st);
+    // GPS near San Antonio 10 minutes ago: on time
+    await recordPosition(a, { source: "eld", lat: 29.42, lng: -98.49, truckId: f.t211, legId: leg, at: new Date(Date.now() - 10 * 60_000) });
+    let e = Object.values(await mergedOrderEtas(a.tenantId, o.order.id))[0];
+    expect([e.source, e.late]).toEqual(["gps", false]);
+    // dispatch hears "running late, tomorrow 1 PM": that is the ETA the customer sees everywhere
+    const late = new Date(Date.now() + 20 * H);
+    await addCheckCall(a, o.order.id, { status: "running_late", location: "I-35 N", etaAt: late });
+    e = Object.values(await mergedOrderEtas(a.tenantId, o.order.id))[0];
+    expect([e.source, e.late, e.at.getTime()]).toEqual(["check_call", true, late.getTime()]);
+    const v = await trackingView(a.tenantId, o.order.id);
+    expect(Object.values(v.etas)[0]).toMatchObject({ source: "check_call", late: true });
+    expect(new Date(Object.values(v.etas)[0].at).getTime()).toBe(late.getTime());
+    const portal = await customerPortalView(a.tenantId, f.cust);
+    const load = portal.active.find((l) => l.orderNumber === o.order.orderNumber)!;
+    expect(load.eta && [new Date(load.eta.at).getTime(), load.eta.late]).toEqual([late.getTime(), true]);
+    const reply = await draftStatusReply(a.tenantId, o.order.id, { fromName: "Ana", text: "where is it?", subject: "status" });
+    const { fmtWhen, stopZone } = await import("@/lib/time");
+    expect(reply).toContain(`ETA at Dallas DC: ${fmtWhen(late, stopZone({ country: "US", state: "TX", city: "Dallas", name: "Dallas DC" }, "America/Chicago"))}.`);
+    // a newer GPS position takes over again
+    await recordPosition(a, { source: "eld", lat: 30.27, lng: -97.74, truckId: f.t211, legId: leg, at: new Date() });
+    e = Object.values(await mergedOrderEtas(a.tenantId, o.order.id))[0];
+    expect(e.source).toBe("gps");
   });
 });

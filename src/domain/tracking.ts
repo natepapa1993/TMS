@@ -330,7 +330,8 @@ export async function trackingView(tenantId: string, orderId: string) {
     legs: legs.map((l) => ({ id: l.id, seq: l.seq, type: l.type, state: l.state, fromStopId: l.fromStopId, toStopId: l.toStopId })),
     events: events.map((e) => ({ at: e.at, legId: e.legId, toState: e.toState, verified: e.verified })),
     lastPosition: last[0] ? { at: last[0].at, lat: last[0].lat, lng: last[0].lng, place: last[0].place, source: last[0].source } : null,
-    etas: Object.fromEntries(Object.entries(await orderEtas(tenantId, orderId)).map(([legId, e]) => [legId, { at: e.at, stopId: e.stopId, miles: e.miles, late: e.late, positionAt: e.positionAt }])),
+    // the board's ETA: a check call's beats GPS until a newer position (N4)
+    etas: Object.fromEntries(Object.entries(await mergedOrderEtas(tenantId, orderId)).map(([legId, e]) => [legId, { at: e.at, stopId: e.stopId, miles: e.miles, late: e.late, positionAt: e.positionAt, source: e.source }])),
   };
 }
 
@@ -433,6 +434,32 @@ export async function orderEtas(tenantId: string, orderId: string, now = new Dat
     if (e) out[l.id] = e;
   }
   return out;
+}
+
+export type MergedEta = { at: Date; stopId: string | null; stopName: string; miles: number | null; late: boolean; positionAt: Date; source: "gps" | "check_call" };
+
+/**
+ * One ETA everywhere (N4): the same merge the board uses — the dispatcher's check-call ETA stands over the GPS
+ * math until a GPS position newer than the call comes in — for the customer's tracking page, the customer
+ * portal and the status replies, so the customer never gets two different ETAs. Keyed by leg id.
+ */
+export async function mergedOrderEtas(tenantId: string, orderId: string, now = new Date()): Promise<Record<string, MergedEta>> {
+  const { mergeCallEtas } = await import("./board-buckets");
+  const [gps, legs, stops, [call]] = await Promise.all([
+    orderEtas(tenantId, orderId, now),
+    db.select().from(s.legs).where(and(eq(s.legs.tenantId, tenantId), eq(s.legs.orderId, orderId))).orderBy(s.legs.seq),
+    db.select().from(s.stops).where(and(eq(s.stops.tenantId, tenantId), eq(s.stops.orderId, orderId))).orderBy(s.stops.seq),
+    db.select().from(s.checkCalls).where(and(eq(s.checkCalls.tenantId, tenantId), eq(s.checkCalls.orderId, orderId))).orderBy(desc(s.checkCalls.at)).limit(1),
+  ]);
+  const iso = (d: Date | null | undefined) => (d ? d.toISOString() : null);
+  const row = {
+    order: { id: orderId },
+    legs: legs.map((l) => ({ id: l.id, state: l.state, truckId: l.truckId, fromStopId: l.fromStopId, toStopId: l.toStopId })),
+    stops: stops.map((st) => ({ id: st.id, seq: st.seq, type: st.type, name: st.name, windowStart: iso(st.windowStart), windowEnd: iso(st.windowEnd), arrivedAt: iso(st.arrivedAt), departedAt: iso(st.departedAt) })),
+  };
+  const g = Object.fromEntries(Object.entries(gps).map(([k, e]) => [k, { at: e.at.toISOString(), stopId: e.stopId, stopName: e.stopName, miles: e.miles, late: e.late, positionAt: e.positionAt.toISOString(), source: "gps" as const }]));
+  const merged = mergeCallEtas([row], g, call ? { [orderId]: { at: call.at.toISOString(), etaAt: call.etaAt?.toISOString() ?? null, legId: call.legId } } : {});
+  return Object.fromEntries(Object.entries(merged).map(([k, e]) => [k, { at: new Date(e.at), stopId: e.stopId ?? null, stopName: e.stopName, miles: e.miles, late: e.late, positionAt: new Date(e.positionAt), source: e.source ?? "gps" }]));
 }
 
 /** ETAs for every moving leg in the company, keyed by leg id — one pass for the dispatch board. */

@@ -1171,6 +1171,15 @@
       "tests": [
         "src/domain/flow2.test.ts"
       ]
+    },
+    {
+      "id": "F-34.4",
+      "name": "One ETA everywhere: the customer tracking page, customer portal and status replies use the board's merged ETA (a check-call ETA beats GPS until a newer position)",
+      "milestone": "M34",
+      "status": "done",
+      "tests": [
+        "src/domain/flow2.test.ts"
+      ]
     }
   ]
 }
