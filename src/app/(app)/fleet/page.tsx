@@ -11,6 +11,7 @@ import { loadRefs } from "@/data/refs";
 import { QuickAdd } from "../settings/[kind]/quick-add";
 import { trailerBoard } from "@/domain/fleet";
 import { Trailers } from "./trailers";
+import { tenantZone } from "@/domain/company";
 
 export const metadata = { title: "Fleet" };
 export const dynamic = "force-dynamic";
@@ -80,7 +81,7 @@ export default async function FleetPage() {
           </div>
           <QuickAdd kind="trailer" fields={FIELDS.trailer} refs={trailerRefs.options} label="Add trailer" buttonClass="btn" />
         </div>
-        <Trailers rows={JSON.parse(JSON.stringify(cajas))} />
+        <Trailers rows={JSON.parse(JSON.stringify(cajas))} zone={await tenantZone(ctx.tenantId)} />
       </div>
     </div>
   );

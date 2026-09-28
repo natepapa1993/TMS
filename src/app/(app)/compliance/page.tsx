@@ -8,6 +8,8 @@ import { PageHeader } from "@/components/page-header";
 import { Pill } from "@/components/ui";
 import { ComplianceTable } from "./table";
 import { SafetyNav } from "./nav";
+import { tenantZone } from "@/domain/company";
+import { fmtWhen } from "@/lib/time";
 
 export const metadata = { title: "Compliance" };
 export const dynamic = "force-dynamic";
@@ -34,6 +36,8 @@ export default async function CompliancePage({ searchParams }: PageProps<"/compl
     await evaluateAll(ctx).catch(() => null);
     d = await dashboard(ctx);
   }
+  // times on the company's clock with the zone printed (safety N2)
+  const zone = await tenantZone(ctx.tenantId);
   const companyTab = sp.tab === "company";
   const [pending, blanks, company, companyDocs] = await Promise.all([pendingUploads(ctx), blankBlockingDates(ctx), companyStatus(ctx), subjectDocuments(ctx, "company" as SubjectKind, ctx.tenantId)]);
   const blankText = Object.entries(blanks.counts).map(([k, n]) => `${n} ${k}${n === 1 ? "" : "s"}`).join(", ");
@@ -78,7 +82,7 @@ export default async function CompliancePage({ searchParams }: PageProps<"/compl
           </>
         }
       >
-        Every driver, truck, trailer and carrier against your document rules. Last run {d.tiles.lastRun ? d.tiles.lastRun.toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) : "never"} · re-runs on every save and every hour.
+        Every driver, truck, trailer and carrier against your document rules. Last run {d.tiles.lastRun ? fmtWhen(d.tiles.lastRun, zone, { style: "short", now }) : "never"} · re-runs on every save and every hour.
       </PageHeader>
       <SafetyNav role={ctx.role} />
       <div className="px-gutter pb-10">
@@ -107,7 +111,7 @@ export default async function CompliancePage({ searchParams }: PageProps<"/compl
                 </>
               ) : (
                 <>
-                  <b>{blankText} with a required date left blank</b> (licence, medical card, annual inspection, I-94…) — shown as missing but still dispatchable. Enter them, then turn on blocking. (Hire prerequisites in the qualification file block regardless.)
+                  <b>{blankText} with a required date left blank</b> (licence, medical card, annual inspection, I-94…) — shown as missing but still dispatchable. Enter them, then turn on blocking. (Hire prerequisites in the qualification file block regardless, and so does a truck or trailer added after your first month with no annual inspection.)
                 </>
               )}
             </div>
@@ -117,7 +121,7 @@ export default async function CompliancePage({ searchParams }: PageProps<"/compl
         {graceUntil && (
           <div className="rounded-lg border border-amber/50 bg-amber-soft/40 px-4 py-3 mb-4 text-callout flex items-center gap-3" data-testid="dq-grace">
             <div className="flex-1">
-              <b>Qualification files: grace until {graceUntil.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}.</b> While you enter your drivers&rsquo; files, a blank hire prerequisite (application, road test, Clearinghouse query, pre-employment test) shows as missing without blocking. A pre-employment test waiting on its result blocks now. After the date every gap blocks dispatch.
+              <b>Qualification files: grace until {fmtWhen(graceUntil, zone, { style: "date" })}.</b> While you enter your drivers&rsquo; files, a blank hire prerequisite (application, road test, Clearinghouse query, pre-employment test) shows as missing without blocking. A pre-employment test waiting on its result blocks now. After the date every gap blocks dispatch.
             </div>
             {canSet && <DqGraceButton />}
           </div>

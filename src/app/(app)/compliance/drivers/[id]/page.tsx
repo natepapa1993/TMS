@@ -59,9 +59,14 @@ export default async function DriverSafetyFilePage({ params }: PageProps<"/compl
           </span>
         }
         actions={
-          <Link href={`/settings/drivers/${d.id}`} className="btn">
-            Driver record
-          </Link>
+          <>
+            <a href={`/api/compliance/dq-packet/${d.id}`} className="btn" data-testid="dq-packet" title="The qualification file for an auditor: every item with its dates, then every paper on file">
+              DQ file (PDF)
+            </a>
+            <Link href={`/settings/drivers/${d.id}`} className="btn">
+              Driver record
+            </Link>
+          </>
         }
       >
         {d.driverType} · {d.driverType === "B1" ? `licencia federal ${d.mxLicenseNumber ?? "—"}` : `licence ${d.licenseNumber ?? "—"} ${d.licenseState ?? ""} ${d.licenseClass ? `class ${d.licenseClass}` : ""}`} · hired {d.hireDate ? day(d.hireDate) : "— (add the hire date on the driver record: 30-day and annual items count from it)"}

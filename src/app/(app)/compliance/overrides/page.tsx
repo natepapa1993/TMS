@@ -3,6 +3,8 @@ import { requireCtx } from "@/lib/auth";
 import { overrideLog } from "@/domain/safety";
 import { PageHeader } from "@/components/page-header";
 import { SafetyNav } from "../nav";
+import { tenantZone } from "@/domain/company";
+import { fmtWhen } from "@/lib/time";
 
 export const metadata = { title: "Overrides" };
 export const dynamic = "force-dynamic";
@@ -21,7 +23,7 @@ export default async function OverridesPage({ searchParams }: PageProps<"/compli
   const sp = await searchParams;
   const kind = typeof sp.kind === "string" ? sp.kind : "";
   const days = [30, 90, 365].includes(Number(sp.days)) ? Number(sp.days) : 90;
-  const rows = await overrideLog(ctx, { days, kind: kind || undefined });
+  const [rows, zone] = await Promise.all([overrideLog(ctx, { days, kind: kind || undefined }), tenantZone(ctx.tenantId)]);
   const q = (k: string, d: number) => `/compliance/overrides?${new URLSearchParams({ ...(k ? { kind: k } : {}), days: String(d) })}`;
   return (
     <div>
@@ -72,7 +74,7 @@ export default async function OverridesPage({ searchParams }: PageProps<"/compli
               <tbody>
                 {rows.map((r) => (
                   <tr key={r.id}>
-                    <td className="whitespace-nowrap">{new Date(r.at).toLocaleString("en-US", { month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit" })}</td>
+                    <td className="whitespace-nowrap">{fmtWhen(r.at, zone, { style: "short", year: true })}</td>
                     <td className="font-semibold">{r.who}</td>
                     <td>
                       <span className={`pill ${r.kind === "paperwork" ? "pill-red" : r.kind === "dispatch" ? "pill-amber" : "pill-slate"}`}>{KIND_LABEL[r.kind]}</span>

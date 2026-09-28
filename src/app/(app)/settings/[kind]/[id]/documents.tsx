@@ -7,6 +7,8 @@ import { Modal, Pill, Spinner, Toast, useToast } from "@/components/ui";
 import type { ComplianceItem } from "@/db/schema";
 import type { SubjectKind } from "@/domain/compliance";
 import { uploadSubjectDocAction, readSubjectDocAction, reviewSubjectDocAction } from "@/app/(app)/compliance/actions";
+import { fmtWhen } from "@/lib/time";
+import { useZone } from "@/components/zone";
 
 type Doc = { id: string; documentTypeId: string | null; code: string | null; fileName: string; status: string; version: number; expiresAt: string | null; issuedAt: string | null; number: string | null; source: string; createdAt: string };
 const INSPECTION = ["field:dotInspectionExpires", "field:inspectionExpires"];
@@ -21,6 +23,7 @@ const tone: Record<string, "green" | "amber" | "red" | "slate"> = { ok: "green",
  */
 export function SubjectDocuments({ kind, subjectId, docs, types, status, canEdit, canEditCredentials = false, title = "Compliance" }: { kind: SubjectKind | "company"; subjectId: string; docs: Doc[]; types: DocType[]; status: { dispatchable: boolean; items: ComplianceItem[]; override: { reason: string; expiresAt: string } | null } | null; canEdit: boolean; canEditCredentials?: boolean; title?: string }) {
   const router = useRouter();
+  const zone = useZone(); // the company's clock: the server's render and the browser agree (hydration #418)
   const t = useToast();
   const [open, setOpen] = useState<string | null>(null);
   const [pending, start] = useTransition();
@@ -58,7 +61,7 @@ export function SubjectDocuments({ kind, subjectId, docs, types, status, canEdit
     <div className="card p-4" id="documents">
       <div className="flex items-center justify-between">
         <div className="eyebrow">{title}</div>
-        {status && kind !== "company" && (status.dispatchable ? status.override ? <Pill tone="amber">override until {new Date(status.override.expiresAt).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric" })}</Pill> : <Pill tone="green">Dispatchable</Pill> : <Pill tone="red">Blocked</Pill>)}
+        {status && kind !== "company" && (status.dispatchable ? status.override ? <Pill tone="amber">override until {fmtWhen(status.override.expiresAt, zone, { style: "short" })}</Pill> : <Pill tone="green">Dispatchable</Pill> : <Pill tone="red">Blocked</Pill>)}
       </div>
       {status && status.items.length > 0 && (
         <ul className="mt-2 space-y-1">
@@ -125,7 +128,7 @@ export function SubjectDocuments({ kind, subjectId, docs, types, status, canEdit
                 <a href={`/api/files/${d.id}`} target="_blank" rel="noreferrer" className="hover:text-teal">
                   {typeName(d)} v{d.version} · {d.fileName}
                 </a>
-                {d.expiresAt ? ` · exp ${day(d.expiresAt)}` : ""} · {d.status === "rejected" ? "sent back" : "replaced"} {new Date(d.createdAt).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}
+                {d.expiresAt ? ` · exp ${day(d.expiresAt)}` : ""} · {d.status === "rejected" ? "sent back" : "replaced"} {fmtWhen(d.createdAt, zone, { style: "date" })}
               </li>
             ))}
           </ul>
@@ -232,6 +235,7 @@ export function SubjectDocuments({ kind, subjectId, docs, types, status, canEdit
 
 /** A photo the driver sent: open it, fix the dates if needed, confirm it onto the file or send it back with a reason. */
 function PendingDoc({ doc, typeName, tracksExpiry, canEdit, onDone }: { doc: Doc; typeName: string; tracksExpiry: boolean; canEdit: boolean; onDone: (msg: string) => void }) {
+  const zone = useZone();
   const [expiresAt, setExpiresAt] = useState(doc.expiresAt ? doc.expiresAt.slice(0, 10) : "");
   const [number, setNumber] = useState(doc.number ?? "");
   const [reason, setReason] = useState("");
@@ -244,7 +248,7 @@ function PendingDoc({ doc, typeName, tracksExpiry, canEdit, onDone }: { doc: Doc
         <a href={`/api/files/${doc.id}`} target="_blank" rel="noreferrer" className="font-semibold hover:text-teal truncate">
           {typeName} <span className="text-faint font-normal">· {doc.fileName}</span>
         </a>
-        <span className="text-muted whitespace-nowrap">sent {new Date(doc.createdAt).toLocaleDateString("en-US", { month: "short", day: "numeric" })}</span>
+        <span className="text-muted whitespace-nowrap">sent {fmtWhen(doc.createdAt, zone, { style: "date" })}</span>
       </div>
       {canEdit && (
         <div className="mt-2 grid grid-cols-[1fr_1fr_auto_auto] gap-2 items-end">

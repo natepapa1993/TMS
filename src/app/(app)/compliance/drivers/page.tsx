@@ -4,19 +4,22 @@ import { dqOverview } from "@/domain/safety";
 import { DQ_ITEMS } from "@/domain/safety-rules";
 import { PageHeader } from "@/components/page-header";
 import { SafetyNav } from "../nav";
+import { tenantZone } from "@/domain/company";
+import { fmtWhen } from "@/lib/time";
 
 export const metadata = { title: "Driver files" };
 export const dynamic = "force-dynamic";
 
 const TONE: Record<string, string> = { ok: "pill-green", expiring: "pill-amber", expired: "pill-red", missing: "pill-amber" };
 const SHORT: Record<string, string> = { application: "Application", mvr_hire: "Record at hire", road_test: "Road test", clearinghouse_full: "CH full query", pre_employment_test: "Pre-emp. test", prior_employers: "Prior employers", mvr_annual: "Annual record", annual_review: "Annual review", clearinghouse_annual: "CH annual" };
-const day = (iso: string | null) => (iso ? new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "2-digit", timeZone: "UTC" }) : "");
 
 export default async function DriverFilesPage({ searchParams }: PageProps<"/compliance/drivers">) {
   const ctx = await requireCtx();
   const sp = await searchParams;
   const only = sp.f === "gaps";
-  const all = await dqOverview(ctx);
+  const [all, zone] = await Promise.all([dqOverview(ctx), tenantZone(ctx.tenantId)]);
+  // four-digit years on the company's calendar: "Sep 13, 2025", never "Sep 13, 25" (safety N16)
+  const day = (iso: string | null) => fmtWhen(iso, zone, { style: "date" }) ?? "";
   const rows = only ? all.filter((d) => d.missing || d.overdue) : all;
   const gaps = all.filter((d) => d.missing || d.overdue).length;
   return (

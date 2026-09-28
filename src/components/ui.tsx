@@ -1,10 +1,12 @@
 "use client";
 
-import { useEffect, useId, useState, type ReactNode } from "react";
+import { useEffect, useId, useState, useSyncExternalStore, type ReactNode } from "react";
 import { MoreHorizontal, X } from "lucide-react";
 import { createPortal } from "react-dom";
 
 /** Small, dependency-free primitives. Everything the screens need to feel like one product. */
+
+const noSubscribe = () => () => {};
 
 export function Modal({ open, onClose, title, children, wide, footer }: { open: boolean; onClose: () => void; title: ReactNode; children: ReactNode; wide?: boolean; footer?: ReactNode }) {
   const titleId = useId();
@@ -14,7 +16,10 @@ export function Modal({ open, onClose, title, children, wide, footer }: { open: 
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [open, onClose]);
-  if (!open || typeof document === "undefined") return null;
+  // a modal open on the first paint (?add=1) renders after hydration: the server has no document.body, and a
+  // portal that appears only in the browser is hydration error #418 (settings lists)
+  const mounted = useSyncExternalStore(noSubscribe, () => true, () => false);
+  if (!open || !mounted) return null;
   return createPortal(
     <div className="overlay" onMouseDown={(e) => e.target === e.currentTarget && onClose()} role="presentation">
       <div className={`modal ${wide ? "modal-wide" : ""}`} role="dialog" aria-modal="true" aria-label={typeof title === "string" ? title : undefined} aria-labelledby={typeof title === "string" ? undefined : titleId}>

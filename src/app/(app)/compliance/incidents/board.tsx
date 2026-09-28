@@ -4,22 +4,23 @@ import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Modal, Pill, Toast, useToast } from "@/components/ui";
 import { saveIncidentAction } from "../actions";
+import { useClock } from "@/components/zone";
+import { toZoneInput, fromZoneInput, zoneLabel } from "@/lib/time";
 
 type Inc = { id: string; occurredAt: string; kind: string; driverId: string | null; truckId: string | null; trailerId: string | null; location: string | null; description: string; dotRecordable: boolean; injuries: boolean; towAway: boolean; fatality: boolean; citation: boolean; preventable: string | null; policeReport: string | null; claimNumber: string | null; status: string; postAccident: { alcoholBy: string; drugBy: string; why: string } | null; tests: { alcohol: boolean; drug: boolean } | null };
 type Opt = { id: string; name: string };
 const KINDS = [["accident", "Accident"], ["injury", "Injury"], ["cargo", "Cargo claim"], ["roadside_inspection", "Roadside inspection (log it under Inspections)"], ["citation", "Citation"], ["near_miss", "Near miss"], ["other", "Other"]];
-/** An instant as the value of a datetime-local input, in the viewer's own clock (the input has no zone). */
-const toLocalInput = (iso: string | Date) => {
-  const d = new Date(iso);
-  return new Date(d.getTime() - d.getTimezoneOffset() * 60_000).toISOString().slice(0, 16);
-};
-const blank = () => ({ occurredAt: toLocalInput(new Date()), kind: "accident", driverId: "", truckId: "", trailerId: "", location: "", description: "", dotRecordable: false, injuries: false, towAway: false, fatality: false, citation: false, preventable: "", policeReport: "", claimNumber: "", status: "open" });
-const when = (iso: string) => new Date(iso).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+const blankAt = (occurredAt: string) => ({ occurredAt, kind: "accident", driverId: "", truckId: "", trailerId: "", location: "", description: "", dotRecordable: false, injuries: false, towAway: false, fatality: false, citation: false, preventable: "", policeReport: "", claimNumber: "", status: "open" });
 
 export function IncidentsBoard({ rows, drivers, trucks, trailers, role }: { rows: Inc[]; drivers: Opt[]; trucks: Opt[]; trailers: Opt[]; role: string }) {
   const router = useRouter();
+  // every time here on the company's clock with its zone, typed and printed: the 8 h / 32 h deadlines read the same for everyone (safety N2)
+  const clock = useClock();
+  const toInput = (d: string | Date) => toZoneInput(d, clock.zone);
+  const blank = () => blankAt(toInput(new Date()));
+  const when = (iso: string) => clock.at(iso, { style: "short" });
   const t = useToast();
-  const [edit, setEdit] = useState<{ id: string | null; f: ReturnType<typeof blank> } | null>(null);
+  const [edit, setEdit] = useState<{ id: string | null; f: ReturnType<typeof blankAt> } | null>(null);
   const [pending, start] = useTransition();
   const canEdit = ["owner", "compliance"].includes(role);
   const name = (o: Opt[], id: string | null) => o.find((x) => x.id === id)?.name ?? "";
@@ -52,8 +53,8 @@ export function IncidentsBoard({ rows, drivers, trucks, trailers, role }: { rows
             </thead>
             <tbody>
               {rows.map((r) => (
-                <tr key={r.id} className="cursor-pointer" onClick={() => canEdit && setEdit({ id: r.id, f: { ...blank(), occurredAt: toLocalInput(r.occurredAt), kind: r.kind, driverId: r.driverId ?? "", truckId: r.truckId ?? "", trailerId: r.trailerId ?? "", location: r.location ?? "", description: r.description, dotRecordable: r.dotRecordable, injuries: r.injuries, towAway: r.towAway, fatality: r.fatality, citation: r.citation, preventable: r.preventable ?? "", policeReport: r.policeReport ?? "", claimNumber: r.claimNumber ?? "", status: r.status } })}>
-                  <td className="whitespace-nowrap">{new Date(r.occurredAt).toLocaleString("en-US", { month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit" })}</td>
+                <tr key={r.id} className="cursor-pointer" onClick={() => canEdit && setEdit({ id: r.id, f: { ...blank(), occurredAt: toInput(r.occurredAt), kind: r.kind, driverId: r.driverId ?? "", truckId: r.truckId ?? "", trailerId: r.trailerId ?? "", location: r.location ?? "", description: r.description, dotRecordable: r.dotRecordable, injuries: r.injuries, towAway: r.towAway, fatality: r.fatality, citation: r.citation, preventable: r.preventable ?? "", policeReport: r.policeReport ?? "", claimNumber: r.claimNumber ?? "", status: r.status } })}>
+                  <td className="whitespace-nowrap">{clock.at(r.occurredAt, { style: "short", year: true })}</td>
                   <td className="capitalize">{r.kind.replace("_", " ")}</td>
                   <td>
                     {name(drivers, r.driverId)} {r.truckId ? `· ${name(trucks, r.truckId)}` : ""}
@@ -103,7 +104,7 @@ export function IncidentsBoard({ rows, drivers, trucks, trailers, role }: { rows
                 disabled={pending}
                 onClick={() =>
                   start(async () => {
-                    const r = await saveIncidentAction(edit.id, { ...edit.f, occurredAt: new Date(edit.f.occurredAt).toISOString() });
+                    const r = await saveIncidentAction(edit.id, { ...edit.f, occurredAt: fromZoneInput(edit.f.occurredAt, clock.zone)?.toISOString() ?? "" });
                     if (r.ok) {
                       setEdit(null);
                       t.ok("Saved");
@@ -119,7 +120,7 @@ export function IncidentsBoard({ rows, drivers, trucks, trailers, role }: { rows
         >
           <div className="grid grid-cols-3 gap-3">
             <div>
-              <label className="label">When</label>
+              <label className="label">When ({zoneLabel(clock.zone)})</label>
               <input type="datetime-local" className="input" value={edit.f.occurredAt} onChange={(e) => setEdit({ ...edit, f: { ...edit.f, occurredAt: e.target.value } })} />
             </div>
             <div>

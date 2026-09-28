@@ -42,7 +42,7 @@ export default async function RecordPage({ params }: PageProps<"/settings/[kind]
   const row = await get(ctx, kind, id).catch(() => null);
   if (!row) notFound();
   const meta = KIND_META[kind];
-  const [{ options }, hist, blockers, people] = await Promise.all([loadRefs(ctx, kind), history(ctx, kind, id), archiveBlockers(ctx, kind, id), db.select({ id: users.id, name: users.name }).from(users).where(eq(users.tenantId, ctx.tenantId))]);
+  const [{ options, names }, hist, blockers, people] = await Promise.all([loadRefs(ctx, kind), history(ctx, kind, id), archiveBlockers(ctx, kind, id), db.select({ id: users.id, name: users.name }).from(users).where(eq(users.tenantId, ctx.tenantId))]);
   const who = new Map(people.map((p) => [p.id, p.name]));
   const companyZone = await tenantZone(ctx.tenantId);
   const isSubject = ["driver", "truck", "trailer", "carrier"].includes(kind);
@@ -184,7 +184,7 @@ export default async function RecordPage({ params }: PageProps<"/settings/[kind]
                     <div className="text-muted">{h.userId ? (who.get(h.userId) ?? "someone") : "system"}</div>
                     {h.changes && (() => {
                       // every field that changed, by its label; long edits fold after six so none is dropped
-                      const lines = changeLines(h.changes, FIELDS[kind]);
+                      const lines = changeLines(h.changes, FIELDS[kind], names);
                       return (
                         <div className="text-muted mt-0.5" data-testid="history-changes">
                           {lines.slice(0, 6).join(" · ")}

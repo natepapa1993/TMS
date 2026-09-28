@@ -3,9 +3,11 @@ import { Pill } from "@/components/ui";
 
 type Row = { id: string; unitNumber: string; kind: string; lengthFt: number | null; usPlate: string | null; status: string; inspectionExpires: string | null; now: { orderId: string; orderNumber: string; legType: string; state: string; route: string } | null; last: { orderNumber: string; where: string | null; at: string | null } | null; idleDays: number | null; loads: number };
 
-const when = (d: string | null) => (d ? new Date(d).toLocaleDateString("en-US", { month: "short", day: "numeric" }) : "");
+import { fmtWhen } from "@/lib/time";
 
-export function Trailers({ rows }: { rows: Row[] }) {
+export function Trailers({ rows, zone }: { rows: Row[]; zone: string }) {
+  // the company's calendar, not the server's (safety N2)
+  const when = (d: string | null) => fmtWhen(d, zone, { style: "date" }) ?? "";
   if (!rows.length)
     return (
       <div className="card p-8 text-center">

@@ -221,3 +221,46 @@ describe("new blocking rules start with the 14-day grace (safety N9)", () => {
     expect(st.items.find((i) => i.label === "Permit book")!.graceUntil).toBeTruthy();
   });
 });
+
+describe("history reads in words (safety N12)", () => {
+  it("a reference shows the name it points to, a status in words, never a raw column name", async () => {
+    const { changeLines } = await import("@/data/history");
+    const { FIELDS } = await import("@/data/fields");
+    const names = new Map([[f.t1, "Q317"]]);
+    expect(changeLines({ currentTruckId: { from: null, to: f.t1 } }, FIELDS.driver, names)).toEqual(["Current unit: — → Q317"]);
+    expect(changeLines({ status: { from: "oos", to: "active" }, oosReason: { from: "Roadside OOS", to: null } }, FIELDS.truck)).toEqual(["Status: out of service → active", "Out-of-service reason: Roadside OOS → —"]);
+    expect(changeLines({ driverType: { from: "CDL", to: "B1" } }, FIELDS.driver)[0]).not.toMatch(/driverType/);
+  });
+});
+
+describe("qualification-file dates make sense against the hire (safety #13)", () => {
+  it("an MVR 15 months before the hire is refused; one within 30 days is on file; an annual item can't predate the hire", async () => {
+    const { update } = await import("@/data/records");
+    await update(a, "driver", f.d1, { hireDate: new Date("2026-09-28T12:00:00Z") });
+    await expect(S.recordDq(a, f.d1, "mvr_hire", { completedAt: new Date("2025-06-01T12:00:00Z") })).rejects.toThrow(/more than 30 days before the hire on Sep 28, 2026/);
+    await expect(S.recordDq(a, f.d1, "annual_review", { completedAt: new Date("2026-06-01T12:00:00Z") })).rejects.toThrow(/after the hire/);
+    await expect(S.recordDq(a, f.d1, "application", { completedAt: new Date("2024-06-01T12:00:00Z") })).rejects.toThrow(/more than a year before the hire/);
+    await S.recordDq(a, f.d1, "mvr_hire", { completedAt: new Date("2026-09-10T12:00:00Z") });
+    await S.recordDq(a, f.d1, "application", { completedAt: new Date("2026-09-01T12:00:00Z") });
+  });
+});
+
+describe("the qualification file as one PDF for an auditor (safety #19)", () => {
+  it("lists every item with its dates and appends the papers on file, latest per item", async () => {
+    const { PDFDocument } = await import("pdf-lib");
+    const pdf = await PDFDocument.create();
+    pdf.addPage([612, 792]);
+    const app = Buffer.from(await pdf.save());
+    await S.recordDq(a, f.d1, "application", { completedAt: days(-90), file: { fileName: "application.pdf", mimeType: "application/pdf", bytes: app } });
+    await S.recordDq(a, f.d1, "road_test", { completedAt: days(-95), note: "Examiner J. Soto" });
+    const { driverDqPacket } = await import("./dq-packet");
+    const p = await driverDqPacket(a, f.d1);
+    expect(p.fileName).toMatch(/^dq-file-fernando-aguilar-\d{4}-\d{2}-\d{2}\.pdf$/);
+    expect(p.parts).toEqual(["Employment application — application.pdf"]);
+    expect(p.summary.lines.find((l) => l.label === "Employment application")).toMatchObject({ status: "on file", file: "application.pdf" });
+    expect(p.summary.lines.find((l) => l.label.startsWith("Road test"))!.note).toBe("Examiner J. Soto");
+    const out = await PDFDocument.load(p.bytes);
+    expect(out.getPageCount()).toBe(2); // summary + the application
+    await expect(driverDqPacket({ ...a, role: "driver" }, f.d1)).rejects.toThrow(/permission/);
+  });
+});

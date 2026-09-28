@@ -47,6 +47,23 @@ export const DQ_ITEMS: DqItemDef[] = [
   { key: "clearinghouse_annual", label: () => "Clearinghouse limited query (annual)", cite: "382.701(b)", cadence: "annual", blocks: false, hint: "At least once every 12 months (a full query also counts)." },
 ];
 
+/**
+ * A qualification-file date that can't be right for this hire (safety #13): an MVR pulled more than 30 days before
+ * the hire (391.23 wants one within 30 days of it), an "annual" item from before the driver was hired, anything
+ * dated more than a year before the hire. Returns the refusal, or null. No hire date on the record: no check.
+ */
+export function dqDateProblem(itemKey: string, completedAt: Date, hireDate: Date | string | null | undefined): string | null {
+  if (!hireDate) return null;
+  const hire = new Date(hireDate);
+  if (Number.isNaN(hire.getTime())) return null;
+  const d = (x: Date) => x.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: "UTC" });
+  const days = (completedAt.getTime() - hire.getTime()) / DAY;
+  if (itemKey === "mvr_hire" && days < -30) return `A record from ${d(completedAt)} is more than 30 days before the hire on ${d(hire)}: pull a new one within 30 days of the hire (391.23(a))`;
+  if (["mvr_annual", "annual_review", "clearinghouse_annual"].includes(itemKey) && days < -1) return `The annual item comes after the hire on ${d(hire)}; record the at-hire item instead`;
+  if (days < -365) return `${d(completedAt)} is more than a year before the hire on ${d(hire)} — check the date, or the hire date on the driver record`;
+  return null;
+}
+
 export type DqRecordLike = { itemKey: string; completedAt: Date | string | null; notRequired: boolean; note?: string | null; createdAt: Date | string; documentId?: string | null };
 export type DqLine = { key: string; label: string; cite: string; hint: string; cadence: DqItemDef["cadence"]; blocks: boolean; status: ComplianceItem["status"]; completedAt: string | null; dueAt: string | null; notRequired: boolean; note: string | null; documentId: string | null };
 

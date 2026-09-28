@@ -7,17 +7,21 @@ import { list } from "@/data/records";
 import { PageHeader } from "@/components/page-header";
 import { SafetyNav } from "../nav";
 import { InspectionButton, RepairButton } from "../safety-ui";
+import { tenantZone } from "@/domain/company";
+import { fmtWhen } from "@/lib/time";
 
 export const metadata = { title: "Inspections" };
 export const dynamic = "force-dynamic";
 
-const day = (v: string | Date) => new Date(v).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
 const pct = (r: number | null) => (r == null ? "—" : `${(r * 100).toFixed(1)}%`);
 const COUNTRY: Record<string, string> = { US: "United States · SMS", CA: "Canada · CVOR / NSC", MX: "Mexico · SCT" };
 
 export default async function InspectionsPage() {
   const ctx = await requireCtx();
   const canEdit = can(ctx, "compliance.edit");
+  // the company's clock with the zone printed (safety N2): an inspection at 1:10 PM reads 1:10 PM CDT for everyone
+  const zone = await tenantZone(ctx.tenantId);
+  const when = (v: string | Date) => fmtWhen(v, zone, { style: "short", year: true });
   const [b, drivers, trucks, trailers] = await Promise.all([inspectionsBoard(ctx), list(ctx, "driver", { limit: 2000 }), list(ctx, "truck", { limit: 2000 }), list(ctx, "trailer", { limit: 2000 })]);
   // pickers in name / unit-number order
   const opts = { drivers: drivers.map((d) => ({ id: d.id, name: String(d.name) })).sort((p, q) => p.name.localeCompare(q.name, "en-US", { numeric: true })), trucks: trucks.map((t) => ({ id: t.id, name: String(t.unitNumber) })).sort((p, q) => p.name.localeCompare(q.name, "en-US", { numeric: true })), trailers: trailers.map((t) => ({ id: t.id, name: String(t.unitNumber) })).sort((p, q) => p.name.localeCompare(q.name, "en-US", { numeric: true })) };
@@ -149,7 +153,7 @@ export default async function InspectionsPage() {
               <tbody>
                 {b.list.map((i) => (
                   <tr key={i.id}>
-                    <td className="whitespace-nowrap">{day(i.inspectedAt)}</td>
+                    <td className="whitespace-nowrap">{when(i.inspectedAt)}</td>
                     <td className="whitespace-nowrap">
                       {i.jurisdiction ?? i.country} · L{i.level}
                       {i.hazmat ? " · HM" : ""}
@@ -181,7 +185,7 @@ export default async function InspectionsPage() {
                         const units = [o.truck.length ? name(opts.trucks, i.truckId) : "", o.trailer.length ? name(opts.trailers, i.trailerId) : ""].filter(Boolean).join(" and ");
                         return (
                           <>
-                            {o.driver.length > 0 && i.driverOosUntil && <div className="text-footnote text-red mt-1">Driver out of service until {new Date(i.driverOosUntil).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}</div>}
+                            {o.driver.length > 0 && i.driverOosUntil && <div className="text-footnote text-red mt-1">Driver out of service until {when(i.driverOosUntil)}</div>}
                             {units && !i.repair && (
                               <div className="mt-1.5 flex items-center gap-2" data-testid="unit-oos">
                                 <span className="text-footnote text-red font-semibold">{units} out of service until the repair is signed off</span>
@@ -190,7 +194,7 @@ export default async function InspectionsPage() {
                             )}
                             {units && i.repair && (
                               <div className="text-footnote text-muted mt-1" data-testid="repair-signed">
-                                Repair signed off by {i.repair.byName}, {day(i.repair.at)}: {i.repair.note}
+                                Repair signed off by {i.repair.byName}, {when(i.repair.at)}: {i.repair.note}
                                 {i.repair.documentId && (
                                   <>
                                     {" · "}

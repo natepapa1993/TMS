@@ -8,7 +8,7 @@ import { assertCtx, can, requirePermission, type Ctx } from "@/lib/context";
 import { writeAudit } from "@/lib/audit";
 import { NotFoundError, ValidationError } from "./orders";
 import { evaluateSubject, isBuiltIn } from "./compliance";
-import { DQ_ITEMS, dqLines, daStanding, rtdProblem, specimensFor, SPECIMEN_LABEL, clearinghouseDuty, randomRequirement, perDraw, pick, overlappingDraw, postAccidentDuty, basicOf, unitOf, basicMeasures, oosRates, driverPoints, BASICS, periodStart, lookupViolation, roadsideOos, oosReleaseNeedsReason, repairInstant } from "./safety-rules";
+import { DQ_ITEMS, dqLines, dqDateProblem, daStanding, rtdProblem, specimensFor, SPECIMEN_LABEL, clearinghouseDuty, randomRequirement, perDraw, pick, overlappingDraw, postAccidentDuty, basicOf, unitOf, basicMeasures, oosRates, driverPoints, BASICS, periodStart, lookupViolation, roadsideOos, oosReleaseNeedsReason, repairInstant } from "./safety-rules";
 import { zonedDate } from "@/lib/time";
 
 /**
@@ -49,6 +49,8 @@ export async function recordDq(ctx: Ctx, driverId: string, itemKey: string, inpu
   } else {
     if (!input.completedAt || Number.isNaN(input.completedAt.getTime())) throw new ValidationError("the date it was done", "completedAt");
     if (input.completedAt.getTime() > Date.now() + 86400_000) throw new ValidationError("that date is in the future", "completedAt");
+    const off = dqDateProblem(itemKey, input.completedAt, driver.hireDate);
+    if (off) throw new ValidationError(off, "completedAt");
   }
   const documentId = input.file ? await storeFile(ctx, driverId, `dq:${itemKey}`, input.file) : null;
   const row = { id: newId(), tenantId: ctx.tenantId, driverId, itemKey, completedAt: input.notRequired ? null : input.completedAt!, notRequired: !!input.notRequired, note, documentId, createdBy: ctx.userId };

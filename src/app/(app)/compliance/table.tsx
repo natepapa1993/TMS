@@ -8,6 +8,7 @@ import type { ComplianceItem } from "@/db/schema";
 import type { SubjectKind } from "@/domain/compliance";
 import { snoozeAction, overrideDispatchAction, unsnoozeAction, missingDatesBlockAction, dqGraceAction, blockLevelsAction } from "./actions";
 import { rollup, blockSentence, BLOCK_LEVEL_LABEL, type BlockLevel } from "@/domain/compliance-rules";
+import { useClock } from "@/components/zone";
 
 type Row = { id: string; label: string; sub: string; st: { dispatchable: boolean; expired: string[]; expiring: string[]; missing: string[]; items: ComplianceItem[]; ranAt: string } | null; override: { reason: string; expiresAt: string } | null };
 
@@ -15,6 +16,7 @@ const tone: Record<string, string> = { ok: "pill-green", expiring: "pill-amber",
 
 export function ComplianceTable({ kind, path, columns, rows, role }: { kind: SubjectKind; path: string; columns: { key: string; label: string; blocks: boolean; sub?: string }[]; rows: Row[]; role: string }) {
   const router = useRouter();
+  const clock = useClock(); // the company's calendar: server render and browser print the same date (no hydration error #418)
   const t = useToast();
   const [snoozeFor, setSnoozeFor] = useState<{ id: string; key: string; label: string } | null>(null);
   const [until, setUntil] = useState("");
@@ -86,9 +88,9 @@ export function ComplianceTable({ kind, path, columns, rows, role }: { kind: Sub
                     {it ? (
                       <div className="flex items-center gap-1">
                         <Link href={`/settings/${path}/${r.id}#documents`} className={`pill ${tone[it.status]}`} title={it.snoozeReason ?? (it.graceUntil ? `Grace until ${it.graceUntil.slice(0, 10)}: shown, not blocking yet` : undefined)}>
-                          {it.expiresAt ? new Date(it.expiresAt).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }) : it.status === "na" ? "not on file" : it.status}
+                          {it.expiresAt ? clock.at(it.expiresAt, { style: "date" }) : it.status === "na" ? "not on file" : it.status}
                         </Link>
-                        {it.graceUntil && <span className="text-caption text-muted whitespace-nowrap">grace to {new Date(it.graceUntil).toLocaleDateString("en-US", { month: "short", day: "numeric" })}</span>}
+                        {it.graceUntil && <span className="text-caption text-muted whitespace-nowrap">grace to {clock.at(it.graceUntil, { style: "date" })}</span>}
                         {canEdit && it.status === "snoozed" && (
                           <button className="btn btn-ghost btn-sm text-caption px-1" title={`Snoozed until ${it.snoozedUntil?.slice(0, 10)} (${it.snoozeReason ?? ""}) — end the snooze`} onClick={async () => { const res = await unsnoozeAction(kind, r.id, it.key); if (res.ok) { t.ok("Snooze ended"); router.refresh(); } else t.err(res.error); }}>
                             wake
