@@ -845,6 +845,26 @@
         "src/domain/cash.test.ts",
         "e2e/cash.spec.ts"
       ]
+    },
+    {
+      "id": "F-26.4",
+      "name": "Weekly pay run: statements for every driver who ran or has a pay item due, approved together (a disputed one waits), paid in one ACH/check batch; statement PDF with the year to date, in the office and in the driver app",
+      "milestone": "M26",
+      "status": "done",
+      "tests": [
+        "src/domain/payrun.test.ts",
+        "e2e/payrun.spec.ts"
+      ]
+    },
+    {
+      "id": "F-26.5",
+      "name": "Factoring ledger: advance, fee and reserve at the entity's terms per funding, collection (invoice paid by factoring, reserve released), chargeback past recourse (back in Receivables); funded invoices leave Receivables and reminders; recourse exposure and at-risk",
+      "milestone": "M26",
+      "status": "done",
+      "tests": [
+        "src/domain/payrun.test.ts",
+        "e2e/payrun.spec.ts"
+      ]
     }
   ]
 }

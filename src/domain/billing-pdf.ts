@@ -2,7 +2,7 @@ import { PDFDocument, StandardFonts, rgb } from "pdf-lib";
 import { pdfText } from "@/lib/pdf-text";
 import type { InvoiceSnapshot } from "@/db/schema";
 
-const money = (c: number, cur: string) => `${cur === "MXN" ? "MX$" : "$"}${(c / 100).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+const money = (c: number, cur: string) => `${c < 0 ? "-" : ""}${cur === "MXN" ? "MX$" : "$"}${(Math.abs(c) / 100).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
 /** Invoice PDF from the locked snapshot only (spec 7.4 "never from current master data"). */
 export async function buildInvoicePdf(inv: { number: string; issuedAt: Date; dueAt: Date; snapshot: InvoiceSnapshot; subtotalCents: number; totalCents: number; creditedCents?: number; notes?: string | null }): Promise<Uint8Array> {
@@ -231,5 +231,69 @@ export async function buildFactorSchedulePdf(input: { entity: string; factor: st
   draw("The invoices listed are assigned to the factor above. Invoices and supporting documents follow.", 54, y, 9, font, muted);
   y -= 40;
   draw("Signed: ______________________________", 54, y, 10);
+  return doc.save();
+}
+
+/** A driver's pay statement: earnings, reimbursements, deductions, net, how it was paid, and the year to date. */
+export async function buildSettlementPdf(p: { company: string; driver: string; periodStart: Date; periodEnd: Date; state: string; lines: { kind: string; description: string; amountCents: number }[]; grossCents: number; deductionsCents: number; netCents: number; paidAt: Date | null; method: string | null; reference: string | null; ytd: { grossCents: number; deductionsCents: number; netCents: number }; timeZone: string }): Promise<Uint8Array> {
+  const doc = await PDFDocument.create();
+  const bold = await doc.embedFont(StandardFonts.HelveticaBold);
+  const font = await doc.embedFont(StandardFonts.Helvetica);
+  const ink = rgb(0.06, 0.09, 0.16);
+  const muted = rgb(0.4, 0.45, 0.55);
+  const rule = rgb(0.89, 0.91, 0.94);
+  let page = doc.addPage([612, 792]);
+  const draw = (t: string, x: number, y: number, size = 10, f = font, color = ink) => page.drawText(pdfText(t), { x, y, size, font: f, color });
+  const right = (t: string, xr: number, y: number, size = 10, f = font, color = ink) => draw(t, xr - f.widthOfTextAtSize(pdfText(t), size), y, size, f, color);
+  const day = (d: Date) => d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: p.timeZone });
+  const last = new Date(p.periodEnd.getTime() - 1);
+
+  page.drawRectangle({ x: 0, y: 742, width: 612, height: 50, color: ink });
+  draw(p.company, 54, 760, 18, bold, rgb(1, 1, 1));
+  draw("PAY STATEMENT", 430, 760, 14, bold, rgb(0.6, 0.96, 0.89));
+  let y = 712;
+  draw(p.driver, 54, y, 13, bold);
+  draw(`Week ${day(p.periodStart)} - ${day(last)}`, 54, y - 16, 10, font, muted);
+  draw(p.state === "paid" && p.paidAt ? `Paid ${day(p.paidAt)}${p.method ? ` by ${p.method.toUpperCase()}` : ""}${p.reference ? ` · ${p.reference}` : ""}` : `Status: ${p.state}`, 54, y - 30, 10, font, muted);
+  right(money(p.netCents, "USD"), 558, y - 4, 22, bold);
+  right("NET PAY", 558, y + 16, 8, bold, muted);
+  y = 650;
+
+  const section = (title: string, rows: typeof p.lines) => {
+    if (!rows.length) return;
+    draw(title, 54, y, 9, bold, muted);
+    y -= 6;
+    page.drawLine({ start: { x: 54, y }, end: { x: 558, y }, thickness: 0.4, color: rule });
+    y -= 14;
+    for (const l of rows) {
+      if (y < 110) {
+        page = doc.addPage([612, 792]);
+        y = 740;
+      }
+      draw(l.description.length > 80 ? `${l.description.slice(0, 78)}...` : l.description, 54, y, 9.5);
+      right(money(l.amountCents, "USD"), 558, y, 9.5, l.amountCents < 0 ? font : bold);
+      y -= 15;
+    }
+    y -= 10;
+  };
+  section("EARNINGS", p.lines.filter((l) => l.kind === "leg" || l.kind === "accessorial" || (l.kind === "adjustment" && l.amountCents >= 0)));
+  section("REIMBURSEMENTS", p.lines.filter((l) => l.kind === "reimbursement"));
+  section("DEDUCTIONS", p.lines.filter((l) => l.kind === "deduction" || (l.kind === "adjustment" && l.amountCents < 0)));
+
+  if (y < 170) {
+    page = doc.addPage([612, 792]);
+    y = 740;
+  }
+  page.drawLine({ start: { x: 330, y: y + 4 }, end: { x: 558, y: y + 4 }, thickness: 0.6, color: ink });
+  for (const [label, v, b] of [["Gross", p.grossCents, false], ["Deductions", -p.deductionsCents, false], ["Net pay", p.netCents, true]] as const) {
+    y -= 14;
+    draw(label, 330, y, 10, b ? bold : font);
+    right(money(v, "USD"), 558, y, 10, b ? bold : font);
+  }
+  y -= 34;
+  draw(`YEAR TO DATE (${p.periodStart.getUTCFullYear()})`, 54, y, 9, bold, muted);
+  y -= 16;
+  draw(`Gross ${money(p.ytd.grossCents, "USD")}    Deductions ${money(-p.ytd.deductionsCents, "USD")}    Net ${money(p.ytd.netCents, "USD")}`, 54, y, 10);
+  draw("Questions about a line? Dispute it in the driver app and dispatch will answer there.", 54, 60, 8.5, font, muted);
   return doc.save();
 }

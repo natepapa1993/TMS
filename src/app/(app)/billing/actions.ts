@@ -395,3 +395,65 @@ export async function applyOnAccountAction(paymentId: string, invoiceId: string,
   }
   return r;
 }
+
+// ---------- weekly pay run ----------
+
+async function weekBounds(ctx: Parameters<Parameters<typeof act>[0]>[0], weekStart: string) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(weekStart)) throw Object.assign(new Error("pick the week's Sunday"), { name: "ValidationError", field: "weekStart" });
+  const { getCompany } = await import("@/domain/company");
+  const { zonedMidnight } = await import("@/lib/time");
+  const company = await getCompany(ctx);
+  const next = new Date(Date.UTC(Number(weekStart.slice(0, 4)), Number(weekStart.slice(5, 7)) - 1, Number(weekStart.slice(8, 10)) + 7)).toISOString().slice(0, 10);
+  return { start: zonedMidnight(weekStart, company.timeZone), end: zonedMidnight(next, company.timeZone) };
+}
+export async function settlementRunAction(weekStart: string) {
+  const { settlementRun } = await import("@/domain/settlement-run");
+  const r = await act(async (ctx) => {
+    const { start, end } = await weekBounds(ctx, weekStart);
+    return settlementRun(ctx, start, end);
+  });
+  if (r.ok) touch();
+  return r;
+}
+export async function approveSettlementsAction(ids: string[]) {
+  const { approveSettlements } = await import("@/domain/settlement-run");
+  const r = await act((ctx) => approveSettlements(ctx, ids));
+  if (r.ok) touch();
+  return r;
+}
+export async function paySettlementsAction(ids: string[], method: string, reference: string) {
+  const { paySettlements } = await import("@/domain/settlement-run");
+  const r = await act((ctx) => paySettlements(ctx, ids, { method, reference }));
+  if (r.ok) touch();
+  return r;
+}
+
+// ---------- factoring ----------
+
+export async function recordFundingAction(ids: string[], v: { at: string; reference: string; advance: string; fee: string }) {
+  const F = await import("@/domain/factoring");
+  const r = await act((ctx) => F.recordFunding(ctx, ids, { at: v.at ? dayOf(v.at) : undefined, reference: v.reference, advanceBp: v.advance ? Number(v.advance) : null, feeBp: v.fee ? Number(v.fee) : null }));
+  if (r.ok) {
+    touch();
+    revalidatePath("/billing/factoring");
+  }
+  return r;
+}
+export async function recordCollectionAction(id: string, v: { at: string; reference: string }) {
+  const F = await import("@/domain/factoring");
+  const r = await act((ctx) => F.recordCollection(ctx, id, { at: v.at ? dayOf(v.at) : undefined, reference: v.reference }));
+  if (r.ok) {
+    touch(id);
+    revalidatePath("/billing/factoring");
+  }
+  return r;
+}
+export async function recordChargebackAction(id: string, v: { at: string; reference: string; note: string }) {
+  const F = await import("@/domain/factoring");
+  const r = await act((ctx) => F.recordChargeback(ctx, id, { at: v.at ? dayOf(v.at) : undefined, reference: v.reference, note: v.note }));
+  if (r.ok) {
+    touch(id);
+    revalidatePath("/billing/factoring");
+  }
+  return r;
+}

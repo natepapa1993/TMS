@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { Modal, Pill, Toast, useToast } from "@/components/ui";
 import { formatCents } from "@/data/fields";
 import type { SettlementLine } from "@/db/schema";
-import { buildSettlementAction, settlementTransitionAction, addSettlementLineAction, addPayItemAction } from "../actions";
+import { buildSettlementAction, settlementTransitionAction, addSettlementLineAction, addPayItemAction, settlementRunAction, approveSettlementsAction, paySettlementsAction } from "../actions";
 
 type Row = { st: { id: string; driverId: string; periodStart: string; periodEnd: string; state: string; lines: SettlementLine[]; grossCents: number; deductionsCents: number; netCents: number; method: string | null; reference: string | null }; driverName: string };
 type Driver = { id: string; name: string; payType: string; payRateCents: number | null };
@@ -21,6 +21,10 @@ export function Settlements({ rows, drivers, defaultWeek, role }: { rows: Row[];
   const [line, setLine] = useState({ kind: "accessorial" as "accessorial" | "deduction" | "reimbursement" | "adjustment", description: "", amount: "" });
   const [item, setItem] = useState<{ open: boolean; kind: "deduction" | "reimbursement" | "advance" | "escrow"; description: string; amount: string; recurring: boolean; remaining: string; target: string }>({ open: false, kind: "deduction", description: "", amount: "", recurring: false, remaining: "", target: "" });
   const [pay, setPay] = useState({ method: "ach", reference: "" });
+  const [sel, setSel] = useState<string[]>([]);
+  const [batchPay, setBatchPay] = useState<{ method: string; reference: string } | null>(null);
+  const toggle = (id: string, on: boolean) => setSel((x) => (on ? [...x, id] : x.filter((y) => y !== id)));
+  const selRows = rows.filter((r) => sel.includes(r.st.id));
   const can = ["owner", "billing"].includes(role);
   const run = (label: string, fn: () => Promise<{ ok: boolean; error?: string }>) =>
     start(async () => {
@@ -55,6 +59,40 @@ export function Settlements({ rows, drivers, defaultWeek, role }: { rows: Row[];
           <button className="btn" disabled={!driverId} onClick={() => setItem({ ...item, open: true })}>
             + Pay item (deduction, advance, escrow)
           </button>
+          <button
+            className="btn btn-primary ml-auto"
+            disabled={!week || pending}
+            data-testid="run-week"
+            title="Every driver who ran a leg that week, or has a pay item due"
+            onClick={() =>
+              start(async () => {
+                const r = await settlementRunAction(week);
+                if (!r.ok) return t.err(r.error);
+                const built = r.data.filter((x) => x.state === "open").length;
+                const errs = r.data.filter((x) => x.state === "error");
+                t.ok(r.data.length ? `${built} statement${built === 1 ? "" : "s"} built${r.data.length > built ? `, ${r.data.length - built - errs.length} already approved or paid` : ""}${errs.length ? ` · ${errs.length} failed: ${errs.map((x) => `${x.driver} (${x.note})`).join("; ")}` : ""}` : "Nobody ran a leg that week");
+                router.refresh();
+              })
+            }
+          >
+            Run the week for all drivers
+          </button>
+        </div>
+      )}
+      {can && sel.length > 0 && (
+        <div className="flex items-center gap-2 mb-3" data-testid="settlement-bulk">
+          <span className="text-[13px] font-semibold">
+            {sel.length} selected · net {formatCents(selRows.reduce((a, r) => a + r.st.netCents, 0))}
+          </span>
+          <button className="btn btn-sm" disabled={pending || !selRows.some((r) => r.st.state === "open" || r.st.state === "reviewed")} onClick={() => start(async () => { const r = await approveSettlementsAction(sel); if (!r.ok) return t.err(r.error); t.ok(`${r.data.approved} approved${r.data.skipped.length ? ` · ${r.data.skipped.length} skipped (${r.data.skipped.map((x) => x.reason).join("; ")})` : ""}`); setSel([]); router.refresh(); })}>
+            Approve selected
+          </button>
+          <button className="btn btn-sm btn-primary" disabled={pending || !selRows.some((r) => r.st.state === "approved")} onClick={() => setBatchPay({ method: "ach", reference: "" })}>
+            Pay selected
+          </button>
+          <button className="btn btn-ghost btn-sm" onClick={() => setSel([])}>
+            Clear
+          </button>
         </div>
       )}
       <div className="card overflow-hidden">
@@ -64,6 +102,7 @@ export function Settlements({ rows, drivers, defaultWeek, role }: { rows: Row[];
           <table className="table">
             <thead>
               <tr>
+                {can && <th className="w-8"></th>}
                 <th>Driver</th>
                 <th>Week</th>
                 <th>Lines</th>
@@ -75,7 +114,12 @@ export function Settlements({ rows, drivers, defaultWeek, role }: { rows: Row[];
             </thead>
             <tbody>
               {rows.map((r) => (
-                <tr key={r.st.id} className="cursor-pointer" onClick={() => setOpen(r)}>
+                <tr key={r.st.id} className="cursor-pointer" onClick={() => setOpen(r)} data-testid="settlement-row">
+                  {can && (
+                    <td onClick={(e) => e.stopPropagation()}>
+                      {r.st.state !== "paid" && <input type="checkbox" className="accent-teal" aria-label={`Select ${r.driverName}`} checked={sel.includes(r.st.id)} onChange={(e) => toggle(r.st.id, e.target.checked)} />}
+                    </td>
+                  )}
                   <td className="font-bold">{r.driverName}</td>
                   <td className="text-[12.5px]">{r.st.periodStart.slice(0, 10)}</td>
                   <td className="text-muted">
@@ -104,6 +148,9 @@ export function Settlements({ rows, drivers, defaultWeek, role }: { rows: Row[];
           footer={
             can ? (
               <>
+                <a className="btn mr-auto" href={`/api/settlements/${cur.st.id}/pdf`} target="_blank" rel="noreferrer">
+                  PDF
+                </a>
                 {cur.st.state === "open" && <button className="btn btn-primary" onClick={() => run("Reviewed", () => settlementTransitionAction(cur.st.id, "reviewed"))}>Mark reviewed</button>}
                 {cur.st.state === "reviewed" && <button className="btn" onClick={() => run("Back to open", () => settlementTransitionAction(cur.st.id, "open"))}>Back to open</button>}
                 {cur.st.state === "reviewed" && <button className="btn btn-primary" onClick={() => run("Approved — the driver can see it", () => settlementTransitionAction(cur.st.id, "approved"))}>Approve</button>}
@@ -217,6 +264,56 @@ export function Settlements({ rows, drivers, defaultWeek, role }: { rows: Row[];
           )}
         </div>
       </Modal>
+      {batchPay && (
+        <Modal
+          open
+          onClose={() => setBatchPay(null)}
+          title={`Pay ${selRows.filter((r) => r.st.state === "approved").length} approved statement(s)`}
+          footer={
+            <>
+              <button className="btn" onClick={() => setBatchPay(null)}>
+                Cancel
+              </button>
+              <button
+                className="btn btn-primary"
+                disabled={pending}
+                onClick={() =>
+                  start(async () => {
+                    const r = await paySettlementsAction(sel, batchPay.method, batchPay.reference);
+                    if (!r.ok) return t.err(r.error);
+                    setBatchPay(null);
+                    setSel([]);
+                    t.ok(`${r.data.paid} paid · ${formatCents(r.data.totalCents)}`);
+                    router.refresh();
+                  })
+                }
+              >
+                Mark paid
+              </button>
+            </>
+          }
+        >
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="label" htmlFor="bp-method">
+                Paid by
+              </label>
+              <select id="bp-method" className="select" value={batchPay.method} onChange={(e) => setBatchPay({ ...batchPay, method: e.target.value })}>
+                {["ach", "check", "cash", "other"].map((m) => (
+                  <option key={m}>{m}</option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="label" htmlFor="bp-ref">
+                Batch reference
+              </label>
+              <input id="bp-ref" className="input" value={batchPay.reference} onChange={(e) => setBatchPay({ ...batchPay, reference: e.target.value })} placeholder="ACH batch 0926" />
+            </div>
+          </div>
+          <div className="help mt-2">Only approved statements are paid. Advances and escrow update, and each driver sees the statement as paid (with its PDF) in the app.</div>
+        </Modal>
+      )}
       <Toast message={t.toast?.message ?? null} tone={t.toast?.tone} onDone={t.clear} />
     </>
   );

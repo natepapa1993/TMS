@@ -106,6 +106,9 @@ export const billingEntities = pgTable(
     factorRemitTo: jsonb("factor_remit_to").$type<Address>(),
     factorAll: boolean("factor_all").notNull().default(false), // every customer's invoices go to the factor unless the customer says otherwise
     factorNotice: text("factor_notice"), // the notice-of-assignment wording on the invoice
+    factorAdvanceBp: integer("factor_advance_bp"), // advance as basis points of the invoice (9700 = 97%); blank = 97%
+    factorFeeBp: integer("factor_fee_bp"), // fee in basis points (300 = 3%); blank = 3%
+    factorRecourseDays: integer("factor_recourse_days"), // unpaid after this many days the factor charges it back; blank = 90; 0 = non-recourse
     ...audit(),
   },
   (t) => [index("billing_entities_tenant").on(t.tenantId)],

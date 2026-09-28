@@ -634,9 +634,15 @@ export async function aging(ctx: Ctx, now = new Date()) {
   const open = await db.select().from(s.invoices).where(and(eq(s.invoices.tenantId, ctx.tenantId), inArray(s.invoices.state, ["issued", "sent", "partially_paid", "disputed"])));
   const customers = await db.select({ id: s.customers.id, name: s.customers.name, payWhenPaid: s.customers.payWhenPaid }).from(s.customers).where(eq(s.customers.tenantId, ctx.tenantId));
   const rows = new Map<string, { customerId: string; name: string; buckets: Record<AgingBucket, number>; total: number; invoices: (typeof open)[number][] }>();
+  let withFactor = 0;
   for (const inv of open) {
     const openCents = inv.totalCents - inv.creditedCents - inv.paidCents;
     if (openCents <= 0) continue;
+    // funded by the factor: the customer owes the factor now (Billing → Factoring), not us
+    if (inv.factorFundedAt) {
+      withFactor += openCents;
+      continue;
+    }
     const r = rows.get(inv.customerId) ?? { customerId: inv.customerId, name: customers.find((c) => c.id === inv.customerId)?.name ?? "?", buckets: { current: 0, "1_30": 0, "31_60": 0, "61_90": 0, "90_plus": 0 }, total: 0, invoices: [] };
     r.buckets[bucketFor(inv.dueAt, now)] += openCents;
     r.total += openCents;
@@ -645,7 +651,7 @@ export async function aging(ctx: Ctx, now = new Date()) {
   }
   const list = [...rows.values()].sort((p, q) => q.total - p.total);
   const totals = list.reduce((a, r) => ({ current: a.current + r.buckets.current, "1_30": a["1_30"] + r.buckets["1_30"], "31_60": a["31_60"] + r.buckets["31_60"], "61_90": a["61_90"] + r.buckets["61_90"], "90_plus": a["90_plus"] + r.buckets["90_plus"], total: a.total + r.total }), { current: 0, "1_30": 0, "31_60": 0, "61_90": 0, "90_plus": 0, total: 0 });
-  return { rows: list, totals };
+  return { rows: list, totals, withFactor };
 }
 
 export async function statementPdf(ctx: Ctx, customerId: string, now = new Date()) {
@@ -660,7 +666,8 @@ export async function statementPdf(ctx: Ctx, customerId: string, now = new Date(
 
 /** Job: reminder emails at the customer's configured days after due (default +3, +10, +20), once per step. */
 export async function sendReminders(now = new Date()) {
-  const open = await db.select().from(s.invoices).where(and(inArray(s.invoices.state, ["sent", "partially_paid"]), lt(s.invoices.dueAt, now)));
+  // funded factored invoices are the factor's to collect: no reminders from us
+  const open = await db.select().from(s.invoices).where(and(inArray(s.invoices.state, ["sent", "partially_paid"]), lt(s.invoices.dueAt, now), isNull(s.invoices.factorFundedAt)));
   let sent = 0;
   for (const inv of open) {
     const [cust] = await db.select().from(s.customers).where(eq(s.customers.id, inv.customerId)).limit(1);

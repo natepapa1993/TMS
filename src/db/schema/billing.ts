@@ -96,6 +96,7 @@ export const invoices = pgTable(
     deliveries: jsonb("deliveries").$type<InvoiceDelivery[]>().notNull().default(sql`'[]'::jsonb`),
     batchId: text("batch_id"),
     kind: text("kind").$type<"standard" | "supplemental" | "rebill">().notNull().default("standard"),
+    factorFundedAt: timestamp("factor_funded_at", { withTimezone: true }), // the factor advanced on it: the customer now owes the factor
     rebillOf: text("rebill_of"), // the voided invoice this one replaces
     ...audit(),
   },
@@ -362,4 +363,25 @@ export const iftaRates = pgTable(
     ...audit(),
   },
   (t) => [uniqueIndex("ifta_rates_tenant_quarter_j").on(t.tenantId, t.quarter, t.jurisdiction)],
+);
+
+export const FACTOR_ENTRY_KINDS = ["advance", "fee", "reserve_release", "collected", "chargeback"] as const;
+
+/** The factoring ledger: what the factor advanced on each invoice, its fee, the reserve it holds, collection, chargebacks. */
+export const factorEntries = pgTable(
+  "factor_entries",
+  {
+    id: id(),
+    tenantId: tenantId(),
+    entityId: text("entity_id").notNull(),
+    invoiceId: text("invoice_id").notNull(),
+    kind: text("kind").$type<(typeof FACTOR_ENTRY_KINDS)[number]>().notNull(),
+    amountCents: integer("amount_cents").notNull(), // money to us positive (advance, reserve release), cost or repayment negative (fee, chargeback); "collected" is the customer's payment to the factor
+    at: timestamp("at", { withTimezone: true }).notNull(),
+    reference: text("reference"), // the factor's schedule / wire #
+    note: text("note"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    createdBy: text("created_by"),
+  },
+  (t) => [index("factor_entries_invoice").on(t.tenantId, t.invoiceId), index("factor_entries_entity").on(t.tenantId, t.entityId, t.at)],
 );

@@ -239,6 +239,13 @@
       "when": 1790560190815,
       "tag": "0033_customer_billing_address",
       "breakpoints": true
+    },
+    {
+      "idx": 34,
+      "version": "7",
+      "when": 1790561614744,
+      "tag": "0034_factoring_ledger",
+      "breakpoints": true
     }
   ]
 }

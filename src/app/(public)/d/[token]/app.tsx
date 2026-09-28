@@ -332,6 +332,9 @@ function PayCard({ token, stub, onChanged }: { token: string; stub: PayStub; onC
       </button>
       {open && (
         <div className="mt-2 border-t border-line pt-2">
+          <a href={`/d/${token}/statement/${stub.id}`} target="_blank" rel="noreferrer" className="text-teal font-semibold text-[13px] block mb-2">
+            Statement PDF · Recibo en PDF
+          </a>
           <ul className="space-y-1 text-[13px]">
             {stub.lines.map((l) => (
               <li key={l.id}>
