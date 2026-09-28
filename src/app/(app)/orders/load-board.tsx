@@ -202,6 +202,7 @@ export function LoadBoard({ rows, views, role }: { rows: LoadRow[]; views: GridV
                         clear();
                         router.refresh();
                         if (r.data.failed.length) t.err(`Booked ${r.data.booked}; ${r.data.failed.length} could not be booked: ${r.data.failed[0]}`);
+                        else if (r.data.warnings.length) t.err(`Booked ${r.data.booked} — check: ${r.data.warnings.slice(0, 2).join("; ")}${r.data.warnings.length > 2 ? ` (+${r.data.warnings.length - 2} more)` : ""}`);
                         else t.ok(`Booked ${r.data.booked}`);
                       })
                     }

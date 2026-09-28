@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useRef, useState, useTransition } from "react";
 import { previewLoadsAction, importLoadsAction } from "../actions";
 
-type Preview = { layout: "per_load" | "per_stop"; loads: { key: string; customer: string; rateCents: number | null; currency: string; stops: { type: string; name: string; city: string | null; state: string | null; country: string; at: string | null }[]; errors: string[] }[] };
+type Preview = { layout: "per_load" | "per_stop"; loads: { key: string; customer: string; rateCents: number | null; currency: string; stops: { type: string; name: string; city: string | null; state: string | null; country: string; at: string | null }[]; errors: string[]; warnings: string[] }[] };
 
 const EXAMPLE = [
   "Customer,Rate,PO,Equipment,Pickup Name,Pickup City,Pickup State,Pickup Country,Pickup Date,Pickup Time,Delivery Name,Delivery City,Delivery State,Delivery Country,Delivery Date,Delivery Time,Commodity,Weight",
@@ -17,7 +17,7 @@ export function ImportLoads() {
   const [preview, setPreview] = useState<Preview | null>(null);
   const [book, setBook] = useState(false);
   const [err, setErr] = useState<string | null>(null);
-  const [done, setDone] = useState<{ created: { key: string; orderNumber: string; orderId: string }[]; skipped: { key: string; errors: string[] }[] } | null>(null);
+  const [done, setDone] = useState<{ created: { key: string; orderNumber: string; orderId: string; warnings: string[] }[]; skipped: { key: string; errors: string[] }[]; booked: boolean } | null>(null);
   const [pending, start] = useTransition();
   const input = useRef<HTMLInputElement>(null);
   const read = (f: File) =>
@@ -35,6 +35,7 @@ export function ImportLoads() {
       }
     });
   const ok = preview?.loads.filter((l) => !l.errors.length).length ?? 0;
+  const warned = preview?.loads.filter((l) => !l.errors.length && l.warnings.length).length ?? 0;
   return (
     <div className="space-y-5">
       <div className="card p-6 flex items-center gap-4 flex-wrap" onDragOver={(e) => e.preventDefault()} onDrop={(e) => { e.preventDefault(); const f = e.dataTransfer.files?.[0]; if (f) read(f); }}>
@@ -64,10 +65,11 @@ export function ImportLoads() {
             <div className="font-bold">
               {preview.loads.length} load{preview.loads.length === 1 ? "" : "s"} found · <span className="text-green">{ok} ready</span>
               {preview.loads.length - ok ? <span className="text-red"> · {preview.loads.length - ok} with problems (skipped)</span> : null}
+              {warned ? <span className="text-amber"> · {warned} to check</span> : null}
             </div>
             <div className="text-callout text-muted">{preview.layout === "per_stop" ? "one row per stop, grouped by load" : "one row per load"}</div>
             <label className="ml-auto flex items-center gap-2 text-callout cursor-pointer">
-              <input type="checkbox" className="accent-teal w-4 h-4" checked={book} onChange={(e) => setBook(e.target.checked)} /> Book them (those with a rate)
+              <input type="checkbox" className="accent-teal w-4 h-4" checked={book} onChange={(e) => setBook(e.target.checked)} /> Book them now (those with a rate) — otherwise they come in as drafts
             </label>
             <button
               type="button"
@@ -80,12 +82,12 @@ export function ImportLoads() {
                   fd.set("file", file);
                   fd.set("book", book ? "1" : "0");
                   const r = await importLoadsAction(fd);
-                  if (r.ok) setDone(r.data);
+                  if (r.ok) setDone({ ...r.data, booked: book });
                   else setErr(r.error);
                 })
               }
             >
-              {pending ? "Importing…" : `Import ${ok} load${ok === 1 ? "" : "s"}`}
+              {pending ? "Importing…" : `Import ${ok} load${ok === 1 ? "" : "s"}${book ? "" : " as drafts"}`}
             </button>
           </div>
           <div className="max-h-[60vh] overflow-auto">
@@ -97,7 +99,7 @@ export function ImportLoads() {
                   <th>Lane</th>
                   <th>Pickup</th>
                   <th>Rate</th>
-                  <th>Problems</th>
+                  <th>Problems · to check</th>
                 </tr>
               </thead>
               <tbody>
@@ -111,7 +113,10 @@ export function ImportLoads() {
                     </td>
                     <td className="text-callout text-muted">{l.stops[0]?.at ? new Date(l.stops[0].at).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) : "—"}</td>
                     <td className="tabular-nums">{l.rateCents == null ? <span className="text-faint">TBD</span> : new Intl.NumberFormat("en-US", { style: "currency", currency: l.currency }).format(l.rateCents / 100)}</td>
-                    <td className="text-callout text-red">{l.errors.join("; ")}</td>
+                    <td className="text-callout">
+                      {l.errors.length > 0 && <div className="text-red">{l.errors.join("; ")}</div>}
+                      {l.warnings.length > 0 && <div className="text-amber font-semibold" data-testid="import-warning">{l.warnings.join("; ")}</div>}
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -123,7 +128,8 @@ export function ImportLoads() {
       {done && (
         <div className="card p-6" data-testid="import-done">
           <div className="font-bold text-headline">
-            {done.created.length} load{done.created.length === 1 ? "" : "s"} created{done.skipped.length ? `, ${done.skipped.length} skipped` : ""}
+            {done.created.length} load{done.created.length === 1 ? "" : "s"} created {done.booked ? "and booked (those with a rate)" : "as drafts — book them from Loads (select, then Book drafts)"}
+            {done.skipped.length ? `, ${done.skipped.length} skipped` : ""}
           </div>
           <div className="text-callout mt-2 flex flex-wrap gap-2">
             {done.created.map((c) => (
@@ -132,6 +138,17 @@ export function ImportLoads() {
               </Link>
             ))}
           </div>
+          {done.created.some((c) => c.warnings.length) && (
+            <ul className="mt-3 text-callout text-amber space-y-1" data-testid="import-warnings">
+              {done.created
+                .filter((c) => c.warnings.length)
+                .map((c) => (
+                  <li key={c.orderId}>
+                    {c.orderNumber}: {c.warnings.join("; ")}
+                  </li>
+                ))}
+            </ul>
+          )}
           {done.skipped.length > 0 && (
             <ul className="mt-3 text-callout text-red space-y-1">
               {done.skipped.map((x) => (

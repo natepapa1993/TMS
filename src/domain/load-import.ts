@@ -1,4 +1,4 @@
-import { and, eq, isNull } from "drizzle-orm";
+import { and, eq, isNull, inArray, sql } from "drizzle-orm";
 import ExcelJS from "exceljs";
 import { db } from "@/db/client";
 import * as s from "@/db/schema";
@@ -8,7 +8,7 @@ import { writeAudit } from "@/lib/audit";
 import { localToInstant, zoneFor } from "@/lib/time";
 import { parseCsv } from "@/data/import";
 import { createOrder, ValidationError, type StopInput } from "./orders";
-import { normCountry } from "./zones";
+import { normCountry, stopTimeProblems } from "./zones";
 
 /**
  * Import loads from a spreadsheet (Excel or CSV), the way other TMSs take a customer's weekly plan.
@@ -90,7 +90,38 @@ function field(headers: string[], key: string, prefix = "") {
   return headers.find((h) => want.includes(norm(h))) ?? null;
 }
 
-export type PreviewLoad = { key: string; customer: string; customerId: string | null; rateCents: number | null; currency: string; equipment: string; refs: Record<string, string>; freight: { commodity: string; pieces?: number; weightLb?: number }[]; cargoNote: string | null; stops: (StopInput & { windowStart: Date | null })[]; errors: string[] };
+export type PreviewLoad = { key: string; customer: string; customerId: string | null; rateCents: number | null; currency: string; equipment: string; refs: Record<string, string>; freight: { commodity: string; pieces?: number; weightLb?: number }[]; cargoNote: string | null; stops: (StopInput & { windowStart: Date | null })[]; errors: string[]; warnings: string[] };
+
+const REF_LABEL: Record<string, string> = { po: "PO", reference: "Customer load #" };
+
+/**
+ * What to warn about before a load goes on the board (M12): a delivery scheduled before its pickup, and
+ * a customer PO or load # that another live load of the same customer already carries (the same load
+ * booked twice from an email and a phone call). Warnings never stop the import; they are shown.
+ */
+export async function loadWarnings(ctx: Ctx, loads: { key: string; customerId: string | null; refs: Record<string, string>; stops: { name?: string | null; windowStart?: Date | string | null; windowEnd?: Date | string | null }[]; orderId?: string | null }[]) {
+  const out = new Map<string, string[]>();
+  const add = (k: string, w: string) => out.set(k, [...(out.get(k) ?? []), w]);
+  for (const l of loads) for (const p of stopTimeProblems(l.stops)) add(l.key, p.charAt(0).toUpperCase() + p.slice(1));
+  // duplicate references: in the same batch, and on loads already in the system (not cancelled)
+  const keyed = loads.flatMap((l) => Object.entries(REF_LABEL).filter(([k]) => l.refs[k]?.trim()).map(([k, label]) => ({ l, k, label, v: l.refs[k].trim() })));
+  const seen = new Map<string, string>();
+  for (const x of keyed) {
+    const id = `${x.l.customerId ?? ""}|${x.k}|${x.v.toLowerCase()}`;
+    const first = seen.get(id);
+    if (first) add(x.l.key, `${x.label} ${x.v} is also on ${first} in this batch`);
+    else seen.set(id, x.l.key);
+  }
+  if (keyed.length) {
+    const custIds = [...new Set(keyed.map((x) => x.l.customerId).filter((c): c is string => !!c))];
+    const live = custIds.length ? await db.select({ id: s.orders.id, orderNumber: s.orders.orderNumber, customerId: s.orders.customerId, refs: s.orders.refs }).from(s.orders).where(and(eq(s.orders.tenantId, ctx.tenantId), inArray(s.orders.customerId, custIds), sql`${s.orders.state} <> 'cancelled'`)) : [];
+    for (const x of keyed) {
+      const dupe = live.find((o) => o.id !== x.l.orderId && o.customerId === x.l.customerId && (o.refs?.[x.k] ?? "").trim().toLowerCase() === x.v.toLowerCase());
+      if (dupe) add(x.l.key, `${x.label} ${x.v} is already on ${dupe.orderNumber}`);
+    }
+  }
+  return out;
+}
 
 const EQUIP: Record<string, string> = { "53": "53_dry", "53dry": "53_dry", "53van": "53_dry", dryvan: "53_dry", van: "53_dry", "53reefer": "53_reefer", reefer: "53_reefer", "48": "48_dry", "48dry": "48_dry", flatbed: "flatbed", sprinter: "sprinter", cargovan: "sprinter", straight: "straight", straighttruck: "straight", boxtruck: "straight", poweronly: "power_only" };
 
@@ -146,7 +177,7 @@ export async function previewLoads(ctx: Ctx, table: Table): Promise<{ layout: "p
     const address = get(r, "address", prefix) || get(r, "city", prefix) || state ? { line1: get(r, "address", prefix) || undefined, city: get(r, "city", prefix) || undefined, state: state || undefined, postalCode: get(r, "zip", prefix) || undefined, country } : null;
     return { type, name, country, address, windowStart: at, windowEnd: null, appointment: /^(y|yes|si|sí|true|1|x)$/i.test(get(r, "appointment", prefix)) } as StopInput & { windowStart: Date | null };
   };
-  const common = (r: Record<string, string>, key: string, errors: string[]): Omit<PreviewLoad, "stops" | "errors"> => {
+  const common = (r: Record<string, string>, key: string, errors: string[]): Omit<PreviewLoad, "stops" | "errors" | "warnings"> => {
     const cName = get(r, "customer");
     const want = cName.toLowerCase();
     const cust = customers.find((c) => c.name.toLowerCase() === want) ?? customers.find((c) => want && (c.name.toLowerCase().includes(want) || want.includes(c.name.toLowerCase())));
@@ -186,7 +217,7 @@ export async function previewLoads(ctx: Ctx, table: Table): Promise<{ layout: "p
       });
       if (!stops.some((x) => x.type === "pickup")) errors.push("no pickup");
       if (!stops.some((x) => x.type === "delivery")) errors.push("no delivery");
-      loads.push({ ...base, stops, errors });
+      loads.push({ ...base, stops, errors, warnings: [] });
     }
   } else {
     if (!field(H, "name", "pickup") && !field(H, "city", "pickup")) throw new ValidationError("the sheet needs pickup and delivery columns (e.g. Pickup Name, Pickup City, Pickup Date, Delivery Name…), or a Load + Stop Type layout", "file");
@@ -194,16 +225,18 @@ export async function previewLoads(ctx: Ctx, table: Table): Promise<{ layout: "p
       const errors: string[] = [];
       const base = common(r, get(r, "load") || get(r, "reference") || `row ${i + 2}`, errors);
       const stops = [stopOf(r, "pickup", "pickup", errors, "pickup"), stopOf(r, "delivery", "delivery", errors, "delivery")];
-      loads.push({ ...base, stops, errors });
+      loads.push({ ...base, stops, errors, warnings: [] });
     });
   }
+  const warn = await loadWarnings(ctx, loads);
+  for (const l of loads) l.warnings = warn.get(l.key) ?? [];
   return { layout: perStop ? "per_stop" : "per_load", loads };
 }
 
 /** Create the loads that passed the preview; the rest are reported. */
 export async function importLoads(ctx: Ctx, table: Table, opts: { book?: boolean; fileName?: string } = {}) {
   const { loads } = await previewLoads(ctx, table);
-  const created: { key: string; orderNumber: string; orderId: string }[] = [];
+  const created: { key: string; orderNumber: string; orderId: string; warnings: string[] }[] = [];
   const skipped: { key: string; errors: string[] }[] = [];
   for (const l of loads) {
     if (l.errors.length) {
@@ -212,7 +245,7 @@ export async function importLoads(ctx: Ctx, table: Table, opts: { book?: boolean
     }
     try {
       const o = await createOrder(ctx, { customerId: l.customerId, rateCents: l.rateCents, rateTbd: l.rateCents == null, currency: l.currency, equipment: l.equipment, refs: l.refs, freight: l.freight, cargoNote: l.cargoNote, stops: l.stops, book: !!opts.book && l.rateCents != null, source: "import" });
-      created.push({ key: l.key, orderNumber: o.order.orderNumber, orderId: o.order.id });
+      created.push({ key: l.key, orderNumber: o.order.orderNumber, orderId: o.order.id, warnings: l.warnings });
     } catch (e) {
       skipped.push({ key: l.key, errors: [e instanceof Error ? e.message : String(e)] });
     }

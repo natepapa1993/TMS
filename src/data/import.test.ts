@@ -81,7 +81,8 @@ describe("CSV import (F-1.3)", () => {
     const map = autoMap("driver", headers);
     expect(Object.values(map).filter(Boolean).length).toBe(headers.length);
     const p = await previewImport(a, "driver", "Name,Driver type,Phone\nBenjamín Xochihua,B-1 (Mexican; crossing only),+52 867 111 2222\nMartín Martínez,B1,");
-    expect(p.rows[0].action).toBe("skip"); // label with the semicolon does not match the option
+    expect(p.rows[0].action).toBe("insert"); // the label typed with a semicolon still reads as the option
+    expect(p.rows[0].values.driverType).toBe("B1");
     expect(p.rows[1].action).toBe("insert");
     expect(p.rows[1].values.driverType).toBe("B1");
   });

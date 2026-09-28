@@ -56,7 +56,7 @@ export async function ensureDemoCompany(opts: { force?: boolean; now?: Date } = 
 }
 
 /** Bump when the builder changes: every deployment then rebuilds the demo once with the new data. */
-const DEMO_VERSION = 3;
+const DEMO_VERSION = 4;
 const BASE = { demo: true, dispatchPhone: "+1 956 555 0142" };
 
 async function ensure(opts: { force?: boolean; now?: Date }): Promise<string> {
@@ -236,7 +236,9 @@ async function build(a: Ctx, nowDate: Date) {
   for (const u of ["201", "202", "203", "204", "205", "206", "207", "208", "209", "210", "211", "212", "213", "214", "215"]) T[u] = await truck(u, u === "204" ? { usPlateExpires: fut(9) } : u === "209" ? { dotInspectionExpires: fut(-2) } : u === "210" ? { make: "Kenworth", model: "T680" } : {});
   const R: Record<string, string> = {};
   for (const [u, kind] of [["5301", "53_dry"], ["5302", "53_dry"], ["5303", "53_dry"], ["5304", "53_dry"], ["5305", "53_dry"], ["5306", "53_reefer"], ["5307", "53_reefer"], ["5308", "53_dry"], ["5309", "53_dry"], ["5310", "53_dry"]] as const) R[u] = (await create(a, "trailer", { unitNumber: u, kind, lengthFt: 53, usPlate: `TR${u}`, inspectionExpires: fut(u === "5305" ? 12 : 200) })).id;
-  const driver = async (name: string, truckId: string | null, extra: Record<string, unknown> = {}) => (await create(a, "driver", { name, driverType: "CDL", phone: `+1 956 555 01${String(Math.floor(Math.random() * 90) + 10)}`, whatsapp: null, licenseState: "TX", licenseNumber: `TX${Math.floor(10000000 + Math.random() * 8999999)}`, licenseClass: "A", licenseExpires: fut(600), medicalExpires: fut(300), fastExpires: fut(500), currentTruckId: truckId, hireDate: fut(-400), payType: "per_mile", payRateCents: 62, ...extra })).id;
+  // every driver has their own phone: WhatsApp replies are matched by number
+  let phoneSeq = 10;
+  const driver = async (name: string, truckId: string | null, extra: Record<string, unknown> = {}) => (await create(a, "driver", { name, driverType: "CDL", phone: `+1 956 555 01${String(phoneSeq++)}`, whatsapp: null, licenseState: "TX", licenseNumber: `TX${Math.floor(10000000 + Math.random() * 8999999)}`, licenseClass: "A", licenseExpires: fut(600), medicalExpires: fut(300), fastExpires: fut(500), currentTruckId: truckId, hireDate: fut(-400), payType: "per_mile", payRateCents: 62, ...extra })).id;
   const D = {
     rafael: await driver("Rafael Mendoza", T["201"]),
     marisol: await driver("Marisol Treviño", T["202"]),

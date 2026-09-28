@@ -664,7 +664,7 @@ export function coerce(kind: RecordKind, raw: Record<string, string | undefined 
         break;
       }
       case "cents": {
-        const n = Number(v.replace(/[$,\s]/g, ""));
+        const n = Number(v.replace(/[$,\s%]/g, "")); // "28%" on a percent pay rate is 28
         if (!Number.isFinite(n)) errors[f.name] = `${f.label} must be an amount`;
         else values[f.name] = Math.round(n * 100);
         break;
@@ -679,7 +679,11 @@ export function coerce(kind: RecordKind, raw: Record<string, string | undefined 
         values[f.name] = ["1", "true", "yes", "y", "on", "x", "si", "sí"].includes(v.toLowerCase());
         break;
       case "select": {
-        const opt = f.options?.find((o) => o.value === v || o.label.toLowerCase() === v.toLowerCase());
+        // the value, the label, or a clear short form of the label ("Dual", "Sprinter van", "Percent")
+        const k = (x: string) => x.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]/g, "");
+        const kv = k(v);
+        const loose = (f.options ?? []).filter((o) => o.value && kv.length >= 3 && (k(o.label).startsWith(kv) || (kv.startsWith(k(o.label)) && k(o.label).length >= 4)));
+        const opt = f.options?.find((o) => o.value === v || o.label.toLowerCase() === v.toLowerCase()) ?? f.options?.find((o) => o.value && (k(o.value) === kv || k(o.label) === kv)) ?? (loose.length === 1 ? loose[0] : undefined);
         if (!opt) errors[f.name] = `${f.label}: "${v}" is not one of ${f.options?.map((o) => o.label).join(", ")}`;
         else values[f.name] = opt.value || null;
         break;
