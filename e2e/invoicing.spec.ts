@@ -43,7 +43,9 @@ test("billing run: a summary customer's loads become one invoice, issued and ema
   await expect(plan).toContainText("$550.00");
   await page.getByRole("dialog").locator("button:has-text('Create, issue & send (1)')").click();
   const res = page.getByTestId("batch-result-row");
-  await expect(res).toContainText("sent");
+  // no email provider: issued, and the run says the email was only logged
+  await expect(res).toContainText("issued");
+  await expect(res).toContainText("not emailed");
   await expect(res).toContainText("BC-");
   await res.locator("a").click();
   await page.waitForURL("**/billing/invoices/**", { waitUntil: "commit" });
@@ -56,7 +58,7 @@ test("billing run: a summary customer's loads become one invoice, issued and ema
   expect(packet.headers()["content-type"]).toBe("application/pdf");
 
   // recorded by hand: uploaded to the portal
-  await page.click("button:has-text('Send again')");
+  await page.click("button:has-text('Send invoice')");
   const d = page.getByRole("dialog");
   await d.locator("#d-method").selectOption("portal");
   await d.locator("#d-to").fill("https://portal.acme.test");

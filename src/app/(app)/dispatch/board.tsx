@@ -905,7 +905,11 @@ function AssignModal({ leg, order, data, onClose, onDone }: { leg: Leg; order: O
   useEffect(() => {
     let live = true;
     const t = setTimeout(() => {
-      A.marginPreviewAction(leg.id, { driverId: pick?.driverId ?? null, coDriverId: pick?.coDriverId ?? null, plannedMiles: milesTyped != null && Number.isFinite(milesTyped) ? milesTyped : null }).then((r) => live && r.ok && setMp(r.data));
+      const q = new URLSearchParams({ driverId: pick?.driverId ?? "", coDriverId: pick?.coDriverId ?? "", miles: milesTyped != null && Number.isFinite(milesTyped) ? String(milesTyped) : "" });
+      fetch(`/api/legs/${leg.id}/margin?${q}`)
+        .then((r) => (r.ok ? r.json() : null))
+        .then((d) => live && d && setMp(d))
+        .catch(() => null);
     }, 250);
     return () => {
       live = false;

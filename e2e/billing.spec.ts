@@ -156,7 +156,9 @@ test("billing day: charges, docs gate, invoice to paid, AR, carrier three-way wi
   await page.click("button:has-text('Send invoice')");
   await expect(page.getByRole("dialog").locator("input[type=email]")).toHaveValue("ap@rxo.test");
   await page.getByRole("dialog").locator("button:has-text('Send')").click();
-  await expect(page.getByRole("status")).toContainText("Sent");
+  // no email provider in this company: the send is logged, and the invoice says it was never emailed
+  await expect(page.getByRole("status")).toContainText("Logged — not emailed (connect email in Settings → Integrations)");
+  await expect(page.locator("main")).toContainText("Not emailed — connect email in Settings → Integrations");
   await page.click("button:has-text('Record receipt')");
   let rc = page.getByRole("dialog");
   await rc.locator("input[inputmode=decimal]").fill("1000");
@@ -287,7 +289,7 @@ test("billing day: charges, docs gate, invoice to paid, AR, carrier three-way wi
 
   // ---- QuickBooks: preview counts the month, the IIF balances, the second run finds nothing new
   await page.goto("/billing/exports");
-  await expect(page.getByTestId("export-preview")).toContainText("1 invoices ($1,850.00) · 2 deposits ($1,850.00) · 0 credit memos · 1 carrier bills ($441.00) · 1 driver settlements ($252.60)");
+  await expect(page.getByTestId("export-preview")).toContainText("1 invoices ($1,850.00) · 2 deposits ($1,850.00) · 0 credit memos · 0 credits applied to invoices · 1 carrier bills ($441.00) · 1 driver settlements ($252.60)");
   await page.click("button:has-text('Create export')");
   await expect(page.getByRole("status")).toContainText("Export ready — 1 invoices, 2 receipts, 1 carrier bills, 1 settlements");
   const iifHref = await page.locator("a:has-text('.iif')").first().getAttribute("href");

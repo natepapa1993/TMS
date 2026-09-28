@@ -7,7 +7,7 @@ import { newId } from "@/lib/ids";
 import { assertCtx, requirePermission, type Ctx } from "@/lib/context";
 import { writeAudit } from "@/lib/audit";
 import { publicUrl } from "@/lib/tokens";
-import { enqueue, deliverQueued, canSendEmail } from "@/lib/outbox";
+import { enqueue, deliverQueued, emailReachesInbox } from "@/lib/outbox";
 import { ValidationError } from "./orders";
 import { TransitionError } from "./states";
 import { billingQueue, createInvoice, issueInvoice, invoiceById, type QueueRow } from "./billing";
@@ -160,7 +160,7 @@ export async function runBatch(ctx: Ctx, orderIds: string[], opts: { issue?: boo
     try {
       const sch = await sendFactorSchedule(ctx, toFactor);
       schedule = { id: sch.id, number: sch.number, count: toFactor.length };
-      const live = await canSendEmail(ctx.tenantId);
+      const live = await emailReachesInbox(ctx.tenantId);
       for (const r of results) if (r.invoiceId && toFactor.includes(r.invoiceId)) Object.assign(r, live ? { state: "sent" } : { note: `to the factor: ${NOT_EMAILED}` });
     } catch (e) {
       for (const r of results) if (r.invoiceId && toFactor.includes(r.invoiceId)) Object.assign(r, { ok: false, note: `to the factor: ${(e as Error).message}` });
@@ -281,7 +281,7 @@ export async function deliverInvoice(ctx: Ctx, invoiceId: string, opts: { method
     .join("\n");
   await enqueue(ctx, { channel: "email", to, subject: `Invoice ${inv.number} · ${entity?.dba || entity?.legalName}`, body, subjectKind: "invoice", subjectId: inv.id, meta: { kind: "invoice", attachments: [{ fileName: packet.fileName, storageKey }], cc } });
   await deliverQueued().catch(() => null);
-  const live = await canSendEmail(ctx.tenantId);
+  const live = await emailReachesInbox(ctx.tenantId);
   return recordDelivery(ctx, invoiceId, { method: "email", to: [to, ...cc].join(", "), reference: [!live ? NOT_EMAILED : null, packet.missing.length ? `${live ? "sent" : "written"} without ${packet.missing.join(", ")}` : null].filter(Boolean).join(" · ") || null, batchId: opts.batchId ?? null, ...(live ? {} : { logged: true }) });
 }
 
@@ -317,7 +317,7 @@ export async function sendFactorSchedule(ctx: Ctx, invoiceIds: string[]) {
   const body = [`${entity.factorName},`, ``, `Schedule of accounts #${number} from ${entity.legalName}: ${rows.length} invoice${rows.length === 1 ? "" : "s"} totalling ${fmt(total, invs[0].currency)}.`, ``, ...rows.map((r) => `${r.number}  ${r.customer}  ${fmt(r.amountCents, invs[0].currency)}`), ``, `The schedule, the invoices and their documents are attached.`].join("\n");
   await enqueue(ctx, { channel: "email", to: entity.factorEmail, subject: `Schedule #${number} · ${entity.legalName} · ${fmt(total, invs[0].currency)}`, body, subjectKind: "invoice_batch", subjectId: id, meta: { kind: "invoice", attachments: [{ fileName: `Schedule ${number} - ${entity.legalName}.pdf`, storageKey }] } });
   await deliverQueued().catch(() => null);
-  const live = await canSendEmail(ctx.tenantId);
+  const live = await emailReachesInbox(ctx.tenantId);
   for (const i of invs) {
     if (!i.factored) await db.update(s.invoices).set({ factored: true }).where(eq(s.invoices.id, i.id));
     await recordDelivery(ctx, i.id, { method: "factor", to: entity.factorEmail, reference: `schedule #${number}${live ? "" : ` · ${NOT_EMAILED}`}`, batchId: id, ...(live ? {} : { logged: true }) });

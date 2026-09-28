@@ -51,6 +51,13 @@ export async function canSendEmail(tenantId: string) {
   return !!(await resendFor(tenantId));
 }
 
+/** Whether an email from this tenant reaches a real inbox: a sender is configured and it isn't the demo company (its mail is only logged). */
+export async function emailReachesInbox(tenantId: string) {
+  if (!(await resendFor(tenantId))) return false;
+  const [t] = await db.select({ demo: sql<string | null>`${tenants.settings} ->> 'demo'` }).from(tenants).where(eq(tenants.id, tenantId)).limit(1);
+  return t?.demo !== "true";
+}
+
 export async function whatsappFor(tenantId: string): Promise<WaConfig | null> {
   const [row] = await db.select().from(integrations).where(and(eq(integrations.tenantId, tenantId), eq(integrations.provider, "whatsapp"))).limit(1);
   if (!row?.enabled || !row.config.phoneNumberId || !row.config.accessToken) return null;

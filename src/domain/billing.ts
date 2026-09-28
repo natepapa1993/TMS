@@ -808,10 +808,10 @@ export async function sendCreditMemo(ctx: Ctx, memoId: string, to?: string | nul
   const open = inv.totalCents - inv.creditedCents - inv.paidCents;
   const body = [`${customer?.name},`, ``, `Attached is credit memo ${memo.number} from ${entity?.legalName} for ${money(memo.amountCents, inv.currency, { code: true })}, applied to invoice ${inv.number}.`, `Reason: ${memo.reason}`, ``, open > 0 ? `Invoice ${inv.number} now has ${money(open, inv.currency, { code: true })} open.` : `Invoice ${inv.number} is now settled.`, ``, `Reference: ${memo.number}`].join("\n");
   await enqueue(ctx, { channel: "email", to: dest, subject: `Credit memo ${memo.number} · invoice ${inv.number} · ${entity?.dba || entity?.legalName}`, body, subjectKind: "credit_memo", subjectId: memo.id, meta: { kind: "invoice", attachments: [{ fileName: `Credit memo ${memo.number}.pdf`, storageKey: key }] } });
-  const { deliverQueued, canSendEmail } = await import("@/lib/outbox");
+  const { deliverQueued, emailReachesInbox } = await import("@/lib/outbox");
   await deliverQueued().catch(() => null);
   // with no email provider connected the email only went to the log: say so, never "sent"
-  if (!(await canSendEmail(ctx.tenantId))) {
+  if (!(await emailReachesInbox(ctx.tenantId))) {
     const { NOT_EMAILED } = await import("./invoicing");
     await db.update(s.creditMemos).set({ pdfStorageKey: key }).where(eq(s.creditMemos.id, memo.id));
     await writeAudit(db, ctx, "invoice", inv.id, "update", undefined, `credit memo ${memo.number} for ${dest}: ${NOT_EMAILED}`);
