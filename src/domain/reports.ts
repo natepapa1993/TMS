@@ -130,7 +130,7 @@ function costOrders(d: Awaited<ReturnType<typeof deliveredOrders>>, fuelCpm: num
 
 export async function dashboard(ctx: Ctx, period: Period, entityId: string | null = null): Promise<Dashboard> {
   assertCtx(ctx);
-  requirePermission(ctx, "orders.view");
+  requirePermission(ctx, "reports.view");
   const company = await getCompany(ctx);
   const tz = company.timeZone;
   const d = await deliveredOrders(ctx, period, tz, entityId);
@@ -196,7 +196,7 @@ export type Breakdown = "truck" | "customer" | "lane" | "carrier" | "driver" | "
 
 export async function breakdown(ctx: Ctx, by: Breakdown, period: Period, entityId: string | null = null): Promise<BreakdownRow[]> {
   assertCtx(ctx);
-  requirePermission(ctx, "orders.view");
+  requirePermission(ctx, "reports.view");
   const company = await getCompany(ctx);
   const tz = company.timeZone;
   const d = await deliveredOrders(ctx, period, tz, entityId);
@@ -258,7 +258,7 @@ export async function breakdown(ctx: Ctx, by: Breakdown, period: Period, entityI
 /** Order-level detail for a breakdown row (the drill-down). */
 export async function orderDetail(ctx: Ctx, period: Period, entityId: string | null, orderIds: string[]) {
   assertCtx(ctx);
-  requirePermission(ctx, "orders.view");
+  requirePermission(ctx, "reports.view");
   const company = await getCompany(ctx);
   const d = await deliveredOrders(ctx, period, company.timeZone, entityId);
   const costed = costOrders(d, company.settings.fuelCostCentsPerMile, company.settings.fx).filter((c) => orderIds.includes(c.orderId));

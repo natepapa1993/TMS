@@ -47,13 +47,18 @@ describe("block levels", () => {
     expect(syncDocumentTypeLevel({ blockLevel: "hard" })).toMatchObject({ blocksDispatch: true });
     expect(syncDocumentTypeLevel({ blockLevel: "warn" })).toMatchObject({ blocksDispatch: false });
   });
-  it("a new blocking rule gets 14 days' grace unless a date was given; a warn-only or optional rule needs none", () => {
+  it("a new blocking rule gets 14 days' grace unless a date was given; a warn-only rule needs none", () => {
     const now = new Date("2026-09-28T15:00:00Z");
     expect((withNewRuleGrace({ name: "IRP cab card", required: true, blockLevel: "override" }, now).graceUntil as Date).toISOString()).toBe("2026-10-12T15:00:00.000Z");
     const given = new Date("2026-11-01T12:00:00Z");
     expect(withNewRuleGrace({ required: true, blockLevel: "hard", graceUntil: given }, now).graceUntil).toBe(given);
     expect(withNewRuleGrace({ required: true, blockLevel: "warn" }, now).graceUntil).toBeUndefined();
-    expect(withNewRuleGrace({ required: false, blockLevel: "hard" }, now).graceUntil).toBeUndefined();
+    // quick-add has no Required box: a new blocking rule gets the grace anyway, and so does one made required later
+    expect((withNewRuleGrace({ required: false, blockLevel: "hard" }, now).graceUntil as Date).toISOString()).toBe("2026-10-12T15:00:00.000Z");
+    expect((withNewRuleGrace({ required: true, blockLevel: "override", graceUntil: null }, now, { required: false, blocksDispatch: true, blockLevel: "override", graceUntil: null }).graceUntil as Date).toISOString()).toBe("2026-10-12T15:00:00.000Z");
+    expect(withNewRuleGrace({ blockLevel: "override" }, now, { required: false, blocksDispatch: false, blockLevel: "warn" }).graceUntil).toBeInstanceOf(Date);
+    // a blocking rule whose date Safety clears is enforced now
+    expect(withNewRuleGrace({ required: true, blockLevel: "hard", graceUntil: null }, now, { required: true, blocksDispatch: true, blockLevel: "hard", graceUntil: new Date("2026-10-01") }).graceUntil).toBeNull();
   });
   it("the sentence dispatch reads comes from the reasons, with a fallback for old stored rows", () => {
     expect(blockSentence({ blockers: ["On a safety hold — ask Safety"], expired: ["Safety hold"], missing: [] })).toBe("On a safety hold — ask Safety");

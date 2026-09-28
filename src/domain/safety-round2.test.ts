@@ -183,3 +183,41 @@ describe("D&A validation (safety N10)", () => {
     await expect(S.drawRandom(a, { period: month, drugRate: 50, alcoholRate: 10, drawsPerYear: 4 })).rejects.toThrow(/12 draws a year|already covers/);
   });
 });
+
+describe("a new unit with no annual inspection isn't silently dispatchable (safety N14)", () => {
+  it("added after the company's first month: blocked until the inspection is on file; units typed in during setup follow the blank-dates switch", async () => {
+    const setupUnit = await create(a, "truck", { unitNumber: "OLD1" });
+    expect((await C.evaluateSubject(a, "truck", setupUnit.id)).dispatchable).toBe(true);
+    // the company is two months old now; OLD1 was typed in during its first weeks
+    await db.update(tenants).set({ createdAt: new Date(Date.now() - 60 * DAY) }).where(eq(tenants.id, a.tenantId));
+    const { trucks } = await import("@/db/schema");
+    await db.update(trucks).set({ createdAt: new Date(Date.now() - 50 * DAY) }).where(eq(trucks.id, setupUnit.id));
+    expect((await C.evaluateSubject(a, "truck", setupUnit.id)).dispatchable).toBe(true);
+    const q316 = await create(a, "truck", { unitNumber: "Q316" });
+    let st = await C.evaluateSubject(a, "truck", q316.id);
+    expect(st.dispatchable).toBe(false);
+    expect(C.forLeg(st, null).blockers).toEqual(["Annual inspection: none on file for this new unit (396.17)"]);
+    const q5501 = await create(a, "trailer", { unitNumber: "Q5502" });
+    expect((await C.evaluateSubject(a, "trailer", q5501.id)).dispatchable).toBe(false);
+    const { update } = await import("@/data/records");
+    await update(a, "truck", q316.id, { dotInspectionExpires: days(300) });
+    st = await C.evaluateSubject(a, "truck", q316.id);
+    expect(st.dispatchable).toBe(true);
+  });
+});
+
+describe("new blocking rules start with the 14-day grace (safety N9)", () => {
+  it("a rule from quick-add (no Required box) and one made required later both get it; the board shows it without blocking", async () => {
+    const { withNewRuleGrace } = await import("./compliance-rules");
+    const { create: mk, update, get: getRec } = await import("@/data/records");
+    const quick = await mk(a, "documentType", withNewRuleGrace({ name: "IRP cab card QA2", appliesTo: "truck", tracksExpiry: true, blockLevel: "override" }));
+    expect(quick.graceUntil).toBeInstanceOf(Date);
+    const plain = await mk(a, "documentType", { name: "Permit book", appliesTo: "truck", tracksExpiry: false, blockLevel: "warn" });
+    const before = await getRec(a, "documentType", plain.id);
+    await update(a, "documentType", plain.id, withNewRuleGrace({ required: true, blockLevel: "hard", graceUntil: null }, new Date(), before));
+    expect((await getRec(a, "documentType", plain.id)).graceUntil).toBeInstanceOf(Date);
+    const st = await C.evaluateSubject(a, "truck", f.t1);
+    expect(st.dispatchable).toBe(true);
+    expect(st.items.find((i) => i.label === "Permit book")!.graceUntil).toBeTruthy();
+  });
+});

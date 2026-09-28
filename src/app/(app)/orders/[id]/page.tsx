@@ -91,14 +91,17 @@ export default async function OrderPage({ params }: PageProps<"/orders/[id]">) {
   const margin = headPnl ? headPnl.margin : rateUsd != null && covered ? rateUsd - carrierCost : null;
   const fxHint = order.currency !== "USD" ? ` · in USD, ${order.currency} at ${((headPnl?.fx?.rateE4 ?? fxOf(order.currency)) / 10000).toFixed(4)}` : "";
   const weightLb = (order.freight ?? []).reduce((a, f) => a + (f.weightLb ?? 0), 0) || order.weightLbs || null;
-  const facts: [string, string, string?][] = [
+  // the owner can hide what the customer pays and the margin from dispatchers (owner #18)
+  const showMoney = await (await import("@/domain/money-visibility")).canSeeMoney(ctx);
+  const allFacts: [string, string, string?][] = [
     ["Pickup", atStop(pickup?.windowStart ?? pickup?.windowEnd, pickup), place(pickup)],
     ["Delivery", atStop(delivery?.windowStart ?? delivery?.windowEnd, delivery), place(delivery)],
     ["Rate", rate == null ? "TBD" : formatCents(rate, order.currency), order.rateType !== "flat" && order.rateUnitCents != null ? `${formatCents(order.rateUnitCents, order.currency)} × ${order.rateQty ?? "?"}` : undefined],
     ["Carrier cost", carrierCost ? formatCents(headPnl ? headPnl.carrierCost + headPnl.extra : carrierCost, "USD") : "—", carrierCost && legs.some((l) => (l.carrierRateCurrency ?? "USD") !== "USD") ? "carriers paid in their own currency, shown in USD" : undefined],
     ["Margin", margin == null ? "—" : formatCents(margin, "USD"), margin != null && headPnl ? `${headPnl.marginPct}% after carriers, driver pay${headPnl.driverPayEstimated ? " (est.)" : ""}, fuel${fxHint}` : margin != null && rateUsd ? `${((margin / rateUsd) * 100).toFixed(1)}%${fxHint}` : covered ? undefined : "legs not covered yet"],
-    ["Miles", miles == null ? "—" : `${miles.toLocaleString("en-US")}${milesEst ? " est." : ""}`, miles && rateUsd ? `${formatCents(Math.round(rateUsd / miles), "USD")} / mile${order.currency !== "USD" ? " (USD)" : ""}${milesEst ? " est." : ""}` : undefined],
+    ["Miles", miles == null ? "—" : `${miles.toLocaleString("en-US")}${milesEst ? " est." : ""}`, miles && rateUsd && showMoney ? `${formatCents(Math.round(rateUsd / miles), "USD")} / mile${order.currency !== "USD" ? " (USD)" : ""}${milesEst ? " est." : ""}` : undefined],
   ];
+  const facts = showMoney ? allFacts : allFacts.filter(([k]) => !["Rate", "Carrier cost", "Margin"].includes(k));
   // where it is: the leg on the road, its last position and ETA, and the check calls
   const liveLeg = legs.find((l) => ["dispatched", "accepted", "en_route_to_pickup", "at_pickup", "loaded", "en_route", "at_delivery"].includes(l.state)) ?? null;
   const tracking = liveLeg
@@ -412,7 +415,7 @@ export default async function OrderPage({ params }: PageProps<"/orders/[id]">) {
               </div>
             ),
           },
-        ]}
+        ].filter((t) => showMoney || t.id !== "money")}
       />
     </div>
   );

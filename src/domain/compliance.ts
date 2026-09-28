@@ -101,6 +101,9 @@ export function complianceSettings(settings: Record<string, unknown> | null | un
   return { strictMissing: !!st.missingDatesBlock, levels: (st.blockLevels as Record<string, unknown>) ?? {}, dqGraceUntil: g && !Number.isNaN(g.getTime()) ? g : null };
 }
 
+/** Units typed in during a company's first month are its existing fleet: the blank-dates switch decides for them. */
+export const NEW_UNIT_SETUP_DAYS = 30;
+
 /** Evaluate one subject and store the result. */
 export async function evaluateSubject(ctx: Ctx, kind: SubjectKind, subjectId: string, now = new Date()) {
   assertCtx(ctx);
@@ -112,8 +115,10 @@ export async function evaluateSubject(ctx: Ctx, kind: SubjectKind, subjectId: st
   const docs = await db.select().from(s.documents).where(and(eq(s.documents.tenantId, ctx.tenantId), eq(s.documents.subjectKind, kind), eq(s.documents.subjectId, subjectId), inArray(s.documents.status, ["present", "verified"])));
   const snoozes = await db.select().from(s.complianceSnoozes).where(and(eq(s.complianceSnoozes.tenantId, ctx.tenantId), eq(s.complianceSnoozes.subjectKind, kind), eq(s.complianceSnoozes.subjectId, subjectId), gt(s.complianceSnoozes.until, now)));
   const items: ComplianceItem[] = [];
-  const [tenant] = await db.select({ settings: s.tenants.settings }).from(s.tenants).where(eq(s.tenants.id, ctx.tenantId)).limit(1);
+  const [tenant] = await db.select({ settings: s.tenants.settings, createdAt: s.tenants.createdAt }).from(s.tenants).where(eq(s.tenants.id, ctx.tenantId)).limit(1);
   const cfg = complianceSettings(tenant?.settings as Record<string, unknown> | null);
+  // a unit added after the company's first month (its setup, when existing units are typed in) with no annual inspection on file
+  const newUnit = (kind === "truck" || kind === "trailer") && !!tenant && r.createdAt instanceof Date && r.createdAt.getTime() > tenant.createdAt.getTime() + NEW_UNIT_SETUP_DAYS * 86400_000;
 
   for (const t of types) {
     const doc = docs.filter((d) => d.documentTypeId === t.id).sort((p, q) => (q.expiresAt?.getTime() ?? 0) - (p.expiresAt?.getTime() ?? 0))[0];
@@ -139,7 +144,9 @@ export async function evaluateSubject(ctx: Ctx, kind: SubjectKind, subjectId: st
     if (snooze && underlying) status = "snoozed";
     // the latest photo or scan of this credential on file
     const scan = docs.filter((x) => x.code === key).sort((p, q) => q.createdAt.getTime() - p.createdAt.getTime())[0];
-    items.push({ key, label: f.label, status, underlying: snooze ? underlying : null, blocksWhenMissing: blocks && cfg.strictMissing, expiresAt: d?.toISOString() ?? null, documentId: scan?.id ?? null, blocksDispatch: blocks, level, required: true, alertDays: 30, snoozedUntil: snooze?.until.toISOString() ?? null, snoozeReason: snooze?.reason ?? null });
+    // 396.17: a brand-new truck or trailer has no periodic inspection until one is on file — it doesn't wait for the blank-dates switch (safety N14)
+    const newUnitMissing = newUnit && !d && INSPECTION_KEYS.includes(f.key);
+    items.push({ key, label: f.label, status, underlying: snooze ? underlying : null, blocksWhenMissing: blocks && (cfg.strictMissing || newUnitMissing), ...(newUnitMissing && blocks ? { reason: `${f.label}: none on file for this new unit (396.17)` } : {}), expiresAt: d?.toISOString() ?? null, documentId: scan?.id ?? null, blocksDispatch: blocks, level, required: true, alertDays: 30, snoozedUntil: snooze?.until.toISOString() ?? null, snoozeReason: snooze?.reason ?? null });
   }
   if (kind === "driver") items.push(...(await driverSafetyItems(ctx, r, subjectId, cfg, now)));
   const { expired, expiring, missing, dispatchable } = rollup(items);

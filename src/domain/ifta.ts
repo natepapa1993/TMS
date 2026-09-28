@@ -64,7 +64,7 @@ const GPS_MAX_JUMP_MI = 250;
  */
 export async function computeMiles(ctx: Ctx, quarter: string) {
   assertCtx(ctx);
-  requirePermission(ctx, "billing.issue");
+  requirePermission(ctx, "ifta.edit");
   const { zone, from, to } = await quarterRange(ctx.tenantId, quarter);
   const acc: Acc = new Map();
   const warnings: string[] = [];
@@ -156,7 +156,7 @@ export async function computeMiles(ctx: Ctx, quarter: string) {
 /** A trip-sheet entry: miles a truck ran in a jurisdiction on a day (what GPS and the legs cannot see: a repair run, a deadhead with no app). */
 export async function addTripMiles(ctx: Ctx, input: { truckId: string; date: string; jurisdiction: string; miles: number; note?: string | null }) {
   assertCtx(ctx);
-  requirePermission(ctx, "billing.issue");
+  requirePermission(ctx, "ifta.edit");
   const j = jurisdictionCode(input.jurisdiction);
   if (!j) throw new ValidationError("a state or province code (TX, ON…) or MX", "jurisdiction");
   if (!/^\d{4}-\d{2}-\d{2}$/.test(input.date)) throw new ValidationError("the date", "date");
@@ -171,7 +171,7 @@ export async function addTripMiles(ctx: Ctx, input: { truckId: string; date: str
 
 export async function deleteTripMiles(ctx: Ctx, id: string) {
   assertCtx(ctx);
-  requirePermission(ctx, "billing.issue");
+  requirePermission(ctx, "ifta.edit");
   const [r] = await db.select().from(s.iftaMiles).where(and(eq(s.iftaMiles.tenantId, ctx.tenantId), eq(s.iftaMiles.id, id))).limit(1);
   if (!r) throw new NotFoundError("miles entry", id);
   if (r.source !== "trip_sheet") throw new ValidationError("computed miles are replaced by recomputing; add a trip-sheet entry to correct them");
@@ -197,7 +197,7 @@ function cleanFuel(input: FuelInput) {
 
 export async function addFuelPurchase(ctx: Ctx, input: FuelInput) {
   assertCtx(ctx);
-  requirePermission(ctx, "billing.issue");
+  requirePermission(ctx, "ifta.edit");
   const c = cleanFuel(input);
   if (input.truckId) {
     const [t] = await db.select({ id: s.trucks.id }).from(s.trucks).where(and(eq(s.trucks.tenantId, ctx.tenantId), eq(s.trucks.id, input.truckId))).limit(1);
@@ -211,7 +211,7 @@ export async function addFuelPurchase(ctx: Ctx, input: FuelInput) {
 
 export async function deleteFuelPurchase(ctx: Ctx, id: string) {
   assertCtx(ctx);
-  requirePermission(ctx, "billing.issue");
+  requirePermission(ctx, "ifta.edit");
   const r = await db.delete(s.fuelPurchases).where(and(eq(s.fuelPurchases.tenantId, ctx.tenantId), eq(s.fuelPurchases.id, id))).returning({ id: s.fuelPurchases.id });
   if (!r.length) throw new NotFoundError("fuel purchase", id);
   await writeAudit(db, ctx, "fuel_purchase", id, "archive");
@@ -244,7 +244,7 @@ function col(headers: string[], field: string) {
  */
 export async function importFuelPurchases(ctx: Ctx, file: { fileName: string; bytes: Buffer }) {
   assertCtx(ctx);
-  requirePermission(ctx, "billing.issue");
+  requirePermission(ctx, "ifta.edit");
   const table = await readTable(file);
   const h = Object.fromEntries(Object.keys(FUEL_ALIAS).map((k) => [k, col(table.headers, k)])) as Record<string, string | null>;
   const missing = ["date", "jurisdiction"].filter((k) => !h[k]);
@@ -302,7 +302,7 @@ export async function importFuelPurchases(ctx: Ctx, file: { fileName: string; by
 /** The quarter's rates; each row replaces the jurisdiction's rate (a blank rate removes it). */
 export async function setRates(ctx: Ctx, quarter: string, rows: { jurisdiction: string; rate: number | null; surcharge?: number | null }[]) {
   assertCtx(ctx);
-  requirePermission(ctx, "billing.issue");
+  requirePermission(ctx, "ifta.edit");
   quarterDates(quarter);
   let saved = 0;
   for (const r of rows) {
@@ -329,7 +329,7 @@ export async function setRates(ctx: Ctx, quarter: string, rows: { jurisdiction: 
 /** Copy the last quarter's rates that are not yet set for this one (rates change often: check them). */
 export async function copyRatesFrom(ctx: Ctx, quarter: string, fromQuarter: string) {
   assertCtx(ctx);
-  requirePermission(ctx, "billing.issue");
+  requirePermission(ctx, "ifta.edit");
   const prev = await db.select().from(s.iftaRates).where(and(eq(s.iftaRates.tenantId, ctx.tenantId), eq(s.iftaRates.quarter, fromQuarter)));
   const cur = await db.select({ j: s.iftaRates.jurisdiction }).from(s.iftaRates).where(and(eq(s.iftaRates.tenantId, ctx.tenantId), eq(s.iftaRates.quarter, quarter)));
   const have = new Set(cur.map((c) => c.j));
@@ -378,7 +378,7 @@ export function iftaReturn(miles: Record<string, number>, gallons: Record<string
 /** The quarter's return for the fleet (or one truck), with the per-truck MPG and what to check. */
 export async function iftaReport(ctx: Ctx, quarter: string, truckId?: string | null) {
   assertCtx(ctx);
-  requirePermission(ctx, "billing.view");
+  requirePermission(ctx, "ifta.view");
   const { from, to } = await quarterRange(ctx.tenantId, quarter);
   const [milesRows, fuelRows, rateRows, trucks] = await Promise.all([
     db.select().from(s.iftaMiles).where(and(eq(s.iftaMiles.tenantId, ctx.tenantId), eq(s.iftaMiles.quarter, quarter), truckId ? eq(s.iftaMiles.truckId, truckId) : sql`true`)),
@@ -423,7 +423,7 @@ export async function iftaReport(ctx: Ctx, quarter: string, truckId?: string | n
 /** The purchases and trip-sheet entries of a quarter, for the page. */
 export async function iftaDetail(ctx: Ctx, quarter: string) {
   assertCtx(ctx);
-  requirePermission(ctx, "billing.view");
+  requirePermission(ctx, "ifta.view");
   const { from, to } = await quarterRange(ctx.tenantId, quarter);
   const [fuel, trips, rates] = await Promise.all([
     db.select().from(s.fuelPurchases).where(and(eq(s.fuelPurchases.tenantId, ctx.tenantId), gte(s.fuelPurchases.purchasedAt, from), lt(s.fuelPurchases.purchasedAt, to))).orderBy(asc(s.fuelPurchases.purchasedAt)),

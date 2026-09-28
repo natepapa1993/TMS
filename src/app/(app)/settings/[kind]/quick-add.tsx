@@ -41,6 +41,7 @@ export function QuickAdd({ kind, fields, refs, label, openInitially, onSaved, bu
             return r;
           }}
         />
+        {kind === "documentType" && <div className="help mt-3" data-testid="rule-grace-note">A rule that blocks starts with 14 days&rsquo; grace — shown on the board but not blocking — so the fleet doesn&rsquo;t stop at once. Change or clear the date on the rule.</div>}
         <div className="help mt-3">Only the essentials. Everything else lives on the record and can be filled in later.</div>
       </Modal>
       <Toast message={t.toast?.message ?? null} tone={t.toast?.tone} onDone={t.clear} />

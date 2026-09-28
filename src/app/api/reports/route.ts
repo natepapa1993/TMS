@@ -1,4 +1,5 @@
 import { requireCtx } from "@/lib/auth";
+import { can } from "@/lib/context";
 import { breakdown, breakdownCsv, type Breakdown } from "@/domain/reports";
 
 export const dynamic = "force-dynamic";
@@ -7,6 +8,7 @@ export const dynamic = "force-dynamic";
 export async function GET(req: Request) {
   const c = await requireCtx().catch(() => null);
   if (!c) return new Response("sign in first", { status: 401 });
+  if (!can(c, "reports.view")) return new Response("reports are for the owner and billing", { status: 403 });
   const p = new URL(req.url).searchParams;
   const by = (p.get("by") ?? "truck") as Breakdown;
   const from = p.get("from") ?? "";

@@ -1,6 +1,7 @@
 "use client";
 
 import { fold } from "@/lib/fold";
+import { useShowMoney } from "@/components/money";
 import Link from "next/link";
 import { useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
@@ -58,6 +59,7 @@ const friendly = (s: string | null, zone: string, now: string) => fmtWhen(s, zon
 const isToday = (s: string | null, zone: string, now: string, add = 0) => !!s && zonedDate(new Date(s), zone) === zonedDate(new Date(new Date(now).getTime() + add * 86400_000), zone);
 
 export function Planner({ data, canPlan }: { data: { legs: PlannerLeg[]; drivers: PlannerDriver[]; trucks: PlannerTruck[]; now: string }; canPlan: boolean }) {
+  const showMoney = useShowMoney(); // the owner can hide the customer's rate from dispatchers
   const zone = useZone();
   const now = data.now;
   const router = useRouter();
@@ -224,8 +226,8 @@ export function Planner({ data, canPlan }: { data: { legs: PlannerLeg[]; drivers
                           {l.state === "planned" ? <Pill tone="blue">{l.assigned}</Pill> : l.state === "declined" ? <Pill tone="red">declined</Pill> : null}
                           {passed(l) && <Pill tone="red" title="The pickup appointment is already past: call the shipper and move it">pickup passed</Pill>}
                           <span className="ml-auto text-callout text-muted tabular-nums">
-                            {l.miles != null ? `${l.miles.toLocaleString("en-US")} mi${l.milesEst ? " est." : ""} · ` : ""}
-                            {money(l.rateCents, l.currency)}
+                            {l.miles != null ? `${l.miles.toLocaleString("en-US")} mi${l.milesEst ? " est." : ""}${showMoney ? " · " : ""}` : ""}
+                            {showMoney && money(l.rateCents, l.currency)}
                           </span>
                         </div>
                         <div className="grid grid-cols-2 gap-3 mt-1.5 text-callout">

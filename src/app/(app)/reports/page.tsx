@@ -5,6 +5,8 @@ import { list } from "@/data/records";
 import { zonedDate } from "@/lib/time";
 import { PageHeader } from "@/components/page-header";
 import { ReportsView } from "./view";
+import { NoAccess } from "@/components/no-access";
+import { can } from "@/lib/context";
 
 export const metadata = { title: "Reports" };
 export const dynamic = "force-dynamic";
@@ -13,6 +15,8 @@ const currentTime = async () => new Date();
 
 export default async function ReportsPage({ searchParams }: PageProps<"/reports">) {
   const ctx = await requireCtx();
+  // revenue, margin and receivables are the owner's and billing's (safety #37, owner #18)
+  if (!can(ctx, "reports.view")) return <NoAccess area="Reports (revenue, margin, receivables)" role={ctx.role} />;
   const sp = await searchParams;
   const company = await getCompany(ctx);
   const now = await currentTime();

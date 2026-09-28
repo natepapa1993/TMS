@@ -13,6 +13,7 @@ export function SafetyNav({ role, counts }: { role: string; counts?: Record<stri
     ["/compliance/inspections", "Inspections"],
     ["/compliance/incidents", "Incidents"],
     ["/compliance/overrides", "Overrides"],
+    ...(["owner", "compliance"].includes(role) ? ([["/compliance/ifta", "IFTA"]] as [string, string][]) : []),
   ];
   return (
     <nav className="subnav" data-testid="safety-nav">

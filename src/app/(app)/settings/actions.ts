@@ -3,10 +3,10 @@
 import { revalidatePath } from "next/cache";
 import { act, type ActionResult } from "@/lib/action";
 import { coerce, KIND_META } from "@/data/fields";
-import { create, update, archive, restore, type RecordKind, ValidationErrorLike } from "@/data/records";
+import { create, update, archive, restore, get, type RecordKind, ValidationErrorLike } from "@/data/records";
+import { withNewRuleGrace } from "@/domain/compliance-rules";
 import { previewImport, commitImport, type ImportPreview } from "@/data/import";
 import { setTruckOos, setTruckActive } from "@/domain/orders";
-import { withNewRuleGrace } from "@/domain/compliance-rules";
 import { hashPassword } from "@/lib/auth";
 import { requirePermission } from "@/lib/context";
 import { db } from "@/db/client";
@@ -19,9 +19,10 @@ export async function saveRecord(kind: RecordKind, id: string | null, raw: Recor
   const { values, errors, ok } = coerce(kind, raw, { partial: !!id });
   if (!ok) return { ok: false, error: Object.values(errors)[0], errors, code: "validation" };
   if (kind === "user" && raw.password) values.passwordHash = await hashPassword(raw.password);
-  // a new blocking rule made here gets 14 days' grace unless a date was given (the whole fleet doesn't stop at once)
-  const vals = kind === "documentType" && !id ? withNewRuleGrace(values) : values;
   const r = await act(async (ctx) => {
+    // a rule that starts blocking — new from quick-add or the form, or switched to blocking / made required on an edit —
+    // gets 14 days' grace unless a date was given: the whole fleet doesn't stop at once (safety N9)
+    const vals = kind === "documentType" ? withNewRuleGrace(values, new Date(), id ? await get(ctx, kind, id) : null) : values;
     const row = id ? await update(ctx, kind, id, vals, expectedUpdatedAt ? new Date(expectedUpdatedAt) : undefined) : await create(ctx, kind, vals);
     return { id: row.id as string };
   });

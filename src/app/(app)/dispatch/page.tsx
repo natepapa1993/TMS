@@ -1,4 +1,5 @@
 import { requireCtx } from "@/lib/auth";
+import { canSeeMoney } from "@/domain/money-visibility";
 import { board, type BoardRow } from "@/domain/orders";
 import { list } from "@/data/records";
 import { DispatchBoard, type BoardData, type Row } from "./board";
@@ -25,6 +26,7 @@ export default async function DispatchPage({ searchParams }: PageProps<"/dispatc
   const initialBucket = typeof sp.bucket === "string" && BUCKETS.some((b) => b.key === sp.bucket) ? (sp.bucket as BucketKey) : undefined;
   const initialChip = typeof sp.chip === "string" && ALERTS.some((a) => a.key === sp.chip) ? (sp.chip as AlertKey) : undefined;
   const ctx = await requireCtx();
+  const showMoney = await canSeeMoney(ctx); // the owner can hide the customer's rate from dispatchers
   const [rows, customers, carriers, drivers, trucks, trailers, [tenant], locations] = await Promise.all([
     board(ctx),
     list(ctx, "customer", { limit: 2000 }),
@@ -38,7 +40,7 @@ export default async function DispatchPage({ searchParams }: PageProps<"/dispatc
   const custName = new Map(customers.map((c) => [c.id, String(c.name)]));
   const [tenderRows, inbox, msgs, requests, etas, mail, pings, calls] = await Promise.all([openTendersForOrders(ctx, rows.map((r) => r.order.id)), ediInbox(ctx), messageInbox(ctx, { limit: 50 }), openPortalRequests(ctx), boardEtas(ctx), mailInbox(ctx, { limit: 50 }), lastPings(ctx), lastCheckCalls(ctx, rows.map((r) => r.order.id))]);
   const carrierName = new Map(carriers.map((c) => [c.id, String(c.name)]));
-  const slimRows = rows.map(slim);
+  const slimRows = rows.map((r) => slim(r, showMoney));
   // the dispatcher's ETA from a check call stands until a newer GPS position (M6)
   const callEtas = Object.fromEntries([...calls].map(([k, c]) => [k, { at: c.at.toISOString(), etaAt: c.etaAt?.toISOString() ?? null, legId: c.legId }]));
   const mergedEtas = mergeCallEtas(slimRows, Object.fromEntries(Object.entries(etas).map(([k, e]) => [k, { ...e, source: "gps" as const }])), callEtas);
@@ -80,10 +82,10 @@ export default async function DispatchPage({ searchParams }: PageProps<"/dispatc
 
 const iso = (d: Date | null | undefined) => (d ? d.toISOString() : null);
 /** Only what the board draws. The full rows are ~4 KB each; a busy week is a thousand of them, and the board is a client component. */
-function slim(r: BoardRow): Omit<Row, "customerName" | "tenders" | "podMissing"> {
+function slim(r: BoardRow, showMoney = true): Omit<Row, "customerName" | "tenders" | "podMissing"> {
   const o = r.order;
   return {
-    order: { id: o.id, orderNumber: o.orderNumber, state: o.state, kind: o.kind, rateCents: o.rateCents, rateTbd: o.rateTbd, currency: o.currency, equipment: o.equipment, refs: o.refs ?? {}, holdReason: o.holdReason, legTemplate: o.legTemplate, customerId: o.customerId, brokerId: o.brokerId },
+    order: { id: o.id, orderNumber: o.orderNumber, state: o.state, kind: o.kind, rateCents: showMoney ? o.rateCents : null, rateTbd: o.rateTbd, currency: o.currency, equipment: o.equipment, refs: o.refs ?? {}, holdReason: o.holdReason, legTemplate: o.legTemplate, customerId: o.customerId, brokerId: o.brokerId },
     stops: r.stops.map((st) => ({ id: st.id, seq: st.seq, type: st.type, name: st.name, country: st.country, windowStart: iso(st.windowStart), windowEnd: iso(st.windowEnd), arrivedAt: iso(st.arrivedAt), departedAt: iso(st.departedAt), address: st.address ? { city: st.address.city, state: st.address.state } : null })),
     legs: r.legs.map((l) => ({ id: l.id, seq: l.seq, type: l.type, state: l.state, assigneeKind: l.assigneeKind, truckId: l.truckId, trailerId: l.trailerId, trailerUnit: l.trailerUnit, driverId: l.driverId, coDriverId: l.coDriverId, carrierId: l.carrierId, carrierRateCents: l.carrierRateCents, plannedMiles: l.plannedMiles, carrierRateCurrency: l.carrierRateCurrency ?? "USD", estMiles: l.estMiles, fromStopId: l.fromStopId, toStopId: l.toStopId, truckUnit: l.truckUnit, driverName: l.driverName, carrierName: l.carrierName, declineReason: l.declineReason, dispatchedAt: iso(l.dispatchedAt), completedAt: iso(l.completedAt) })),
     openFlags: r.openFlags.map((f) => ({ id: f.id, code: f.code, level: f.level, title: f.title, detail: f.detail, legId: f.legId })),

@@ -50,12 +50,13 @@ const NAV: { section: string; items: NavItem[] }[] = [
       { href: "/compliance/drivers", label: "Driver files", icon: FolderCheck },
       { href: "/compliance/inspections", label: "Inspections", icon: ClipboardCheck },
       { href: "/compliance/incidents", label: "Incidents", icon: TriangleAlert },
+      { href: "/compliance/ifta", label: "IFTA", icon: FileText, roles: ["compliance"] },
     ],
   },
   {
     section: "Company",
     items: [
-      { href: "/reports", label: "Reports", icon: BarChart3 },
+      { href: "/reports", label: "Reports", icon: BarChart3, roles: ["owner", "billing"] },
       { href: "/edi", label: "EDI", icon: Cable, roles: ["owner", "dispatcher", "billing"] },
       { href: "/settings/integrations", label: "Integrations", icon: Plug, roles: ["owner"] },
       { href: "/settings", label: "Settings", icon: Settings },

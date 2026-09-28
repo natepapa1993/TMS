@@ -2,7 +2,7 @@
 
 import { useRef, useState, useTransition } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useRouter, usePathname } from "next/navigation";
 import { Modal, Pill, Toast, useToast } from "@/components/ui";
 import { formatCents } from "@/data/fields";
 import type { IftaRow } from "@/domain/ifta";
@@ -23,6 +23,7 @@ const n = (v: number, d = 0) => v.toLocaleString("en-US", { minimumFractionDigit
 
 export function IftaScreen({ quarter, quarters, report, fuel, trips, rates, members, trucks, canEdit }: { quarter: string; quarters: string[]; report: Report; fuel: Fuel[]; trips: Trip[]; rates: Record<string, { rate: string; surcharge: string }>; members: string[]; trucks: { id: string; unit: string }[]; canEdit: boolean }) {
   const router = useRouter();
+  const path = usePathname(); // /billing/ifta or /compliance/ifta: the quarter tabs stay on the page they're on
   const t = useToast();
   const [pending, start] = useTransition();
   const [tab, setTab] = useState<(typeof TABS)[number][0]>("return");
@@ -49,7 +50,7 @@ export function IftaScreen({ quarter, quarters, report, fuel, trips, rates, memb
       <div className="flex flex-wrap items-center gap-2">
         <div className="flex gap-1 flex-wrap">
           {quarters.map((q) => (
-            <Link key={q} href={`/billing/ifta?q=${q}`} className="stage-tab h-8 text-callout" data-active={q === quarter}>
+            <Link key={q} href={`${path}?q=${q}`} className="stage-tab h-8 text-callout" data-active={q === quarter}>
               {q.replace("Q", " Q")}
             </Link>
           ))}

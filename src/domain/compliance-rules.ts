@@ -140,8 +140,15 @@ export function syncDocumentTypeLevel(values: Record<string, unknown>) {
  * "IRP cab card" must not stop the whole fleet mid-shift (dispatch M21). Clearing the date enforces it now.
  */
 export const NEW_RULE_GRACE_DAYS = 14;
-export function withNewRuleGrace(values: Record<string, unknown>, now = new Date()) {
+export function withNewRuleGrace(values: Record<string, unknown>, now = new Date(), before?: Record<string, unknown> | null) {
   const v = syncDocumentTypeLevel(values);
-  if (v.graceUntil || !v.required || !v.blocksDispatch) return v;
+  if (v.graceUntil) return v;
+  const after = { ...(before ?? {}), ...v };
+  const blocksNow = !!after.blocksDispatch;
+  // a rule starts blocking when it's made blocking, or a blocking rule is made required (then a missing document blocks too)
+  const starts = before ? (blocksNow && !before.blocksDispatch) || (blocksNow && !!after.required && !before.required) : blocksNow;
+  if (!starts) return v;
+  // a grace already running on the rule stays as it is
+  if (before?.graceUntil && new Date(before.graceUntil as Date).getTime() > now.getTime() && !("graceUntil" in v)) return v;
   return { ...v, graceUntil: new Date(now.getTime() + NEW_RULE_GRACE_DAYS * 86400_000) };
 }

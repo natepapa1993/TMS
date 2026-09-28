@@ -13,6 +13,7 @@ import { BUCKETS, ALERTS, bucketsOf, alertsOf, urgency, currentLeg, nextStop, ty
 import { fmtIn, fmtWhen, shortDate, stopZone, zonedDate, toZoneInput, fromZoneInput, zoneAbbrev } from "@/lib/time";
 import { CheckCallBox } from "./check-call";
 import { money as fxMoney } from "@/domain/fx-rules";
+import { useShowMoney } from "@/components/money";
 
 /**
  * The trip board: every open load on one dense screen, most urgent first. Buckets (Needs truck,
@@ -394,6 +395,7 @@ export function DispatchBoard({ data, initialOrder, initialBucket, initialChip }
 }
 
 function BoardRow({ r, alerts, data, now, selected, onClick }: { r: Row; alerts: Set<AlertKey>; data: BoardData; now: number; selected: boolean; onClick: () => void }) {
+  const showMoney = useShowMoney(); // the owner can hide the customer's rate from dispatchers
   const first = r.stops.find((s) => s.type === "pickup") ?? r.stops[0];
   const last = [...r.stops].reverse().find((s) => s.type === "delivery") ?? r.stops[r.stops.length - 1];
   const cur = currentLeg(r.legs);
@@ -511,8 +513,8 @@ function BoardRow({ r, alerts, data, now, selected, onClick }: { r: Row; alerts:
         {rolling ? (pingAge ?? "none") : "—"}
       </div>
       <div className="text-right min-w-0">
-        <div className="font-semibold tabular-nums">{r.order.rateTbd ? "TBD" : money(r.order.rateCents, r.order.currency)}</div>
-        <div className="sub tabular-nums" title={milesEst && miles ? "Miles estimated from the stops — type the real miles on the load" : undefined}>{miles ? `${miles.toLocaleString()} mi${milesEst ? " est." : ""}${r.order.rateCents && !r.order.rateTbd ? ` · ${fxMoney(Math.round(r.order.rateCents / miles), r.order.currency)}/mi` : ""}` : ""}</div>
+        {showMoney && <div className="font-semibold tabular-nums">{r.order.rateTbd ? "TBD" : money(r.order.rateCents, r.order.currency)}</div>}
+        <div className="sub tabular-nums" title={milesEst && miles ? "Miles estimated from the stops — type the real miles on the load" : undefined}>{miles ? `${miles.toLocaleString()} mi${milesEst ? " est." : ""}${showMoney && r.order.rateCents && !r.order.rateTbd ? ` · ${fxMoney(Math.round(r.order.rateCents / miles), r.order.currency)}/mi` : ""}` : ""}</div>
       </div>
     </div>
   );
@@ -521,6 +523,7 @@ function BoardRow({ r, alerts, data, now, selected, onClick }: { r: Row; alerts:
 const STAMPS: LegState[] = ["en_route_to_pickup", "at_pickup", "en_route", "at_delivery"];
 
 function SidePanel({ r, data, busy, canDispatch, onClose, onPopup, run, onToast }: { r: Row; data: BoardData; busy: boolean; canDispatch: boolean; onClose: () => void; onPopup: (p: { kind: "assign" | "split" | "hold" | "cancel" | "oos" | "decline" | "drivers" | "track"; legId?: string }) => void; run: (label: string, fn: () => Promise<{ ok: boolean; error?: string }>) => void; onToast: (msg: string) => void }) {
+  const showMoney = useShowMoney();
   const nl = nextLeg(r);
   const [confirming, setConfirming] = useState<{ legId: string; label: string; when: string } | null>(null);
   const zoneOfStopId = (id: string | null | undefined) => {
@@ -565,7 +568,7 @@ function SidePanel({ r, data, busy, canDispatch, onClose, onPopup, run, onToast 
               {hold && <Pill tone="amber">On hold</Pill>}
               {closed && <Pill tone="slate">Cancelled</Pill>}
             </div>
-            <div className="text-muted text-callout">{r.order.kind === "trip" ? `Tailgate trip · ${r.shipments} shipment${r.shipments === 1 ? "" : "s"}` : `${r.customerName ?? "No customer"} · ${money(r.order.rateCents, r.order.currency)}`}</div>
+            <div className="text-muted text-callout">{r.order.kind === "trip" ? `Tailgate trip · ${r.shipments} shipment${r.shipments === 1 ? "" : "s"}` : `${r.customerName ?? "No customer"}${showMoney ? ` · ${money(r.order.rateCents, r.order.currency)}` : ""}`}</div>
           </div>
           <button className="btn btn-ghost btn-sm" onClick={onClose} aria-label="Close panel">
             ✕
@@ -846,7 +849,7 @@ function SidePanel({ r, data, busy, canDispatch, onClose, onPopup, run, onToast 
         <details className="accordion">
           <summary>Details</summary>
           <div className="pb-3">
-            <KV k="Rate" v={r.order.rateTbd ? "TBD" : money(r.order.rateCents, r.order.currency)} />
+            {showMoney && <KV k="Rate" v={r.order.rateTbd ? "TBD" : money(r.order.rateCents, r.order.currency)} />}
             <KV k="Equipment" v={EQUIPMENT_LABEL[r.order.equipment] ?? r.order.equipment.replace(/_/g, " ")} />
             <KV k="Legs" v={`${r.legs.length} · cut from ${r.stops.length} stops`} />
             {Object.entries(r.order.refs).map(([k, v]) => (
@@ -880,6 +883,7 @@ function QuickBtn({ label, onClick, disabled, hint }: { label: string; onClick?:
 /* ---------- popups ---------- */
 
 function AssignModal({ leg, order, data, onClose, onDone }: { leg: Leg; order: Order; data: BoardData; onClose: () => void; onDone: (msg: string) => void }) {
+  const showMoney = useShowMoney();
   // Change: the dialog opens on what the leg has now (M3)
   const [tab, setTab] = useState<"truck" | "carrier">(leg.assigneeKind === "carrier" ? "carrier" : leg.assigneeKind === "truck" ? "truck" : leg.type === "mx" ? "carrier" : "truck");
   const [cands, setCands] = useState<Candidate[] | null>(null);
@@ -1155,7 +1159,7 @@ function AssignModal({ leg, order, data, onClose, onDone }: { leg: Leg; order: O
                   ))}
                 </div>
               </div>
-              {rateCents != null && order.rateCents != null && !order.rateTbd && (() => {
+              {showMoney && rateCents != null && order.rateCents != null && !order.rateTbd && (() => {
                 // true load margin, in USD: the load's rate less every other leg's carrier and this one, each converted
                 const usd = (c: number, cur: string) => (cur === "USD" ? c : Math.round((c * 10000) / (data.fx?.[cur] ?? (cur === "CAD" ? 13700 : 180000))));
                 const loadUsd = usd(order.rateCents, order.currency);
