@@ -1,4 +1,4 @@
-import { normCountry } from "./zones";
+import { normCountry, HANDOFF } from "./zones";
 import { and, eq, inArray, or, desc, gte, sql } from "drizzle-orm";
 import { db } from "@/db/client";
 import * as s from "@/db/schema";
@@ -144,6 +144,38 @@ export type LoadRequest = {
   contact?: string | null;
 };
 
+/**
+ * The hand-off stops a customer's loads usually make between two countries: the border yard and the
+ * yard on the other side their recent loads on the same crossing went through, most common first.
+ * Nothing when the lane stays in one country or they have no history on it.
+ */
+export async function usualHandoffs(tenantId: string, customerId: string, fromCountry: string, toCountry: string): Promise<StopInput[]> {
+  if (fromCountry === toCountry) return [];
+  const since = new Date(Date.now() - 180 * 86400_000);
+  const recent = await db
+    .select({ id: s.orders.id })
+    .from(s.orders)
+    .where(and(eq(s.orders.tenantId, tenantId), eq(s.orders.customerId, customerId), eq(s.orders.kind, "order"), sql`${s.orders.state} not in ('cancelled', 'draft')`, gte(s.orders.createdAt, since)))
+    .orderBy(sql`${s.orders.createdAt} desc`)
+    .limit(40);
+  if (!recent.length) return [];
+  const all = await db.select().from(s.stops).where(and(eq(s.stops.tenantId, tenantId), inArray(s.stops.orderId, recent.map((o) => o.id)))).orderBy(s.stops.seq);
+  const counts = new Map<string, { n: number; stops: typeof all }>();
+  for (const o of recent) {
+    const st = all.filter((x) => x.orderId === o.id);
+    if (st.length < 3 || st[0].country !== fromCountry || st[st.length - 1].country !== toCountry) continue;
+    const mid = st.slice(1, -1).filter((x) => HANDOFF.includes(x.type));
+    if (!mid.length) continue;
+    const key = mid.map((x) => `${x.type}|${x.locationId ?? x.name.toLowerCase()}`).join(">");
+    const c = counts.get(key) ?? { n: 0, stops: mid };
+    c.n++;
+    counts.set(key, c);
+  }
+  const best = [...counts.values()].sort((p, q) => q.n - p.n)[0];
+  if (!best) return [];
+  return best.stops.map((x) => ({ type: x.type, name: x.name, locationId: x.locationId, address: x.address, country: x.country }));
+}
+
 /** The customer asks for a load: a draft order from them, flagged so Dispatch sees it in Pending. */
 export async function portalRequestLoad(tenantId: string, customerId: string, input: LoadRequest) {
   const ctx = systemCtx(tenantId);
@@ -160,8 +192,11 @@ export async function portalRequestLoad(tenantId: string, customerId: string, in
     notes: p.notes?.trim() || null,
     contact: input.contact?.trim() || null,
   });
-  // the two ends as the customer gave them; dispatch adds any yard or hand-off stops when it plans the load
-  const stops = [stop("pickup", input.pickup), stop("delivery", input.delivery)];
+  // the two ends as the customer gave them, with the hand-offs their loads on this lane usually make
+  // (MX → border yard → Laredo yard → US): the request arrives already legged (M10)
+  const ends = [stop("pickup", input.pickup), stop("delivery", input.delivery)];
+  const via = await usualHandoffs(tenantId, customer.id, ends[0].country ?? "US", ends[1].country ?? "US");
+  const stops = [ends[0], ...via, ends[1]];
   const refs: Record<string, string> = {};
   if (input.po?.trim()) refs.po = input.po.trim();
   if (input.reference?.trim()) refs.reference = input.reference.trim();
@@ -175,7 +210,7 @@ export async function portalRequestLoad(tenantId: string, customerId: string, in
     stops,
     book: false,
   });
-  await db.insert(s.flags).values({ id: newId(), tenantId, orderId: r.order.id, code: "portal_request", level: "yellow", title: `Load request from ${customer.name}`, detail: `${stops[0].name} → ${stops[stops.length - 1].name}${input.contact ? ` · ${input.contact}` : ""}. Price it, confirm with them, then book.`, owner: "dispatch" });
+  await db.insert(s.flags).values({ id: newId(), tenantId, orderId: r.order.id, code: "portal_request", level: "yellow", title: `Load request from ${customer.name}`, detail: `${stops[0].name} → ${stops[stops.length - 1].name}${input.contact ? ` · ${input.contact}` : ""}.${via.length ? ` Legged like their usual lane, via ${via.map((v) => v.name).join(" → ")}.` : ""} Price it, confirm with them, then book.`, owner: "dispatch" });
   await writeAudit(db, ctx, "order", r.order.id, "create", undefined, `requested by ${customer.name} through the customer portal`);
   return r;
 }

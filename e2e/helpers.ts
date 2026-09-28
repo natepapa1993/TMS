@@ -21,7 +21,8 @@ export async function login(page: Page, email: string, password: string) {
   await page.fill("#email", email);
   await page.fill("#password", password);
   await page.click("button:has-text('Sign in')");
-  await page.waitForURL("**/dispatch", { waitUntil: "commit" });
+  // each role lands on its own home: owner → Today, dispatcher → the board, billing → Billing, Safety → Compliance
+  await page.waitForURL(/\/(today|dispatch|billing|compliance|crossing)(\?|$)/, { waitUntil: "commit" });
 }
 
 /** Fill the quick-add popup for a record kind. Values keyed by field name (input id f-<name>). */

@@ -250,15 +250,8 @@
     {
       "idx": 35,
       "version": "7",
-      "when": 1790606185903,
-      "tag": "0035_money_currency_pay_credit",
-      "breakpoints": true
-    },
-    {
-      "idx": 36,
-      "version": "7",
-      "when": 1790608756889,
-      "tag": "0036_money_export_stamps",
+      "when": 1790614319379,
+      "tag": "0035_round1_4_fixes",
       "breakpoints": true
     }
   ]

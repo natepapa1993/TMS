@@ -77,6 +77,14 @@ export function legsFromStops(stops: { type: StopType | string; country?: string
   return legs;
 }
 
+/** A leg's type from the countries of its stops (from its first stop to its last), the way legsFromStops names them. */
+export function legTypeBetween(stops: { country?: string | null }[], from: number, to: number): LegType {
+  const countries = stops.map((s) => normCountry(s.country));
+  const international = new Set(countries).size > 1;
+  const on = new Set(countries.slice(from, to + 1));
+  return on.size > 1 ? "crossing" : on.has("MX") ? "mx" : on.has("CA") ? "ca" : international ? "us" : "domestic";
+}
+
 export const LEG_TYPE_LABEL: Record<string, string> = { mx: "Mexico", ca: "Canada", us: "US", domestic: "Domestic", crossing: "Crossing", equipment_move: "Equipment move" };
 
 /**

@@ -171,12 +171,33 @@ function assertRecord(kind: RecordKind, merged: Record<string, unknown>) {
   if (p) throw Object.assign(new Error(p.message), { name: "ValidationError", field: p.field });
 }
 
+/** Digits only, for comparing phone numbers typed different ways ("+1 956 555 0159" = "9565550159" once the country code is known). */
+export const phoneKey = (p: unknown) => {
+  const d = String(p ?? "").replace(/\D/g, "");
+  return d.length === 10 ? `1${d}` : d;
+};
+
+/**
+ * Rules a record must keep beyond its field types. A driver's phone is theirs alone in the company:
+ * WhatsApp replies are matched to the driver by number, so two drivers on one number would read each
+ * other's messages (M23). Only checked when the number is set or changed.
+ */
+export async function validateRecord(ctx: Ctx, kind: RecordKind, values: Record<string, unknown>, id?: string) {
+  if (kind !== "driver" || !("phone" in values)) return;
+  const key = phoneKey(values.phone);
+  if (key.length < 7) return;
+  const others = await db.select({ id: s.drivers.id, name: s.drivers.name, phone: s.drivers.phone }).from(s.drivers).where(and(eq(s.drivers.tenantId, ctx.tenantId), isNull(s.drivers.archivedAt)));
+  const clash = others.find((o) => o.id !== id && o.phone && phoneKey(o.phone) === key);
+  if (clash) throw Object.assign(new Error(`${clash.name} already has ${String(values.phone)} — each driver needs their own phone number (WhatsApp messages are matched by number)`), { name: "ValidationError", field: "phone" });
+}
+
 export async function create(ctx: Ctx, kind: RecordKind, values: Record<string, unknown>): Promise<Row> {
   assertCtx(ctx);
   requirePermission(ctx, "records.create");
   await assertGuarded(ctx, kind, values);
   assertRecord(kind, values);
   if (kind === "documentType") values = syncDocumentTypeLevel(values);
+  await validateRecord(ctx, kind, values);
   const { table } = REGISTRY[kind];
   const id = (values.id as string) ?? newId();
   const row = { ...values, id, tenantId: ctx.tenantId, createdBy: ctx.userId, updatedBy: ctx.userId };
@@ -202,6 +223,7 @@ export async function update(ctx: Ctx, kind: RecordKind, id: string, values: Rec
     assertRecord(kind, { ...b, ...values });
     if (kind === "documentType") values = syncDocumentTypeLevel(values);
     values = sameDayDates(kind, values, b);
+    if (kind === "driver" && "phone" in values && phoneKey(values.phone) !== phoneKey(b.phone)) await validateRecord(ctx, kind, values, id);
     const { id: _id, tenantId: _t, createdAt: _c, createdBy: _cb, ...safe } = values as Record<string, unknown>;
     void _id; void _t; void _c; void _cb;
     const [after] = await tx

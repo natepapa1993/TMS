@@ -96,9 +96,13 @@ export async function addCheckCall(ctx: Ctx, orderId: string, input: CheckCallIn
     row.sentTo = to;
   }
   await db.insert(s.checkCalls).values(row);
-  // a breakdown is a problem to work, not just a line in the log
-  if (status === "breakdown")
-    await db.insert(s.flags).values({ id: newId(), tenantId: ctx.tenantId, orderId, legId: leg?.id ?? null, code: "breakdown", level: "red", title: `Breakdown${location ? ` near ${location}` : ""}`, detail: row.note ?? "Repower, recover or reschedule; tell the customer.", owner: "dispatch" });
+  // a breakdown is a problem to work, not just a line in the log: the load is flagged and the truck is out of
+  // the planner (not rankable, "Unavailable — breakdown") until someone clears the flag
+  if (status === "breakdown") {
+    const truckId = leg?.assigneeKind === "truck" ? leg.truckId : null;
+    const [unit] = truckId ? await db.select({ unit: s.trucks.unitNumber }).from(s.trucks).where(eq(s.trucks.id, truckId)).limit(1) : [];
+    await db.insert(s.flags).values({ id: newId(), tenantId: ctx.tenantId, orderId, legId: leg?.id ?? null, code: "breakdown", level: "red", title: `Breakdown${unit ? ` · unit ${unit.unit}` : ""}${location ? ` near ${location}` : ""}`, detail: row.note ?? "Repower, recover or reschedule; tell the customer. Clear this flag once the truck runs again.", owner: "dispatch", data: { truckId, driverId: leg?.driverId ?? null, checkCallId: id } });
+  }
   await writeAudit(db, ctx, "order", orderId, "update", undefined, `check call: ${CHECK_CALL_LABEL[status]}${location ? ` · ${location}` : ""}${row.note ? ` · ${row.note}` : ""}${row.sentTo ? ` · sent to ${row.sentTo}` : ""}`);
   return row;
 }

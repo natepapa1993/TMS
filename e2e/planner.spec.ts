@@ -4,7 +4,7 @@ import { signupFresh, quickAdd, future, buildLoad } from "./helpers";
 
 async function driver(page: Page, name: string, unit: string) {
   await quickAdd(page, "trucks", "Add truck", { unitNumber: unit, usPlate: `TX${unit}` });
-  await quickAdd(page, "drivers", "Add driver", { name, driverType: "CDL", phone: "+1 956 000 0003" });
+  await quickAdd(page, "drivers", "Add driver", { name, driverType: "CDL", phone: `+1 956 000 ${unit}` }); // one phone per driver
   await page.goto("/settings/drivers");
   await page.click(`table a:has-text('${name}')`);
   await page.locator("#f-licenseExpires").fill(future(400));

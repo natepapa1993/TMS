@@ -75,8 +75,11 @@ export default async function OrderPage({ params }: PageProps<"/orders/[id]">) {
   const pickup = stops.find((s) => s.type === "pickup") ?? stops[0];
   const delivery = [...stops].reverse().find((s) => s.type === "delivery") ?? stops[stops.length - 1];
   const place = (s: (typeof stops)[number] | undefined) => (s ? [s.address?.city, s.address?.state].filter(Boolean).join(", ") || s.name : "—");
-  const milesKnown = legs.some((l) => l.plannedMiles != null);
-  const miles = milesKnown ? legs.reduce((a, l) => a + (l.plannedMiles ?? 0), 0) : null;
+  // typed miles, else the estimate from the stops, marked "est."
+  const liveLegs = legs.filter((l) => l.state !== "cancelled");
+  const milesKnown = liveLegs.some((l) => l.plannedMiles != null || l.estMiles != null);
+  const miles = milesKnown ? liveLegs.reduce((a, l) => a + (l.plannedMiles ?? l.estMiles ?? 0), 0) : null;
+  const milesEst = milesKnown && liveLegs.some((l) => l.plannedMiles == null);
   // money in USD: each carrier rate in its own currency (a Mexican carrier in pesos), converted; the load's rate at its rate
   const fxOf = (cur: string) => pickRate(cur, null, companySettings.fx).rateE4;
   const carrierCost = legs.filter((l) => l.state !== "cancelled").reduce((a, l) => a + toHome(l.carrierRateCents ?? 0, l.carrierRateCurrency ?? "USD", fxOf(l.carrierRateCurrency ?? "USD")), 0) + toHome(order.tollsFeesCents ?? 0, order.currency, fxOf(order.currency));
@@ -94,7 +97,7 @@ export default async function OrderPage({ params }: PageProps<"/orders/[id]">) {
     ["Rate", rate == null ? "TBD" : formatCents(rate, order.currency), order.rateType !== "flat" && order.rateUnitCents != null ? `${formatCents(order.rateUnitCents, order.currency)} × ${order.rateQty ?? "?"}` : undefined],
     ["Carrier cost", carrierCost ? formatCents(headPnl ? headPnl.carrierCost + headPnl.extra : carrierCost, "USD") : "—", carrierCost && legs.some((l) => (l.carrierRateCurrency ?? "USD") !== "USD") ? "carriers paid in their own currency, shown in USD" : undefined],
     ["Margin", margin == null ? "—" : formatCents(margin, "USD"), margin != null && headPnl ? `${headPnl.marginPct}% after carriers, driver pay${headPnl.driverPayEstimated ? " (est.)" : ""}, fuel${fxHint}` : margin != null && rateUsd ? `${((margin / rateUsd) * 100).toFixed(1)}%${fxHint}` : covered ? undefined : "legs not covered yet"],
-    ["Miles", miles == null ? "—" : miles.toLocaleString("en-US"), miles && rateUsd ? `${formatCents(Math.round(rateUsd / miles), "USD")} / mile${order.currency !== "USD" ? " (USD)" : ""}` : undefined],
+    ["Miles", miles == null ? "—" : `${miles.toLocaleString("en-US")}${milesEst ? " est." : ""}`, miles && rateUsd ? `${formatCents(Math.round(rateUsd / miles), "USD")} / mile${order.currency !== "USD" ? " (USD)" : ""}${milesEst ? " est." : ""}` : undefined],
   ];
   // where it is: the leg on the road, its last position and ETA, and the check calls
   const liveLeg = legs.find((l) => ["dispatched", "accepted", "en_route_to_pickup", "at_pickup", "loaded", "en_route", "at_delivery"].includes(l.state)) ?? null;
@@ -154,7 +157,7 @@ export default async function OrderPage({ params }: PageProps<"/orders/[id]">) {
                   <Pill tone={l.state === "completed" ? "green" : l.state === "declined" ? "red" : l.state === "unassigned" ? "slate" : l.state === "cancelled" ? "slate" : "teal"}>{LEG_LABEL[l.state]}</Pill>
                 </td>
                 <td>
-                  <LegMiles legId={l.id} miles={l.plannedMiles} locked={closed || ["invoiced", "paid"].includes(order.state)} />
+                  <LegMiles legId={l.id} miles={l.plannedMiles} est={l.estMiles} locked={closed || ["invoiced", "paid"].includes(order.state)} />
                 </td>
                 <td className="text-muted text-callout">{l.dispatchedAt ? when(l.dispatchedAt) : "—"}</td>
                 <td className="text-muted text-callout">{l.completedAt ? when(l.completedAt, zoneOf(stopById.get(l.toStopId ?? ""))) : "—"}</td>
@@ -261,7 +264,17 @@ export default async function OrderPage({ params }: PageProps<"/orders/[id]">) {
             </div>
           </div>
           <div className="flex items-center gap-2 flex-wrap">
-            <OrderActions order={J(order)} />
+            <OrderActions
+              order={J(order)}
+              ends={
+                stops.length
+                  ? {
+                      pickup: { name: stops[0].name, at: stops[0].windowStart?.toISOString() ?? stops[0].windowEnd?.toISOString() ?? null, zone: stopZone({ country: stops[0].country, address: stops[0].address }, companyZone) },
+                      delivery: { name: stops[stops.length - 1].name, at: stops[stops.length - 1].windowStart?.toISOString() ?? stops[stops.length - 1].windowEnd?.toISOString() ?? null, zone: stopZone({ country: stops[stops.length - 1].country, address: stops[stops.length - 1].address }, companyZone) },
+                    }
+                  : null
+              }
+            />
           </div>
         </div>
         <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 mt-5 rounded-xl border border-line overflow-hidden" data-testid="load-facts">
@@ -286,7 +299,7 @@ export default async function OrderPage({ params }: PageProps<"/orders/[id]">) {
                   {legsTable}
                   <div className="card p-5">
                     <div className="text-headline font-extrabold mb-4">Load details</div>
-                    <OrderEditor order={J(order)} customers={customers.map((c) => ({ id: c.id, name: String(c.name), kind: String(c.kind) }))} entities={entities.map((e) => ({ id: e.id, name: String(e.legalName) }))} readOnly={readOnly} />
+                    <OrderEditor order={J(order)} customers={customers.map((c) => ({ id: c.id, name: String(c.name), kind: String(c.kind) })).sort((p, q) => p.name.localeCompare(q.name))} entities={entities.map((e) => ({ id: e.id, name: String(e.legalName) }))} readOnly={readOnly} />
                   </div>
                 </div>
                 <aside className="space-y-4 min-w-0">

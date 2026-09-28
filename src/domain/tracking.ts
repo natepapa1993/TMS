@@ -74,11 +74,17 @@ export async function driverToday(tenantId: string, driverId: string) {
   const ctx = systemCtx(tenantId);
   const [driver] = await db.select().from(s.drivers).where(and(eq(s.drivers.tenantId, tenantId), eq(s.drivers.id, driverId))).limit(1);
   if (!driver) throw new NotFoundError("driver", driverId);
-  const legs = await db
+  const active = await db
     .select()
     .from(s.legs)
     .where(and(eq(s.legs.tenantId, tenantId), inArray(s.legs.state, ACTIVE), or(eq(s.legs.driverId, driverId), eq(s.legs.coDriverId, driverId))))
     .orderBy(s.legs.dispatchedAt, s.legs.seq);
+  // a load delivered in the last day stays on the phone until its POD is in (the driver can still take the photo)
+  const recent = await db
+    .select()
+    .from(s.legs)
+    .where(and(eq(s.legs.tenantId, tenantId), eq(s.legs.state, "completed"), gt(s.legs.completedAt, new Date(Date.now() - 24 * 3600_000)), or(eq(s.legs.driverId, driverId), eq(s.legs.coDriverId, driverId))));
+  const legs = [...active, ...recent];
   const orderIds = [...new Set(legs.map((l) => l.orderId))];
   const [orders, stops, trucks] = await Promise.all([
     orderIds.length ? db.select().from(s.orders).where(inArray(s.orders.id, orderIds)) : Promise.resolve([]),
@@ -111,7 +117,7 @@ export async function driverToday(tenantId: string, driverId: string) {
     const before = legsOfOrders.find((p) => p.orderId === leg.orderId && p.toStopId === leg.fromStopId && p.id !== leg.id);
     const freightReady = before ? before.state === "completed" : null;
     const mids = midStops(leg, stops.filter((x) => x.orderId === leg.orderId));
-    const stopId = currentStopId(leg, mids);
+    const stopId = leg.state === "completed" ? leg.toStopId : currentStopId(leg, mids);
     const orderStops = stops.filter((x) => x.orderId === leg.orderId);
     const sealExpected = (() => {
       // what the driver should find on the trailer at the next opening: the last seal applied before this leg's next stop
@@ -122,11 +128,18 @@ export async function driverToday(tenantId: string, driverId: string) {
     })();
     const podTargets = photoTargets(order, shipments, stopId);
     const docs = { pod: podTargets.length > 0 && podTargets.every((id) => photos.some((d) => d.subjectId === id && d.code === "POD")), seal: photos.some((d) => d.subjectId === order.id && d.code === "SEAL_PHOTO") };
-    return { leg, order: { id: order.id, orderNumber: order.orderNumber, equipment: order.equipment, cargoNote: order.cargoNote, refs: order.refs, state: order.state }, from, to, mids, truck, next, crossing, docs, sealExpected, freightReady };
+    const held = order.state === "exception";
+    return { leg, order: { id: order.id, orderNumber: order.orderNumber, equipment: order.equipment, cargoNote: order.cargoNote, refs: order.refs, state: order.state, held, holdReason: held ? (order.holdReason ?? null) : null }, from, to, mids, truck, next: held || leg.state === "completed" ? null : next, crossing, docs, sealExpected, freightReady };
   });
-  // the leg the driver is on = first non-dispatched active leg, else the first offered one
-  const current = items.find((i) => i.leg.state !== "dispatched") ?? items[0] ?? null;
-  return { ctx, driver: { id: driver.id, name: driver.name, driverType: driver.driverType }, current, items };
+  // done loads only stay while their POD is missing (on a trip: a stop's shipments), and after the open ones
+  const shown = items.filter((i) => i.leg.state !== "completed" || (!i.docs.pod && i.order.state !== "cancelled"));
+  // in the order the driver will run them: the one rolling first, then by pickup time (M13)
+  const at = (i: (typeof items)[number]) => i.from?.windowStart?.getTime() ?? Number.MAX_SAFE_INTEGER;
+  const rank = (i: (typeof items)[number]) => (i.leg.state === "completed" ? 2 : ["dispatched", "accepted"].includes(i.leg.state) ? 1 : 0);
+  shown.sort((p, q) => rank(p) - rank(q) || at(p) - at(q) || p.leg.seq - q.leg.seq);
+  // the leg the driver is on = the rolling one, else the next pickup; a done load waiting for its POD last
+  const current = shown[0] ?? null;
+  return { ctx, driver: { id: driver.id, name: driver.name, driverType: driver.driverType }, current, items: shown };
 }
 
 export function nextStep(state: LegState): { to: LegState; label: string; es: string } | null {
@@ -151,6 +164,11 @@ export async function driverStep(tenantId: string, driverId: string, legId: stri
   if (!leg) throw new NotFoundError("leg", legId);
   if (leg.driverId !== driverId && leg.coDriverId !== driverId) throw new NotFoundError("leg", legId);
   const hasPos = input.lat != null && input.lng != null && input.lat !== "" && input.lng !== "";
+  if (!input.decline) {
+    // a held load's steps are frozen (M8): the app says so; a stale button can't move it either
+    const [o] = await db.select({ state: s.orders.state, holdReason: s.orders.holdReason }).from(s.orders).where(eq(s.orders.id, leg.orderId)).limit(1);
+    if (o?.state === "exception") throw new ValidationError(`This load is on hold — wait for dispatch${o.holdReason ? ` (${o.holdReason})` : ""} · Carga en espera — espera a despacho`);
+  }
   if (hasPos) await recordPosition(ctx, { source: "driver_app", lat: input.lat!, lng: input.lng!, accuracyM: input.accuracyM ?? null, truckId: leg.truckId, driverId, legId: leg.id }).catch(() => null);
   if (input.decline) {
     if (!input.declineReason?.trim()) throw new ValidationError("say why", "declineReason");
@@ -225,7 +243,8 @@ export async function driverUploadPhoto(tenantId: string, driverId: string, legI
   const [order] = await db.select({ id: s.orders.id, kind: s.orders.kind, orderNumber: s.orders.orderNumber }).from(s.orders).where(eq(s.orders.id, leg.orderId)).limit(1);
   if (!order) throw new NotFoundError("order", leg.orderId);
   const stops = await db.select().from(s.stops).where(and(eq(s.stops.tenantId, tenantId), eq(s.stops.orderId, leg.orderId))).orderBy(s.stops.seq);
-  const stopId = currentStopId(leg, midStops(leg, stops));
+  // a delivered leg still on the phone for its POD: the photo is for its delivery stop
+  const stopId = leg.state === "completed" ? leg.toStopId : currentStopId(leg, midStops(leg, stops));
   let targets = [order.id];
   if (photo.code === "POD") {
     const here = stops.find((x) => x.id === stopId);

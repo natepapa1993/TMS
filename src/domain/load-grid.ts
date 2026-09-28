@@ -57,6 +57,8 @@ export type LoadRow = {
   carrierCostCents: number;
   marginCents: number | null;
   miles: number | null;
+  /** some of the miles are estimated from the stops */
+  milesEst: boolean;
   rpmCents: number | null;
   flags: number;
   redFlags: number;
@@ -67,6 +69,8 @@ export type LoadRow = {
   deliveredAt: string | null;
   /** times not tied to a stop (created) are on the company's clock */
   companyZone: string;
+  /** delivered, and no POD on file (nor a "bill without POD" from dispatch): not ready to bill */
+  podMissing: boolean;
 };
 
 const CLOSED = ["paid", "cancelled"] as const;
@@ -97,6 +101,11 @@ export async function loadGrid(ctx: Ctx, opts: { days?: number } = {}): Promise<
     db.select({ orderId: s.crossings.orderId, state: s.crossings.state, fromCountry: s.crossings.fromCountry, toCountry: s.crossings.toCountry }).from(s.crossings).where(and(eq(s.crossings.tenantId, ctx.tenantId), inArray(s.crossings.orderId, ids))),
     db.select({ id: s.users.id, name: s.users.name }).from(s.users).where(eq(s.users.tenantId, ctx.tenantId)),
   ]);
+  // delivered loads wait for a POD before they are ready to bill (M14)
+  const deliveredIds = orders.filter((o) => ["delivered", "ready_to_bill"].includes(o.state)).map((o) => o.id);
+  const pods = deliveredIds.length ? await db.select({ subjectId: s.documents.subjectId }).from(s.documents).where(and(eq(s.documents.tenantId, ctx.tenantId), eq(s.documents.subjectKind, "order"), eq(s.documents.code, "POD"), inArray(s.documents.subjectId, deliveredIds), inArray(s.documents.status, ["present", "verified"]))) : [];
+  const hasPod = new Set(pods.map((p) => p.subjectId));
+  const { podSatisfied } = await import("./orders");
   const { crossingStateLabel } = await import("./crossing");
   const [ten] = await db.select({ settings: s.tenants.settings, timeZone: s.tenants.timeZone }).from(s.tenants).where(eq(s.tenants.id, ctx.tenantId)).limit(1);
   const companyZone = ten?.timeZone || "America/Detroit";
@@ -138,7 +147,7 @@ export async function loadGrid(ctx: Ctx, opts: { days?: number } = {}): Promise<
       : lg
           .filter((l) => l.assigneeKind === "truck" && l.state !== "cancelled")
           .reduce((sum, l) => {
-            const mi = l.plannedMiles ?? 0;
+            const mi = l.plannedMiles ?? l.estMiles ?? 0;
             const pay = [l.driverId, l.coDriverId].filter(Boolean).reduce((a, did) => {
               const d = drivers.find((x) => x.id === did);
               if (!d?.payRateCents) return a;
@@ -147,8 +156,11 @@ export async function loadGrid(ctx: Ctx, opts: { days?: number } = {}): Promise<
             }, 0);
             return sum + pay + mi * fuelCpm;
           }, 0);
-    const milesKnown = lg.some((l) => l.plannedMiles != null);
-    const miles = milesKnown ? lg.reduce((sum, l) => sum + (l.plannedMiles ?? 0), 0) : null;
+    // typed miles, else the estimate from the stops ("est." on the screen)
+    const live = lg.filter((l) => l.state !== "cancelled");
+    const milesKnown = live.some((l) => l.plannedMiles != null || l.estMiles != null);
+    const miles = milesKnown ? live.reduce((sum, l) => sum + (l.plannedMiles ?? l.estMiles ?? 0), 0) : null;
+    const milesEst = milesKnown && live.some((l) => l.plannedMiles == null);
     const rate = o.rateTbd ? null : o.rateCents;
     const rateUsd = rate == null ? null : usd(rate, o.currency);
     const fl = flagsBy.get(o.id) ?? [];
@@ -197,6 +209,7 @@ export async function loadGrid(ctx: Ctx, opts: { days?: number } = {}): Promise<
       // margin once every leg has someone on it; before that the cost is not known
       marginCents: rateUsd != null && !lg.some((l) => l.state === "unassigned" || l.state === "declined") ? rateUsd - carrierCostCents - ownCost : null,
       miles: onTrip ? null : miles,
+      milesEst: onTrip ? false : milesEst,
       rpmCents: rateUsd != null && miles && !onTrip ? Math.round(rateUsd / miles) : null,
       flags: fl.length,
       redFlags: fl.filter((f) => f.level === "red").length,
@@ -206,6 +219,7 @@ export async function loadGrid(ctx: Ctx, opts: { days?: number } = {}): Promise<
       createdAt: o.createdAt.toISOString(),
       companyZone,
       deliveredAt: iso(o.deliveredAt),
+      podMissing: ["delivered", "ready_to_bill"].includes(o.state) && o.kind !== "trip" && !podSatisfied(o, hasPod.has(o.id)),
     };
   });
 }

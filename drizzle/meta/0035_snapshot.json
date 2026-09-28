@@ -1,5 +1,5 @@
 {
-  "id": "842a07ef-c48e-400f-a192-9b571739c792",
+  "id": "101de4a6-f4ee-485c-a6fa-326e9f32a142",
   "prevId": "a6459992-916b-4a2b-a27c-3629ed1205fc",
   "version": "7",
   "dialect": "postgresql",
@@ -1498,6 +1498,12 @@
           "notNull": true,
           "default": false
         },
+        "block_level": {
+          "name": "block_level",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
         "leg_scope": {
           "name": "leg_scope",
           "type": "text",
@@ -2940,6 +2946,18 @@
           "notNull": true,
           "default": "'active'"
         },
+        "oos_reason": {
+          "name": "oos_reason",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "oos_inspection_id": {
+          "name": "oos_inspection_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
         "custom": {
           "name": "custom",
           "type": "jsonb",
@@ -3221,6 +3239,12 @@
         "oos_until": {
           "name": "oos_until",
           "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "oos_inspection_id": {
+          "name": "oos_inspection_id",
+          "type": "text",
           "primaryKey": false,
           "notNull": false
         },
@@ -3865,6 +3889,12 @@
         },
         "planned_miles": {
           "name": "planned_miles",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "est_miles": {
+          "name": "est_miles",
           "type": "integer",
           "primaryKey": false,
           "notNull": false
@@ -6121,6 +6151,12 @@
           "primaryKey": false,
           "notNull": false
         },
+        "unit_plate": {
+          "name": "unit_plate",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
         "trailer_number": {
           "name": "trailer_number",
           "type": "text",
@@ -8196,6 +8232,12 @@
           "primaryKey": false,
           "notNull": false
         },
+        "exported_at": {
+          "name": "exported_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
         "created_at": {
           "name": "created_at",
           "type": "timestamp with time zone",
@@ -9554,6 +9596,12 @@
           "notNull": true,
           "default": 0
         },
+        "exported_at": {
+          "name": "exported_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
         "created_at": {
           "name": "created_at",
           "type": "timestamp with time zone",
@@ -10841,6 +10889,18 @@
         "note": {
           "name": "note",
           "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "driver_oos_until": {
+          "name": "driver_oos_until",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "repair": {
+          "name": "repair",
+          "type": "jsonb",
           "primaryKey": false,
           "notNull": false
         },

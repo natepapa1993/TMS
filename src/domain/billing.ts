@@ -279,7 +279,9 @@ export async function billingQueue(ctx: Ctx): Promise<QueueRow[]> {
     const cust = customers.find((c) => c.id === (o.customerId ?? o.brokerId));
     const entity = entities.find((e) => e.id === (o.billingEntityId ?? cust?.billingEntityId)) ?? entities.find((e) => e.isDefault) ?? entities[0];
     // a TONU never picked up: no POD or BOL to wait for
-    const required = (cust?.requiredDocs ?? ["POD", "BOL", "RATE_CON"]).filter((code) => !(o.tonu && ["POD", "BOL", "SEAL"].includes(code))).map((code) => ({ code, present: docs.some((d) => d.subjectId === o.id && d.code === code) }));
+    // a POD dispatch said will not come ("bill without POD", with the reason on the record) counts as on file
+    const podWaived = !!(o.custom as { podWaived?: unknown } | null)?.podWaived;
+    const required = (cust?.requiredDocs ?? ["POD", "BOL", "RATE_CON"]).filter((code) => !(o.tonu && ["POD", "BOL", "SEAL"].includes(code))).map((code) => ({ code, present: docs.some((d) => d.subjectId === o.id && d.code === code) || (code === "POD" && podWaived) }));
     const requiredRefs = requiredRefsFor(cust, o.refs ?? {});
     const pendingRows = cs.filter((c) => c.billable && !c.invoiceId && c.approvalState === "pending");
     const chargesCents = cs.filter(billsNow).reduce((a, c) => a + c.amountCents, 0);
@@ -1149,8 +1151,10 @@ export async function buildSettlement(ctx: Ctx, driverId: string, periodStart: D
       const share = team ? 0.5 : 1;
       let line: SettlementLine;
       if (driver.payType === "per_mile") {
-        const miles = leg.plannedMiles ?? 0;
-        line = { id: newId(), kind: "leg", legId: leg.id, orderNumber, description: `${orderNumber} leg ${leg.seq} · ${miles} mi × ${(rate / 100).toFixed(2)}${team ? " (team ½)" : ""}`, qty: miles, unit: "mi", rateCents: rate, amountCents: Math.round(miles * rate * share), source: leg.plannedMiles ? "planned miles" : "no miles on the leg" };
+        // typed miles win; otherwise the estimate from the stops, labelled so the driver and the office see it
+        const miles = leg.plannedMiles ?? leg.estMiles ?? 0;
+        const est = leg.plannedMiles == null && leg.estMiles != null;
+        line = { id: newId(), kind: "leg", legId: leg.id, orderNumber, description: `${orderNumber} leg ${leg.seq} · ${miles} mi${est ? " (est.)" : ""} × ${(rate / 100).toFixed(2)}${team ? " (team ½)" : ""}`, qty: miles, unit: "mi", rateCents: rate, amountCents: Math.round(miles * rate * share), source: leg.plannedMiles ? "planned miles" : est ? "estimated miles" : "no miles on the leg" };
       } else if (driver.payType === "pct") {
         // a percent of the line haul's dollar value: a peso load is converted first
         const usdRate = toHome(rateCents ?? 0, currency, loadRate({ id: orderId, currency }, invs, company.settings.fx).rateE4);
@@ -1440,13 +1444,13 @@ export async function orderPnl(ctx: Ctx, orderId: string) {
         const sh = team ? 0.5 : 1;
         // a percent of the line haul is a percent of its dollar value
         const linehaulUsd = toHome(costOrder.rateCents ?? 0, costOrder.currency, costRate.rateE4);
-        driverPay += Math.round((d.payType === "per_mile" ? (l.plannedMiles ?? 0) * pr : d.payType === "pct" ? (linehaulUsd * pr) / 10000 : pr) * sh);
+        driverPay += Math.round((d.payType === "per_mile" ? (l.plannedMiles ?? l.estMiles ?? 0) * pr : d.payType === "pct" ? (linehaulUsd * pr) / 10000 : pr) * sh);
         driverPayEstimated = true;
       }
     }
   }
   driverPay = Math.round(driverPay * share);
-  const milesAll = legs.filter((l) => l.assigneeKind === "truck").reduce((a, l) => a + (l.plannedMiles ?? 0), 0);
+  const milesAll = legs.filter((l) => l.assigneeKind === "truck").reduce((a, l) => a + (l.plannedMiles ?? l.estMiles ?? 0), 0);
   const miles = Math.round(milesAll * share);
   const fuelCpm = company.settings.fuelCostCentsPerMile;
   const fuel = Math.round(milesAll * fuelCpm * share);

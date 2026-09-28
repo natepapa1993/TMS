@@ -258,11 +258,16 @@ export async function deleteLoadViewAction(id: string) {
   return r.ok ? { ok: true as const } : { ok: false as const, error: r.error };
 }
 
-/** Book every draft in the selection; says which could not be booked and why. */
+/** Book every draft in the selection; says which could not be booked and why, and warns on stop order and a PO already used (M12). */
 export async function bulkBookAction(orderIds: string[]) {
   const r = await act(async (ctx) => {
     const failed: string[] = [];
     let booked = 0;
+    const { loadWarnings } = await import("@/domain/load-import");
+    const picked = await Promise.all(orderIds.slice(0, 500).map((id) => O.getOrder(ctx, id).catch(() => null)));
+    const live = picked.filter((x): x is NonNullable<typeof x> => !!x);
+    const warn = await loadWarnings(ctx, live.map((x) => ({ key: x.order.orderNumber, customerId: x.order.customerId, refs: x.order.refs ?? {}, stops: x.stops, orderId: x.order.id })));
+    const warnings = [...warn].flatMap(([k, ws]) => ws.map((w) => `${k}: ${w}`));
     for (const id of orderIds.slice(0, 500)) {
       try {
         await O.bookOrder(ctx, id);
@@ -271,7 +276,7 @@ export async function bulkBookAction(orderIds: string[]) {
         failed.push(e instanceof Error ? e.message : String(e));
       }
     }
-    return { booked, failed };
+    return { booked, failed, warnings };
   });
   if (r.ok) touch();
   return r;
@@ -390,7 +395,7 @@ export async function previewLoadsAction(form: FormData) {
     const p = await previewLoads(ctx, table);
     return {
       layout: p.layout,
-      loads: p.loads.map((l) => ({ key: l.key, customer: l.customer, rateCents: l.rateCents, currency: l.currency, stops: l.stops.map((s) => ({ type: s.type, name: s.name, city: s.address?.city ?? null, state: s.address?.state ?? null, country: s.country, at: s.windowStart ? s.windowStart.toISOString() : null })), errors: l.errors })),
+      loads: p.loads.map((l) => ({ key: l.key, customer: l.customer, rateCents: l.rateCents, currency: l.currency, stops: l.stops.map((s) => ({ type: s.type, name: s.name, city: s.address?.city ?? null, state: s.address?.state ?? null, country: s.country, at: s.windowStart ? s.windowStart.toISOString() : null })), errors: l.errors, warnings: l.warnings })),
     };
   });
 }

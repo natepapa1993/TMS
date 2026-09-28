@@ -145,9 +145,11 @@ export async function carrierPortalView(tenantId: string, carrierId: string, now
 export async function scorecard(ctx: Ctx, carrierId: string, now = new Date()) {
   assertCtx(ctx);
   const since = new Date(now.getTime() - 90 * 86400_000);
-  const [tenders, legs] = await Promise.all([
+  const [tenders, legs, [running]] = await Promise.all([
     db.select().from(s.tenders).where(and(eq(s.tenders.tenantId, ctx.tenantId), eq(s.tenders.carrierId, carrierId), gte(s.tenders.createdAt, since))),
     db.select().from(s.legs).where(and(eq(s.legs.tenantId, ctx.tenantId), eq(s.legs.carrierId, carrierId), eq(s.legs.state, "completed"), gte(s.legs.completedAt, since))),
+    // loads they have now (accepted and not delivered yet) count too: "0 loads" while they run one reads wrong (m20)
+    db.select({ n: sql<number>`count(*)` }).from(s.legs).where(and(eq(s.legs.tenantId, ctx.tenantId), eq(s.legs.carrierId, carrierId), eq(s.legs.assigneeKind, "carrier"), inArray(s.legs.state, ["dispatched", "accepted", "en_route_to_pickup", "at_pickup", "loaded", "en_route", "at_delivery"]))),
   ]);
   const offered = tenders.filter((t) => t.state !== "withdrawn").length;
   const accepted = tenders.filter((t) => t.state === "accepted").length;
@@ -178,7 +180,7 @@ export async function scorecard(ctx: Ctx, carrierId: string, now = new Date()) {
   const billed = legs.length ? await db.select({ expectedCents: s.carrierBills.expectedCents, accessorialCents: s.carrierBills.accessorialCents, invoicedCents: s.carrierBills.invoicedCents }).from(s.carrierBills).where(and(eq(s.carrierBills.tenantId, ctx.tenantId), inArray(s.carrierBills.legId, legs.map((l) => l.id)), sql`${s.carrierBills.invoicedCents} is not null`)) : [];
   const over = billed.filter((b) => (b.invoicedCents ?? 0) > b.expectedCents + b.accessorialCents).length;
   const varianceCents = billed.reduce((a, b) => a + Math.max(0, (b.invoicedCents ?? 0) - b.expectedCents - b.accessorialCents), 0);
-  return { days: 90, offered, answered, accepted, declined, expired, acceptancePct: answered ? Math.round((accepted / answered) * 100) : null, loads: legs.length, onTimePct: onTimeWindow ? Math.round((onTime / onTimeWindow) * 100) : null, onTimeOf: onTimeWindow, trackedPct: legs.length ? Math.round((tracked / legs.length) * 100) : null, billed: billed.length, billedOver: over, overCents: varianceCents };
+  return { days: 90, offered, answered, accepted, declined, expired, acceptancePct: answered ? Math.round((accepted / answered) * 100) : null, loads: legs.length, running: Number(running?.n ?? 0), onTimePct: onTimeWindow ? Math.round((onTime / onTimeWindow) * 100) : null, onTimeOf: onTimeWindow, trackedPct: legs.length ? Math.round((tracked / legs.length) * 100) : null, billed: billed.length, billedOver: over, overCents: varianceCents };
 }
 
 /** What the dispatcher sees when picking a carrier: the scorecard and whether compliance lets them run. */

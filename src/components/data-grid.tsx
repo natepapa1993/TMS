@@ -6,6 +6,7 @@
  * a totals bar over what is filtered; row selection with bulk actions; CSV export; pages.
  */
 
+import { fold } from "@/lib/fold";
 import { useEffect, useMemo, useRef, useState, useTransition, type ReactNode } from "react";
 import { localDay } from "@/lib/time";
 import Link from "next/link";
@@ -46,9 +47,9 @@ declare module "@tanstack/react-table" {
 
 const textFilter: FilterFn<unknown> = (row, id, value) => {
   const v = row.getValue(id);
-  const q = String(value ?? "").trim().toLowerCase();
+  const q = fold(String(value ?? "").trim());
   if (!q) return true;
-  return String(v ?? "").toLowerCase().includes(q);
+  return fold(String(v ?? "")).includes(q);
 };
 const selectFilter: FilterFn<unknown> = (row, id, value) => {
   const vals = value as string[] | undefined;
@@ -235,9 +236,9 @@ export function DataGrid<T extends { id: string }>({
     filterFns: { text: textFilter, select: selectFilter },
     defaultColumn: { filterFn: textFilter as FilterFn<T>, size: 140, minSize: 60 },
     globalFilterFn: (row: Row<T>, _id, value) => {
-      const q = String(value ?? "").trim().toLowerCase();
+      const q = fold(String(value ?? "").trim());
       if (!q) return true;
-      return row.getAllCells().some((c) => String(c.getValue() ?? "").toLowerCase().includes(q));
+      return row.getAllCells().some((c) => fold(String(c.getValue() ?? "")).includes(q));
     },
     getCoreRowModel: getCoreRowModel(),
     getSortedRowModel: getSortedRowModel(),

@@ -56,7 +56,7 @@ export async function ensureDemoCompany(opts: { force?: boolean; now?: Date } = 
 }
 
 /** Bump when the builder changes: every deployment then rebuilds the demo once with the new data. */
-const DEMO_VERSION = 4;
+const DEMO_VERSION = 5;
 const BASE = { demo: true, dispatchPhone: "+1 956 555 0142" };
 
 async function ensure(opts: { force?: boolean; now?: Date }): Promise<string> {
@@ -236,7 +236,9 @@ async function build(a: Ctx, nowDate: Date) {
   for (const u of ["201", "202", "203", "204", "205", "206", "207", "208", "209", "210", "211", "212", "213", "214", "215"]) T[u] = await truck(u, u === "204" ? { usPlateExpires: fut(9) } : u === "209" ? { dotInspectionExpires: fut(6) } : u === "210" ? { make: "Kenworth", model: "T680", dotInspectionExpires: fut(-2) } : {});
   const R: Record<string, string> = {};
   for (const [u, kind] of [["5301", "53_dry"], ["5302", "53_dry"], ["5303", "53_dry"], ["5304", "53_dry"], ["5305", "53_dry"], ["5306", "53_reefer"], ["5307", "53_reefer"], ["5308", "53_dry"], ["5309", "53_dry"], ["5310", "53_dry"]] as const) R[u] = (await create(a, "trailer", { unitNumber: u, kind, lengthFt: 53, usPlate: `TR${u}`, inspectionExpires: fut(u === "5305" ? 12 : 200) })).id;
-  const driver = async (name: string, truckId: string | null, extra: Record<string, unknown> = {}) => (await create(a, "driver", { name, driverType: "CDL", phone: `+1 956 555 01${String(Math.floor(Math.random() * 90) + 10)}`, whatsapp: null, licenseState: "TX", licenseNumber: `TX${Math.floor(10000000 + Math.random() * 8999999)}`, licenseClass: "A", licenseExpires: fut(600), medicalExpires: fut(300), fastExpires: fut(500), currentTruckId: truckId, hireDate: fut(-400), payType: "per_mile", payRateCents: 62, ...extra })).id;
+  // every driver has their own phone: WhatsApp replies are matched by number
+  let phoneSeq = 10;
+  const driver = async (name: string, truckId: string | null, extra: Record<string, unknown> = {}) => (await create(a, "driver", { name, driverType: "CDL", phone: `+1 956 555 01${String(phoneSeq++)}`, whatsapp: null, licenseState: "TX", licenseNumber: `TX${Math.floor(10000000 + Math.random() * 8999999)}`, licenseClass: "A", licenseExpires: fut(600), medicalExpires: fut(300), fastExpires: fut(500), currentTruckId: truckId, hireDate: fut(-400), payType: "per_mile", payRateCents: 62, ...extra })).id;
   const D = {
     rafael: await driver("Rafael Mendoza", T["201"]),
     marisol: await driver("Marisol Treviño", T["202"]),
@@ -427,13 +429,6 @@ async function build(a: Ctx, nowDate: Date) {
   await xb("cross-border: crossed, US leg rolling", "us_rolling", L.apodaca, L.sa);
 
   // ---------------- exceptions ----------------
-  await step("breakdown: 205 on the shoulder", async () => {
-    const o = await order(C.northstar, 215000, [stop("pickup", L.yard, appt(-1, 12)), stop("delivery", L.joliet, appt(1, 16))], { refs: { po: po() } });
-    await O.planLeg(a, o.legs[0].id, on(D.luz, R["5304"]), { plannedMiles: 1250, ...ov });
-    await walk(o.legs[0].id, "en_route", now - 14 * H, 20);
-    await ping(o.legs[0].id, D.luz, L.yard, L.joliet, 0.35, 0.5, 0);
-    await addCheckCall(a, o.order.id, { status: "breakdown", location: "I-35 N mm 294, Waco TX", note: "Blown air line — road service ETA 2 h" });
-  });
   await step("hold: customer paperwork", async () => {
     const o = await order(C.lonestar, 240000, [stop("pickup", L.sa, appt(0, 9)), stop("delivery", L.atlanta, appt(2, 9))], { refs: { po: po() } });
     await O.planLeg(a, o.legs[0].id, { kind: "carrier", carrierId: K.bluewater, carrierRateCents: 190000 }, { plannedMiles: 990, ...ov });
@@ -467,6 +462,14 @@ async function build(a: Ctx, nowDate: Date) {
   await done("delivered: for invoicing 4", C.maple, 176000, L.detroit, L.mississauga, D.priya, 9, ["POD"], 235);
   await done("delivered: for invoicing 5", C.summit, 205000, L.yard, L.dallas, D.rafael, 12, ["POD", "RATE_CON"], 430);
   await done("delivered: for invoicing 6", C.lonestar, 240000, L.houston, L.joliet, D.luz, 14, ["POD"], 1085);
+  // a breakdown takes its truck out of the planner until it's cleared: log it after 205's past loads are on file
+  await step("breakdown: 205 on the shoulder", async () => {
+    const o = await order(C.northstar, 215000, [stop("pickup", L.yard, appt(-1, 12)), stop("delivery", L.joliet, appt(1, 16))], { refs: { po: po() } });
+    await O.planLeg(a, o.legs[0].id, on(D.luz, R["5304"]), { plannedMiles: 1250, ...ov });
+    await walk(o.legs[0].id, "en_route", now - 14 * H, 20);
+    await ping(o.legs[0].id, D.luz, L.yard, L.joliet, 0.35, 0.5, 0);
+    await addCheckCall(a, o.order.id, { status: "breakdown", location: "I-35 N mm 294, Waco TX", note: "Blown air line — road service ETA 2 h" });
+  });
   const dq = delivered.find((x) => delivered.indexOf(x) === 4);
   await step("detention waiting approval", async () => {
     if (dq) await B.addCharge(a, dq.id, { kind: "detention", description: "Detention at Trinity DC — 2h 30m over 2 h free", qty: 250, unit: "h", rateCents: 7500 });

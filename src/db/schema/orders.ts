@@ -161,6 +161,7 @@ export const legs = pgTable(
     plannedStart: timestamp("planned_start", { withTimezone: true }),
     plannedEnd: timestamp("planned_end", { withTimezone: true }),
     plannedMiles: integer("planned_miles"),
+    estMiles: integer("est_miles"), // estimated from the stops when nobody typed planned miles (shown as "est.")
     planReason: text("plan_reason"), // one-line reason from the ranked pick (spec §11.15)
     dispatchedAt: timestamp("dispatched_at", { withTimezone: true }),
     acceptedAt: timestamp("accepted_at", { withTimezone: true }),

@@ -119,7 +119,7 @@ function costOrders(d: Awaited<ReturnType<typeof deliveredOrders>>, fuelCpm: num
     const other = (cents: number, cur: string) => toHome(cents, cur, pickRate(cur, null, fx).rateE4);
     const carrierCost = Math.round((billsHere.reduce((a, b) => a + other(b.paidCents ?? b.approvedCents ?? b.invoicedCents ?? b.expectedCents + b.accessorialCents, b.currency), 0) || legs.filter((l) => l.assigneeKind === "carrier" && l.state !== "cancelled").reduce((a, l) => a + other(l.carrierRateCents ?? 0, l.carrierRateCurrency ?? "USD"), 0)) * share);
     const driverPay = Math.round(legs.reduce((a, l) => a + (d.settlementPay.get(l.id) ?? 0), 0) * share);
-    const milesAll = legs.filter((l) => l.assigneeKind === "truck").reduce((a, l) => a + (l.plannedMiles ?? 0), 0);
+    const milesAll = legs.filter((l) => l.assigneeKind === "truck").reduce((a, l) => a + (l.plannedMiles ?? l.estMiles ?? 0), 0);
     const miles = Math.round(milesAll * share);
     const fuel = Math.round(milesAll * fuelCpm * share);
     const extra = usd(o.tollsFeesCents ?? 0, o.currency);
@@ -141,8 +141,8 @@ export async function dashboard(ctx: Ctx, period: Period, entityId: string | nul
   const activeTrucks = truckIds.size;
   // empty %: equipment-move legs on our trucks against all planned miles on our trucks in the period
   const ourLegs = d.legs.filter((l) => l.assigneeKind === "truck");
-  const totalMiles = ourLegs.reduce((a, l) => a + (l.plannedMiles ?? 0), 0);
-  const emptyMiles = ourLegs.filter((l) => l.type === "equipment_move").reduce((a, l) => a + (l.plannedMiles ?? 0), 0);
+  const totalMiles = ourLegs.reduce((a, l) => a + (l.plannedMiles ?? l.estMiles ?? 0), 0);
+  const emptyMiles = ourLegs.filter((l) => l.type === "equipment_move").reduce((a, l) => a + (l.plannedMiles ?? l.estMiles ?? 0), 0);
 
   const [openFlags, crossings, compliance, ar] = await Promise.all([
     db.select({ orderId: s.flags.orderId, code: s.flags.code, level: s.flags.level, orderNumber: s.orders.orderNumber }).from(s.flags).innerJoin(s.orders, eq(s.orders.id, s.flags.orderId)).where(and(eq(s.flags.tenantId, ctx.tenantId), isNull(s.flags.clearedAt), eq(s.flags.level, "red"), inArray(s.orders.state, ["booked", "dispatched", "in_transit", "exception"]))),

@@ -1,7 +1,7 @@
 "use client";
 
 import { useClock, useZone } from "@/components/zone";
-import { fmtWhen, shortDate } from "@/lib/time";
+import { fmtWhen } from "@/lib/time";
 import { useEffect, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { driverStepAction, driverPingAction, disputeSettlementLineAction, driverPhotoAction, driverRenewalAction, driverMessageAction } from "../../actions";
@@ -15,8 +15,8 @@ import type { LegState } from "@/db/schema";
  * Seal and POD photos at the stop, renewals of their own documents, and a line to dispatch (spec §5.2).
  */
 
-type Stop = { id: string; name: string; type: string; country: string; address: { line1?: string; city?: string; state?: string } | null; windowStart: string | null; windowEnd: string | null; contact: string | null; notes: string | null; arrivedAt?: string | null; departedAt?: string | null; sealIn?: string | null; sealOut?: string | null };
-type Item = { leg: { id: string; seq: number; type: string; state: LegState }; order: { orderNumber: string; equipment: string; cargoNote: string | null; refs: Record<string, string> }; from: Stop | null; to: Stop | null; mids?: Stop[]; truck: { unitNumber: string } | null; next: { to: LegState; label: string; es: string } | null; crossing: { id: string; state: string; trailerNumber: string | null; packetToken: string | null; nextStep: string | null; wait?: { en: string; es: string } | null; stateLabel?: string; steps?: Record<string, { en: string; es: string }> } | null; docs: { pod: boolean; seal: boolean }; sealExpected: string | null; freightReady?: boolean | null };
+type Stop = { id: string; name: string; type: string; country: string; address: { line1?: string; city?: string; state?: string } | null; windowStart: string | null; windowEnd: string | null; contact: string | null; notes: string | null; refs?: Record<string, string> | null; arrivedAt?: string | null; departedAt?: string | null; sealIn?: string | null; sealOut?: string | null };
+type Item = { leg: { id: string; seq: number; type: string; state: LegState }; order: { orderNumber: string; equipment: string; cargoNote: string | null; refs: Record<string, string>; held?: boolean; holdReason?: string | null }; from: Stop | null; to: Stop | null; mids?: Stop[]; truck: { unitNumber: string } | null; next: { to: LegState; label: string; es: string } | null; crossing: { id: string; state: string; trailerNumber: string | null; packetToken: string | null; nextStep: string | null; wait?: { en: string; es: string } | null; stateLabel?: string; steps?: Record<string, { en: string; es: string }> } | null; docs: { pod: boolean; seal: boolean }; sealExpected: string | null; freightReady?: boolean | null };
 const XSTEP: Record<string, { en: string; es: string }> = { departed_yard: { en: "Departed the yard", es: "Salí del patio" }, at_mx_customs: { en: "At Mexican customs", es: "En aduana mexicana" }, in_us_customs: { en: "At US customs", es: "En aduana americana" }, cleared: { en: "Cleared — US side", es: "Liberado — lado americano" } };
 // the English part of XLABEL, as the server labels a Mexico → US crossing; any other direction uses the server's label
 const XLABEL_EN: Record<string, string> = { packet_sent: "Packet sent", departed_yard: "Departed yard", at_mx_customs: "At MX customs", in_us_customs: "In US customs", cleared: "Cleared", held: "Held", returned: "Returned to MX" };
@@ -47,10 +47,17 @@ function getFix(timeout = 8000): Promise<Fix | null> {
   });
 }
 
+/** The numbers a driver reads to the guard or the dock: pickup #, delivery #, appointment, PO, BOL. */
+const REF_LABEL: Record<string, string> = { pickup: "Pickup #", pu: "Pickup #", pickup_number: "Pickup #", delivery: "Delivery #", delivery_number: "Delivery #", appointment: "Appt #", appt: "Appt #", po: "PO", bol: "BOL", shipment: "BOL", reference: "Ref", seal: "Seal" };
+const refLines = (refs: Record<string, string> | null | undefined) =>
+  Object.entries(refs ?? {})
+    .filter(([, v]) => v && String(v).trim())
+    .map(([k, v]) => `${REF_LABEL[k.toLowerCase()] ?? k.replace(/_/g, " ")} ${v}`);
 const addr = (s: Stop | null) => (s ? [s.address?.line1, s.address?.city, s.address?.state].filter(Boolean).join(", ") : "");
 const mapsHref = (s: Stop | null) => (s ? `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent([s.name, addr(s)].filter(Boolean).join(", "))}` : "#");
 
 export function DriverApp({ token, data }: { token: string; data: Data }) {
+  const clock = useClock();
   const router = useRouter();
   const [pending, start] = useTransition();
   const [err, setErr] = useState<string | null>(null);
@@ -124,11 +131,13 @@ export function DriverApp({ token, data }: { token: string; data: Data }) {
   const x = cur?.crossing;
   // the border card once the caja is on the truck: the next border step, or what the driver waits for
   const xActive = x && (!!x.nextStep || !!x.wait || x.state === "held");
+  // one big button at a time (m17): when a border step is due it is the one to press
+  const borderFirst = !!xActive && !!x?.nextStep && x.state !== "held";
 
   return (
     <div className="driver-app form-roomy">
-      <div className="flex items-center justify-between">
-        <div>
+      <div className="flex items-center justify-between gap-2">
+        <div className="min-w-0">
           <div className="eyebrow">Driver · Chofer</div>
           <div className="h1">{data.driver.name}</div>
         </div>
@@ -142,17 +151,26 @@ export function DriverApp({ token, data }: { token: string; data: Data }) {
         </div>
       ) : (
         <div className="card mt-4 overflow-hidden">
-          <div className="px-5 pt-4 pb-3 border-b border-line flex items-center justify-between">
-            <div>
+          <div className="px-4 pt-4 pb-3 border-b border-line flex items-center justify-between gap-2">
+            <div className="min-w-0">
               <div className="font-extrabold mono text-headline">{cur.order.orderNumber}</div>
               <div className="text-muted text-callout">
                 {cur.truck ? `Unit ${cur.truck.unitNumber} · ` : ""}
                 {cur.order.equipment.replace("_", " ")}
               </div>
             </div>
-            <span className="pill pill-teal">{LEG_LABEL[cur.leg.state]}</span>
+            <span className="pill pill-teal shrink-0">{cur.leg.state === "completed" ? "Delivered · Entregado" : LEG_LABEL[cur.leg.state]}</span>
           </div>
-          <div className="px-5 py-4 space-y-4">
+          {cur.order.held && (
+            <div className="mx-4 mt-3 rounded-lg bg-amber-soft text-amber font-semibold px-3 py-2 text-callout" role="status" data-testid="held">
+              On hold — wait for dispatch before you move this load.{cur.order.holdReason ? ` (${cur.order.holdReason})` : ""} · Carga en espera — espera a despacho.
+            </div>
+          )}
+          {(() => {
+            const refs = refLines(cur.order.refs);
+            return refs.length ? <div className="px-4 pt-3 text-callout font-semibold mono" data-testid="load-refs">{refs.join(" · ")}</div> : null;
+          })()}
+          <div className="px-4 py-4 space-y-4">
             <Place label="Pickup · Recoger" s={cur.from} active={["accepted", "en_route_to_pickup", "at_pickup"].includes(cur.leg.state)} />
             {cur.freightReady != null && ["dispatched", "accepted", "en_route_to_pickup", "at_pickup"].includes(cur.leg.state) && (
               <div className={`text-callout font-semibold ${cur.freightReady ? "text-teal" : "text-amber"}`} data-testid="freight-ready">
@@ -165,9 +183,9 @@ export function DriverApp({ token, data }: { token: string; data: Data }) {
             <Place label="Deliver · Entregar" s={cur.to} active={["loaded", "at_delivery"].includes(cur.leg.state) || (cur.leg.state === "en_route" && !(cur.mids ?? []).some((m) => !m.departedAt))} />
             {cur.order.cargoNote && <div className="text-callout text-muted">📦 {cur.order.cargoNote}</div>}
           </div>
-          <div className="px-5 pb-5">
+          <div className="px-4 pb-5">
             {cur.leg.state === "at_pickup" && <PhotoButton token={token} legId={cur.leg.id} code="SEAL_PHOTO" done={cur.docs.seal} label="Seal photo · Foto del sello" onDone={() => router.refresh()} />}
-            {(cur.leg.state === "at_delivery" || (cur.leg.state === "en_route" && (cur.mids ?? []).some((m) => m.arrivedAt && !m.departedAt))) && <PhotoButton token={token} legId={cur.leg.id} code="POD" done={cur.docs.pod} label="POD photo · Foto del POD" onDone={() => router.refresh()} />}
+            {(cur.leg.state === "at_delivery" || cur.leg.state === "completed" || (cur.leg.state === "en_route" && (cur.mids ?? []).some((m) => m.arrivedAt && !m.departedAt))) && <PhotoButton token={token} legId={cur.leg.id} code="POD" done={cur.docs.pod} label="POD photo · Foto del POD" onDone={() => router.refresh()} />}
             {sealAsk && (
               <div className="mb-3" data-testid="seal">
                 <input className="input mono" placeholder={`${sealAsk.label} # · ${sealAsk.es}`} value={seal} onChange={(e) => setSeal(e.target.value)} aria-label={sealAsk.label} />
@@ -175,29 +193,31 @@ export function DriverApp({ token, data }: { token: string; data: Data }) {
               </div>
             )}
             {cur.next ? (
-              <button className="btn btn-primary w-full justify-center flex-col gap-0" style={{ height: 72, fontSize: 18 }} onClick={() => step(false)} disabled={pending || declining}>
-                {pending ? "…" : cur.next.label}
+              <button className={`btn ${borderFirst ? "" : "btn-primary"} w-full justify-center flex-col gap-0`} style={{ minHeight: borderFirst ? 56 : 72, fontSize: 18 }} onClick={() => step(false)} disabled={pending || declining} data-testid="next-step">
+                {pending ? "Sending… · Enviando…" : cur.next.label}
                 {!pending && <span className="text-callout font-semibold opacity-80">{cur.next.es}</span>}
               </button>
-            ) : x && xActive ? null : (
+            ) : cur.order.held ? null : x && xActive ? null : cur.leg.state === "completed" ? (
+              <div className="text-center text-muted">{cur.docs.pod ? "Done · Listo" : "Delivered — send the POD photo so the office can bill. · Entregado — manda la foto del POD."}</div>
+            ) : (
               <div className="text-center text-muted">Done · Listo</div>
             )}
             {cur.leg.state === "at_delivery" && !cur.docs.pod && <div className="text-callout text-amber font-semibold text-center mt-2">No POD photo yet — the office needs it to bill. · Falta la foto del POD.</div>}
             {(cur.leg.state === "dispatched" || cur.leg.state === "accepted") &&
               (declining ? (
                 <div className="mt-3 space-y-2">
-                  <input className="input" placeholder="Why? / ¿Por qué?" value={reason} onChange={(e) => setReason(e.target.value)} autoFocus />
+                  <input className="input" placeholder="Why? / ¿Por qué?" value={reason} onChange={(e) => setReason(e.target.value)} autoFocus aria-label="Why you can't take it" />
                   <div className="flex gap-2">
-                    <button className="btn flex-1 justify-center" onClick={() => setDeclining(false)}>
+                    <button type="button" className="btn flex-1 justify-center" onClick={() => setDeclining(false)}>
                       Back
                     </button>
-                    <button className="btn btn-danger flex-1 justify-center" onClick={() => step(true)} disabled={pending || !reason.trim()}>
-                      Can&apos;t take it
+                    <button type="button" className="btn btn-danger flex-1 justify-center" onClick={() => step(true)} disabled={pending || !reason.trim()} data-testid="decline-send">
+                      {pending ? "…" : "Can't take it · No puedo"}
                     </button>
                   </div>
                 </div>
               ) : (
-                <button className="btn btn-ghost w-full justify-center mt-2 text-muted" onClick={() => setDeclining(true)}>
+                <button type="button" className="btn btn-ghost w-full justify-center mt-2 text-muted" onClick={() => setDeclining(true)} data-testid="decline">
                   I can&apos;t take this load · No puedo
                 </button>
               ))}
@@ -210,16 +230,16 @@ export function DriverApp({ token, data }: { token: string; data: Data }) {
         </div>
       )}
 
-      {cur && xActive && (
+      {cur && xActive && !cur.order.held && (
         <div className="card mt-4 overflow-hidden">
-          <div className="px-5 pt-4 pb-3 border-b border-line flex items-center justify-between">
-            <div>
+          <div className="px-4 pt-4 pb-3 border-b border-line flex items-center justify-between gap-2">
+            <div className="min-w-0">
               <div className="font-extrabold text-headline">Border · Frontera</div>
               <div className="text-muted text-callout">{x!.trailerNumber ? `Caja ${x!.trailerNumber}` : ""}</div>
             </div>
             <span className={`pill ${x!.state === "held" ? "pill-red" : "pill-amber"}`}>{XLABEL[x!.state] && (!x!.stateLabel || x!.stateLabel === XLABEL_EN[x!.state]) ? XLABEL[x!.state] : (x!.stateLabel ?? x!.state)}</span>
           </div>
-          <div className="px-5 py-4 space-y-3">
+          <div className="px-4 py-4 space-y-3">
             {x!.packetToken && (
               <a className="btn btn-lg w-full justify-center" href={`/p/${x!.packetToken}`} target="_blank" rel="noreferrer">
                 📄 Open packet · Abrir paquete
@@ -234,7 +254,7 @@ export function DriverApp({ token, data }: { token: string; data: Data }) {
               </div>
             )}
             {x!.state !== "held" && x!.nextStep && (
-              <button className="btn btn-primary w-full justify-center flex-col gap-0" style={{ height: 64, fontSize: 17 }} onClick={() => xstep(x!.nextStep)} disabled={pending || holding}>
+              <button className={`btn ${borderFirst ? "btn-primary" : ""} w-full justify-center flex-col gap-0`} style={{ minHeight: 64, fontSize: 17 }} onClick={() => xstep(x!.nextStep)} disabled={pending || holding}>
                 {(x!.steps?.[x!.nextStep] ?? XSTEP[x!.nextStep])?.en}
                 <span className="text-callout font-semibold opacity-80">{(x!.steps?.[x!.nextStep] ?? XSTEP[x!.nextStep])?.es}</span>
               </button>
@@ -267,14 +287,15 @@ export function DriverApp({ token, data }: { token: string; data: Data }) {
           <div className="eyebrow mb-2">All your loads · Todas tus cargas</div>
           <div className="card divide-y divide-line">
             {data.items.map((i) => (
-              <button key={i.leg.id} className={`w-full text-left px-4 py-3 flex items-center justify-between ${i.leg.id === cur?.leg.id ? "bg-teal-soft" : ""}`} onClick={() => setSel(i.leg.id)}>
-                <div>
+              <button key={i.leg.id} className={`w-full text-left px-4 py-3 flex items-center justify-between gap-2 ${i.leg.id === cur?.leg.id ? "bg-teal-soft" : ""}`} onClick={() => setSel(i.leg.id)} data-testid="my-load">
+                <div className="min-w-0">
                   <div className="font-bold mono text-body">{i.order.orderNumber}</div>
-                  <div className="text-muted text-callout truncate">
+                  <div className="text-muted text-callout">
                     {i.from?.name} → {i.to?.name}
                   </div>
+                  {i.from?.windowStart && <div className="text-footnote text-muted">{clock.stop(i.from.windowStart, i.from, { style: "short" })}</div>}
                 </div>
-                <span className="pill pill-slate">{LEG_LABEL[i.leg.state]}</span>
+                <span className="pill pill-slate shrink-0">{i.order.held ? "On hold" : i.leg.state === "completed" ? "POD needed" : LEG_LABEL[i.leg.state]}</span>
               </button>
             ))}
           </div>
@@ -310,17 +331,19 @@ export function DriverApp({ token, data }: { token: string; data: Data }) {
 function Place({ label, s, active }: { label: string; s: Stop | null; active: boolean }) {
   // the stop's own clock with its name: a Mexican pickup reads CST even on a phone set to Texas time
   const clock = useClock();
+  const refs = refLines(s?.refs);
   return (
-    <div className={`rounded-lg border p-3 ${active ? "border-teal bg-teal-soft/40" : "border-line"}`}>
+    <div className={`rounded-lg border p-3 min-w-0 ${active ? "border-teal bg-teal-soft/40" : "border-line"}`}>
       <div className="text-caption font-bold text-faint">{label}</div>
       <div className="font-extrabold text-headline mt-0.5">{s?.name ?? "—"}</div>
+      {refs.length > 0 && <div className="text-callout font-bold mono mt-0.5" data-testid="stop-refs">{refs.join(" · ")}</div>}
       {s && addr(s) && <div className="text-callout text-muted">{addr(s)}</div>}
       {s?.windowStart && (
         <div className="text-callout font-semibold text-teal">
           {clock.window(s)}
         </div>
       )}
-      {s?.notes && <div className="text-callout mt-1">📝 {s.notes}</div>}
+      {s?.notes && <div className="text-callout mt-1 whitespace-pre-wrap">📝 {s.notes}</div>}
       {s?.contact && <div className="text-callout text-muted">☎ {s.contact}</div>}
       {s && (
         <a className="btn btn-sm mt-2" href={mapsHref(s)} target="_blank" rel="noreferrer">
@@ -552,7 +575,7 @@ function Chat({ token, legId, thread, dispatchPhone, onDone }: { token: string; 
   };
   return (
     <div className="card mt-5 p-4" data-testid="chat">
-      <div className="flex items-center justify-between mb-1">
+      <div className="flex items-center justify-between gap-2 flex-wrap mb-1">
         <div className="eyebrow">Dispatch · Despacho</div>
         {dispatchPhone && <DispatchLinks phone={dispatchPhone} />}
       </div>
@@ -569,8 +592,8 @@ function Chat({ token, legId, thread, dispatchPhone, onDone }: { token: string; 
         </div>
       )}
       <div className="flex gap-2">
-        <input className="input flex-1" placeholder="Message dispatch · Mensaje a despacho" value={text} onChange={(e) => setText(e.target.value)} onKeyDown={(e) => e.key === "Enter" && send()} />
-        <button type="button" className="btn btn-primary" disabled={busy || !text.trim()} onClick={send}>
+        <input className="input flex-1 min-w-0" placeholder="Message dispatch · Mensaje a despacho" value={text} onChange={(e) => setText(e.target.value)} onKeyDown={(e) => e.key === "Enter" && send()} />
+        <button type="button" className="btn" disabled={busy || !text.trim()} onClick={send}>
           Send
         </button>
       </div>

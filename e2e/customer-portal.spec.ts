@@ -85,7 +85,7 @@ test("customer's day: one link, a load tracked to delivered, the POD and the inv
   await up.locator("input[type=file]").setInputFiles(POD);
   await up.locator("button:has-text('Upload')").last().click();
   await expect(up).toBeHidden();
-  await page.locator("tr", { hasText: o1 }).locator("button:has-text('Create invoice')").click();
+  await page.locator("tr", { hasText: o1 }).locator("button:has-text('Draft')").click();
   await expect(page.getByRole("status")).toContainText("Draft invoice created");
   await page.locator("tr", { hasText: o1 }).locator("a:has-text('Open draft')").click();
   await page.waitForURL("**/billing/invoices/**", { waitUntil: "commit" });

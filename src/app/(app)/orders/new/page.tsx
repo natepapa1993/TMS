@@ -14,7 +14,7 @@ export default async function NewOrderPage() {
     <OrderForm
       zone={company.timeZone}
       templates={templates.map((t) => ({ id: t.id, name: t.name, customer: t.customer }))}
-      customers={customers.map((c) => ({ id: c.id, name: String(c.name), kind: String(c.kind) }))}
+      customers={customers.map((c) => ({ id: c.id, name: String(c.name), kind: String(c.kind) })).sort((p, q) => p.name.localeCompare(q.name))}
       entities={entities.map((e) => ({ id: e.id, name: String(e.legalName) }))}
       locations={locations.map((l) => ({ id: l.id, name: String(l.name), country: String(l.country), kind: String(l.kind), address: (l.address ?? null) as { line1?: string; city?: string; state?: string; postalCode?: string; country?: string } | null }))}
     />

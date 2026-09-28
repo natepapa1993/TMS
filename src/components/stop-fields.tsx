@@ -6,6 +6,7 @@
  * what the driver needs to know. Used by the load builder and by "Add stop" on an existing load.
  */
 
+import { fold } from "@/lib/fold";
 import type { ReactNode } from "react";
 import { stopZone, fromZoneInput, toZoneInput, zoneAbbrev, fmtWhen, fmtWindow } from "@/lib/time";
 
@@ -120,7 +121,8 @@ export function StopFields({ stop, onChange, locations, index, invalid, companyZ
               aria-label={`Stop ${n1} location`}
               onChange={(e) => {
                 const v = e.target.value;
-                const l = locations.find((x) => x.name === v);
+                // "Bajio Planta" finds "Bajío Planta": accents never stop a saved location from matching
+                const l = locations.find((x) => x.name === v) ?? (v.trim().length > 3 ? locations.find((x) => fold(x.name) === fold(v.trim())) : undefined);
                 onChange(l ? fromLocation(stop, l) : { name: v, locationId: stop.locationId && linked?.name !== v ? null : stop.locationId });
               }}
             />
@@ -128,6 +130,7 @@ export function StopFields({ stop, onChange, locations, index, invalid, companyZ
               {locations.map((l) => (
                 <option key={l.id} value={l.name}>
                   {[l.address?.city, l.address?.state, l.country].filter(Boolean).join(", ")}
+                  {fold(l.name) !== l.name.toLowerCase() ? ` · ${fold(l.name)}` : ""}
                 </option>
               ))}
             </datalist>

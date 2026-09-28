@@ -1,1 +1,0 @@
-ALTER TABLE "tenders" ADD COLUMN "unit_plate" text;

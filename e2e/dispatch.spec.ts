@@ -1,4 +1,4 @@
-// Features: F-2.1 F-2.3 F-3.1 F-3.2 F-11.1 F-11.2 F-11.3 F-11.4 F-11.5 F-15 (through the real UI) F-2.9 F-1.6
+// Features: F-2.1 F-2.3 F-3.1 F-3.2 F-11.1 F-11.2 F-11.3 F-11.4 F-11.5 F-15 (through the real UI) F-2.9 F-1.6 F-30.10
 import { test, expect, type Page } from "@playwright/test";
 import { signupFresh, quickAdd, future, login, buildLoad, mxToUs, step, confirmStamp } from "./helpers";
 
@@ -34,6 +34,7 @@ async function newOrder(page: Page) {
 }
 
 test("dispatcher day: build a load stop by stop, B-1 blocked on the US leg, carrier on MX, truck crosses, delivered", async ({ page }) => {
+  test.setTimeout(120_000); // ~45 s of clicking on a quiet machine; the default 60 s is too tight when the box is busy
   await signupFresh(page);
   await readyFleet(page);
   await newOrder(page);
@@ -169,8 +170,8 @@ test("unit OOS from Fleet pulls the planned leg back to Pending; split makes a s
   await panel.locator("summary:has-text('Stops')").scrollIntoViewIfNeeded();
   await expect(panel).toContainText("San Antonio Yard");
 
-  // hold: only once something is sent
-  await expect(panel.locator("button:has-text('Hold')")).toBeDisabled();
+  // hold: at any stage, a booked load with no truck too (M8)
+  await expect(panel.locator("button:has-text('Hold')")).toBeEnabled();
   await panel.locator(".rounded-lg.border >> nth=0 >> button:has-text('Assign')").click();
   await page.getByRole("dialog").locator("button:has-text('Partner carrier')").click();
   await page.getByRole("dialog").locator("select").first().selectOption({ label: "Transportes Garza (MX)" });
@@ -242,6 +243,10 @@ test("book it again: a copy of an order is a new draft with the same shape and n
   await page.waitForURL("**/orders/**", { waitUntil: "commit" });
   const first = page.url();
   await page.click("button:has-text('Book again')");
+  // it asks for the new dates first (M11): the old times moved to the next day they can happen
+  const again = page.getByRole("dialog");
+  await expect(again.locator("#again-pu")).not.toHaveValue("");
+  await again.locator("button:has-text('Make the draft')").click();
   await page.waitForURL((u) => u.toString().includes("/orders/") && u.toString() !== first, { waitUntil: "commit" });
   await expect(page.locator("main")).toContainText("26-00002");
   await expect(page.locator("main")).toContainText("Draft");
@@ -287,7 +292,7 @@ test("forgot password: no sender → ask the owner; with a sender the emailed li
   await anon.fill("#password", "brand-new-password-9");
   await anon.fill("#again", "brand-new-password-9");
   await anon.click("button:has-text('Set password and sign in')");
-  await anon.waitForURL("**/dispatch");
+  await anon.waitForURL("**/today");
   await anon.context().clearCookies();
   await anon.goto("/login");
   await anon.fill("#email", me.email);
@@ -296,6 +301,6 @@ test("forgot password: no sender → ask the owner; with a sender the emailed li
   await expect(anon.getByRole("alert").filter({ hasText: "don't match" })).toBeVisible();
   await anon.fill("#password", "brand-new-password-9");
   await anon.click("button:has-text('Sign in')");
-  await anon.waitForURL("**/dispatch");
+  await anon.waitForURL("**/today"); // the owner starts on Today
   await anon.context().close();
 });

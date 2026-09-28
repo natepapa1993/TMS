@@ -6,7 +6,7 @@ import { updateOrderAction, editStopAction, addStopAction, removeStopAction, mov
 import { bookAction, cancelAction, holdAction, releaseAction, setLegMilesAction, copyOrderAction } from "../../dispatch/actions";
 import { Confirm, Modal, MoreMenu, Toast, useToast } from "@/components/ui";
 import { StopFields, blankStop, stopPayload, draftFromStop, stopPatch, STOP_LABEL, type Loc, type StopDraft } from "@/components/stop-fields";
-import { stopZone, fmtWhen, fmtWindow } from "@/lib/time";
+import { stopZone, fmtWhen, fmtWindow, toZoneInput, fromZoneInput, zoneAbbrev } from "@/lib/time";
 
 const REF_LABEL: Record<string, string> = { rate_con: "Rate con", po: "PO", asn: "ASN", shipment: "Shipment", reference: "Reference" };
 type Order = { id: string; state: string; kind?: string; customerId: string | null; brokerId: string | null; billingEntityId: string | null; equipment: string; rateCents: number | null; rateTbd: boolean; currency: string; fuelRule: string; fuelPct: number | null; tollsFeesCents: number | null; refs: Record<string, string>; cargoNote: string | null; updatedAt: string; lockedAt?: string | null; tonu?: boolean };
@@ -230,9 +230,13 @@ export function StopEditor({ orderId, index, count, stop, readOnly, restructure,
   );
 }
 
-export function OrderActions({ order }: { order: Order }) {
+type End = { name: string; at: string | null; zone: string };
+
+export function OrderActions({ order, ends = null }: { order: Order; ends?: { pickup: End; delivery: End } | null }) {
   const router = useRouter();
   const t = useToast();
+  const [again, setAgain] = useState<{ pickup: string; delivery: string } | null>(null);
+  const [againErr, setAgainErr] = useState<string | null>(null);
   const [cancel, setCancel] = useState(false);
   const [hold, setHold] = useState(false);
   const [tonu, setTonu] = useState(false);
@@ -257,19 +261,69 @@ export function OrderActions({ order }: { order: Order }) {
         <button
           className="btn"
           disabled={pending}
-          title="A new draft with the same customer, rate, equipment and stops; windows, references and assignments start over"
-          onClick={() =>
-            start(async () => {
-              const r = await copyOrderAction(order.id);
-              if (r.ok) router.push(`/orders/${r.data.id}`);
-              else t.err(r.error);
-            })
-          }
+          title="A new draft with the same customer, rate, equipment and stops for new dates; references and assignments start over"
+          onClick={() => {
+            setAgainErr(null);
+            if (!ends) return setAgain({ pickup: "", delivery: "" });
+            // the old times moved to the next day they can happen, same time of day; the dispatcher changes them here
+            const DAY = 86400_000;
+            const old = ends.pickup.at ? new Date(ends.pickup.at).getTime() : null;
+            const shift = old ? Math.max(1, Math.ceil((Date.now() - old) / DAY)) * DAY : DAY;
+            const moved = (at: string | null, zone: string) => (at ? toZoneInput(new Date(new Date(at).getTime() + shift), zone) : "");
+            setAgain({ pickup: moved(ends.pickup.at, ends.pickup.zone) || toZoneInput(new Date(Date.now() + DAY), ends.pickup.zone), delivery: moved(ends.delivery.at, ends.delivery.zone) });
+          }}
         >
           Book again
         </button>
       )}
-      {["dispatched", "in_transit"].includes(order.state) && (
+      <Modal
+        open={!!again}
+        onClose={() => setAgain(null)}
+        title="Book it again — for when?"
+        footer={
+          <>
+            <button className="btn" onClick={() => setAgain(null)}>
+              Cancel
+            </button>
+            <button
+              className="btn btn-primary"
+              disabled={pending || !again?.pickup}
+              onClick={() =>
+                again &&
+                start(async () => {
+                  const pickupAt = fromZoneInput(again.pickup, ends?.pickup.zone ?? "America/Chicago");
+                  const deliveryAt = again.delivery ? fromZoneInput(again.delivery, ends?.delivery.zone ?? "America/Chicago") : null;
+                  const r = await copyOrderAction(order.id, { pickupAt: pickupAt?.toISOString() ?? null, deliveryAt: deliveryAt?.toISOString() ?? null });
+                  if (r.ok) router.push(`/orders/${r.data.id}`);
+                  else setAgainErr(r.error);
+                })
+              }
+            >
+              Make the draft
+            </button>
+          </>
+        }
+      >
+        <p className="text-callout text-muted mb-3">Same customer, rate, equipment and stops. The PO, customer load #, rate con and every truck start over — add the new load&apos;s references on the draft.</p>
+        <div className="grid grid-cols-2 gap-3">
+          <div>
+            <label className="label" htmlFor="again-pu">
+              Pickup{ends ? ` · ${ends.pickup.name}` : ""}
+            </label>
+            <input id="again-pu" type="datetime-local" className="input" value={again?.pickup ?? ""} onChange={(e) => again && setAgain({ ...again, pickup: e.target.value })} />
+            {ends && <div className="help">{zoneAbbrev(ends.pickup.zone)} — the stop&apos;s own clock</div>}
+          </div>
+          <div>
+            <label className="label" htmlFor="again-del">
+              Delivery{ends ? ` · ${ends.delivery.name}` : ""}
+            </label>
+            <input id="again-del" type="datetime-local" className="input" value={again?.delivery ?? ""} onChange={(e) => again && setAgain({ ...again, delivery: e.target.value })} />
+            {ends && <div className="help">{zoneAbbrev(ends.delivery.zone)} — the stop&apos;s own clock</div>}
+          </div>
+        </div>
+        {againErr && <div className="error mt-2">{againErr}</div>}
+      </Modal>
+      {["booked", "dispatched", "in_transit"].includes(order.state) && (
         <button className="btn" onClick={() => setHold(true)}>
           Hold
         </button>
@@ -365,12 +419,12 @@ export function OrderActions({ order }: { order: Order }) {
 }
 
 /** Inline planned-miles cell on the legs table: type, blur or Enter to save. */
-export function LegMiles({ legId, miles, locked }: { legId: string; miles: number | null; locked: boolean }) {
+export function LegMiles({ legId, miles, est = null, locked }: { legId: string; miles: number | null; est?: number | null; locked: boolean }) {
   const router = useRouter();
   const [v, setV] = useState(miles != null ? String(miles) : "");
   const [state, setState] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const [msg, setMsg] = useState<string | null>(null);
-  if (locked) return <span className="mono">{miles ?? "—"}</span>;
+  if (locked) return <span className="mono">{miles ?? (est != null ? `${est} est.` : "—")}</span>;
   const save = async () => {
     if (v === (miles != null ? String(miles) : "")) return;
     setState("saving");
@@ -386,7 +440,7 @@ export function LegMiles({ legId, miles, locked }: { legId: string; miles: numbe
   };
   return (
     <span className="inline-flex items-center gap-1">
-      <input className="input w-20 h-7 px-2 mono" inputMode="numeric" value={v} aria-label="Planned miles" onChange={(e) => setV(e.target.value)} onBlur={save} onKeyDown={(e) => e.key === "Enter" && (e.target as HTMLInputElement).blur()} placeholder="mi" aria-invalid={state === "error"} />
+      <input className="input w-20 h-7 px-2 mono" inputMode="numeric" value={v} aria-label="Planned miles" onChange={(e) => setV(e.target.value)} onBlur={save} onKeyDown={(e) => e.key === "Enter" && (e.target as HTMLInputElement).blur()} placeholder={est != null ? `${est} est.` : "mi"} title={est != null && miles == null ? `Estimated ${est} mi from the stops — type the real miles to replace it` : undefined} aria-invalid={state === "error"} />
       {state === "saved" && <span className="text-teal text-caption font-bold">✓</span>}
       {msg && <span className="error m-0 text-caption">{msg}</span>}
     </span>

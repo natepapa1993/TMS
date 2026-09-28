@@ -194,7 +194,8 @@ test("driver app: link from Fleet, one button per step with GPS, customer tracki
   await expect(row).toContainText("26-00001");
   await row.locator("button:has-text('Reply')").click();
   await page.getByRole("dialog").getByLabel("Reply").fill("OK, tell them we need to leave by 3");
-  await page.getByRole("dialog").locator("button:has-text('Send')").click();
+  await expect(page.getByRole("dialog").locator("button", { hasText: "Send, keep open" })).toBeVisible(); // m22: or keep it open
+  await page.getByRole("dialog").locator("button", { hasText: /^Send$/ }).click();
   await expect(page.getByRole("status")).toContainText("the driver sees it in the app");
   await expect(page.locator("tr", { hasText: "Shipper says 40 min more" })).toHaveCount(0); // handled
   await expect(page.getByTestId("sent-log")).toContainText("Reply to driver");

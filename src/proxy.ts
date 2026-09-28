@@ -13,7 +13,7 @@ export function proxy(request: NextRequest) {
     url.searchParams.set("next", pathname);
     return NextResponse.redirect(url);
   }
-  if (has && isAuthPage) return NextResponse.redirect(new URL("/dispatch", request.url));
+  if (has && isAuthPage) return NextResponse.redirect(new URL("/", request.url)); // "/" sends each role to its own home
   return NextResponse.next();
 }
 

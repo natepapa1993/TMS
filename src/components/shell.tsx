@@ -4,7 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
 import { Mark } from "./mark";
-import { ArrowLeftRight, Banknote, BarChart3, ClipboardCheck, FolderCheck, Menu, X, Building2, Cable, CalendarRange, FileText, Handshake, Landmark, LayoutGrid, Map as MapIcon, MapPin, MessageSquare, Package, Plug, Receipt, Route, Settings, ShieldCheck, TriangleAlert, Truck, Users, Wallet, type LucideIcon } from "lucide-react";
+import { Sun, ArrowLeftRight, Banknote, BarChart3, ClipboardCheck, FolderCheck, Menu, X, Building2, Cable, CalendarRange, FileText, Handshake, Landmark, LayoutGrid, Map as MapIcon, MapPin, MessageSquare, Package, Plug, Receipt, Route, Settings, ShieldCheck, TriangleAlert, Truck, Users, Wallet, type LucideIcon } from "lucide-react";
 import { logoutAction } from "@/app/(auth)/actions";
 import { GlobalSearch } from "./global-search";
 
@@ -13,6 +13,7 @@ const NAV: { section: string; items: NavItem[] }[] = [
   {
     section: "Operations",
     items: [
+      { href: "/today", label: "Today", icon: Sun, roles: ["owner"] },
       { href: "/dispatch", label: "Dispatch board", icon: LayoutGrid },
       { href: "/dispatch/planner", label: "Planner", icon: CalendarRange },
       { href: "/orders", label: "Loads", icon: Package },
