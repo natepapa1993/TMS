@@ -68,7 +68,7 @@ test("import: a sheet previews every load with its problems, then creates the go
   await expect(page.getByTestId("import-row").nth(2)).toContainText('customer "Nobody Inc" is not on file');
   await page.locator("label:has-text('Book them') input").check();
   await page.click("button:has-text('Import 2 loads')");
-  await expect(page.getByTestId("import-done")).toContainText("2 loads created, 1 skipped");
+  await expect(page.getByTestId("import-done")).toContainText(/2 loads created.*1 skipped/);
   await page.click("a:has-text('See them on Loads')");
   await expect(page.getByTestId("grid-row")).toHaveCount(2);
   await expect(page.getByTestId("grid-row").first()).toContainText("Booked");

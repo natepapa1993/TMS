@@ -132,7 +132,8 @@ export async function driverToday(tenantId: string, driverId: string) {
     return { leg, order: { id: order.id, orderNumber: order.orderNumber, equipment: order.equipment, cargoNote: order.cargoNote, refs: order.refs, state: order.state, held, holdReason: held ? (order.holdReason ?? null) : null }, from, to, mids, truck, next: held || leg.state === "completed" ? null : next, crossing, docs, sealExpected, freightReady };
   });
   // done loads only stay while their POD is missing (on a trip: a stop's shipments), and after the open ones
-  const shown = items.filter((i) => i.leg.state !== "completed" || (!i.docs.pod && i.order.state !== "cancelled"));
+  // (only a real delivery wants a POD: a crossing or a hand-off that ends at a yard doesn't)
+  const shown = items.filter((i) => i.leg.state !== "completed" || (!i.docs.pod && i.order.state !== "cancelled" && i.to?.type === "delivery"));
   // in the order the driver will run them: the one rolling first, then by pickup time (M13)
   const at = (i: (typeof items)[number]) => i.from?.windowStart?.getTime() ?? Number.MAX_SAFE_INTEGER;
   const rank = (i: (typeof items)[number]) => (i.leg.state === "completed" ? 2 : ["dispatched", "accepted"].includes(i.leg.state) ? 1 : 0);

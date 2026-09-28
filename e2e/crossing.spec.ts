@@ -133,10 +133,8 @@ test("border day: waiting on DODA → seal mismatch → override → packet → 
   const res = await phone.request.get((await packet.getAttribute("href"))!);
   expect(res.ok()).toBeTruthy();
   expect(res.headers()["content-type"]).toContain("pdf");
-  // one big button at a time (m17): accept the load, then the border steps are the primary ones
+  // one big button at a time (m17): the border steps are the primary one now
   await expect(phone.locator("button.btn-primary")).toHaveCount(1);
-  await phone.locator("button.btn-primary", { hasText: "Accept this load" }).click();
-  await phone.waitForTimeout(400);
   for (const label of ["Departed the yard", "At Mexican customs", "At US customs", "Cleared"]) {
     await expect(phone.locator("button.btn-primary", { hasText: label })).toBeVisible();
     await phone.locator("button.btn-primary", { hasText: label }).click();
