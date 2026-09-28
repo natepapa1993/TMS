@@ -223,7 +223,10 @@ test("billing day: charges, docs gate, invoice to paid, AR, carrier three-way wi
   await expect(dlg).toContainText("420 mi");
   await dlg.locator("button:has-text('Mark reviewed')").click();
   await expect(page.getByRole("status")).toContainText("Reviewed");
-  await dlg.locator("button:has-text('Approve')").click();
+  // this week isn't over: the owner approves early, with a reason
+  await expect(dlg.getByTestId("settlement-blockers")).toContainText("The week isn't over");
+  await dlg.getByLabel("Reason to approve early").fill("paying the week early for the test");
+  await dlg.locator("button:has-text('Approve early')").click();
   await expect(page.getByRole("status")).toContainText("driver can see it");
   await page.keyboard.press("Escape");
 
@@ -262,7 +265,8 @@ test("billing day: charges, docs gate, invoice to paid, AR, carrier three-way wi
   await dlg.locator("input[inputmode=decimal]").last().fill("37.20");
   await dlg.locator("button:text-is('Add')").click();
   await expect(page.getByRole("status")).toContainText("Line added");
-  await dlg.locator("button:has-text('Approve')").click();
+  await dlg.getByLabel("Reason to approve early").fill("dispute answered, paying early");
+  await dlg.locator("button:has-text('Approve early')").click();
   await expect(page.getByRole("status")).toContainText("driver can see it");
   await dlg.locator("input[placeholder='reference']").fill("ACH-77");
   await dlg.locator("button:has-text('Mark paid')").click();
@@ -283,7 +287,7 @@ test("billing day: charges, docs gate, invoice to paid, AR, carrier three-way wi
 
   // ---- QuickBooks: preview counts the month, the IIF balances, the second run finds nothing new
   await page.goto("/billing/exports");
-  await expect(page.getByTestId("export-preview")).toContainText("1 invoices ($1,850.00) · 2 receipts ($1,850.00) · 1 carrier bills · 1 driver settlements");
+  await expect(page.getByTestId("export-preview")).toContainText("1 invoices ($1,850.00) · 2 deposits ($1,850.00) · 0 credit memos · 1 carrier bills ($441.00) · 1 driver settlements ($252.60)");
   await page.click("button:has-text('Create export')");
   await expect(page.getByRole("status")).toContainText("Export ready — 1 invoices, 2 receipts, 1 carrier bills, 1 settlements");
   const iifHref = await page.locator("a:has-text('.iif')").first().getAttribute("href");

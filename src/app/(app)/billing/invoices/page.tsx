@@ -1,5 +1,4 @@
 import Link from "next/link";
-import { shortDate } from "@/lib/time";
 import { requireCtx } from "@/lib/auth";
 import { listInvoices, listCreditMemos, type InvoiceFilter } from "@/domain/billing";
 import { list } from "@/data/records";
@@ -34,6 +33,8 @@ export default async function InvoicesPage({ searchParams }: PageProps<"/billing
   const openSum = sumByCurrency(rows.filter((i) => !["paid", "void", "closed", "draft"].includes(i.state)), (i) => i.currency, (i) => i.totalCents - i.creditedCents - i.paidCents);
   const anyOpen = Object.values(openSum).some((v) => v);
   const company = await getCompany(ctx);
+  // invoice dates on the company's calendar (an evening invoice in Texas is not tomorrow's)
+  const localDate = (d: Date) => d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: company.timeZone });
   // credit memos are their own kind: listed with the invoices (and alone on the Credit memos tab)
   const showMemos = !state && (!f.view || f.view === "credits");
   const memos = showMemos ? await listCreditMemos(ctx, { customerId: f.customerId || undefined, q: f.q }) : [];
@@ -162,7 +163,7 @@ export default async function InvoicesPage({ searchParams }: PageProps<"/billing
                         {m.invoiceNumber}
                       </Link>
                     </td>
-                    <td className="text-callout">{shortDate(m.memo.issuedAt)}</td>
+                    <td className="text-callout">{localDate(m.memo.issuedAt)}</td>
                     <td className="text-callout text-muted">—</td>
                     <td className="mono text-red">-{formatCents(m.memo.amountCents, m.currency)}</td>
                     <td className="text-footnote text-muted max-w-[220px] truncate" title={m.memo.reason}>
@@ -183,8 +184,8 @@ export default async function InvoicesPage({ searchParams }: PageProps<"/billing
                     </td>
                     <td>{cn.get(i.customerId)}</td>
                     <td className="text-muted text-callout">{i.orderIds.length}</td>
-                    <td className="text-callout">{i.issuedAt ? shortDate(i.issuedAt) : "—"}</td>
-                    <td className={`text-callout ${i.dueAt && i.dueAt < new Date() && !["paid", "void"].includes(i.state) ? "text-red font-semibold" : ""}`}>{i.dueAt ? shortDate(i.dueAt) : "—"}</td>
+                    <td className="text-callout">{i.issuedAt ? localDate(i.issuedAt) : "—"}</td>
+                    <td className={`text-callout ${i.dueAt && i.dueAt < new Date() && !["paid", "void"].includes(i.state) ? "text-red font-semibold" : ""}`}>{i.dueAt ? localDate(i.dueAt) : "—"}</td>
                     <td className="mono">{formatCents(i.totalCents, i.currency)}</td>
                     <td className="mono font-semibold">{["paid", "void"].includes(i.state) ? "—" : formatCents(i.totalCents - i.creditedCents - i.paidCents, i.currency)}</td>
                     <td>

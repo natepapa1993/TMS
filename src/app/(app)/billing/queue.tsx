@@ -128,7 +128,16 @@ export function Queue({ rows, role }: { rows: Row[]; role: string }) {
                         </Link>
                       ) : (
                         canBill && (
-                          <button className="btn btn-sm btn-primary" disabled={!ok || pending} title={r.pending.count ? "The extras waiting for approval stay off this invoice; once approved they go on a supplemental" : undefined} onClick={() => run(r.supplemental ? "Supplemental draft created" : "Draft invoice created", () => createInvoiceAction([r.order.id], r.pending.count > 0))}>
+                          <button className="btn btn-sm btn-primary" disabled={!ok || pending} title={r.pending.count ? "The extras waiting for approval stay off this invoice; once approved they go on a supplemental" : undefined} onClick={() =>
+                              r.supplemental
+                                ? start(async () => {
+                                    // the load leaves the queue once its late charges are on a draft: open that draft
+                                    const x = await createInvoiceAction([r.order.id], r.pending.count > 0);
+                                    if (!x.ok) return t.err(x.error);
+                                    router.push(`/billing/invoices/${x.data.id}`);
+                                  })
+                                : run("Draft invoice created", () => createInvoiceAction([r.order.id], r.pending.count > 0))
+                            }>
                             {r.pending.count ? "Invoice without extras" : r.supplemental ? "Create supplemental" : "Create invoice"}
                           </button>
                         )

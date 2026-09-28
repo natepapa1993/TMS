@@ -25,6 +25,8 @@ export default async function InvoicePage({ params }: PageProps<"/billing/invoic
   const [rebilled] = inv.rebillOf ? await db.select({ number: invoices.number }).from(invoices).where(and(eq(invoices.tenantId, ctx.tenantId), eq(invoices.id, inv.rebillOf))).limit(1) : [];
   const [supplementOf] = inv.supplementOf ? await db.select({ number: invoices.number }).from(invoices).where(and(eq(invoices.tenantId, ctx.tenantId), eq(invoices.id, inv.supplementOf))).limit(1) : [];
   const company = await getCompany(ctx);
+  // invoice dates are the company's calendar day (an evening invoice in Texas is not tomorrow's)
+  const localDate = (d: Date | null) => (d ? d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: company.timeZone }) : "—");
   const suggestedRate = inv.currency !== "USD" ? (company.settings.fx[inv.currency]?.rateE4 ?? null) : null;
   const open = inv.totalCents - inv.creditedCents - inv.paidCents;
   const { method } = await deliveryForInvoice(ctx, inv.customerId, inv.entityId);
@@ -78,7 +80,7 @@ export default async function InvoicePage({ params }: PageProps<"/billing/invoic
             </Link>
           </span>
         ))}
-        {inv.issuedAt ? ` · issued ${shortDate(inv.issuedAt)} · due ${shortDate(inv.dueAt)}` : ""}
+        {inv.issuedAt ? ` · issued ${localDate(inv.issuedAt)} · due ${localDate(inv.dueAt)}` : ""}
         {inv.sentTo ? ` · sent to ${inv.sentTo}` : ""}
       </PageHeader>
       <div className="px-gutter pb-10 grid lg:grid-cols-[1fr_340px] gap-5 items-start [&>*]:min-w-0">

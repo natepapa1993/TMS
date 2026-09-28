@@ -24,6 +24,7 @@ test("pay run and factoring: the week's statements built, approved and paid in o
   await page.click("table a:has-text('Pay Carrier LLC')");
   await page.locator("#f-factorName").fill("Triumph");
   await page.locator("#f-factorEmail").fill("schedules@triumph.test");
+  await page.locator("#f-factorRemitTo").fill("PO Box 610028, Dallas, TX 75261, US"); // required with a factor: factored invoices say to pay there
   await page.locator("#f-factorAll").check();
   await page.locator("#f-factorAdvanceBp").fill("90");
   await page.locator("#f-factorFeeBp").fill("3");
@@ -46,6 +47,11 @@ test("pay run and factoring: the week's statements built, approved and paid in o
   await dlg.getByLabel("Pay item amount").fill("12");
   await dlg.locator("button:has-text('Add')").click();
   await expect(page.getByRole("status")).toContainText("Pay item added");
+  // last week: a week is approved once it has ended
+  const wk = page.locator("input[type=date]").first();
+  const d = new Date(`${await wk.inputValue()}T12:00:00Z`);
+  d.setUTCDate(d.getUTCDate() - 7);
+  await wk.fill(d.toISOString().slice(0, 10));
   await page.getByTestId("run-week").click();
   await expect(page.getByRole("status")).toContainText("1 statement built");
   const row = page.getByTestId("settlement-row").filter({ hasText: "Ana Torres" });

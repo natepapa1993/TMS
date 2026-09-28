@@ -10,7 +10,6 @@ import { writeAudit } from "@/lib/audit";
 import { newToken, publicUrl } from "@/lib/tokens";
 import { enqueue, deliverQueued } from "@/lib/outbox";
 import { planLeg, dispatchLeg, acceptLeg, declineLeg, NotFoundError, ValidationError, normCurrency } from "./orders";
-import { money as fxMoney } from "./fx-rules";
 import { TransitionError } from "./states";
 
 /**
@@ -71,7 +70,8 @@ export async function sendTender(ctx: Ctx, legId: string, input: SendTenderInput
   const token = newToken();
   const expiresAt = new Date(Date.now() + expiresIn * 60_000);
   const link = publicUrl(`/t/${token}`);
-  const rate = (input.rateCents ?? leg.carrierRateCents) != null ? fxMoney((input.rateCents ?? leg.carrierRateCents) as number, currency, { code: true }) : "rate to be confirmed";
+  // the code first ("MXN 9,500.00"): a bare "$" means pesos to a Mexican carrier and dollars to a US one
+  const rate = (input.rateCents ?? leg.carrierRateCents) != null ? `${currency} ${(((input.rateCents ?? leg.carrierRateCents) as number) / 100).toLocaleString("en-US", { minimumFractionDigits: 2 })}` : "rate to be confirmed";
   const zone = await tenantZone(ctx.tenantId);
   const fmt = (d: Date | null | undefined) => fmtIn(d, zone);
   const place = (st?: typeof from) => (st ? `${st.name}${st.address?.city ? `, ${st.address.city}` : ""}${st.address?.state ? ` ${st.address.state}` : ""}` : "");
