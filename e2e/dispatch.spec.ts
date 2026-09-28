@@ -34,6 +34,7 @@ async function newOrder(page: Page) {
 }
 
 test("dispatcher day: build a load stop by stop, B-1 blocked on the US leg, carrier on MX, truck crosses, delivered", async ({ page }) => {
+  test.setTimeout(120_000); // ~45 s of clicking on a quiet machine; the default 60 s is too tight when the box is busy
   await signupFresh(page);
   await readyFleet(page);
   await newOrder(page);
