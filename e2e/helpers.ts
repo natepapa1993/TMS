@@ -39,7 +39,15 @@ export async function quickAdd(page: Page, path: string, label: string, values: 
   }
   await dialog.locator("button:has-text('Add')").click();
   await expect(dialog).toBeHidden();
+  // drivers, trucks, trailers, carriers and rules open the new record after "Add"; come back to the list the test expects
+  if (OPENS_RECORD.includes(path)) {
+    await page.waitForURL(new RegExp(`/settings/${path}/[^/?#]+$`), { waitUntil: "commit" });
+    await page.goto(`/settings/${path}`);
+  }
 }
+
+/** The settings lists whose "+ Add" opens the new record (so the rest can be filled in without finding the row). */
+export const OPENS_RECORD = ["drivers", "trucks", "trailers", "carriers", "document-types"];
 
 export const future = (days: number) => new Date(Date.now() + days * 86400_000).toISOString().slice(0, 10);
 

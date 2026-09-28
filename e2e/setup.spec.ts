@@ -43,8 +43,13 @@ test("signup → day-one checklist → add entity, truck, driver, customer, loca
 
 test("record screen: edit everything, history shows the change, archive blocked while in use, restore", async ({ page }) => {
   await signupFresh(page);
-  await quickAdd(page, "trucks", "Add truck", { unitNumber: "2109", usPlate: "TX1" });
-  await page.click("table a:has-text('2109')");
+  // "+ Add" opens the new record, ready for the rest
+  await page.goto("/settings/trucks");
+  await page.click("button:has-text('Add truck')");
+  await page.getByRole("dialog").locator("#f-unitNumber").fill("2109");
+  await page.getByRole("dialog").locator("#f-usPlate").fill("TX1");
+  await page.getByRole("dialog").locator("button:has-text('Add')").click();
+  await page.waitForURL(/\/settings\/trucks\/[^/]+$/);
   await expect(page.locator(".h1")).toContainText("2109");
   await page.locator("#f-make").fill("Freightliner");
   await page.locator("#f-usPlateExpires").fill(future(200));
@@ -53,7 +58,7 @@ test("record screen: edit everything, history shows the change, archive blocked 
   await page.reload();
   await expect(page.locator("#f-make")).toHaveValue("Freightliner");
   await expect(page.getByText("History", { exact: true })).toBeVisible();
-  await expect(page.locator("aside.space-y-4")).toContainText("make");
+  await expect(page.getByTestId("history-changes").first()).toContainText("Make: — → Freightliner"); // by the field's label
   await page.click("button:has-text('Archive')");
   await page.getByRole("dialog").locator("button:has-text('Archive')").click();
   await page.waitForURL("**/settings/trucks");
