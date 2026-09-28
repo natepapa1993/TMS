@@ -212,6 +212,17 @@ describe("rate-con charges follow the rate", () => {
     expect(await B.syncRateConCharges(a, o.order.id)).toMatchObject({ changed: false });
   });
 
+  it("a draft invoice follows the rate-con charges when the rate changes before it is issued", async () => {
+    const o = await delivered({ customerId: f.usCust, rateCents: 190000 });
+    const draft = await B.createInvoice(a, [o.order.id]);
+    expect(draft.totalCents).toBe(190000);
+    await updateOrder(a, o.order.id, { rateCents: 205000 });
+    const d = await B.invoiceById(a, draft.id);
+    expect([d.invoice.totalCents, d.lines.map((l) => l.amountCents)]).toEqual([205000, [205000]]);
+    const issued = await B.issueInvoice(a, draft.id);
+    expect(issued.totalCents).toBe(205000);
+  });
+
   it("detention is billed by the minute: 2 h 28 min over at $75/h is $185.00", async () => {
     const o = await delivered({ customerId: f.usCust, rateCents: 100000 });
     const { stops } = await import("@/db/schema");

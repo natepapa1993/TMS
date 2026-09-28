@@ -215,7 +215,7 @@ test("billing day: charges, docs gate, invoice to paid, AR, carrier three-way wi
   await expect(page.locator("input[type=date]")).toHaveValue(/^\d{4}-\d{2}-\d{2}$/);
   await page.click("button:has-text('Build statement')");
   await expect(page.getByRole("status")).toContainText("Statement built");
-  const srow = page.locator("tr", { hasText: "Daniel Reyes" });
+  const srow = page.getByTestId("settlement-row").filter({ hasText: "Daniel Reyes" });
   await expect(srow).toContainText("$260.40");
   await expect(srow).toContainText("$215.40");
   await srow.click();
@@ -255,9 +255,9 @@ test("billing day: charges, docs gate, invoice to paid, AR, carrier three-way wi
 
   // office sees the dispute, fixes the miles, re-approves, pays
   await page.goto("/billing/settlements");
-  await expect(page.locator("tr", { hasText: "Daniel Reyes" })).toContainText("dispute");
-  await expect(page.locator("tr", { hasText: "Daniel Reyes" })).toContainText("reviewed");
-  await page.locator("tr", { hasText: "Daniel Reyes" }).click();
+  await expect(page.getByTestId("settlement-row").filter({ hasText: "Daniel Reyes" })).toContainText("dispute");
+  await expect(page.getByTestId("settlement-row").filter({ hasText: "Daniel Reyes" })).toContainText("reviewed");
+  await page.getByTestId("settlement-row").filter({ hasText: "Daniel Reyes" }).click();
   dlg = page.getByRole("dialog");
   await expect(dlg).toContainText("I ran 480 miles");
   await dlg.locator("select").last().selectOption("adjustment");
@@ -272,8 +272,8 @@ test("billing day: charges, docs gate, invoice to paid, AR, carrier three-way wi
   await dlg.locator("button:has-text('Mark paid')").click();
   await expect(page.getByRole("status")).toContainText("Paid");
   await page.keyboard.press("Escape");
-  await expect(page.locator("tr", { hasText: "Daniel Reyes" })).toContainText("$252.60");
-  await expect(page.locator("tr", { hasText: "Daniel Reyes" })).toContainText("paid");
+  await expect(page.getByTestId("settlement-row").filter({ hasText: "Daniel Reyes" })).toContainText("$252.60");
+  await expect(page.getByTestId("settlement-row").filter({ hasText: "Daniel Reyes" })).toContainText("paid");
 
   // ---- company settings: fuel cost per mile changes the P&L
   await page.goto("/settings/company");

@@ -79,7 +79,11 @@ export async function syncRateConCharges(ctx: Ctx, orderId: string, opts: { rese
   if (order.tonu || order.kind === "trip") return { changed: false as const, reason: order.tonu ? "a TONU bills its fee" : "a trip doesn't bill" };
   const existing = await db.select().from(s.charges).where(and(eq(s.charges.tenantId, ctx.tenantId), eq(s.charges.orderId, orderId)));
   const base = existing.filter((c) => c.kind === "linehaul" || c.kind === "fuel");
-  if (base.some((c) => c.invoiceId)) return { changed: false as const, reason: "the line haul is already on an invoice: credit it or bill a supplemental" };
+  // on a draft invoice the charges still move (the draft follows them); on an issued one they never do
+  const invIds = [...new Set(base.map((c) => c.invoiceId).filter((x): x is string => !!x))];
+  const invs = invIds.length ? await db.select({ id: s.invoices.id, state: s.invoices.state }).from(s.invoices).where(inArray(s.invoices.id, invIds)) : [];
+  if (invs.some((i) => i.state !== "draft")) return { changed: false as const, reason: "the line haul is already on an issued invoice: credit it or bill a supplemental" };
+  const draftId = invs[0]?.id ?? null;
   const drop = base.filter((c) => c.source === "rate_con" || opts.reset);
   // nothing built yet and not a reset: ensureCharges builds them from the load when billing needs them
   if (!drop.length && !opts.reset && !existing.length) return { changed: false as const, reason: null };
@@ -89,7 +93,12 @@ export async function syncRateConCharges(ctx: Ctx, orderId: string, opts: { rese
   delete custom.rateConMismatchAccepted;
   await db.transaction(async (tx) => {
     if (drop.length) await tx.delete(s.charges).where(inArray(s.charges.id, drop.map((c) => c.id)));
-    if (rows.length) await tx.insert(s.charges).values(rows);
+    if (rows.length) await tx.insert(s.charges).values(draftId ? rows.map((r) => ({ ...r, invoiceId: draftId })) : rows);
+    if (draftId) {
+      const onDraft = await tx.select({ amountCents: s.charges.amountCents }).from(s.charges).where(eq(s.charges.invoiceId, draftId));
+      const sum = onDraft.reduce((a, c) => a + c.amountCents, 0);
+      await tx.update(s.invoices).set({ subtotalCents: sum, totalCents: sum, currency: order.currency, updatedAt: new Date(), updatedBy: ctx.userId }).where(eq(s.invoices.id, draftId));
+    }
     if (hadAccepted) await tx.update(s.orders).set({ custom, updatedAt: new Date(), updatedBy: ctx.userId }).where(eq(s.orders.id, orderId));
     const was = drop.map((c) => `${c.description} ${money(c.amountCents, c.currency)}`).join(", ") || "none";
     const now = rows.map((c) => `${c.description} ${money(c.amountCents!, c.currency!)}`).join(", ") || "none";

@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Toast, useToast } from "@/components/ui";
 import { formatCents } from "@/data/fields";
+import { formatTotals, sumByCurrency } from "@/domain/fx-rules";
 import { factorScheduleAction } from "../actions";
 
 type Row = { id: string; number: string; customer: string; issuedAt: string; totalCents: number; currency: string };
@@ -16,7 +17,8 @@ export function ToFactor({ factor, rows, schedules }: { factor: string; rows: Ro
   const t = useToast();
   const [sel, setSel] = useState<string[]>(() => rows.map((r) => r.id));
   const [pending, start] = useTransition();
-  const total = rows.filter((r) => sel.includes(r.id)).reduce((a, r) => a + r.totalCents, 0);
+  const picked = rows.filter((r) => sel.includes(r.id));
+  const total = formatTotals(sumByCurrency(picked, (r) => r.currency, (r) => r.totalCents)); // one schedule is one currency: the server refuses a mix
   return (
     <div className="card p-4 mb-4" data-testid="to-factor">
       <div className="flex items-center justify-between gap-3 mb-2">
@@ -36,7 +38,7 @@ export function ToFactor({ factor, rows, schedules }: { factor: string; rows: Ro
             })
           }
         >
-          Send schedule ({sel.length}) · {formatCents(total, rows[0]?.currency ?? "USD")}
+          Send schedule ({sel.length}) · {total}
         </button>
       </div>
       {rows.length === 0 ? (

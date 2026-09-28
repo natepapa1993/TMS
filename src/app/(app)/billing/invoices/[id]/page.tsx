@@ -215,6 +215,15 @@ export default async function InvoicePage({ params }: PageProps<"/billing/invoic
               </ul>
             </div>
           )}
+          {inv.state === "draft" && customer && !(customer.billingAddress?.line1 && customer.billingAddress?.city) && (
+            <div className="card p-4 text-callout text-amber font-semibold" data-testid="no-bill-to">
+              {customer.name} has no bill-to address: the invoice prints only their name.{" "}
+              <Link href={`/settings/customers/${customer.id}`} className="text-teal">
+                Add it on the customer
+              </Link>{" "}
+              before you issue — many AP departments reject an invoice without one.
+            </div>
+          )}
           {inv.voidReason && <div className="card p-4 text-callout">Voided {shortDate(inv.voidedAt)}: {inv.voidReason}</div>}
           {inv.disputeReason && inv.state === "disputed" && <div className="card p-4 text-callout text-red">Disputed: {inv.disputeReason}{inv.disputeExpectedAt ? ` · expected resolution ${shortDate(inv.disputeExpectedAt)}` : ""}</div>}
           {inv.disputeResolution && inv.state !== "disputed" && (
