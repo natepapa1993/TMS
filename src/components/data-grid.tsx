@@ -57,7 +57,7 @@ const selectFilter: FilterFn<unknown> = (row, id, value) => {
 };
 
 function csvCell(v: unknown) {
-  const s = v == null ? "" : String(v);
+  const s = v == null ? "" : v instanceof Date ? v.toISOString() : String(v); // a Date as text has no year-safe form ("Sat May 20 2028 …")
   return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
 }
 

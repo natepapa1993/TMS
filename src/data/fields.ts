@@ -426,7 +426,7 @@ export const FIELDS: Record<RecordKind, Field[]> = {
     { name: "entityId", label: "Runs under", type: "ref", ref: "billingEntity", group: "Authority" },
     { name: "caat", label: "CAAT", type: "text", group: "Authority" },
     { name: "scac", label: "SCAC", type: "text", group: "Authority" },
-    { name: "dotInspectionExpires", label: "Annual inspection", type: "date", group: "Compliance" },
+    { name: "dotInspectionExpires", label: "Annual inspection expires", type: "date", group: "Compliance", help: "The due date — 12 months after the inspection. To enter the inspection date, attach the report under Compliance on the right: the due date is worked out for you." },
     { name: "dtopsYear", label: "DTOPS year", type: "number", group: "Compliance" },
     { name: "dtopsConfirmation", label: "DTOPS confirmation", type: "text", group: "Compliance" },
     { name: "eldProvider", label: "ELD provider", type: "text", group: "Tracking", placeholder: "Motive" },
@@ -454,7 +454,7 @@ export const FIELDS: Record<RecordKind, Field[]> = {
     },
     { name: "usPlate", label: "US plate", type: "text", quick: true, column: true, group: "Plates" },
     { name: "mxPlate", label: "MX plate", type: "text", group: "Plates" },
-    { name: "inspectionExpires", label: "Inspection expires", type: "date", group: "Compliance" },
+    { name: "inspectionExpires", label: "Annual inspection expires", type: "date", group: "Compliance", help: "The due date — 12 months after the inspection. Attach the report under Compliance to enter the inspection date instead." },
     { name: "gpsDeviceId", label: "GPS device", type: "text", group: "Tracking" },
   ],
   driver: [
@@ -532,7 +532,20 @@ export const FIELDS: Record<RecordKind, Field[]> = {
     { name: "tracksExpiry", label: "Tracks expiry", type: "boolean", quick: true, column: true, group: "Rules" },
     { name: "alertDays", label: "Alert days before expiry", type: "list", listOf: "number", group: "Rules", help: "blank = 30 · the board and the digest alert inside the largest", placeholder: "30, 7" },
     { name: "required", label: "Required", type: "boolean", column: true, group: "Rules" },
-    { name: "blocksDispatch", label: "Blocks dispatch when missing/expired", type: "boolean", column: true, group: "Rules" },
+    {
+      name: "blockLevel",
+      label: "Blocks dispatch",
+      type: "select",
+      quick: true,
+      column: true,
+      group: "Rules",
+      options: [
+        { value: "warn", label: "Warn only" },
+        { value: "override", label: "Blocks — owner or Safety can override" },
+        { value: "hard", label: "Blocks — nobody can override" },
+      ],
+      help: "When the document is expired (or missing, if required). Hard is for what the law requires; an override lasts 24 hours, needs a reason and is logged.",
+    },
     {
       name: "legScope",
       label: "Only for legs",
@@ -547,7 +560,7 @@ export const FIELDS: Record<RecordKind, Field[]> = {
       ],
       help: "A FAST card scoped to border crossings never blocks a run inside one country; the safety board still shows it.",
     },
-    { name: "graceUntil", label: "Grace until", type: "date", group: "Rules", help: "New rules can be introduced without blocking today's loads." },
+    { name: "graceUntil", label: "Grace until", type: "date", group: "Rules", help: "Shown but not blocking until this date. A new rule that blocks gets 14 days by default so the whole fleet doesn't stop at once — clear it to enforce now." },
   ],
   ediPartner: [
     { name: "theirId", label: "Their ISA id", type: "text", required: true, quick: true, column: true, group: "Partner", help: "ISA08 / GS03 from the customer's EDI spec", placeholder: "their ISA sender id" },
@@ -740,8 +753,17 @@ export function parseDate(v: string): Date | null {
   if (m) return utc(+m[1], +m[2], +m[3]);
   m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})$/);
   if (m) return utc(m[3].length === 2 ? 2000 + +m[3] : +m[3], +m[1], +m[2]);
+  // "May 20, 2028", "20 May 2028": fine — but never a date without its year ("Sat May 20" reads as 2001)
+  if (!/\b\d{4}\b/.test(s)) return null;
   const d = new Date(s);
-  return Number.isNaN(d.getTime()) ? null : d;
+  return Number.isNaN(d.getTime()) ? null : utc(d.getFullYear(), d.getMonth() + 1, d.getDate());
+}
+
+/** A date as a CSV cell: YYYY-MM-DD, which every spreadsheet reads and the importer reads back. */
+export function csvDate(v: unknown): string {
+  if (v == null || v === "") return "";
+  const d = v instanceof Date ? v : new Date(String(v));
+  return Number.isNaN(d.getTime()) ? String(v) : d.toISOString().slice(0, 10);
 }
 function utc(y: number, mo: number, d: number) {
   const dt = new Date(Date.UTC(y, mo - 1, d, 12));

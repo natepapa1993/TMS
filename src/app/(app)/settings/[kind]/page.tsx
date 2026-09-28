@@ -33,7 +33,7 @@ export default async function KindListPage({ params, searchParams }: PageProps<"
             <Link href={`/settings/${path}/import`} className="btn">
               Import CSV
             </Link>
-            <QuickAdd kind={kind} fields={fieldsFor(kind, can(ctx, "compliance.edit"))} refs={options} label={`Add ${meta.singular.toLowerCase()}`} openInitially={sp.add === "1"} />
+            <QuickAdd kind={kind} fields={fieldsFor(kind, can(ctx, "compliance.edit"))} refs={options} label={`Add ${meta.singular.toLowerCase()}`} openInitially={sp.add === "1"} openAfter={["driver", "truck", "trailer", "carrier", "documentType"].includes(kind) ? `/settings/${meta.path}` : undefined} />
           </>
         }
       >

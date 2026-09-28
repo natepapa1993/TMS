@@ -19,7 +19,12 @@ const XSTEP: Record<string, { en: string; es: string }> = { departed_yard: { en:
 // the English part of XLABEL, as the server labels a Mexico → US crossing; any other direction uses the server's label
 const XLABEL_EN: Record<string, string> = { packet_sent: "Packet sent", departed_yard: "Departed yard", at_mx_customs: "At MX customs", in_us_customs: "In US customs", cleared: "Cleared", held: "Held", returned: "Returned to MX" };
 const XLABEL: Record<string, string> = { packet_sent: "Packet sent · Paquete enviado", departed_yard: "Departed yard · Salió del patio", at_mx_customs: "MX customs · Aduana MX", in_us_customs: "US customs · Aduana US", cleared: "Cleared · Liberado", held: "Held · Detenido", returned: "Returned · Regresado" };
-type OwnItem = { key: string; label: string; status: string; expiresAt: string | null; documentTypeId: string | null; tracksExpiry: boolean; pending: { fileName: string; at: string } | null; rejected: { reason: string; at: string } | null };
+type OwnItem = { key: string; label: string; status: string; expiresAt: string | null; documentTypeId: string | null; uploadKey: string | null; tracksExpiry: boolean; pending: { fileName: string; at: string } | null; rejected: { reason: string; at: string } | null };
+/**
+ * A date the driver can't misread: the month in words, in the driver's language (a Mexican driver reads
+ * 10/9/2026 as the 10th of September). B-1 and dual drivers get Spanish.
+ */
+const ownDate = (iso: string, lang: "es" | "en") => new Date(iso).toLocaleDateString(lang === "es" ? "es-MX" : "en-US", { day: "numeric", month: "short", year: "numeric", timeZone: "UTC" });
 type Msg = { id: string; who: "driver" | "dispatch"; body: string; at: string; seen: boolean };
 type Data = { driver: { name: string; driverType: string }; current: Item | null; items: Item[]; own: OwnItem[]; pay: PayStub[]; thread: Msg[]; company: { name: string; dispatchPhone: string | null } };
 type PayLine = { id: string; kind: string; orderNumber?: string | null; description: string; amountCents: number; disputed?: string | null; response?: string | null };
@@ -264,7 +269,7 @@ export function DriverApp({ token, data }: { token: string; data: Data }) {
           <div className="eyebrow mb-1">Your documents · Tus documentos</div>
           <ul className="space-y-2 text-callout">
             {data.own.map((i) => (
-              <OwnDoc key={i.key} token={token} item={i} onDone={() => router.refresh()} />
+              <OwnDoc key={i.key} token={token} item={i} lang={data.driver.driverType === "B1" || data.driver.driverType === "DUAL" ? "es" : "en"} onDone={() => router.refresh()} />
             ))}
           </ul>
           <div className="help mt-2">Take a photo of the renewal here; the office checks it and it goes on file. · Toma foto de la renovación aquí; la oficina la revisa.</div>
@@ -439,19 +444,19 @@ function PhotoButton({ token, legId, code, done, label, onDone }: { token: strin
   );
 }
 
-function OwnDoc({ token, item, onDone }: { token: string; item: OwnItem; onDone: () => void }) {
+function OwnDoc({ token, item, lang, onDone }: { token: string; item: OwnItem; lang: "es" | "en"; onDone: () => void }) {
   const [open, setOpen] = useState(false);
   const [name, setName] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const ref = useRef<HTMLFormElement>(null);
-  const d = (s: string) => new Date(s).toLocaleDateString("en-US", { month: "short", day: "numeric" });
+  const d = (s: string) => ownDate(s, lang);
   return (
     <li>
       <div className="flex justify-between gap-2">
         <span className="font-semibold">{item.label}</span>
         <span className={item.status === "expired" ? "text-red font-bold" : item.status === "missing" ? "text-amber font-bold" : "text-amber font-semibold"}>
-          {item.status === "expired" ? "EXPIRED · VENCIDO" : item.status === "missing" ? "missing · falta" : `expires ${item.expiresAt ? new Date(item.expiresAt).toLocaleDateString() : ""}`}
+          {item.status === "expired" ? "EXPIRED · VENCIDO" : item.status === "missing" ? "missing · falta" : `${lang === "es" ? "vence" : "expires"} ${item.expiresAt ? d(item.expiresAt) : ""}`}
         </span>
       </div>
       {item.pending ? (
@@ -459,14 +464,14 @@ function OwnDoc({ token, item, onDone }: { token: string; item: OwnItem; onDone:
       ) : (
         <>
           {item.rejected && <div className="text-callout text-red">The office sent it back: {item.rejected.reason} · Rechazado, manda otra foto.</div>}
-          {item.documentTypeId && !open && (
+          {item.uploadKey && !open && (
             <button type="button" className="text-callout text-teal font-semibold" onClick={() => setOpen(true)}>
               📷 Send the new one · Mandar el nuevo
             </button>
           )}
           {open && (
             <form ref={ref} onSubmit={(e) => e.preventDefault()} className="mt-1 space-y-2 rounded-lg border border-line p-2">
-              <input type="hidden" name="documentTypeId" value={item.documentTypeId ?? ""} />
+              <input type="hidden" name="uploadKey" value={item.uploadKey ?? ""} />
               <label className="btn w-full justify-center">
                 <input type="file" name="file" accept="image/*,application/pdf" capture="environment" className="hidden" onChange={(e) => setName(e.target.files?.[0]?.name ?? null)} />
                 {name ? `✓ ${name}` : "📷 Photo · Foto"}

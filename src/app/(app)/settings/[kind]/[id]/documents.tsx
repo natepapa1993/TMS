@@ -8,12 +8,18 @@ import type { ComplianceItem } from "@/db/schema";
 import type { SubjectKind } from "@/domain/compliance";
 import { uploadSubjectDocAction, readSubjectDocAction, reviewSubjectDocAction } from "@/app/(app)/compliance/actions";
 
-type Doc = { id: string; documentTypeId: string | null; fileName: string; status: string; version: number; expiresAt: string | null; issuedAt: string | null; number: string | null; source: string; createdAt: string };
+type Doc = { id: string; documentTypeId: string | null; code: string | null; fileName: string; status: string; version: number; expiresAt: string | null; issuedAt: string | null; number: string | null; source: string; createdAt: string };
+const INSPECTION = ["field:dotInspectionExpires", "field:inspectionExpires"];
+const day = (iso: string) => new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: "UTC" });
 type DocType = { id: string; name: string; tracksExpiry: boolean; required: boolean; blocksDispatch: boolean };
 const tone: Record<string, "green" | "amber" | "red" | "slate"> = { ok: "green", expiring: "amber", expired: "red", missing: "amber", snoozed: "slate", na: "slate" };
 
 /** Documents + compliance on a driver / truck / trailer / carrier record (spec §6.2 "cell click opens the subject's Documents tab"). */
-export function SubjectDocuments({ kind, subjectId, docs, types, status, canEdit }: { kind: SubjectKind; subjectId: string; docs: Doc[]; types: DocType[]; status: { dispatchable: boolean; items: ComplianceItem[]; override: { reason: string; expiresAt: string } | null } | null; canEdit: boolean }) {
+/**
+ * canEditCredentials: Safety or the owner — attaching a licence, medical card, plate or inspection report
+ * sets the date dispatch reads, so it is theirs, like the dates on the record.
+ */
+export function SubjectDocuments({ kind, subjectId, docs, types, status, canEdit, canEditCredentials = false }: { kind: SubjectKind; subjectId: string; docs: Doc[]; types: DocType[]; status: { dispatchable: boolean; items: ComplianceItem[]; override: { reason: string; expiresAt: string } | null } | null; canEdit: boolean; canEditCredentials?: boolean }) {
   const router = useRouter();
   const t = useToast();
   const [open, setOpen] = useState<string | null>(null);
@@ -27,7 +33,7 @@ export function SubjectDocuments({ kind, subjectId, docs, types, status, canEdit
     setReading(true);
     setRead(null);
     const fd = new FormData(ref.current!);
-    const r = await call(() => readSubjectDocAction(kind, openType?.name ?? "document", fd));
+    const r = await call(() => readSubjectDocAction(kind, openType?.name ?? openCred?.label ?? "document", fd));
     setReading(false);
     if (!r.ok) return setRead({ note: r.error, err: true });
     if (!r.data.ran) return setRead({ note: r.data.reason, err: true });
@@ -38,10 +44,16 @@ export function SubjectDocuments({ kind, subjectId, docs, types, status, canEdit
     setRead({ note: got.length ? `Read by ${d.model}: ${got.join(", ")}. Check them against the document before uploading.` : `${d.model} could not read this one; type the dates.` });
   };
   const ref = useRef<HTMLFormElement>(null);
-  const typeName = (id: string | null) => types.find((x) => x.id === id)?.name ?? "document";
+  // the built-in credentials that apply to this record (licence, medical card, plates, annual inspection…)
+  const creds = (status?.items ?? []).filter((i) => i.key.startsWith("field:"));
+  const credLabel = (code: string | null) => creds.find((c) => c.key === code)?.label ?? (code?.startsWith("dq:") ? "Qualification file" : "document");
+  const typeName = (d: { documentTypeId: string | null; code?: string | null }) => (d.documentTypeId ? (types.find((x) => x.id === d.documentTypeId)?.name ?? "document") : credLabel(d.code ?? null));
   const active = docs.filter((d) => d.status === "present" || d.status === "verified");
+  const earlier = docs.filter((d) => d.status === "superseded" || d.status === "rejected");
   const pendingDocs = docs.filter((d) => d.status === "pending");
   const openType = types.find((x) => x.id === open);
+  const openCred = creds.find((c) => c.key === open);
+  const inspection = !!open && INSPECTION.includes(open);
   return (
     <div className="card p-4" id="documents">
       <div className="flex items-center justify-between">
@@ -52,15 +64,22 @@ export function SubjectDocuments({ kind, subjectId, docs, types, status, canEdit
         <ul className="mt-2 space-y-1">
           {status.items.map((i) => (
             <li key={i.key} className="flex items-center justify-between text-callout">
-              <span className={i.status === "expired" || (i.status === "missing" && i.blocksDispatch) ? "text-red font-semibold" : ""}>
-                {i.label}
+              <span className={i.status === "expired" || (i.status === "missing" && i.blocksDispatch) ? "text-red font-semibold" : ""} title={i.level === "hard" ? "Blocks dispatch — nobody can override" : i.blocksDispatch ? "Blocks dispatch — the owner or Safety can override" : undefined}>
+                {i.documentId ? (
+                  <a href={`/api/files/${i.documentId}`} target="_blank" rel="noreferrer" className="hover:text-teal underline decoration-dotted">
+                    {i.label}
+                  </a>
+                ) : (
+                  i.label
+                )}
                 {i.blocksDispatch ? " •" : ""}
+                {i.graceUntil && <span className="text-footnote text-muted font-normal"> · grace until {day(i.graceUntil)}</span>}
               </span>
               <span className="flex items-center gap-1">
-                <Pill tone={tone[i.status]}>{i.expiresAt ? new Date(i.expiresAt).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }) : i.status === "na" ? "not on file" : i.status}</Pill>
-                {canEdit && !i.key.startsWith("field:") && (
-                  <button className="btn btn-ghost btn-sm text-caption px-1 text-teal" onClick={() => setOpen(i.key)}>
-                    {i.documentId ? "renew" : "upload"}
+                <Pill tone={tone[i.status]}>{i.expiresAt ? day(i.expiresAt) : i.status === "na" ? "not on file" : i.status}</Pill>
+                {(i.key.startsWith("field:") ? canEditCredentials : canEdit && !i.key.startsWith("dq:") && !i.key.startsWith("da:")) && (
+                  <button className="btn btn-ghost btn-sm text-caption px-1 text-teal" onClick={() => setOpen(i.key)} data-testid={`attach-${i.key}`}>
+                    {i.documentId ? "renew" : i.key.startsWith("field:") ? "attach" : "upload"}
                   </button>
                 )}
               </span>
@@ -74,7 +93,7 @@ export function SubjectDocuments({ kind, subjectId, docs, types, status, canEdit
           <div className="eyebrow mb-1">From the driver app — check and confirm</div>
           <ul className="space-y-2">
             {pendingDocs.map((d) => (
-              <PendingDoc key={d.id} doc={d} typeName={typeName(d.documentTypeId)} tracksExpiry={types.find((x) => x.id === d.documentTypeId)?.tracksExpiry ?? false} canEdit={canEdit} onDone={(msg) => { t.ok(msg); router.refresh(); }} />
+              <PendingDoc key={d.id} doc={d} typeName={typeName(d)} tracksExpiry={d.code?.startsWith("field:") ? true : (types.find((x) => x.id === d.documentTypeId)?.tracksExpiry ?? false)} canEdit={d.code?.startsWith("field:") ? canEditCredentials : canEdit} onDone={(msg) => { t.ok(msg); router.refresh(); }} />
             ))}
           </ul>
         </div>
@@ -87,22 +106,36 @@ export function SubjectDocuments({ kind, subjectId, docs, types, status, canEdit
           {active.map((d) => (
             <li key={d.id} className="text-callout flex items-center justify-between gap-2">
               <a href={`/api/files/${d.id}`} target="_blank" rel="noreferrer" className="font-semibold hover:text-teal truncate">
-                {typeName(d.documentTypeId)} <span className="text-faint font-normal">· {d.fileName}</span>
+                {typeName(d)} <span className="text-faint font-normal">· {d.fileName}</span>
               </a>
               <span className="text-muted whitespace-nowrap">
                 {d.number ? `#${d.number} · ` : ""}
-                {d.expiresAt ? `exp ${new Date(d.expiresAt).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "2-digit" })}` : "no expiry"}
+                {d.expiresAt ? `exp ${day(d.expiresAt)}` : "no expiry"}
               </span>
             </li>
           ))}
         </ul>
       )}
-      {canEdit && types.length > 0 && (
-        <button className="btn btn-sm mt-3" onClick={() => setOpen(types[0].id)}>
+      {earlier.length > 0 && (
+        <details className="mt-2 text-footnote text-muted" data-testid="earlier-versions">
+          <summary className="cursor-pointer">Earlier versions ({earlier.length})</summary>
+          <ul className="mt-1 space-y-0.5">
+            {earlier.map((d) => (
+              <li key={d.id}>
+                <a href={`/api/files/${d.id}`} target="_blank" rel="noreferrer" className="hover:text-teal">
+                  {typeName(d)} v{d.version} · {d.fileName}
+                </a>
+                {d.expiresAt ? ` · exp ${day(d.expiresAt)}` : ""} · {d.status === "rejected" ? "sent back" : "replaced"} {new Date(d.createdAt).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}
+              </li>
+            ))}
+          </ul>
+        </details>
+      )}
+      {(canEdit && types.length > 0) || (canEditCredentials && creds.length > 0) ? (
+        <button className="btn btn-sm mt-3" onClick={() => setOpen(types.length && canEdit ? types[0].id : creds[0].key)}>
           + Upload document
         </button>
-      )}
-      {canEdit && types.length === 0 && <div className="help mt-2">Add document types under Settings → Document types to upload against them.</div>}
+      ) : null}
       <Modal
         open={!!open}
         onClose={() => setOpen(null)}
@@ -137,15 +170,29 @@ export function SubjectDocuments({ kind, subjectId, docs, types, status, canEdit
         {open && (
           <form ref={ref} onSubmit={(e) => e.preventDefault()} className="space-y-3">
             <div>
-              <label className="label">Document type</label>
-              <select name="documentTypeId" className="select" value={open} onChange={(e) => setOpen(e.target.value)}>
-                {types.map((x) => (
-                  <option key={x.id} value={x.id}>
-                    {x.name}
-                    {x.blocksDispatch ? " • blocks dispatch" : ""}
-                  </option>
-                ))}
+              <label className="label">Document</label>
+              <select name="uploadKey" className="select" value={open} onChange={(e) => setOpen(e.target.value)}>
+                {canEditCredentials && creds.length > 0 && (
+                  <optgroup label="On the record (sets the date)">
+                    {creds.map((c) => (
+                      <option key={c.key} value={c.key}>
+                        {c.label}
+                      </option>
+                    ))}
+                  </optgroup>
+                )}
+                {canEdit && types.length > 0 && (
+                  <optgroup label="Your document rules">
+                    {types.map((x) => (
+                      <option key={x.id} value={x.id}>
+                        {x.name}
+                        {x.blocksDispatch ? " • blocks dispatch" : ""}
+                      </option>
+                    ))}
+                  </optgroup>
+                )}
               </select>
+              {openCred && <div className="help mt-1">{inspection ? "Enter the date of the inspection: it is good for 12 months, and that due date goes on the record." : `The expiry you enter goes on the record: it is the ${openCred.label.toLowerCase()} date compliance and dispatch read.`}</div>}
             </div>
             <label className="block border-2 border-dashed border-line rounded-lg p-4 text-center cursor-pointer hover:border-teal">
               <input type="file" name="file" accept="application/pdf,image/jpeg,image/png" className="hidden" onChange={(e) => setName(e.target.files?.[0]?.name ?? null)} />
@@ -161,11 +208,11 @@ export function SubjectDocuments({ kind, subjectId, docs, types, status, canEdit
             )}
             <div className="grid grid-cols-3 gap-2">
               <div>
-                <label className="label">Expires{openType?.tracksExpiry ? " *" : ""}</label>
+                <label className="label">{inspection ? "Or due" : "Expires"}{openType?.tracksExpiry || (openCred && !inspection) ? " *" : ""}</label>
                 <input type="date" name="expiresAt" className="input" value={vals.expiresAt} onChange={(e) => setVals({ ...vals, expiresAt: e.target.value })} />
               </div>
               <div>
-                <label className="label">Issued</label>
+                <label className="label">{inspection ? "Inspected on *" : "Issued"}</label>
                 <input type="date" name="issuedAt" className="input" value={vals.issuedAt} onChange={(e) => setVals({ ...vals, issuedAt: e.target.value })} />
               </div>
               <div>

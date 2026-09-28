@@ -69,11 +69,9 @@ export function documentTypeLevel(t: { name: string; blocksDispatch: boolean; bl
   return undefined;
 }
 
-/** What the rule form shows for a rule's level, including the old name-based one. */
-export function documentTypeLevelLabel(t: { name: string; blocksDispatch: boolean; blockLevel?: string | null }) {
-  const l = documentTypeLevel(t);
-  if (l) return BLOCK_LEVEL_LABEL[l];
-  return LEGACY_HARD.test(t.name) ? "Blocks — nobody can override once expired (from the name; pick a setting)" : BLOCK_LEVEL_LABEL.override;
+/** The level the rule form shows: its setting, or for an older rule the nearest one to how it behaved. */
+export function documentTypeFormLevel(t: { name: string; blocksDispatch: boolean; blockLevel?: string | null }): BlockLevel {
+  return documentTypeLevel(t) ?? (LEGACY_HARD.test(t.name) ? "hard" : "override");
 }
 
 const real = (i: ComplianceItem) => (i.status === "snoozed" ? (i.underlying ?? "ok") : i.status);
@@ -128,3 +126,22 @@ export function blockSentence(st: { blockers?: string[]; expired: string[]; miss
  */
 export const DQ_GRACE_DAYS = 30;
 export const newCompanySettings = (now = new Date()) => ({ dqGraceUntil: new Date(now.getTime() + DQ_GRACE_DAYS * 86400_000).toISOString() });
+
+/** Keep the old on/off column in step with the level (other screens and exports read it). */
+export function syncDocumentTypeLevel(values: Record<string, unknown>) {
+  if (!("blockLevel" in values)) return values;
+  const l = values.blockLevel;
+  const level = l === "hard" || l === "override" || l === "warn" ? l : null;
+  return { ...values, blockLevel: level, blocksDispatch: level === "hard" || level === "override" };
+}
+
+/**
+ * A new rule that blocks, made in the rule form, gets 14 days' grace unless a date was given: adding
+ * "IRP cab card" must not stop the whole fleet mid-shift (dispatch M21). Clearing the date enforces it now.
+ */
+export const NEW_RULE_GRACE_DAYS = 14;
+export function withNewRuleGrace(values: Record<string, unknown>, now = new Date()) {
+  const v = syncDocumentTypeLevel(values);
+  if (v.graceUntil || !v.required || !v.blocksDispatch) return v;
+  return { ...v, graceUntil: new Date(now.getTime() + NEW_RULE_GRACE_DAYS * 86400_000) };
+}

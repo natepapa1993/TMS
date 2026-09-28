@@ -9,6 +9,8 @@ import { PageHeader } from "@/components/page-header";
 import { RecordEditor } from "./editor";
 import { SubjectDocuments } from "./documents";
 import { statusFor, subjectDocuments, type SubjectKind } from "@/domain/compliance";
+import { documentTypeFormLevel } from "@/domain/compliance-rules";
+import { changeLines } from "@/data/history";
 import { list } from "@/data/records";
 import { db } from "@/db/client";
 import { users } from "@/db/schema";
@@ -73,7 +75,7 @@ export default async function RecordPage({ params }: PageProps<"/settings/[kind]
             id={id}
             fields={fieldsFor(kind, can(ctx, "compliance.edit"))}
             refs={options}
-            initial={JSON.parse(JSON.stringify(row))}
+            initial={JSON.parse(JSON.stringify(kind === "documentType" ? { ...row, blockLevel: documentTypeFormLevel(row as never) } : row))}
             archived={!!row.archivedAt}
             blockers={blockers.map((b) => b.label)}
             listPath={`/settings/${path}`}
@@ -88,6 +90,7 @@ export default async function RecordPage({ params }: PageProps<"/settings/[kind]
               types={types.filter((x) => x.appliesTo === kind).map((x) => ({ id: x.id, name: String(x.name), tracksExpiry: !!x.tracksExpiry, required: !!x.required, blocksDispatch: !!x.blocksDispatch }))}
               status={compliance ? JSON.parse(JSON.stringify({ dispatchable: compliance.dispatchable, items: compliance.items, override: compliance.override })) : null}
               canEdit={["owner", "compliance", "dispatcher", "mx_office"].includes(ctx.role)}
+              canEditCredentials={can(ctx, "compliance.edit")}
             />
           )}
           {kind === "driver" && compliance && (() => {
@@ -165,14 +168,21 @@ export default async function RecordPage({ params }: PageProps<"/settings/[kind]
                       <span className="text-faint whitespace-nowrap">{new Date(h.at).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}</span>
                     </div>
                     <div className="text-muted">{h.userId ? (who.get(h.userId) ?? "someone") : "system"}</div>
-                    {h.changes && (
-                      <div className="text-muted mt-0.5">
-                        {Object.entries(h.changes)
-                          .slice(0, 6)
-                          .map(([k, c]) => `${k}: ${fmt(c.from)} → ${fmt(c.to)}`)
-                          .join(" · ")}
-                      </div>
-                    )}
+                    {h.changes && (() => {
+                      // every field that changed, by its label; long edits fold after six so none is dropped
+                      const lines = changeLines(h.changes, FIELDS[kind]);
+                      return (
+                        <div className="text-muted mt-0.5" data-testid="history-changes">
+                          {lines.slice(0, 6).join(" · ")}
+                          {lines.length > 6 && (
+                            <details className="inline">
+                              <summary className="cursor-pointer text-teal inline"> +{lines.length - 6} more</summary>
+                              {lines.slice(6).join(" · ")}
+                            </details>
+                          )}
+                        </div>
+                      );
+                    })()}
                     {h.note && <div className="text-muted italic">{h.note}</div>}
                   </li>
                 ))}
@@ -185,9 +195,4 @@ export default async function RecordPage({ params }: PageProps<"/settings/[kind]
   );
 }
 
-function fmt(v: unknown) {
-  if (v == null || v === "") return "—";
-  if (typeof v === "string" && /^\d{4}-\d{2}-\d{2}T/.test(v)) return v.slice(0, 10);
-  if (typeof v === "object") return JSON.stringify(v);
-  return String(v);
-}
+

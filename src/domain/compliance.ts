@@ -1,6 +1,6 @@
 import { and, eq, inArray, desc, gt, sql } from "drizzle-orm";
 import { createHash } from "node:crypto";
-import { db } from "@/db/client";
+import { db, type Tx } from "@/db/client";
 import * as s from "@/db/schema";
 import type { ComplianceItem } from "@/db/schema";
 import { newId } from "@/lib/ids";
@@ -259,28 +259,100 @@ export async function reviewSubjectDocument(ctx: Ctx, documentId: string, decisi
   assertCtx(ctx);
   requirePermission(ctx, "compliance.edit");
   const [doc] = await db.select().from(s.documents).where(and(eq(s.documents.tenantId, ctx.tenantId), eq(s.documents.id, documentId))).limit(1);
-  if (!doc || !doc.documentTypeId) throw new NotFoundError("document", documentId);
+  if (!doc || (!doc.documentTypeId && !doc.code?.startsWith("field:"))) throw new NotFoundError("document", documentId);
   if (doc.status !== "pending") throw new ValidationError(`this document is ${doc.status}, not waiting for review`);
   const kind = doc.subjectKind as SubjectKind;
-  const [type] = await db.select().from(s.documentTypes).where(eq(s.documentTypes.id, doc.documentTypeId)).limit(1);
-  if (!type) throw new NotFoundError("document type", doc.documentTypeId);
+  // a built-in credential (licence, medical card, I-94…): confirming it sets the date dispatch reads
+  const cred = doc.code?.startsWith("field:") ? fieldItem(kind, doc.code) : null;
+  const [type] = doc.documentTypeId ? await db.select().from(s.documentTypes).where(eq(s.documentTypes.id, doc.documentTypeId)).limit(1) : [];
+  if (!cred && !type) throw new NotFoundError("document type", doc.documentTypeId ?? doc.code ?? "");
+  const name = cred?.label ?? type!.name;
   if (decision === "reject") {
     if (!input.reason?.trim()) throw new ValidationError("tell the driver what is wrong (blurry, wrong side, expired…)", "reason");
     await db.update(s.documents).set({ status: "rejected", notes: input.reason.trim(), updatedAt: new Date(), updatedBy: ctx.userId }).where(eq(s.documents.id, doc.id));
-    await writeAudit(db, ctx, kind, doc.subjectId, "update", { [type.name]: { from: "pending review", to: "rejected" } }, input.reason.trim());
+    await writeAudit(db, ctx, kind, doc.subjectId, "update", { [name]: { from: "pending review", to: "rejected" } }, input.reason.trim());
     return { ...doc, status: "rejected" as const };
   }
   const expiresAt = input.expiresAt === undefined ? doc.expiresAt : input.expiresAt;
-  if (type.tracksExpiry && !expiresAt) throw new ValidationError(`${type.name} needs an expiry date`, "expiresAt");
+  if ((cred || type!.tracksExpiry) && !expiresAt) throw new ValidationError(`${name} needs an expiry date`, "expiresAt");
+  const number = input.number === undefined ? doc.number : input.number || null;
   const row = await db.transaction(async (tx) => {
-    const prior = await tx.select().from(s.documents).where(and(eq(s.documents.tenantId, ctx.tenantId), eq(s.documents.subjectKind, kind), eq(s.documents.subjectId, doc.subjectId), eq(s.documents.documentTypeId, type.id), inArray(s.documents.status, ["present", "verified"])));
+    const same = cred ? eq(s.documents.code, doc.code!) : eq(s.documents.documentTypeId, type!.id);
+    const prior = await tx.select().from(s.documents).where(and(eq(s.documents.tenantId, ctx.tenantId), eq(s.documents.subjectKind, kind), eq(s.documents.subjectId, doc.subjectId), same, inArray(s.documents.status, ["present", "verified"])));
     for (const p of prior) await tx.update(s.documents).set({ status: "superseded", updatedAt: new Date(), updatedBy: ctx.userId }).where(eq(s.documents.id, p.id));
-    const [row] = await tx.update(s.documents).set({ status: "verified", expiresAt, issuedAt: input.issuedAt === undefined ? doc.issuedAt : input.issuedAt, number: input.number === undefined ? doc.number : input.number || null, notes: "Confirmed from the driver app", updatedAt: new Date(), updatedBy: ctx.userId }).where(eq(s.documents.id, doc.id)).returning();
-    await writeAudit(tx, ctx, kind, doc.subjectId, "update", { [type.name]: { from: prior[0]?.expiresAt ?? null, to: expiresAt ?? "present" } }, `${type.name} from the driver app confirmed`);
+    const [row] = await tx.update(s.documents).set({ status: "verified", expiresAt, issuedAt: input.issuedAt === undefined ? doc.issuedAt : input.issuedAt, number, notes: "Confirmed from the driver app", updatedAt: new Date(), updatedBy: ctx.userId }).where(eq(s.documents.id, doc.id)).returning();
+    if (cred) await applyCredential(tx, ctx, kind, doc.subjectId, cred, { expiresAt: expiresAt!, number }, `${name} renewal from the driver app confirmed`);
+    else await writeAudit(tx, ctx, kind, doc.subjectId, "update", { [name]: { from: prior[0]?.expiresAt ?? null, to: expiresAt ?? "present" } }, `${name} from the driver app confirmed`);
     return row;
   });
   await evaluateSubject(ctx, kind, doc.subjectId);
   return row;
+}
+
+/** Put a confirmed credential on the record: the date (and number) compliance and dispatch read, audited. */
+async function applyCredential(tx: Tx, ctx: Ctx, kind: SubjectKind, subjectId: string, f: (typeof FIELD_ITEMS)[SubjectKind][number], v: { expiresAt: Date; number?: string | null }, note: string) {
+  const table = TABLE[kind];
+  const [rec] = await tx.select().from(table).where(and(eq(table.tenantId, ctx.tenantId), eq(table.id, subjectId))).limit(1);
+  if (!rec) throw new NotFoundError(kind, subjectId);
+  const r = rec as unknown as Record<string, unknown>;
+  const set: Record<string, unknown> = { [f.key]: v.expiresAt };
+  if (f.numberKey && v.number?.trim()) set[f.numberKey] = v.number.trim();
+  const changes: Record<string, { from: unknown; to: unknown }> = {};
+  for (const [k, val] of Object.entries(set)) if (JSON.stringify(r[k] ?? null) !== JSON.stringify(val)) changes[k] = { from: r[k] ?? null, to: val };
+  await tx.update(table).set({ ...set, updatedAt: new Date(), updatedBy: ctx.userId } as never).where(and(eq(table.tenantId, ctx.tenantId), eq(table.id, subjectId)));
+  await writeAudit(tx, ctx, kind, subjectId, "update", changes, note);
+}
+
+export type CredentialUpload = { fileName: string; mimeType: string; bytes: Buffer; expiresAt?: Date | null; issuedAt?: Date | null; number?: string | null; notes?: string | null; source?: string; status?: "present" | "pending" };
+
+/**
+ * A photo or scan of a built-in credential (licence, medical card, licencia federal, FAST, I-94, plates,
+ * annual inspection, CAAT…): one record per credential — the date and number on the subject, the images
+ * as versions. From Safety it goes straight on file and sets the date; from the driver's phone it waits
+ * for Safety's confirm. An annual inspection report can carry the inspection date instead: the due date
+ * is 12 months later.
+ */
+export async function uploadCredential(ctx: Ctx, kind: SubjectKind, subjectId: string, fieldKey: string, input: CredentialUpload) {
+  assertCtx(ctx);
+  const pending = input.status === "pending";
+  // the dates are Safety's: a dispatcher can't make a driver dispatchable by uploading a new card
+  requirePermission(ctx, pending ? "records.edit" : "compliance.edit");
+  const f = fieldItem(kind, fieldKey);
+  if (!f) throw new ValidationError(`no ${fieldKey} on a ${kind}`, "fieldKey");
+  if (!input.bytes?.length) throw new ValidationError("empty file", "file");
+  if (input.bytes.length > 15 * 1024 * 1024) throw new ValidationError("file is over 15 MB", "file");
+  if (!/^(application\/pdf|image\/(jpeg|png|heic|webp))$/.test(input.mimeType)) throw new ValidationError("PDF, JPG or PNG only", "file");
+  const expiresAt = input.expiresAt ?? (INSPECTION_KEYS.includes(f.key) && input.issuedAt ? inspectionDue(input.issuedAt) : null);
+  if (!expiresAt) throw new ValidationError(INSPECTION_KEYS.includes(f.key) ? "the inspection date (or when it expires)" : `${f.label}: when does it expire?`, "expiresAt");
+  if (INSPECTION_KEYS.includes(f.key) && input.issuedAt && input.issuedAt.getTime() > Date.now() + 86400_000) throw new ValidationError("the inspection date is in the future", "issuedAt");
+  const table = TABLE[kind];
+  const [rec] = await db.select({ id: table.id }).from(table).where(and(eq(table.tenantId, ctx.tenantId), eq(table.id, subjectId))).limit(1);
+  if (!rec) throw new NotFoundError(kind, subjectId);
+  const code = `field:${f.key}`;
+  const sha = createHash("sha256").update(input.bytes).digest("hex");
+  const doc = await db.transaction(async (tx) => {
+    const [blob] = await tx.insert(s.documentBlobs).values({ id: newId(), tenantId: ctx.tenantId, sha256: sha, mimeType: input.mimeType, sizeBytes: input.bytes.length, bytes: input.bytes }).returning({ id: s.documentBlobs.id });
+    const all = await tx.select().from(s.documents).where(and(eq(s.documents.tenantId, ctx.tenantId), eq(s.documents.subjectKind, kind), eq(s.documents.subjectId, subjectId), eq(s.documents.code, code)));
+    // a newer photo replaces one nobody looked at; a confirmed one replaces what was on file
+    for (const p of all.filter((x) => x.status === "pending" || (!pending && (x.status === "present" || x.status === "verified")))) await tx.update(s.documents).set({ status: "superseded", updatedAt: new Date(), updatedBy: ctx.userId }).where(eq(s.documents.id, p.id));
+    const [row] = await tx
+      .insert(s.documents)
+      .values({ id: newId(), tenantId: ctx.tenantId, documentTypeId: null, code, subjectKind: kind, subjectId, fileName: input.fileName, mimeType: input.mimeType, sizeBytes: input.bytes.length, storageKey: `blob:${blob.id}`, sha256: sha, issuedAt: input.issuedAt ?? null, expiresAt, number: input.number?.trim() || null, source: input.source ?? "upload", status: pending ? "pending" : "present", version: Math.max(0, ...all.map((p) => p.version)) + 1, notes: input.notes ?? null, createdBy: ctx.userId, updatedBy: ctx.userId })
+      .returning();
+    if (pending) await writeAudit(tx, ctx, kind, subjectId, "update", { [f.label]: { from: null, to: "pending review" } }, `${f.label} sent from the driver app: ${input.fileName}`);
+    else await applyCredential(tx, ctx, kind, subjectId, f, { expiresAt, number: input.number }, `${f.label} on file: ${input.fileName}${input.issuedAt && INSPECTION_KEYS.includes(f.key) ? ` (inspected ${input.issuedAt.toISOString().slice(0, 10)})` : ""}`);
+    return row;
+  });
+  if (!pending) await evaluateSubject(ctx, kind, subjectId);
+  return doc;
+}
+
+/** How a document is called on screen: its rule's name, the credential it shows, or the qualification-file item. */
+export function documentLabel(d: { documentTypeId: string | null; code: string | null; subjectKind: string }, typeName?: string | null) {
+  if (typeName) return typeName;
+  if (d.code?.startsWith("field:")) return fieldItem(d.subjectKind as SubjectKind, d.code)?.label ?? "Document";
+  if (d.code?.startsWith("dq:")) return "Qualification file";
+  return "Document";
 }
 
 /** What drivers sent from the app and nobody has looked at yet. */
@@ -288,13 +360,13 @@ export async function pendingUploads(ctx: Ctx) {
   assertCtx(ctx);
   requirePermission(ctx, "compliance.view");
   const rows = await db
-    .select({ id: s.documents.id, subjectKind: s.documents.subjectKind, subjectId: s.documents.subjectId, documentTypeId: s.documents.documentTypeId, fileName: s.documents.fileName, expiresAt: s.documents.expiresAt, number: s.documents.number, createdAt: s.documents.createdAt, typeName: s.documentTypes.name, driverName: s.drivers.name })
+    .select({ id: s.documents.id, subjectKind: s.documents.subjectKind, subjectId: s.documents.subjectId, documentTypeId: s.documents.documentTypeId, code: s.documents.code, fileName: s.documents.fileName, expiresAt: s.documents.expiresAt, number: s.documents.number, createdAt: s.documents.createdAt, typeName: s.documentTypes.name, driverName: s.drivers.name })
     .from(s.documents)
     .leftJoin(s.documentTypes, eq(s.documentTypes.id, s.documents.documentTypeId))
     .leftJoin(s.drivers, eq(s.drivers.id, s.documents.subjectId))
     .where(and(eq(s.documents.tenantId, ctx.tenantId), eq(s.documents.status, "pending")))
     .orderBy(s.documents.createdAt);
-  return rows;
+  return rows.map((r) => ({ ...r, typeName: r.typeName ?? documentLabel({ documentTypeId: r.documentTypeId, code: r.code, subjectKind: r.subjectKind }) }));
 }
 
 export async function subjectDocuments(ctx: Ctx, kind: SubjectKind, subjectId: string) {
@@ -495,8 +567,8 @@ async function labelsFor(ctx: Ctx, subs: { kind: SubjectKind; id: string }[]) {
   return out;
 }
 
-/** Driver app: the driver's own expiring items (spec §6.3). */
-export type DriverOwnItem = { key: string; label: string; status: string; expiresAt: string | null; documentTypeId: string | null; tracksExpiry: boolean; pending: { fileName: string; at: string } | null; rejected: { reason: string; at: string } | null };
+/** Driver app: the driver's own expiring items (spec §6.3). uploadKey: what a photo of the renewal files against (a rule's id or field:<credential>). */
+export type DriverOwnItem = { key: string; label: string; status: string; expiresAt: string | null; documentTypeId: string | null; uploadKey: string | null; tracksExpiry: boolean; pending: { fileName: string; at: string } | null; rejected: { reason: string; at: string } | null };
 
 /** What the driver sees under "Your documents": what is expiring, expired or missing, and what they already sent. */
 export async function driverOwnItems(tenantId: string, driverId: string): Promise<DriverOwnItem[]> {
@@ -505,25 +577,36 @@ export async function driverOwnItems(tenantId: string, driverId: string): Promis
   if (!st) return [];
   const [types, sent] = await Promise.all([
     db.select({ id: s.documentTypes.id, tracksExpiry: s.documentTypes.tracksExpiry }).from(s.documentTypes).where(and(eq(s.documentTypes.tenantId, tenantId), eq(s.documentTypes.appliesTo, "driver"))),
-    db.select({ documentTypeId: s.documents.documentTypeId, status: s.documents.status, fileName: s.documents.fileName, notes: s.documents.notes, at: s.documents.updatedAt }).from(s.documents).where(and(eq(s.documents.tenantId, tenantId), eq(s.documents.subjectKind, "driver"), eq(s.documents.subjectId, driverId), eq(s.documents.source, "driver_app"), inArray(s.documents.status, ["pending", "rejected"]))).orderBy(desc(s.documents.updatedAt)),
+    db.select({ documentTypeId: s.documents.documentTypeId, code: s.documents.code, status: s.documents.status, fileName: s.documents.fileName, notes: s.documents.notes, at: s.documents.updatedAt }).from(s.documents).where(and(eq(s.documents.tenantId, tenantId), eq(s.documents.subjectKind, "driver"), eq(s.documents.subjectId, driverId), eq(s.documents.source, "driver_app"), inArray(s.documents.status, ["pending", "rejected"]))).orderBy(desc(s.documents.updatedAt)),
   ]);
   return st.items
     // the qualification file and the drug & alcohol program are the office's work, not uploads from the driver
-    .filter((i) => !i.key.startsWith("dq:") && !i.key.startsWith("da:") && (i.status === "expiring" || i.status === "expired" || i.status === "missing"))
+    .filter((i) => !i.key.startsWith("dq:") && !i.key.startsWith("da:") && (i.status === "expiring" || i.status === "expired" || i.status === "missing" || (i.status === "snoozed" && !!i.underlying)))
     .map((i) => {
-      const typeId = i.key.startsWith("field:") ? null : i.key;
-      const p = typeId ? sent.find((d) => d.documentTypeId === typeId && d.status === "pending") : null;
-      const r = typeId && !p ? sent.find((d) => d.documentTypeId === typeId && d.status === "rejected") : null;
-      return { key: i.key, label: i.label, status: i.status, expiresAt: i.expiresAt, documentTypeId: typeId, tracksExpiry: types.find((t) => t.id === typeId)?.tracksExpiry ?? false, pending: p ? { fileName: p.fileName, at: p.at.toISOString() } : null, rejected: r ? { reason: r.notes ?? "", at: r.at.toISOString() } : null };
+      const field = i.key.startsWith("field:");
+      const typeId = field ? null : i.key;
+      const mine = (d: (typeof sent)[number]) => (field ? d.code === i.key : d.documentTypeId === typeId);
+      // the newest thing the driver sent for it: waiting for the office, or sent back
+      const last = sent.find(mine);
+      const p = last?.status === "pending" ? last : null;
+      const r = last?.status === "rejected" ? last : null;
+      return { key: i.key, label: i.label, status: i.status === "snoozed" ? i.underlying! : i.status, expiresAt: i.expiresAt, documentTypeId: typeId, uploadKey: i.key, tracksExpiry: field ? true : (types.find((t) => t.id === typeId)?.tracksExpiry ?? false), pending: p ? { fileName: p.fileName, at: p.at.toISOString() } : null, rejected: r ? { reason: r.notes ?? "", at: r.at.toISOString() } : null };
     });
 }
 
-/** The driver sends a renewal from the app: a photo of the new card, the expiry they read off it. Waits for safety. */
-export async function driverUploadRenewal(tenantId: string, driverId: string, input: { documentTypeId: string; fileName: string; mimeType: string; bytes: Buffer; expiresAt?: Date | null; number?: string | null }) {
+/**
+ * The driver sends a renewal from the app: a photo of the new card and the expiry they read off it — for a
+ * rule of the company's own (documentTypeId) or a built-in credential (uploadKey field:medicalExpires…).
+ * It waits for Safety; nothing counts until confirmed.
+ */
+export async function driverUploadRenewal(tenantId: string, driverId: string, input: { documentTypeId?: string | null; uploadKey?: string | null; fileName: string; mimeType: string; bytes: Buffer; expiresAt?: Date | null; number?: string | null }) {
   const ctx = systemCtx(tenantId);
   const [driver] = await db.select({ id: s.drivers.id }).from(s.drivers).where(and(eq(s.drivers.tenantId, tenantId), eq(s.drivers.id, driverId))).limit(1);
   if (!driver) throw new NotFoundError("driver", driverId);
-  return uploadSubjectDocument(ctx, "driver", driverId, { ...input, source: "driver_app", status: "pending", notes: "Sent from the driver app — check the photo and confirm" });
+  const key = input.uploadKey || input.documentTypeId || "";
+  const common = { fileName: input.fileName, mimeType: input.mimeType, bytes: input.bytes, expiresAt: input.expiresAt ?? null, number: input.number ?? null, source: "driver_app", status: "pending" as const, notes: "Sent from the driver app — check the photo and confirm" };
+  if (key.startsWith("field:")) return uploadCredential(ctx, "driver", driverId, key, common);
+  return uploadSubjectDocument(ctx, "driver", driverId, { ...common, documentTypeId: key });
 }
 
 // ---------- incidents ----------

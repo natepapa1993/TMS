@@ -20,7 +20,10 @@ export async function uploadSubjectDocAction(kind: SubjectKind, subjectId: strin
     const expires = String(form.get("expiresAt") ?? "");
     const issued = String(form.get("issuedAt") ?? "");
     const mime = file.type || (file.name.toLowerCase().endsWith(".pdf") ? "application/pdf" : "image/jpeg");
-    const doc = await C.uploadSubjectDocument(ctx, kind, subjectId, { documentTypeId: String(form.get("documentTypeId") ?? ""), fileName: file.name, mimeType: mime, bytes: Buffer.from(await file.arrayBuffer()), expiresAt: expires ? parseDate(expires) : null, issuedAt: issued ? parseDate(issued) : null, number: String(form.get("number") ?? "") || null, notes: String(form.get("notes") ?? "") || null });
+    const key = String(form.get("uploadKey") ?? form.get("documentTypeId") ?? "");
+    const common = { fileName: file.name, mimeType: mime, bytes: Buffer.from(await file.arrayBuffer()), expiresAt: expires ? parseDate(expires) : null, issuedAt: issued ? parseDate(issued) : null, number: String(form.get("number") ?? "") || null, notes: String(form.get("notes") ?? "") || null };
+    // a licence, medical card, plate or inspection report: it goes on the record and sets the date
+    const doc = key.startsWith("field:") ? await C.uploadCredential(ctx, kind, subjectId, key, common) : await C.uploadSubjectDocument(ctx, kind, subjectId, { ...common, documentTypeId: key });
     return { id: doc.id };
   });
   if (r.ok) touch(kind, subjectId);
