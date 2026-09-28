@@ -202,7 +202,8 @@ test("driver app: link from Fleet, one button per step with GPS, customer tracki
   await page.click("a:has-text('26-00001')");
   await expect(page.locator("body")).toContainText("SEAL_PHOTO");
   await expect(page.locator("body")).toContainText("POD");
-  await expect(page.locator("body")).toContainText("POD photo from the driver app at Laredo yard");
+  // the crossing leg ended at the Laredo yard by clearing customs: the next leg is told the freight is there (B3)
+  await expect(page.locator("body")).toContainText("Freight cleared customs and is at Laredo yard");
   await expect(page.locator("body")).toContainText("seal out MX-4471"); // recorded on the stops
   await expect(page.locator("body")).toContainText("seal in MX-9999");
   await expect(page.locator("body")).toContainText("Dispatch to Benjamín Xochihua: OK, tell them");

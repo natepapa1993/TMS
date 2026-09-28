@@ -142,6 +142,8 @@ export async function ensureDefaultRules(ctx: Ctx, tx: Tx | typeof db = db) {
 
 export const CROSSING_ORDER: CrossingState[] = ["created", "awaiting_mx_arrival", "at_border_yard", "docs_in_progress", "awaiting_doda", "docs_complete", "docs_verified", "eligibility_checked", "ready_to_cross", "packet_sent", "departed_yard", "at_mx_customs", "in_us_customs", "cleared"];
 const PHYSICAL: CrossingState[] = ["packet_sent", "departed_yard", "at_mx_customs", "in_us_customs", "cleared"];
+/** Still on the paperwork (not sent, not rolling, not held or returned): a leg that rolls from here takes the crossing with it. */
+const beforePacket = (st: CrossingState) => CROSSING_ORDER.indexOf(st) >= 0 && CROSSING_ORDER.indexOf(st) < CROSSING_ORDER.indexOf("packet_sent");
 export const CROSSING_LABEL: Record<CrossingState, string> = {
   created: "New",
   awaiting_mx_arrival: "MX leg rolling",
@@ -815,7 +817,7 @@ export async function recompute(ctx: Ctx, crossingId: string) {
   const [xleg] = await db.select({ state: s.legs.state, completedAt: s.legs.completedAt, updatedAt: s.legs.updatedAt }).from(s.legs).where(eq(s.legs.id, c.legId)).limit(1);
   if (xleg && !["cleared", "cancelled"].includes(c.state)) {
     // (a truck turned back at the border keeps its leg rolling: after a return the border steps start again from the packet)
-    const follow: CrossingState | null = xleg.state === "completed" ? "cleared" : xleg.state === "cancelled" ? "cancelled" : ["en_route", "at_delivery"].includes(xleg.state) && !PHYSICAL.includes(c.state) && !c.returnedReason ? "departed_yard" : null;
+    const follow: CrossingState | null = xleg.state === "completed" ? "cleared" : xleg.state === "cancelled" ? "cancelled" : ["en_route", "at_delivery"].includes(xleg.state) && beforePacket(c.state) && !c.returnedReason ? "departed_yard" : null;
     if (follow && follow !== c.state) {
       await setState(db, sys, c, follow, { source: "system", note: `the crossing leg is ${xleg.state.replace(/_/g, " ")}`, at: xleg.completedAt ?? xleg.updatedAt ?? undefined }, follow === "cleared" ? { departedYardAt: c.departedYardAt ?? xleg.completedAt ?? new Date() } : follow === "departed_yard" ? { departedYardAt: c.departedYardAt ?? new Date() } : {});
       c = await load(ctx, crossingId);
@@ -1161,7 +1163,7 @@ export async function packetByToken(token: string) {
 export async function crossingBoard(ctx: Ctx, synced = false): Promise<Awaited<ReturnType<typeof boardRows>>> {
   const rows = await boardRows(ctx);
   // a crossing whose leg has moved on (crossed, or cancelled) is brought up to date before it is shown
-  const stale = rows.filter((r) => !["cleared", "cancelled"].includes(r.c.state) && (r.legState === "completed" || r.legState === "cancelled" || (["en_route", "at_delivery"].includes(r.legState) && !PHYSICAL.includes(r.c.state))));
+  const stale = rows.filter((r) => !["cleared", "cancelled"].includes(r.c.state) && (r.legState === "completed" || r.legState === "cancelled" || (["en_route", "at_delivery"].includes(r.legState) && beforePacket(r.c.state) && !r.c.returnedReason)));
   if (!stale.length || synced) return rows;
   for (const r of stale) await recompute(ctx, r.c.id);
   return crossingBoard(ctx, true);
@@ -1171,7 +1173,7 @@ async function boardRows(ctx: Ctx) {
   assertCtx(ctx);
   requirePermission(ctx, "orders.view");
   const rows = await db
-    .select({ c: s.crossings, orderNumber: s.orders.orderNumber, customerId: s.orders.customerId, brokerId: s.orders.brokerId, legState: s.legs.state, truckId: s.legs.truckId, driverId: s.legs.driverId })
+    .select({ c: s.crossings, orderNumber: s.orders.orderNumber, customerId: s.orders.customerId, brokerId: s.orders.brokerId, legState: s.legs.state, truckId: s.legs.truckId, driverId: s.legs.driverId, carrierId: s.legs.carrierId })
     .from(s.crossings)
     .innerJoin(s.orders, eq(s.orders.id, s.crossings.orderId))
     .innerJoin(s.legs, eq(s.legs.id, s.crossings.legId))

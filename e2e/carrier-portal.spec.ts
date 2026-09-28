@@ -102,7 +102,7 @@ test("carrier's day: one link, accept the offer, run the load, get paid, keep do
   await driver.getByTestId("photo-POD").locator("input[type=file]").setInputFiles(path.join(__dirname, "fixtures", "bol.pdf"));
   await expect(driver.getByTestId("photo-POD")).toContainText("✓ POD on file", { timeout: 10000 });
   await big.click();
-  await expect(driver.getByRole("alert")).toContainText("caja number");
+  await expect(driver.locator(".error")).toContainText("caja number");
   await drop.getByLabel("Caja number").fill("caja-7702");
   await driver.getByLabel("Seal on the caja").fill("sm-448812");
   await driver.getByTestId("photo-caja").locator("input[type=file]").setInputFiles(path.join(__dirname, "fixtures", "bol.pdf"));
