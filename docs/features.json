@@ -981,6 +981,87 @@
       ]
     },
     {
+      "id": "F-7.28",
+      "name": "Re-running the week keeps lines added by hand to an open statement (and a driver's dispute), and says what it kept",
+      "milestone": "M28",
+      "status": "done",
+      "tests": [
+        "src/domain/money2.test.ts"
+      ]
+    },
+    {
+      "id": "F-7.29",
+      "name": "Percent pay is of the leg's share of the load (by miles, else by legs); estimated miles pay drivers and cost fuel on multi-leg loads in statements, the load P&L, reports and the assign margin",
+      "milestone": "M28",
+      "status": "done",
+      "tests": [
+        "src/domain/money2.test.ts"
+      ]
+    },
+    {
+      "id": "F-7.35",
+      "name": "Report tables add up to the tiles: loads split between trucks, drivers or carriers by leg miles to the cent, loads with none of ours in their own row",
+      "milestone": "M28",
+      "status": "done",
+      "tests": [
+        "src/domain/money2.test.ts"
+      ]
+    },
+    {
+      "id": "F-7.30",
+      "name": "QuickBooks export leaves nothing out: advances when paid out, never-exported records older than the From date (counted), credit memos and money on account applied to invoices, Windows-1252 IIF; the page says what is included",
+      "milestone": "M28",
+      "status": "done",
+      "tests": [
+        "src/domain/money3.test.ts"
+      ]
+    },
+    {
+      "id": "F-7.31",
+      "name": "Month-end close only through a day that has ended, in the company zone; the confirmation names the day and says it can't be reopened",
+      "milestone": "M28",
+      "status": "done",
+      "tests": [
+        "src/domain/money3.test.ts"
+      ]
+    },
+    {
+      "id": "F-7.32",
+      "name": "Honest Sent: with no email provider an invoice or credit memo send is logged, not sent — the invoice stays issued, says so, and can be filtered and counted as not emailed",
+      "milestone": "M28",
+      "status": "done",
+      "tests": [
+        "src/domain/money3.test.ts"
+      ]
+    },
+    {
+      "id": "F-7.33",
+      "name": "Customer portal balances per currency (never pesos plus dollars) and every status label in Spanish",
+      "milestone": "M28",
+      "status": "done",
+      "tests": [
+        "src/domain/money3.test.ts"
+      ]
+    },
+    {
+      "id": "F-7.34",
+      "name": "Apply payment pays what the remittance names (one open invoice, or exactly the ones named) in the payment's currency; received dates can't be in the future and default to the company's day",
+      "milestone": "M28",
+      "status": "done",
+      "tests": [
+        "src/domain/money3.test.ts"
+      ]
+    },
+    {
+      "id": "F-7.36",
+      "name": "FX at receipt: a MXN or CAD receipt keeps the day's rate; the realized exchange gain or loss shows in reports and goes to QuickBooks",
+      "milestone": "M28",
+      "status": "done",
+      "tests": [
+        "src/domain/money3.test.ts"
+      ]
+    },
+    {
       "id": "F-31.1",
       "name": "One clock everywhere: every stop time, window, appointment, ETA, free-at, check call and timeline event on the stop's own clock with its zone name (Tue Sep 29, 8:00 AM CST) — load page, Loads grid, planner, assign dialog, import preview, driver app, partner driver link, tender page, carrier and customer portals, tracking, messages, rate con; the rest on the company's clock, labelled; one shared formatter built from numbers so server and browser agree (no hydration mismatch); border cities (Nuevo Laredo, Reynosa, Piedras Negras, Juárez) keep US daylight time while Mexico's interior stays on CST",
       "milestone": "M31",

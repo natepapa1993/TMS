@@ -59,7 +59,7 @@ test("customer's day: one link, a load tracked to delivered, the POD and the inv
   await expect(phone.locator("body")).toContainText("Magna");
   await expect(phone.locator("body")).toContainText("customer portal");
   const card = phone.getByTestId("load-card").filter({ hasText: o1 });
-  await expect(card).toContainText("Driver assigned");
+  await expect(card).toContainText("Assigned");
   await expect(card).toContainText("Magna Detroit → Toyota San Antonio");
   const track = card.locator("a:has-text('Track')");
   await expect(track).toHaveAttribute("href", /\/track\//);

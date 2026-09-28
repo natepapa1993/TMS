@@ -11,7 +11,7 @@ import { enqueue } from "@/lib/outbox";
 import { NotFoundError, ValidationError } from "./orders";
 import { assertOrderTransition, TransitionError } from "./states";
 import { getCompany, setFxRate } from "./company";
-import { zonedDate, stopZone } from "@/lib/time";
+import { zonedDate, zonedMidnight, stopZone } from "@/lib/time";
 import { buildInvoicePdf, buildStatementPdf, buildCreditMemoPdf } from "./billing-pdf";
 import { money, parseRate, pickRate, toHome, HOME_CURRENCY, type FxRates } from "./fx-rules";
 
@@ -404,21 +404,35 @@ async function closedThrough(ctx: Ctx) {
   return v ? new Date(String(v)) : null;
 }
 
-/** Month-end close (persona: head of billing). Nothing dated on or before this can be issued, voided or credited. */
-export async function closePeriod(ctx: Ctx, through: Date) {
+/**
+ * Month-end close (persona: head of billing). Nothing dated on or before the day can be issued, voided,
+ * credited, received or paid afterwards. The day is a calendar day in the company's zone and must have
+ * ended: today and any later day are refused (a typo of 12/31 would lock every receipt until then), and a
+ * close never moves back.
+ */
+export async function closePeriod(ctx: Ctx, through: Date | string, now = new Date()) {
   assertCtx(ctx);
   requirePermission(ctx, "billing.void");
   const [t] = await db.select().from(s.tenants).where(eq(s.tenants.id, ctx.tenantId)).limit(1);
+  const tz = t.timeZone;
+  const day = typeof through === "string" ? through : zonedDate(through, tz);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) throw new ValidationError("pick the last day to close", "through");
+  const today = zonedDate(now, tz);
+  if (day >= today) throw new ValidationError(day === today ? `today (${day}) hasn't ended yet: close through yesterday at the latest` : `${day} is in the future: the books can only be closed through a day that has ended (yesterday, ${zonedDate(new Date(zonedMidnight(today, tz).getTime() - 1), tz)}, at the latest)`, "through");
   const prev = await closedThrough(ctx);
-  if (prev && through.getTime() < prev.getTime()) throw new ValidationError("a period cannot be re-opened from here");
-  await db.update(s.tenants).set({ settings: { ...(t.settings ?? {}), closedThrough: through.toISOString() } }).where(eq(s.tenants.id, ctx.tenantId));
-  await writeAudit(db, ctx, "tenant", ctx.tenantId, "update", { closedThrough: { from: prev?.toISOString() ?? null, to: through.toISOString() } }, "period closed");
+  // the end of that day in the company's zone
+  const next = new Date(Date.UTC(Number(day.slice(0, 4)), Number(day.slice(5, 7)) - 1, Number(day.slice(8, 10)) + 1)).toISOString().slice(0, 10);
+  const end = new Date(zonedMidnight(next, tz).getTime() - 1);
+  if (prev && end.getTime() < prev.getTime()) throw new ValidationError("a period cannot be re-opened from here");
+  await db.update(s.tenants).set({ settings: { ...(t.settings ?? {}), closedThrough: end.toISOString() } }).where(eq(s.tenants.id, ctx.tenantId));
+  await writeAudit(db, ctx, "tenant", ctx.tenantId, "update", { closedThrough: { from: prev?.toISOString() ?? null, to: end.toISOString() } }, `period closed through ${day}`);
+  return { through: day };
 }
 
 /** Nothing dated on or before the close can be recorded: receipts, payments, factor entries, bill and settlement payments. */
 export async function assertOpenPeriod(ctx: Ctx, date: Date) {
   const c = await closedThrough(ctx);
-  if (c && date.getTime() <= c.getTime()) throw new ValidationError(`the books are closed through ${c.toISOString().slice(0, 10)}: date it after that (the owner closes periods; they can't be reopened)`);
+  if (c && date.getTime() <= c.getTime()) throw new ValidationError(`the books are closed through ${zonedDate(c, (await getCompany(ctx)).timeZone)}: date it after that (the owner closes periods; they can't be reopened)`);
 }
 
 export async function createInvoice(ctx: Ctx, orderIds: string[], opts: { entityId?: string | null; consolidate?: boolean; withoutPending?: boolean; rebillOf?: string | null } = {}) {
@@ -656,7 +670,7 @@ export async function invoiceByToken(token: string) {
   return b ? { invoice: inv, blob: b } : null;
 }
 
-export async function recordReceipt(ctx: Ctx, invoiceId: string, r: { amountCents: number; receivedAt?: Date; method?: string; reference?: string | null; note?: string | null; paymentId?: string | null }) {
+export async function recordReceipt(ctx: Ctx, invoiceId: string, r: { amountCents: number; receivedAt?: Date; method?: string; reference?: string | null; note?: string | null; paymentId?: string | null; /** MXN / CAD: the rate the day it arrived (× 10,000, or typed "18.62"); blank = the company's */ exchangeRate?: number | string | null }) {
   assertCtx(ctx);
   requirePermission(ctx, "billing.issue");
   if (!Number.isFinite(r.amountCents) || r.amountCents <= 0) throw new ValidationError("amount must be positive", "amountCents");
@@ -665,8 +679,22 @@ export async function recordReceipt(ctx: Ctx, invoiceId: string, r: { amountCent
   const open = inv.totalCents - inv.creditedCents - inv.paidCents;
   if (r.amountCents > open) throw new ValidationError(`over-payment: ${(r.amountCents / 100).toFixed(2)} is more than the ${(open / 100).toFixed(2)} open. Record the remainder as unapplied credit on another invoice.`, "amountCents");
   await assertOpenPeriod(ctx, r.receivedAt ?? new Date());
+  const { assertNotFuture } = await import("./cash");
+  if (!r.paymentId) await assertNotFuture(ctx, r.receivedAt ?? new Date());
+  // foreign money: keep the rate it arrived at (the invoice's rate vs this one is the realized exchange gain/loss)
+  let rateE4: number | null = null;
+  if (inv.currency !== HOME_CURRENCY && r.method !== "factoring") {
+    if (typeof r.exchangeRate === "number") rateE4 = r.exchangeRate;
+    else if (r.exchangeRate != null && String(r.exchangeRate).trim()) {
+      try {
+        rateE4 = parseRate(r.exchangeRate, inv.currency);
+      } catch (e) {
+        throw new ValidationError((e as Error).message, "exchangeRate");
+      }
+    } else rateE4 = pickRate(inv.currency, null, (await getCompany(ctx)).settings.fx).rateE4;
+  }
   return db.transaction(async (tx) => {
-    await tx.insert(s.receipts).values({ id: newId(), tenantId: ctx.tenantId, invoiceId, amountCents: r.amountCents, receivedAt: r.receivedAt ?? new Date(), method: r.method ?? "ach", reference: r.reference ?? null, note: r.note ?? null, paymentId: r.paymentId ?? null, createdBy: ctx.userId });
+    await tx.insert(s.receipts).values({ id: newId(), tenantId: ctx.tenantId, invoiceId, amountCents: r.amountCents, receivedAt: r.receivedAt ?? new Date(), method: r.method ?? "ach", reference: r.reference ?? null, note: r.note ?? null, paymentId: r.paymentId ?? null, exchangeRate: rateE4, createdBy: ctx.userId });
     const paid = inv.paidCents + r.amountCents;
     const full = paid >= inv.totalCents - inv.creditedCents;
     const [after] = await tx.update(s.invoices).set({ paidCents: paid, state: full ? "paid" : "partially_paid", paidAt: full ? (r.receivedAt ?? new Date()) : null, updatedAt: new Date(), updatedBy: ctx.userId }).where(eq(s.invoices.id, invoiceId)).returning();
@@ -780,11 +808,18 @@ export async function sendCreditMemo(ctx: Ctx, memoId: string, to?: string | nul
   const open = inv.totalCents - inv.creditedCents - inv.paidCents;
   const body = [`${customer?.name},`, ``, `Attached is credit memo ${memo.number} from ${entity?.legalName} for ${money(memo.amountCents, inv.currency, { code: true })}, applied to invoice ${inv.number}.`, `Reason: ${memo.reason}`, ``, open > 0 ? `Invoice ${inv.number} now has ${money(open, inv.currency, { code: true })} open.` : `Invoice ${inv.number} is now settled.`, ``, `Reference: ${memo.number}`].join("\n");
   await enqueue(ctx, { channel: "email", to: dest, subject: `Credit memo ${memo.number} · invoice ${inv.number} · ${entity?.dba || entity?.legalName}`, body, subjectKind: "credit_memo", subjectId: memo.id, meta: { kind: "invoice", attachments: [{ fileName: `Credit memo ${memo.number}.pdf`, storageKey: key }] } });
-  const { deliverQueued } = await import("@/lib/outbox");
+  const { deliverQueued, emailReachesInbox } = await import("@/lib/outbox");
   await deliverQueued().catch(() => null);
+  // with no email provider connected the email only went to the log: say so, never "sent"
+  if (!(await emailReachesInbox(ctx.tenantId))) {
+    const { NOT_EMAILED } = await import("./invoicing");
+    await db.update(s.creditMemos).set({ pdfStorageKey: key }).where(eq(s.creditMemos.id, memo.id));
+    await writeAudit(db, ctx, "invoice", inv.id, "update", undefined, `credit memo ${memo.number} for ${dest}: ${NOT_EMAILED}`);
+    return { sentTo: null as string | null, logged: true, message: NOT_EMAILED };
+  }
   await db.update(s.creditMemos).set({ sentAt: new Date(), sentTo: dest, pdfStorageKey: key }).where(eq(s.creditMemos.id, memo.id));
   await writeAudit(db, ctx, "invoice", inv.id, "update", undefined, `credit memo ${memo.number} emailed to ${dest}`);
-  return { sentTo: dest };
+  return { sentTo: dest as string | null, logged: false, message: `Credit memo sent to ${dest}` };
 }
 
 export const DISPUTE_OUTCOMES = { customer_pays: "Resolved in our favor — the customer will pay", credited: "Resolved with a credit memo", paid: "The customer paid", other: "Other (see note)" } as const;
@@ -829,7 +864,7 @@ export async function setPromiseToPay(ctx: Ctx, invoiceId: string, at: Date | nu
   await db.update(s.invoices).set({ promiseToPayAt: at, updatedAt: new Date(), updatedBy: ctx.userId }).where(and(eq(s.invoices.tenantId, ctx.tenantId), eq(s.invoices.id, invoiceId)));
 }
 
-export type InvoiceFilter = { states?: string[]; customerId?: string; q?: string; view?: "open" | "overdue" | "unsent" | "factored" | "credits" | ""; from?: string; to?: string; kind?: string };
+export type InvoiceFilter = { states?: string[]; customerId?: string; q?: string; view?: "open" | "overdue" | "unsent" | "not_emailed" | "factored" | "credits" | ""; from?: string; to?: string; kind?: string };
 
 /** Invoices with the filters billing actually uses: who, what state, overdue, not sent yet, factored, dates, and a search over invoice #, load #, any load reference and the customer. */
 export async function listInvoices(ctx: Ctx, opts: InvoiceFilter = {}) {
@@ -843,6 +878,8 @@ export async function listInvoices(ctx: Ctx, opts: InvoiceFilter = {}) {
   if (opts.view === "open") conds.push(inArray(s.invoices.state, open as never));
   if (opts.view === "overdue") conds.push(inArray(s.invoices.state, open as never), lt(s.invoices.dueAt, new Date()));
   if (opts.view === "unsent") conds.push(eq(s.invoices.state, "issued"));
+  // "sent" with no email provider: only written to the log — the customer never got it
+  if (opts.view === "not_emailed") conds.push(inArray(s.invoices.state, open as never), isNull(s.invoices.sentAt), sql`${s.invoices.deliveries} @> '[{"logged": true}]'::jsonb`);
   if (opts.view === "factored") conds.push(eq(s.invoices.factored, true));
   if (opts.from) conds.push(gte(s.invoices.issuedAt, new Date(`${opts.from}T00:00:00Z`)));
   if (opts.to) conds.push(lt(s.invoices.issuedAt, new Date(new Date(`${opts.to}T00:00:00Z`).getTime() + 86400_000)));
@@ -1053,7 +1090,9 @@ export async function approveCarrierBill(ctx: Ctx, id: string, a: { approvedCent
   const approved = a.approvedCents ?? b.invoicedCents ?? chk.expected;
   if (!chk.rateMatch && approved !== chk.expected && !a.note?.trim()) throw new ValidationError(`carrier billed ${(chk.invoiced! / 100).toFixed(2)} vs ${(chk.expected / 100).toFixed(2)} expected: approve the difference with a reason, or short-pay with a note`, "note");
   if (approved < (b.invoicedCents ?? 0) && !a.shortPayNote?.trim()) throw new ValidationError("a short-pay needs a note that goes to the carrier", "shortPayNote");
-  const [after] = await db.update(s.carrierBills).set({ state: a.payDate ? "scheduled" : "approved", approvedCents: approved, approvalNote: a.note ?? null, shortPayNote: a.shortPayNote ?? null, approvedAt: new Date(), payDate: a.payDate ?? null, updatedAt: new Date(), updatedBy: ctx.userId }).where(eq(s.carrierBills.id, id)).returning();
+  // a peso or Canadian-dollar bill keeps the rate of the day it was approved: its dollars never move afterwards
+  const exchangeRate = b.currency === HOME_CURRENCY ? null : pickRate(b.currency, null, (await getCompany(ctx)).settings.fx).rateE4;
+  const [after] = await db.update(s.carrierBills).set({ state: a.payDate ? "scheduled" : "approved", approvedCents: approved, approvalNote: a.note ?? null, shortPayNote: a.shortPayNote ?? null, approvedAt: new Date(), payDate: a.payDate ?? null, exchangeRate, updatedAt: new Date(), updatedBy: ctx.userId }).where(eq(s.carrierBills.id, id)).returning();
   await writeAudit(db, ctx, "carrier_bill", id, "transition", { state: { from: b.state, to: after.state }, approvedCents: { from: null, to: approved } }, a.note ?? a.shortPayNote ?? undefined);
   return after;
 }
@@ -1110,7 +1149,7 @@ const noMiles = (l: SettlementLine) => l.kind === "leg" && l.amountCents === 0 &
  * - a week with no pay at all gets no statement: deductions wait for one with pay;
  * - a pay item already on another statement not yet paid is not taken twice.
  */
-export async function buildSettlement(ctx: Ctx, driverId: string, periodStart: Date, periodEnd: Date) {
+export async function buildSettlement(ctx: Ctx, driverId: string, periodStart: Date, periodEnd: Date): Promise<typeof s.settlements.$inferSelect & { /** lines added by hand to the open statement, kept */ keptManual?: number }> {
   assertCtx(ctx);
   requirePermission(ctx, "billing.issue");
   const [driver] = await db.select().from(s.drivers).where(and(eq(s.drivers.tenantId, ctx.tenantId), eq(s.drivers.id, driverId))).limit(1);
@@ -1144,26 +1183,18 @@ export async function buildSettlement(ctx: Ctx, driverId: string, periodStart: D
     const earned = lines.reduce((a, l) => a + l.amountCents, 0);
     lines.push(...statementExtras(plan, days, earned));
   } else {
-    const rate = driver.payRateCents ?? 0;
-    const invs = legs.length ? await db.select({ orderIds: s.invoices.orderIds, state: s.invoices.state, kind: s.invoices.kind, currency: s.invoices.currency, exchangeRate: s.invoices.exchangeRate, issuedAt: s.invoices.issuedAt }).from(s.invoices).where(and(eq(s.invoices.tenantId, ctx.tenantId), arrayOverlaps(s.invoices.orderIds, [...new Set(legs.map((l) => l.orderId))]))) : [];
+    const orderIds = [...new Set(legs.map((l) => l.orderId))];
+    const [invs, loadLegs] = legs.length
+      ? await Promise.all([
+          db.select({ orderIds: s.invoices.orderIds, state: s.invoices.state, kind: s.invoices.kind, currency: s.invoices.currency, exchangeRate: s.invoices.exchangeRate, issuedAt: s.invoices.issuedAt }).from(s.invoices).where(and(eq(s.invoices.tenantId, ctx.tenantId), arrayOverlaps(s.invoices.orderIds, orderIds))),
+          db.select({ id: s.legs.id, orderId: s.legs.orderId, type: s.legs.type, state: s.legs.state, plannedMiles: s.legs.plannedMiles, estMiles: s.legs.estMiles }).from(s.legs).where(and(eq(s.legs.tenantId, ctx.tenantId), inArray(s.legs.orderId, orderIds))),
+        ])
+      : [[], []];
+    const { payTypeLines, legShare } = await import("./pay-plans-pure");
     for (const { leg, orderNumber, rateCents, currency, orderId } of legs) {
-      const team = !!leg.coDriverId;
-      const share = team ? 0.5 : 1;
-      let line: SettlementLine;
-      if (driver.payType === "per_mile") {
-        // typed miles win; otherwise the estimate from the stops, labelled so the driver and the office see it
-        const miles = leg.plannedMiles ?? leg.estMiles ?? 0;
-        const est = leg.plannedMiles == null && leg.estMiles != null;
-        line = { id: newId(), kind: "leg", legId: leg.id, orderNumber, description: `${orderNumber} leg ${leg.seq} · ${miles} mi${est ? " (est.)" : ""} × ${(rate / 100).toFixed(2)}${team ? " (team ½)" : ""}`, qty: miles, unit: "mi", rateCents: rate, amountCents: Math.round(miles * rate * share), source: leg.plannedMiles ? "planned miles" : est ? "estimated miles" : "no miles on the leg" };
-      } else if (driver.payType === "pct") {
-        // a percent of the line haul's dollar value: a peso load is converted first
-        const usdRate = toHome(rateCents ?? 0, currency, loadRate({ id: orderId, currency }, invs, company.settings.fx).rateE4);
-        line = { id: newId(), kind: "leg", legId: leg.id, orderNumber, description: `${orderNumber} leg ${leg.seq} · ${rate / 100}% of ${money(usdRate, "USD")}${currency !== "USD" ? ` (${money(rateCents ?? 0, currency)})` : ""}${team ? " (team ½)" : ""}`, qty: rate, unit: "pct", rateCents: usdRate, amountCents: Math.round(((usdRate * rate) / 10000) * share), source: "order rate" };
-      } else {
-        line = { id: newId(), kind: "leg", legId: leg.id, orderNumber, description: `${orderNumber} leg ${leg.seq} · flat${team ? " (team ½)" : ""}`, qty: 1, unit: "flat", rateCents: rate, amountCents: Math.round(rate * share), source: "flat per leg" };
-      }
-      lines.push(line);
-      if (leg.type === "crossing" && driver.crossingPayCents) lines.push({ id: newId(), kind: "accessorial", legId: leg.id, orderNumber, description: `${orderNumber} border crossing pay`, qty: 1, unit: "flat", rateCents: driver.crossingPayCents, amountCents: driver.crossingPayCents, source: "driver record" });
+      // a percent is of the line haul's dollar value (a peso load converted first) — and of this leg's share of it
+      const linehaulUsdCents = toHome(rateCents ?? 0, currency, loadRate({ id: orderId, currency }, invs, company.settings.fx).rateE4);
+      lines.push(...payTypeLines(driver, leg, { orderNumber, rateCents, currency, linehaulUsdCents, share: legShare(leg.id, loadLegs.filter((x) => x.orderId === orderId)) }));
     }
   }
   lines = lines.map((l) => ({ ...l, description: `${l.description}${l.kind === "leg" ? lateNote(l.legId) : ""}`, blocker: noMiles(l) ? `${l.orderNumber ?? "a load"}: the leg has no miles, so it pays $0 — enter the miles on the load, then rebuild the statement` : null }));
@@ -1176,11 +1207,19 @@ export async function buildSettlement(ctx: Ctx, driverId: string, periodStart: D
   const due = items.filter((it) => !(it.endsAt && it.endsAt.getTime() < periodStart.getTime()) && !(it.recurring && it.startsAt.getTime() > periodEnd.getTime() + 7 * 86400_000));
   for (const it of due.filter((x) => x.kind === "reimbursement")) {
     if (!it.recurring && held.has(it.id)) continue;
-    lines.push({ id: newId(), kind: "reimbursement", description: it.description, qty: 1, unit: "flat", rateCents: it.amountCents, amountCents: it.amountCents, source: it.recurring ? "recurring" : "one-off", payItemId: it.id });
+    // escrow paid back is the driver's own money coming out of the escrow liability, not a reimbursement expense
+    lines.push({ id: newId(), kind: "reimbursement", description: it.description, qty: 1, unit: "flat", rateCents: it.amountCents, amountCents: it.amountCents, source: it.description.startsWith("Escrow release") ? "escrow release" : it.recurring ? "recurring" : "one-off", payItemId: it.id });
   }
+  // lines a person added to the open statement (a layover, a bonus, a one-off deduction) survive a rebuild
+  const manual = (existing?.lines ?? []).filter((l) => l.source === "manual");
+  lines.push(...manual.filter((l) => l.amountCents > 0));
+  // a driver's dispute (and the office's answer) stays on the line it was about
+  const lineKey = (l: SettlementLine) => `${l.kind}|${l.legId ?? ""}|${l.payItemId ?? ""}`;
+  const disputes = new Map((existing?.lines ?? []).filter((l) => l.source !== "manual" && (l.disputed || l.response)).map((l) => [lineKey(l), l]));
   const earned = lines.filter((l) => l.amountCents > 0).reduce((a, l) => a + l.amountCents, 0);
   // a load that pays $0 (no miles) still makes a statement, so the problem shows; only deductions never do
   if (earned <= 0 && !lines.some((l) => l.kind === "leg")) {
+    if (existing && manual.length) throw new ValidationError(`${driver.name} has no pay for the week of ${zonedDate(periodStart, company.timeZone)}: the open statement was left as it was, with the ${manual.length} line${manual.length === 1 ? "" : "s"} added by hand`);
     // nothing to pay: no statement. An open one from an earlier build goes away; its deductions wait.
     if (existing) {
       await db.delete(s.settlements).where(eq(s.settlements.id, existing.id));
@@ -1200,7 +1239,15 @@ export async function buildSettlement(ctx: Ctx, driverId: string, periodStart: D
       if (it.kind === "escrow" && it.targetCents != null) amt = Math.min(amt, Math.max(0, it.targetCents - (it.balanceCents ?? 0) - (held.get(it.id) ?? 0)));
       return amt > 0 ? [{ it, amt }] : [];
     });
-  const applied = applyDeductions(earned, wants.map((w) => ({ key: w.it.id, wantCents: w.amt })));
+  // deductions typed on the statement by hand come off first (someone decided them for this week)
+  const manualDed = manual.filter((l) => l.amountCents < 0);
+  const allApplied = applyDeductions(earned, [...manualDed.map((l) => ({ key: l.id, wantCents: l.rateCents || -l.amountCents })), ...wants.map((w) => ({ key: w.it.id, wantCents: w.amt }))]);
+  for (const [i, l] of manualDed.entries()) {
+    const { takenCents, shortCents } = allApplied[i];
+    const base = l.description.replace(/ \(only \$[\d,.]+ of \$[\d,.]+ fits this week[^)]*\)$/, "");
+    lines.push({ ...l, description: shortCents ? `${base} (only ${money(takenCents)} of ${money(takenCents + shortCents)} fits this week — add the rest as a deduction pay item)` : base, amountCents: -takenCents });
+  }
+  const applied = allApplied.slice(manualDed.length);
   for (const [i, w] of wants.entries()) {
     const { takenCents, shortCents } = applied[i];
     const it = w.it;
@@ -1210,20 +1257,26 @@ export async function buildSettlement(ctx: Ctx, driverId: string, periodStart: D
     const left = owed != null && owed > 0 ? ` (${money(owed)} left to recover after this)` : "";
     lines.push({ id: newId(), kind: "deduction", description: `${it.description}${what}${left}`, qty: 1, unit: "flat", rateCents: w.amt, amountCents: -takenCents, source: it.carriedFrom ? "carried from last week" : it.kind === "escrow" ? "escrow" : it.kind === "advance" ? "advance" : it.recurring ? "recurring" : "one-off", payItemId: it.id, shortCents: shortCents || null });
   }
+  lines = lines.map((l) => {
+    const was = l.source === "manual" ? null : disputes.get(lineKey(l));
+    return was ? { ...l, disputed: was.disputed ?? null, response: was.response ?? null } : l;
+  });
   const row = { lines, ...totalsOf(lines), updatedAt: new Date(), updatedBy: ctx.userId };
   if (existing) {
     const [after] = await db.update(s.settlements).set(row).where(eq(s.settlements.id, existing.id)).returning();
-    return after;
+    if (manual.length) await writeAudit(db, ctx, "settlement", existing.id, "update", undefined, `rebuilt: kept ${manual.length} line${manual.length === 1 ? "" : "s"} added by hand`);
+    return Object.assign(after, { keptManual: manual.length });
   }
   const [after] = await db.insert(s.settlements).values({ id: newId(), tenantId: ctx.tenantId, driverId, periodStart, periodEnd, ...row, createdBy: ctx.userId }).returning();
   await writeAudit(db, ctx, "settlement", after.id, "create", undefined, `${driver.name} ${periodStart.toISOString().slice(0, 10)}`);
-  return after;
+  return Object.assign(after, { keptManual: 0 });
 }
 
 /** Why a statement can't be approved yet, in plain words (empty = it can). */
-export function approvalBlockers(st: Pick<typeof s.settlements.$inferSelect, "lines" | "periodEnd" | "netCents" | "grossCents">, now = new Date()): string[] {
+export function approvalBlockers(st: Pick<typeof s.settlements.$inferSelect, "lines" | "periodEnd" | "netCents" | "grossCents">, now = new Date(), timeZone = "UTC"): string[] {
   const out: string[] = [];
-  if (st.periodEnd.getTime() > now.getTime()) out.push(`the week isn't over yet (it ends ${st.periodEnd.toISOString().slice(0, 10)}): approve it once it has, so late legs make it on`);
+  // the week's last day in the company zone: a Sunday-to-Saturday week ends at the midnight that starts Sunday
+  if (st.periodEnd.getTime() > now.getTime()) out.push(`the week isn't over yet (its last day is ${zonedDate(new Date(st.periodEnd.getTime() - 1), timeZone)}): approve it once it has, so late legs make it on`);
   for (const l of st.lines) if (l.blocker) out.push(l.blocker);
   for (const l of st.lines) if (!l.blocker && noMiles(l)) out.push(`${l.orderNumber ?? "a load"}: the leg has no miles, so it pays $0 — enter the miles, then rebuild`);
   if (st.grossCents <= 0) out.push("there is no pay on it");
@@ -1245,7 +1298,7 @@ export async function settlementTransition(ctx: Ctx, id: string, to: "reviewed" 
   if (!allowed[st.state].includes(to)) throw new TransitionError("order", st.state, to);
   const now = p.now ?? new Date();
   if (to === "approved" || to === "paid") {
-    let why = approvalBlockers(st, now);
+    let why = approvalBlockers(st, now, (await getCompany(ctx)).timeZone);
     const early = st.periodEnd.getTime() > now.getTime();
     // paying early: only the owner, only with a reason, and only the unfinished week can be waived
     if (early && (p.earlyReason?.trim() || (to === "paid" && st.approvedAt))) {
@@ -1419,45 +1472,25 @@ export async function orderPnl(ctx: Ctx, orderId: string) {
         paidLegs.add(l.legId);
       }
   let driverPayEstimated = false;
+  // legs no statement paid yet: each driver's own rule on the leg's miles (typed, else est.) and its share of the load
   const ownLegs = legs.filter((l) => l.assigneeKind === "truck" && l.driverId && l.state !== "cancelled" && !paidLegs.has(l.id));
   if (ownLegs.length) {
-    const ids = [...new Set(ownLegs.flatMap((l) => [l.driverId!, l.coDriverId].filter((x): x is string => !!x)))];
-    const drivers = await db.select().from(s.drivers).where(inArray(s.drivers.id, ids));
-    const costRate = costOrderId === orderId ? rate : loadRate(costOrder, [], fx);
-    for (const l of ownLegs) {
-      for (const did of [l.driverId, l.coDriverId].filter((x): x is string => !!x)) {
-        const d = drivers.find((x) => x.id === did);
-        if (!d) continue;
-        const team = !!l.coDriverId;
-        if (d.payPlanId) {
-          const [plan] = await db.select().from(s.payPlans).where(eq(s.payPlans.id, d.payPlanId)).limit(1);
-          if (plan) {
-            const { payInputs } = await import("./pay-inputs");
-            const { legPayLines } = await import("./pay-plans-pure");
-            const inputs = await payInputs(ctx, d.id, [l]);
-            driverPay += inputs.flatMap((inp) => legPayLines(plan, inp)).reduce((a, x) => a + x.amountCents, 0);
-            driverPayEstimated = true;
-            continue;
-          }
-        }
-        const pr = d.payRateCents ?? 0;
-        const sh = team ? 0.5 : 1;
-        // a percent of the line haul is a percent of its dollar value
-        const linehaulUsd = toHome(costOrder.rateCents ?? 0, costOrder.currency, costRate.rateE4);
-        driverPay += Math.round((d.payType === "per_mile" ? (l.plannedMiles ?? l.estMiles ?? 0) * pr : d.payType === "pct" ? (linehaulUsd * pr) / 10000 : pr) * sh);
-        driverPayEstimated = true;
-      }
-    }
+    const { estimateLegPay } = await import("./pay-estimate");
+    const est = await estimateLegPay(ctx, ownLegs);
+    for (const v of est.values()) driverPay += v;
+    driverPayEstimated = est.size > 0;
   }
   driverPay = Math.round(driverPay * share);
-  const milesAll = legs.filter((l) => l.assigneeKind === "truck").reduce((a, l) => a + (l.plannedMiles ?? l.estMiles ?? 0), 0);
+  const { truckMiles } = await import("./pay-estimate");
+  const tm = truckMiles(legs);
+  const milesAll = tm.miles;
   const miles = Math.round(milesAll * share);
   const fuelCpm = company.settings.fuelCostCentsPerMile;
   const fuel = Math.round(milesAll * fuelCpm * share);
   // tolls and fees are typed on the load in its currency
   const extra = costOrderId === orderId ? usd(order.tollsFeesCents ?? 0, order.currency) : Math.round(toHome(costOrder.tollsFeesCents ?? 0, costOrder.currency, pickRate(costOrder.currency, null, fx).rateE4) * share) + usd(order.tollsFeesCents ?? 0, order.currency); // trip tolls shared, the shipment's own on top
   const cost = carrierCost + driverPay + fuel + extra;
-  return { currency: HOME_CURRENCY, orderCurrency: order.currency, fx: order.currency === HOME_CURRENCY ? null : rate, revenueOriginal, revenue, carrierCost, driverPay, driverPayEstimated, fuel, miles, fuelCpm, extra, cost, share, margin: revenue - cost, marginPct: revenue ? Math.round(((revenue - cost) / revenue) * 1000) / 10 : 0 };
+  return { currency: HOME_CURRENCY, orderCurrency: order.currency, fx: order.currency === HOME_CURRENCY ? null : rate, revenueOriginal, revenue, carrierCost, driverPay, driverPayEstimated, fuel, miles, milesEst: tm.est, fuelCpm, extra, cost, share, margin: revenue - cost, marginPct: revenue ? Math.round(((revenue - cost) / revenue) * 1000) / 10 : 0 };
 }
 
 export { diff };

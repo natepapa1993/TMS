@@ -10,7 +10,7 @@ export async function GET(_req: Request, { params }: RouteContext<"/api/settleme
   const { id } = await params;
   try {
     const pdf = await settlementPdf(ctx, id);
-    return new Response(new Uint8Array(pdf), { headers: { "Content-Type": "application/pdf", "Content-Disposition": `inline; filename="pay-statement.pdf"`, "Cache-Control": "private, no-store" } });
+    return new Response(new Uint8Array(pdf), { headers: { "Content-Type": "application/pdf", "Content-Disposition": `inline; filename="${pdf.fileName}"`, "Cache-Control": "private, no-store" } });
   } catch {
     return new Response("not found", { status: 404 });
   }

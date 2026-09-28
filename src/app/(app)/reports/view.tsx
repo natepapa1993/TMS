@@ -104,6 +104,7 @@ export function ReportsView({ dash, rows, by, preset, period, entityId, entities
       </div>
       <div className="text-footnote text-muted mb-3" data-testid="reports-fx">
         All figures in US dollars{dash.fxNote ? ` — converted: ${dash.fxNote}` : ""}. Revenue is net of credit memos{dash.creditedCents ? ` (${formatCents(dash.creditedCents)} credited)` : ""}.
+        {dash.fxRealizedCents ? ` Realized exchange ${dash.fxRealizedCents > 0 ? "gain" : "loss"} on pesos / Canadian dollars received: ${formatCents(Math.abs(dash.fxRealizedCents))} (the day's rate against the invoice's; not in the margin).` : ""}
       </div>
       {dash.arOpenCents > 0 && (
         <div className="text-callout text-muted mb-4">
@@ -165,7 +166,7 @@ export function ReportsView({ dash, rows, by, preset, period, entityId, entities
             <tfoot>
               <tr className="font-extrabold">
                 <td>Total</td>
-                <td className="text-right mono">{rows.reduce((a, r) => a + r.loads, 0)}</td>
+                <td className="text-right mono" title="Each load counted once, even when it is split between rows">{new Set(rows.flatMap((r) => r.orderIds)).size}</td>
                 <td className="text-right mono">{formatCents(rows.reduce((a, r) => a + r.revenueCents, 0))}</td>
                 <td className="text-right mono">{formatCents(rows.reduce((a, r) => a + r.costCents, 0))}</td>
                 <td className="text-right mono">{formatCents(rows.reduce((a, r) => a + r.marginCents, 0))}</td>
@@ -217,7 +218,7 @@ export function ReportsView({ dash, rows, by, preset, period, entityId, entities
               </tbody>
             </table>
           )}
-          <div className="help mt-2">Driver pay counts once a statement is approved; fuel is planned miles × the company cost per mile; carrier cost is the bill (or the tender rate until one exists).</div>
+          <div className="help mt-2">Driver pay is what the statement paid, or — until one has — an estimate from the driver&rsquo;s pay rule (a percent is of the leg&rsquo;s share of the load). Fuel is the miles on our trucks (typed, else estimated from the stops) × the company cost per mile. Carrier cost is the bill (or the tender rate until one exists). A load split between trucks, drivers or carriers is shared by its legs&rsquo; miles, so every table adds up to the tiles.</div>
         </Modal>
       )}
     </>

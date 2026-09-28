@@ -16,13 +16,14 @@ export default async function ArPage() {
   const ctx = await requireCtx();
   const [{ rows, totals, withFactor, home }, onAccount, customers] = await Promise.all([aging(ctx), onAccountByCustomer(ctx), list(ctx, "customer", { limit: 2000 })]);
   const canBill = ["owner", "billing"].includes(ctx.role);
+  const today = (await import("@/lib/time")).zonedDate(new Date(), (await (await import("@/domain/company")).getCompany(ctx)).timeZone);
   const cols = [["current", "Current"], ["1_30", "1–30"], ["31_60", "31–60"], ["61_90", "61–90"], ["90_plus", "90+"]] as const;
   const currencies = Object.keys(totals);
   const foreign = currencies.some((c) => c !== "USD");
   const factorTotal = Object.values(withFactor).some((v) => v);
   return (
     <div>
-      <PageHeader eyebrow="Billing" title="Receivables" actions={canBill ? <ApplyPaymentButton customers={customers.map((c) => ({ id: c.id, name: String(c.name) }))} role={ctx.role} /> : undefined}>
+      <PageHeader eyebrow="Billing" title="Receivables" actions={canBill ? <ApplyPaymentButton customers={customers.map((c) => ({ id: c.id, name: String(c.name) }))} role={ctx.role} today={today} /> : undefined}>
         Open invoices by customer and age, each currency on its own. Invoices the factor funded are left out (the customer owes the factor). Reminders go out at +3, +10 and +20 days past due unless a customer opts out.{" "}
         {factorTotal ? (
           <Link href="/billing/factoring" className="text-teal font-semibold">

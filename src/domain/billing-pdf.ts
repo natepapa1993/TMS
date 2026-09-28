@@ -326,7 +326,7 @@ export async function buildFactorSchedulePdf(input: { entity: string; factor: st
 }
 
 /** A driver's pay statement: earnings, reimbursements, deductions, net, how it was paid, and the year to date. */
-export async function buildSettlementPdf(p: { company: string; driver: string; periodStart: Date; periodEnd: Date; state: string; lines: { kind: string; description: string; amountCents: number }[]; grossCents: number; deductionsCents: number; netCents: number; paidAt: Date | null; method: string | null; reference: string | null; ytd: { grossCents: number; deductionsCents: number; netCents: number }; timeZone: string }): Promise<Uint8Array> {
+export async function buildSettlementPdf(p: { company: string; driver: string; periodStart: Date; periodEnd: Date; state: string; lines: { kind: string; description: string; amountCents: number }[]; grossCents: number; deductionsCents: number; netCents: number; paidAt: Date | null; method: string | null; reference: string | null; ytd: { grossCents: number; deductionsCents: number; netCents: number }; /** false: an open statement, not in the year to date yet */ ytdIncludesThis?: boolean; /** after this statement: advances left to recover, escrow held */ balances?: { label: string; cents: number }[]; timeZone: string }): Promise<Uint8Array> {
   const doc = await PDFDocument.create();
   const bold = await doc.embedFont(StandardFonts.HelveticaBold);
   const font = await doc.embedFont(StandardFonts.Helvetica);
@@ -361,9 +361,20 @@ export async function buildSettlementPdf(p: { company: string; driver: string; p
         page = doc.addPage([612, 792]);
         y = 740;
       }
-      draw(l.description.length > 80 ? `${l.description.slice(0, 78)}...` : l.description, 54, y, 9.5);
+      // a long line wraps onto a second one rather than cutting off what is still owed
+      const words = pdfText(l.description).split(" ");
+      const rows: string[] = [""];
+      for (const w of words) {
+        const next = rows[rows.length - 1] ? `${rows[rows.length - 1]} ${w}` : w;
+        if (font.widthOfTextAtSize(next, 9.5) > 400 && rows[rows.length - 1]) rows.push(w);
+        else rows[rows.length - 1] = next;
+      }
       right(money(l.amountCents, "USD"), 558, y, 9.5, l.amountCents < 0 ? font : bold);
-      y -= 15;
+      for (const r of rows) {
+        draw(r, 54, y, 9.5);
+        y -= 12;
+      }
+      y -= 3;
     }
     y -= 10;
   };
@@ -381,8 +392,17 @@ export async function buildSettlementPdf(p: { company: string; driver: string; p
     draw(label, 330, y, 10, b ? bold : font);
     right(money(v, "USD"), 558, y, 10, b ? bold : font);
   }
+  if (p.balances?.length) {
+    y -= 30;
+    draw("BALANCES AFTER THIS STATEMENT", 54, y, 9, bold, muted);
+    for (const b of p.balances) {
+      y -= 15;
+      draw(b.label.length > 80 ? `${b.label.slice(0, 78)}...` : b.label, 54, y, 9.5);
+      right(money(b.cents, "USD"), 558, y, 9.5, bold);
+    }
+  }
   y -= 34;
-  draw(`YEAR TO DATE (${p.periodStart.getUTCFullYear()})`, 54, y, 9, bold, muted);
+  draw(`YEAR TO DATE (${p.periodStart.getUTCFullYear()})${p.ytdIncludesThis === false ? " — paid statements; this one counts once approved" : ""}`, 54, y, 9, bold, muted);
   y -= 16;
   draw(`Gross ${money(p.ytd.grossCents, "USD")}    Deductions ${money(-p.ytd.deductionsCents, "USD")}    Net ${money(p.ytd.netCents, "USD")}`, 54, y, 10);
   draw("Questions about a line? Dispute it in the driver app and dispatch will answer there.", 54, 60, 8.5, font, muted);

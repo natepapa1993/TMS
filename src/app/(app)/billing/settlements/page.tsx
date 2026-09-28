@@ -21,7 +21,7 @@ export default async function SettlementsPage() {
       </PageHeader>
       <BillingNav />
       <div className="px-gutter pb-10">
-        <Settlements rows={JSON.parse(JSON.stringify(rows))} drivers={drivers.map((d) => ({ id: d.id, name: String(d.name), payType: String(d.payType), payRateCents: (d.payRateCents as number | null) ?? null }))} defaultWeek={startDate} role={ctx.role} ledger={JSON.parse(JSON.stringify(ledger))} now={new Date().toISOString()} />
+        <Settlements rows={JSON.parse(JSON.stringify(rows))} drivers={drivers.map((d) => ({ id: d.id, name: String(d.name), payType: String(d.payType), payRateCents: (d.payRateCents as number | null) ?? null }))} defaultWeek={startDate} role={ctx.role} ledger={JSON.parse(JSON.stringify(ledger))} now={new Date().toISOString()} timeZone={company.timeZone} />
       </div>
     </div>
   );

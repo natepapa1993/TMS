@@ -37,6 +37,8 @@ export type Dashboard = {
   fxNote: string;
   /** credit memos taken off the revenue */
   creditedCents: number;
+  /** realized exchange gain (+) or loss (−) on MXN / CAD money received in the period: the day's rate vs the invoice's */
+  fxRealizedCents: number;
 };
 
 function window(period: Period, tz: string) {
@@ -62,7 +64,7 @@ async function deliveredOrders(ctx: Ctx, period: Period, tz: string, entityId: s
   if (entityId) conds.push(eq(s.orders.billingEntityId, entityId));
   // trips carry no revenue of their own: their shipments do, and take the trip's costs by share
   const orders = (await db.select().from(s.orders).where(and(...conds))).filter((o) => o.kind !== "trip");
-  const empty = { orders, legs: [], charges: [], bills: [], settlementPay: new Map<string, number>(), stops: [], shares: new Map<string, { tripId: string; share: number }>(), invoices: [], credits: [] };
+  const empty = { orders, legs: [], charges: [], bills: [], settlementPay: new Map<string, number>(), estimatedPay: new Map<string, number>(), stops: [], shares: new Map<string, { tripId: string; share: number }>(), invoices: [], credits: [] };
   if (!orders.length) return empty;
   const tripIds = [...new Set(orders.filter((o) => o.kind === "shipment" && o.tripId).map((o) => o.tripId!))];
   const shares = new Map<string, { tripId: string; share: number }>();
@@ -84,7 +86,10 @@ async function deliveredOrders(ctx: Ctx, period: Period, tz: string, entityId: s
   const legIds = new Set(legs.map((l) => l.id));
   const settlementPay = new Map<string, number>(); // legId → driver pay
   for (const st of settlements) for (const l of st.lines) if (l.legId && legIds.has(l.legId) && l.amountCents > 0) settlementPay.set(l.legId, (settlementPay.get(l.legId) ?? 0) + l.amountCents);
-  return { orders, legs, charges, bills, settlementPay, stops, shares, invoices, credits };
+  // our drivers' legs no statement has paid yet: their pay estimated by the same rule the statement will use
+  const { estimateLegPay } = await import("./pay-estimate");
+  const estimatedPay = await estimateLegPay(ctx, legs.filter((l) => !settlementPay.has(l.id)));
+  return { orders, legs, charges, bills, settlementPay, estimatedPay, stops, shares, invoices, credits };
 }
 
 type Costed = { orderId: string; revenue: number; carrierCost: number; driverPay: number; fuel: number; extra: number; miles: number; cost: number; margin: number; credited: number; currency: string; fx: { currency: string; rateE4: number; source: FxRateSource } | null };
@@ -118,8 +123,9 @@ function costOrders(d: Awaited<ReturnType<typeof deliveredOrders>>, fuelCpm: num
     const billsHere = d.bills.filter((b) => b.orderId === costId);
     const other = (cents: number, cur: string) => toHome(cents, cur, pickRate(cur, null, fx).rateE4);
     const carrierCost = Math.round((billsHere.reduce((a, b) => a + other(b.paidCents ?? b.approvedCents ?? b.invoicedCents ?? b.expectedCents + b.accessorialCents, b.currency), 0) || legs.filter((l) => l.assigneeKind === "carrier" && l.state !== "cancelled").reduce((a, l) => a + other(l.carrierRateCents ?? 0, l.carrierRateCurrency ?? "USD"), 0)) * share);
-    const driverPay = Math.round(legs.reduce((a, l) => a + (d.settlementPay.get(l.id) ?? 0), 0) * share);
-    const milesAll = legs.filter((l) => l.assigneeKind === "truck").reduce((a, l) => a + (l.plannedMiles ?? l.estMiles ?? 0), 0);
+    // driver pay: what statements paid for the leg, else the estimate (miles typed or est., % on the leg's share)
+    const driverPay = Math.round(legs.reduce((a, l) => a + (d.settlementPay.get(l.id) ?? d.estimatedPay.get(l.id) ?? 0), 0) * share);
+    const milesAll = legs.filter((l) => l.assigneeKind === "truck" && l.state !== "cancelled").reduce((a, l) => a + (l.plannedMiles ?? l.estMiles ?? 0), 0);
     const miles = Math.round(milesAll * share);
     const fuel = Math.round(milesAll * fuelCpm * share);
     const extra = usd(o.tollsFeesCents ?? 0, o.currency);
@@ -166,6 +172,10 @@ export async function dashboard(ctx: Ctx, period: Period, entityId: string | nul
   const expired = compliance.reduce((a, c) => a + c.expired.length, 0);
   const expiring = compliance.reduce((a, c) => a + c.expiring.length, 0);
   const missing = compliance.reduce((a, c) => a + c.missing.length, 0);
+  // money received in pesos or Canadian dollars at another rate than its invoice's
+  const { from: pFrom, to: pTo } = window(period, tz);
+  const fxRows = await db.select({ amountCents: s.receipts.amountCents, rx: s.receipts.exchangeRate, currency: s.invoices.currency, invRate: s.invoices.exchangeRate }).from(s.receipts).innerJoin(s.invoices, eq(s.invoices.id, s.receipts.invoiceId)).where(and(eq(s.receipts.tenantId, ctx.tenantId), gte(s.receipts.receivedAt, pFrom), lt(s.receipts.receivedAt, pTo), sql`${s.receipts.exchangeRate} is not null`, sql`${s.invoices.currency} <> 'USD'`, ...(entityId ? [eq(s.invoices.entityId, entityId)] : [])));
+  const fxRealizedCents = fxRows.reduce((a, r) => a + toHome(r.amountCents, r.currency, r.rx) - toHome(r.amountCents, r.currency, pickRate(r.currency, r.invRate, company.settings.fx).rateE4), 0);
   const arOpenCents = ar.home.openCents;
   const arOverdueCents = ar.home.overdueCents;
   return {
@@ -185,10 +195,25 @@ export async function dashboard(ctx: Ctx, period: Period, entityId: string | nul
     arOverdueCents,
     fxNote: fxNote([...costed.flatMap((c) => (c.fx ? [c.fx] : [])), ...ar.home.rates]),
     creditedCents: costed.reduce((a, c) => a + c.credited, 0),
+    fxRealizedCents,
   };
 }
 
 // ---------- breakdowns (drill-down tables) ----------
+
+/** Split cents by weights so the parts add up to the total exactly (largest remainder). Pure. */
+export function splitCents(total: number, weights: number[]): number[] {
+  if (!weights.length) return [];
+  const sum = weights.reduce((a, w) => a + w, 0);
+  const ws = sum > 0 ? weights : weights.map(() => 1);
+  const all = sum > 0 ? sum : ws.length;
+  const raw = ws.map((w) => (total * w) / all);
+  const out = raw.map(Math.floor);
+  let left = total - out.reduce((a, x) => a + x, 0);
+  const order = raw.map((r, i) => ({ i, frac: r - Math.floor(r) })).sort((p, q) => q.frac - p.frac);
+  for (let k = 0; left > 0 && k < order.length; k++, left--) out[order[k].i]++;
+  return out;
+}
 
 export type BreakdownRow = { key: string; label: string; loads: number; revenueCents: number; costCents: number; marginCents: number; marginPct: number; miles: number; orderIds: string[] };
 
@@ -209,21 +234,41 @@ export async function breakdown(ctx: Ctx, by: Breakdown, period: Period, entityI
   ]);
   const name = (list: { id: string; name?: string; unitNumber?: string }[], id: string | null) => (id ? (list.find((x) => x.id === id)?.name ?? list.find((x) => x.id === id)?.unitNumber ?? "?") : "—");
   const rows = new Map<string, BreakdownRow>();
-  const add = (key: string, label: string, c: Costed, share = 1) => {
+  // part: this row's piece of the load (revenue, cost and miles), when a load is split between rows
+  const add = (key: string, label: string, c: Costed, part?: { revenue: number; cost: number; miles: number }) => {
     const r = rows.get(key) ?? { key, label, loads: 0, revenueCents: 0, costCents: 0, marginCents: 0, marginPct: 0, miles: 0, orderIds: [] };
     if (!r.orderIds.includes(c.orderId)) {
       r.orderIds.push(c.orderId);
       r.loads++;
     }
-    r.revenueCents += Math.round(c.revenue * share);
-    r.costCents += Math.round(c.cost * share);
-    r.marginCents += Math.round(c.margin * share);
-    r.miles += Math.round(c.miles * share);
+    const p = part ?? { revenue: c.revenue, cost: c.cost, miles: c.miles };
+    r.revenueCents += p.revenue;
+    r.costCents += p.cost;
+    r.marginCents += p.revenue - p.cost;
+    r.miles += p.miles;
     rows.set(key, r);
+  };
+  const mi = (l: (typeof d.legs)[number]) => l.plannedMiles ?? l.estMiles ?? 0;
+  /**
+   * A load run by more than one of ours (two trucks, two drivers, two carriers) is split between them by
+   * their legs' miles (evenly when a leg has none), to the cent: the rows add up to the load, and the
+   * table's total to the tiles above it.
+   */
+  const split = (c: Costed, groups: { key: string; label: string; legs: (typeof d.legs)[number][] }[]) => {
+    const w = groups.map((g) => g.legs.reduce((a, l) => a + mi(l), 0));
+    const weights = w.every((x) => x > 0) ? w : groups.map(() => 1);
+    const rev = splitCents(c.revenue, weights);
+    const cost = splitCents(c.cost, weights);
+    groups.forEach((g, i) => add(g.key, g.label, c, { revenue: rev[i], cost: cost[i], miles: Math.round(w[i] * (d.shares.get(c.orderId)?.share ?? 1)) }));
+  };
+  const groupBy = (legs: (typeof d.legs)[number][], id: (l: (typeof d.legs)[number]) => string, label: (id: string) => string) => {
+    const m = new Map<string, (typeof d.legs)[number][]>();
+    for (const l of legs) m.set(id(l), [...(m.get(id(l)) ?? []), l]);
+    return [...m.entries()].map(([k, ls]) => ({ key: k, label: label(k), legs: ls }));
   };
   for (const c of costed) {
     const o = d.orders.find((x) => x.id === c.orderId)!;
-    const legs = d.legs.filter((l) => l.orderId === (d.shares.get(o.id)?.tripId ?? o.id)); // a shipment rides its trip's legs
+    const legs = d.legs.filter((l) => l.orderId === (d.shares.get(o.id)?.tripId ?? o.id) && l.state !== "cancelled"); // a shipment rides its trip's legs
     if (by === "customer") add(o.customerId ?? o.brokerId ?? "none", name(customers, o.customerId ?? o.brokerId), c);
     else if (by === "week") {
       const w = weekOfZoned(o.deliveredAt!, tz);
@@ -236,23 +281,21 @@ export async function breakdown(ctx: Ctx, by: Breakdown, period: Period, entityI
       add(`${place(f)}→${place(l)}`, `${place(f)} → ${place(l)}`, c);
     } else if (by === "truck") {
       const ours = legs.filter((l) => l.assigneeKind === "truck" && l.truckId);
-      if (!ours.length) continue;
-      const share = 1 / ours.length; // an order run by two units splits evenly
-      for (const l of ours) add(l.truckId!, `Unit ${name(trucks, l.truckId)}`, c, share);
+      // a load no truck of ours ran still counts: the rows add up to the tiles
+      if (!ours.length) add("~none", "No truck of ours (carriers ran it)", c);
+      else split(c, groupBy(ours, (l) => l.truckId!, (id) => `Unit ${name(trucks, id)}`));
     } else if (by === "driver") {
       const ours = legs.filter((l) => l.assigneeKind === "truck" && l.driverId);
-      if (!ours.length) continue;
-      const share = 1 / ours.length;
-      for (const l of ours) add(l.driverId!, name(drivers, l.driverId), c, share);
+      if (!ours.length) add("~none", "No driver of ours (carriers ran it)", c);
+      else split(c, groupBy(ours, (l) => l.driverId!, (id) => name(drivers, id)));
     } else if (by === "carrier") {
       const theirs = legs.filter((l) => l.assigneeKind === "carrier" && l.carrierId);
-      if (!theirs.length) continue;
-      const share = 1 / theirs.length;
-      for (const l of theirs) add(l.carrierId!, name(carriers, l.carrierId), c, share);
+      if (!theirs.length) add("~none", "Our own trucks (no carrier)", c);
+      else split(c, groupBy(theirs, (l) => l.carrierId!, (id) => name(carriers, id)));
     }
   }
   const out = [...rows.values()].map((r) => ({ ...r, marginPct: r.revenueCents ? Math.round((r.marginCents / r.revenueCents) * 1000) / 10 : 0 }));
-  return out.sort((p, q) => (by === "week" ? p.key.localeCompare(q.key) : q.revenueCents - p.revenueCents));
+  return out.sort((p, q) => (p.key === "~none" ? 1 : q.key === "~none" ? -1 : by === "week" ? p.key.localeCompare(q.key) : q.revenueCents - p.revenueCents));
 }
 
 /** Order-level detail for a breakdown row (the drill-down). */

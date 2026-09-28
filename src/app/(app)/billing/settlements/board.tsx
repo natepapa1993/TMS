@@ -4,6 +4,7 @@ import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Modal, Pill, Toast, useToast } from "@/components/ui";
 import { formatCents } from "@/data/fields";
+import { zonedDate } from "@/lib/time";
 import type { SettlementLine } from "@/db/schema";
 import type { PayItemLedgerRow } from "@/domain/billing";
 import { buildSettlementAction, settlementTransitionAction, addSettlementLineAction, addPayItemAction, settlementRunAction, approveSettlementsAction, paySettlementsAction } from "../actions";
@@ -12,7 +13,9 @@ type Row = { st: { id: string; driverId: string; periodStart: string; periodEnd:
 type Driver = { id: string; name: string; payType: string; payRateCents: number | null };
 const TONE: Record<string, "slate" | "teal" | "amber" | "green"> = { open: "slate", reviewed: "amber", approved: "teal", paid: "green" };
 
-export function Settlements({ rows, drivers, defaultWeek, role, ledger = [], now }: { rows: Row[]; drivers: Driver[]; defaultWeek: string; role: string; ledger?: PayItemLedgerRow[]; now?: string }) {
+export function Settlements({ rows, drivers, defaultWeek, role, ledger = [], now, timeZone = "America/Chicago" }: { rows: Row[]; drivers: Driver[]; defaultWeek: string; role: string; ledger?: PayItemLedgerRow[]; now?: string; timeZone?: string }) {
+  // the last day of a statement's week, in the company's zone (the week ends at midnight starting the next Sunday)
+  const lastDay = (end: string) => zonedDate(new Date(new Date(end).getTime() - 1), timeZone);
   const router = useRouter();
   const t = useToast();
   const [pending, start] = useTransition();
@@ -77,7 +80,8 @@ export function Settlements({ rows, drivers, defaultWeek, role, ledger = [], now
                 const errs = r.data.filter((x) => x.state === "error");
                 const skipped = r.data.filter((x) => x.state === "skipped");
                 const done = r.data.length - built - errs.length - skipped.length;
-                t.ok(r.data.length ? `${built} statement${built === 1 ? "" : "s"} built${done ? `, ${done} already approved or paid` : ""}${skipped.length ? ` · no pay this week (deductions wait): ${skipped.map((x) => x.driver).join(", ")}` : ""}${errs.length ? ` · ${errs.length} failed: ${errs.map((x) => `${x.driver} (${x.note})`).join("; ")}` : ""}` : "Nobody ran a leg that week");
+                const kept = r.data.filter((x) => x.keptManual);
+                t.ok(r.data.length ? `${built} statement${built === 1 ? "" : "s"} built${done ? `, ${done} already approved or paid` : ""}${kept.length ? ` · kept the lines added by hand: ${kept.map((x) => `${x.driver} (${x.keptManual})`).join(", ")}` : ""}${skipped.length ? ` · no pay this week (deductions wait): ${skipped.map((x) => x.driver).join(", ")}` : ""}${errs.length ? ` · ${errs.length} failed: ${errs.map((x) => `${x.driver} (${x.note})`).join("; ")}` : ""}` : "Nobody ran a leg that week");
                 router.refresh();
               })
             }
@@ -133,7 +137,7 @@ export function Settlements({ rows, drivers, defaultWeek, role, ledger = [], now
                   )}
                   <td className="font-bold">{r.driverName}</td>
                   <td className="text-callout">
-                    {r.st.periodStart.slice(0, 10)}
+                    {zonedDate(new Date(r.st.periodStart), timeZone)}
                     {r.st.state !== "paid" && r.st.state !== "approved" && unfinished(r) && <div className="text-footnote text-muted">week in progress</div>}
                   </td>
                   <td className="text-muted">
@@ -168,7 +172,7 @@ export function Settlements({ rows, drivers, defaultWeek, role, ledger = [], now
           open
           onClose={() => setOpen(null)}
           wide
-          title={`${cur.driverName} · week of ${cur.st.periodStart.slice(0, 10)}`}
+          title={`${cur.driverName} · week of ${zonedDate(new Date(cur.st.periodStart), timeZone)}`}
           footer={
             can ? (
               <>
@@ -208,7 +212,7 @@ export function Settlements({ rows, drivers, defaultWeek, role, ledger = [], now
         >
           {cur.st.state !== "paid" && cur.st.state !== "approved" && (unfinished(cur) || blockers(cur).length > 0) && (
             <div className="rounded-lg bg-amber-soft text-amber px-3 py-2 text-callout font-semibold mb-3" data-testid="settlement-blockers">
-              {[...(unfinished(cur) ? [`The week isn't over (it ends ${new Date(new Date(cur.st.periodEnd).getTime() - 1).toISOString().slice(0, 10)}): approve it after, so a late leg still makes it on.${role === "owner" ? " To pay early (a final check), approve early with a reason." : ""}`] : []), ...blockers(cur)].map((b) => (
+              {[...(unfinished(cur) ? [`The week isn't over (its last day is ${lastDay(cur.st.periodEnd)}): approve it after, so a late leg still makes it on.${role === "owner" ? " To pay early (a final check), approve early with a reason." : ""}`] : []), ...blockers(cur)].map((b) => (
                 <div key={b}>{b}</div>
               ))}
             </div>

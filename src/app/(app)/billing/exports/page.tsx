@@ -26,7 +26,7 @@ export default async function ExportsPage() {
       </PageHeader>
       <BillingNav />
       <div className="px-gutter pb-10">
-        <Exports runs={JSON.parse(JSON.stringify(runs))} defaults={{ from: first, to: today }} role={ctx.role} />
+        <Exports runs={JSON.parse(JSON.stringify(runs))} defaults={{ from: first, to: today }} role={ctx.role} timeZone={company.timeZone} />
       </div>
     </div>
   );

@@ -10,6 +10,7 @@ import { invoiceById } from "@/domain/billing";
 import { deliveryForInvoice, DELIVERY_LABEL } from "@/domain/invoicing";
 import { PageHeader } from "@/components/page-header";
 import { Pill } from "@/components/ui";
+import { NOT_EMAILED, notEmailed } from "@/domain/delivery-rules";
 import { formatCents } from "@/data/fields";
 import { InvoiceActions, SendCreditMemo } from "./actions-panel";
 import { getCompany } from "@/domain/company";
@@ -45,6 +46,11 @@ export default async function InvoicePage({ params }: PageProps<"/billing/invoic
           <span className="flex items-center gap-3">
             <span className="mono">{inv.number ?? "Draft invoice"}</span>
             <Pill tone={TONE[inv.state]}>{inv.state.replace("_", " ")}</Pill>
+            {notEmailed(inv) && (
+              <Pill tone="amber" title={NOT_EMAILED}>
+                Not emailed — connect email in Settings → Integrations
+              </Pill>
+            )}
             {inv.factored && <Pill tone="navy">Factored</Pill>}
             {orders.length > 1 && <Pill tone="blue">Summary · {orders.length} loads</Pill>}
             {inv.kind === "supplemental" && (inv.supplementOf ? (
@@ -169,12 +175,13 @@ export default async function InvoicePage({ params }: PageProps<"/billing/invoic
           )}
           {inv.deliveries.length > 0 && (
             <div className="card p-4" data-testid="invoice-deliveries">
-              <div className="eyebrow mb-2">Sent</div>
+              <div className="eyebrow mb-2">{inv.deliveries.every((d) => d.logged) ? "Not emailed yet" : "Sent"}</div>
               <ul className="space-y-1 text-callout">
                 {inv.deliveries.map((d, i) => (
                   <li key={i} className="flex justify-between gap-3">
                     <span>
                       <span className="font-semibold">{DELIVERY_LABEL[d.method as keyof typeof DELIVERY_LABEL] ?? d.method}</span>
+                      {d.logged ? <span className="text-amber font-semibold"> · logged, not emailed</span> : null}
                       {d.to ? ` · ${d.to}` : ""}
                       {d.reference ? <span className="text-muted"> — {d.reference}</span> : null}
                     </span>

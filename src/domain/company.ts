@@ -7,11 +7,11 @@ import { ValidationError } from "./orders";
 import { parseRate, type FxRates } from "./fx-rules";
 
 /** Company-wide settings (spec §1.1 "everything is master data"): the numbers the P&L, digests and close use. */
-export type QbAccounts = { arAccount: string; apAccount: string; bankAccount: string; depositAccount: string; incomeAccount: string; fuelIncomeAccount: string; accessorialIncomeAccount: string; carrierExpenseAccount: string; driverPayAccount: string; reimbursementAccount: string; deductionAccount: string; advanceAccount: string; escrowAccount: string; factorReserveAccount: string; factoringFeeAccount: string };
+export type QbAccounts = { arAccount: string; apAccount: string; bankAccount: string; depositAccount: string; incomeAccount: string; fuelIncomeAccount: string; accessorialIncomeAccount: string; carrierExpenseAccount: string; driverPayAccount: string; reimbursementAccount: string; deductionAccount: string; advanceAccount: string; escrowAccount: string; factorReserveAccount: string; factoringFeeAccount: string; fxGainLossAccount: string };
 export type CompanySettings = { fuelCostCentsPerMile: number; closedThrough: string | null; qb: QbAccounts; dispatchPhone: string | null; fx: FxRates };
 
 export const DEFAULT_FUEL_CPM = 65;
-export const DEFAULT_QB: QbAccounts = { arAccount: "Accounts Receivable", apAccount: "Accounts Payable", bankAccount: "Checking", depositAccount: "Undeposited Funds", incomeAccount: "Freight Income", fuelIncomeAccount: "Fuel Surcharge Income", accessorialIncomeAccount: "Accessorial Income", carrierExpenseAccount: "Purchased Transportation", driverPayAccount: "Driver Pay", reimbursementAccount: "Driver Reimbursements", deductionAccount: "Driver Deductions", advanceAccount: "Driver Advances", escrowAccount: "Driver Escrow", factorReserveAccount: "Factor Reserve", factoringFeeAccount: "Factoring Fees" };
+export const DEFAULT_QB: QbAccounts = { arAccount: "Accounts Receivable", apAccount: "Accounts Payable", bankAccount: "Checking", depositAccount: "Undeposited Funds", incomeAccount: "Freight Income", fuelIncomeAccount: "Fuel Surcharge Income", accessorialIncomeAccount: "Accessorial Income", carrierExpenseAccount: "Purchased Transportation", driverPayAccount: "Driver Pay", reimbursementAccount: "Driver Reimbursements", deductionAccount: "Driver Deductions", advanceAccount: "Driver Advances", escrowAccount: "Driver Escrow", factorReserveAccount: "Factor Reserve", factoringFeeAccount: "Factoring Fees", fxGainLossAccount: "Exchange Gain or Loss" };
 
 /** The company's latest exchange rates (MXN / CAD per 1 USD × 10,000), from Settings or the last invoice issued with one. */
 function readFx(settings: Record<string, unknown>): FxRates {

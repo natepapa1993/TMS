@@ -1,7 +1,7 @@
 // Features: F-7 billing — charges, queue with docs + rate-con hard stop, invoice lifecycle with locked snapshot and entity numbering, receipts, void/credit/dispute, AR aging + reminders, carrier bills 3-way + short-pay + pay-when-paid + 1099, driver settlements + deductions + disputes, P&L, month-end close F-4.9 F-26.2
 import { describe, it, expect, beforeEach, vi, afterEach } from "vitest";
 import { PDFDocument } from "pdf-lib";
-import { truncateAll, makeTenant } from "@/test/helpers";
+import { truncateAll, makeTenant, connectEmail } from "@/test/helpers";
 import { create, update } from "@/data/records";
 import { db } from "@/db/client";
 import { outbox, billingEntities } from "@/db/schema";
@@ -20,6 +20,7 @@ const pdf = Buffer.from("%PDF-1.4 fixture");
 let a: Awaited<ReturnType<typeof makeTenant>>;
 let f: { entity: string; rxo: string; garza: string; t2104: string; reyes: string };
 
+afterEach(() => vi.unstubAllGlobals());
 beforeEach(async () => {
   await truncateAll();
   a = await makeTenant("24:7");
@@ -129,8 +130,15 @@ describe("invoice lifecycle (7.1, 7.4)", () => {
     await expect(B.removeCharge(a, (await B.chargesFor(a, o.order.id)).find((c) => c.kind === "linehaul")!.id)).rejects.toThrow(/on an invoice/);
     await B.removeCharge(a, late.id);
 
+    // with no email provider the send is only logged, and the invoice says so: it stays issued
+    const logged = await B.sendInvoice(a, inv.id);
+    expect(logged).toMatchObject({ state: "issued", sentAt: null });
+    expect(logged.deliveries.at(-1)).toMatchObject({ method: "email", logged: true, reference: "Logged — not emailed (connect email in Settings → Integrations)" });
+    expect((await B.listInvoices(a, { view: "not_emailed" })).map((x) => x.id)).toEqual([inv.id]);
+    await connectEmail(a);
     const sent = await B.sendInvoice(a, inv.id);
     expect(sent.state).toBe("sent");
+    expect(await B.listInvoices(a, { view: "not_emailed" })).toEqual([]);
     expect(sent.sentTo).toBe("ap@rxo.test");
     const mail = await db.select().from(outbox).where(eq(outbox.subjectId, inv.id));
     expect(mail[0].body).toContain("247-001001");
@@ -181,11 +189,14 @@ describe("invoice lifecycle (7.1, 7.4)", () => {
 
   it("month-end close blocks issuing, voiding and crediting in the closed period", async () => {
     const { inv } = await readyInvoice();
-    await B.closePeriod(a, new Date(Date.now() + 5000));
-    await expect(B.issueInvoice(a, inv.id)).rejects.toThrow(/closed/);
-    const issued = await B.issueInvoice(a, inv.id, { issuedAt: new Date(Date.now() + 60_000) });
+    // only a day that has ended: not today, not a typo of a later day
+    await expect(B.closePeriod(a, new Date())).rejects.toThrow(/hasn't ended/);
+    await expect(B.closePeriod(a, new Date(Date.now() + 90 * 86400_000))).rejects.toThrow(/in the future/);
+    await B.closePeriod(a, new Date(Date.now() - 86400_000));
+    await expect(B.issueInvoice(a, inv.id, { issuedAt: new Date(Date.now() - 2 * 86400_000) })).rejects.toThrow(/closed/);
+    const issued = await B.issueInvoice(a, inv.id);
     expect(issued.state).toBe("issued");
-    await expect(B.closePeriod(a, new Date(Date.now() - 86400_000))).rejects.toThrow(/re-opened/);
+    await expect(B.closePeriod(a, new Date(Date.now() - 3 * 86400_000))).rejects.toThrow(/re-opened/);
   });
 
   it("consolidated invoice for one customer, refused across customers; MXN needs an exchange rate", async () => {
@@ -244,6 +255,7 @@ describe("AR (7.5)", () => {
   });
 
   it("aging buckets by customer, statement PDF, reminders once per step", async () => {
+    await connectEmail(a);
     const { inv } = await readyInvoice(100000);
     await B.issueInvoice(a, inv.id, { issuedAt: new Date(Date.now() - 45 * 86400_000) });
     await B.sendInvoice(a, inv.id);

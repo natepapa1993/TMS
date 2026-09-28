@@ -42,6 +42,7 @@ export default async function TodayPage() {
       { label: "Overrides this week", value: String(d.approvals.overrides), sub: d.approvals.overrides ? "paperwork and schedule blocks someone waved through — review them" : "nobody overrode a block", href: "/compliance/overrides", tone: d.approvals.overrides ? "amber" : undefined, testid: "approve-overrides" },
       { label: "Renewals to check", value: String(d.approvals.renewals), sub: d.approvals.renewals ? "documents drivers sent from their phones" : "nothing sent in", href: "/compliance", tone: d.approvals.renewals ? "amber" : undefined, testid: "approve-renewals" },
       ...(d.billing ? [{ label: "Ready to bill", value: String(d.billing.readyToBill), sub: d.billing.missingPod ? `${d.billing.missingPod} more delivered without a POD` : "delivered with the POD on file", href: "/billing", tone: d.billing.missingPod ? ("amber" as const) : undefined, testid: "ready-to-bill" }] : []),
+      ...(d.billing?.notEmailed ? [{ label: "Invoices not emailed", value: String(d.billing.notEmailed), sub: "no email provider is connected: they were only logged — connect email in Settings → Integrations, or send them another way", href: "/billing/invoices?view=not_emailed", tone: "amber" as const, testid: "not-emailed" }] : []),
     ],
   });
   groups.push({

@@ -117,7 +117,7 @@ describe("QuickBooks export", () => {
     await B.recordReceipt(a, inv.id, { amountCents: 100000, method: "check", reference: "1234", receivedAt: new Date() });
     const run = await A.createExport(a, { format: "qbo", ...period(), onlyNew: true });
     const { files } = await A.exportFiles(a, run.id);
-    expect(files.map((x) => x.name.replace(/^.*-/, ""))).toEqual(["invoices.csv", "bills.csv", "payments.csv", "credits.csv", "journal.csv"]);
+    expect(files.map((x) => x.name.replace(/^.*-/, ""))).toEqual(["invoices.csv", "bills.csv", "payments.csv", "credits.csv", "journal.csv", "applications.csv"]);
     const invCsv = files[0].body.split("\r\n");
     expect(invCsv[0]).toBe("InvoiceNo,Customer,InvoiceDate,DueDate,Terms,Memo,Item(Product/Service),ItemDescription,ItemQuantity,ItemRate,ItemAmount,Currency");
     expect(invCsv[1]).toMatch(/^247-000001,RXO,\d{2}\/\d{2}\/\d{4},\d{2}\/\d{2}\/\d{4},Net 30,26-00001,Line haul,Line haul,1,1000\.00,1000\.00,USD$/);

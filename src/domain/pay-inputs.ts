@@ -4,7 +4,7 @@ import * as s from "@/db/schema";
 import { coords, roadMiles } from "@/lib/geo";
 import type { Ctx } from "@/lib/context";
 import type { LegPayInput } from "./pay-plans";
-import { PASS_THROUGH_KINDS } from "./pay-plans-pure";
+import { PASS_THROUGH_KINDS, legShare } from "./pay-plans-pure";
 import { pickRate, toHome } from "./fx-rules";
 import { getCompany } from "./company";
 import { loadRate } from "./billing";
@@ -20,7 +20,7 @@ type Leg = typeof s.legs.$inferSelect;
 export async function payInputs(ctx: Ctx, driverId: string, legs: Leg[]): Promise<LegPayInput[]> {
   if (!legs.length) return [];
   const orderIds = [...new Set(legs.map((l) => l.orderId))];
-  const [orders, stops, charges, allMine, invoices, company] = await Promise.all([
+  const [orders, stops, charges, allMine, invoices, company, loadLegs] = await Promise.all([
     db.select().from(s.orders).where(inArray(s.orders.id, orderIds)),
     db.select().from(s.stops).where(and(eq(s.stops.tenantId, ctx.tenantId), inArray(s.stops.orderId, orderIds))),
     db.select({ orderId: s.charges.orderId, kind: s.charges.kind, amountCents: s.charges.amountCents, currency: s.charges.currency, billable: s.charges.billable, approvalState: s.charges.approvalState }).from(s.charges).where(and(eq(s.charges.tenantId, ctx.tenantId), inArray(s.charges.orderId, orderIds))),
@@ -28,6 +28,8 @@ export async function payInputs(ctx: Ctx, driverId: string, legs: Leg[]): Promis
     db.select({ id: s.legs.id, orderId: s.legs.orderId, seq: s.legs.seq }).from(s.legs).where(and(eq(s.legs.tenantId, ctx.tenantId), inArray(s.legs.orderId, orderIds), eq(s.legs.state, "completed"), or(eq(s.legs.driverId, driverId), eq(s.legs.coDriverId, driverId)))),
     db.select({ orderIds: s.invoices.orderIds, state: s.invoices.state, kind: s.invoices.kind, currency: s.invoices.currency, exchangeRate: s.invoices.exchangeRate, issuedAt: s.invoices.issuedAt }).from(s.invoices).where(and(eq(s.invoices.tenantId, ctx.tenantId), arrayOverlaps(s.invoices.orderIds, orderIds))),
     getCompany(ctx),
+    // every leg of these loads, whoever runs it: a percent is of this leg's share of the load
+    db.select({ id: s.legs.id, orderId: s.legs.orderId, type: s.legs.type, state: s.legs.state, plannedMiles: s.legs.plannedMiles, estMiles: s.legs.estMiles }).from(s.legs).where(and(eq(s.legs.tenantId, ctx.tenantId), inArray(s.legs.orderId, orderIds))),
   ]);
   const stop = new Map(stops.map((x) => [x.id, x]));
   const out: LegPayInput[] = [];
@@ -73,8 +75,10 @@ export async function payInputs(ctx: Ctx, driverId: string, legs: Leg[]): Promis
       hours: hours == null ? null : Math.round(hours * 100) / 100,
       linehaulCents: order.rateTbd || order.rateCents == null ? null : usd(order.rateCents, order.currency),
       billedCents: billed || null,
-      firstLegOfLoad: mineOnLoad[0]?.id === leg.id,
+      // a leg not completed yet (the P&L estimate) is the first when the driver has none done on the load
+      firstLegOfLoad: mineOnLoad.some((x) => x.id === leg.id) ? mineOnLoad[0].id === leg.id : !mineOnLoad.length,
       team: !!leg.coDriverId,
+      loadShare: legShare(leg.id, loadLegs.filter((x) => x.orderId === leg.orderId)),
     });
   }
   return out;

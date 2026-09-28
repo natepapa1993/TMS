@@ -65,7 +65,7 @@ export type InvoiceSnapshot = {
   correctedFromFactor?: string | null;
 };
 
-export type InvoiceDelivery = { at: string; method: string; to: string | null; reference: string | null; by: string | null; batchId?: string | null };
+export type InvoiceDelivery = { at: string; method: string; to: string | null; reference: string | null; by: string | null; batchId?: string | null; /** no email provider is connected: the email was written to the log, never sent */ logged?: boolean };
 
 export const invoices = pgTable(
   "invoices",
@@ -126,6 +126,7 @@ export const receipts = pgTable(
     note: text("note"),
     exportedAt: timestamp("exported_at", { withTimezone: true }),
     paymentId: text("payment_id"), // the check / ACH it came from, when one payment paid several invoices
+    exchangeRate: integer("exchange_rate_e4"), // MXN / CAD money: the rate the day it arrived (× 10,000, per USD); the invoice's rate vs this one is the realized exchange gain or loss
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     createdBy: text("created_by"),
   },
@@ -147,6 +148,7 @@ export const payments = pgTable(
     remittance: text("remittance"), // the remittance advice as pasted
     note: text("note"),
     appliedCents: integer("applied_cents").notNull().default(0),
+    exchangeRate: integer("exchange_rate_e4"), // MXN / CAD money: the rate the day it arrived (× 10,000, per USD)
     exportedAt: timestamp("exported_at", { withTimezone: true }), // last accounting export that carried it (one deposit with its applications)
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     createdBy: text("created_by"),
@@ -203,6 +205,7 @@ export const carrierBills = pgTable(
     method: text("method"),
     reference: text("reference"),
     quickPayPct: integer("quick_pay_pct"), // basis points
+    exchangeRate: integer("exchange_rate_e4"), // a MXN / CAD bill: the rate the day it was approved (× 10,000, per USD) — the export converts at it, so a re-download never changes
     exportedAt: timestamp("exported_at", { withTimezone: true }),
     ...audit(),
   },
@@ -256,6 +259,7 @@ export const payItems = pgTable(
     active: boolean("active").notNull().default(true),
     originalCents: integer("original_cents"), // what there was to recover when it was added (advances, deductions with a total)
     carriedFrom: text("carried_from"), // the statement a shortfall carried over from
+    exportedAt: timestamp("exported_at", { withTimezone: true }), // an advance: the accounting export that carried the money paid out
     ...audit(),
   },
   (t) => [index("pay_items_driver").on(t.tenantId, t.driverId, t.active)],
@@ -272,7 +276,7 @@ export const accountingExports = pgTable(
     toDate: text("to_date").notNull(),
     onlyNew: boolean("only_new").notNull().default(true),
     counts: jsonb("counts").$type<Record<string, number>>().notNull().default(sql`'{}'::jsonb`),
-    recordIds: jsonb("record_ids").$type<{ invoices: string[]; receipts: string[]; bills: string[]; settlements: string[]; credits?: string[]; payments?: string[]; factor?: string[] }>().notNull().default(sql`'{"invoices":[],"receipts":[],"bills":[],"settlements":[]}'::jsonb`),
+    recordIds: jsonb("record_ids").$type<{ invoices: string[]; receipts: string[]; bills: string[]; settlements: string[]; credits?: string[]; payments?: string[]; factor?: string[]; /** money on account applied after its payment was exported (receipt ids) */ applications?: string[]; /** advances paid out (pay item ids) */ advances?: string[] }>().notNull().default(sql`'{"invoices":[],"receipts":[],"bills":[],"settlements":[]}'::jsonb`),
     reopenedAt: timestamp("reopened_at", { withTimezone: true }),
     fileName: text("file_name").notNull(),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),

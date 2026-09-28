@@ -903,6 +903,23 @@ function AssignModal({ leg, order, data, onClose, onDone }: { leg: Leg; order: O
   const [rateCur, setRateCur] = useState(leg.carrierRateCurrency ?? (leg.carrierId ? curFor(leg.carrierId) : leg.type === "mx" ? "MXN" : "USD"));
   const [lane, setLane] = useState<{ lane: string; rateCents: number; fuelRule: string; fuelValue: number | null; validTo: string | null } | null>(null);
   const [miles, setMiles] = useState(leg.plannedMiles != null ? String(leg.plannedMiles) : "");
+  // the margin with every other leg's cost (carriers, our drivers' pay est., fuel) and, on our truck, this leg's
+  const [mp, setMp] = useState<import("@/domain/pay-estimate").MarginPreview | null>(null);
+  const milesTyped = miles.trim() ? Number(miles.replace(/[,\s]/g, "")) : null;
+  useEffect(() => {
+    let live = true;
+    const t = setTimeout(() => {
+      const q = new URLSearchParams({ driverId: pick?.driverId ?? "", coDriverId: pick?.coDriverId ?? "", miles: milesTyped != null && Number.isFinite(milesTyped) ? String(milesTyped) : "" });
+      fetch(`/api/legs/${leg.id}/margin?${q}`)
+        .then((r) => (r.ok ? r.json() : null))
+        .then((d) => live && d && setMp(d))
+        .catch(() => null);
+    }, 250);
+    return () => {
+      live = false;
+      clearTimeout(t);
+    };
+  }, [leg.id, pick?.driverId, pick?.coDriverId, milesTyped]);
   const [override, setOverride] = useState("");
   const [needsOverride, setNeedsOverride] = useState<{ message: string; hard: boolean; safety?: boolean } | null>(null);
   // paperwork blocks are Safety's to override; schedule calls (double booking, time off) are dispatch's
@@ -1091,6 +1108,20 @@ function AssignModal({ leg, order, data, onClose, onDone }: { leg: Leg; order: O
               <input id="plan-miles" className="input w-28" inputMode="numeric" value={miles} onChange={(e) => setMiles(e.target.value)} placeholder={leg.estMiles != null ? `${leg.estMiles} est.` : "for pay & fuel"} />
               <span className="help m-0">Per-mile driver pay and the fuel estimate come from this. Editable later on the order.</span>
             </div>
+            {mp && mp.loadUsdCents != null && pick?.driverId && (() => {
+              const cost = (mp.driverPayCents ?? 0) + mp.fuelCents + mp.otherCarrierCents + mp.otherDriverPayCents + mp.otherFuelCents;
+              const m = mp.loadUsdCents - cost;
+              const other = mp.otherCarrierCents + mp.otherDriverPayCents + mp.otherFuelCents;
+              return (
+                <div className={`help px-2 font-semibold ${m < mp.loadUsdCents * 0.1 ? "text-red" : m < mp.loadUsdCents * 0.15 ? "text-amber" : "text-green"}`} data-testid="truck-margin">
+                  Margin est. {money(m, "USD")} · {mp.loadUsdCents ? Math.round((m / mp.loadUsdCents) * 1000) / 10 : 0}% of the load
+                  <span className="font-normal text-muted">
+                    {" "}
+                    · driver pay est. {money(mp.driverPayCents ?? 0, "USD")}, fuel {money(mp.fuelCents, "USD")} ({mp.miles == null ? "no miles — type them" : `${mp.miles.toLocaleString("en-US")} mi${mp.milesEst ? " est." : ""}`}){other ? `, other legs ${money(other, "USD")}` : ""}
+                  </span>
+                </div>
+              );
+            })()}
           </>
         )
       ) : (
@@ -1163,13 +1194,15 @@ function AssignModal({ leg, order, data, onClose, onDone }: { leg: Leg; order: O
                 // true load margin, in USD: the load's rate less every other leg's carrier and this one, each converted
                 const usd = (c: number, cur: string) => (cur === "USD" ? c : Math.round((c * 10000) / (data.fx?.[cur] ?? (cur === "CAD" ? 13700 : 180000))));
                 const loadUsd = usd(order.rateCents, order.currency);
-                const others = (data.rows.find((x) => x.order.id === order.id)?.legs ?? []).filter((l) => l.id !== leg.id && l.state !== "cancelled" && l.carrierRateCents != null).reduce((a, l) => a + usd(l.carrierRateCents!, l.carrierRateCurrency ?? "USD"), 0);
+                const carriersOnly = (data.rows.find((x) => x.order.id === order.id)?.legs ?? []).filter((l) => l.id !== leg.id && l.state !== "cancelled" && l.carrierRateCents != null).reduce((a, l) => a + usd(l.carrierRateCents!, l.carrierRateCurrency ?? "USD"), 0);
+                const ownCost = mp ? mp.otherDriverPayCents + mp.otherFuelCents : 0;
+                const others = (mp ? mp.otherCarrierCents : carriersOnly) + ownCost;
                 const m = loadUsd - others - usd(rateCents, rateCur);
                 const converted = order.currency !== "USD" || rateCur !== "USD";
                 return (
                   <div className={`help font-semibold ${m < loadUsd * 0.1 ? "text-red" : m < loadUsd * 0.15 ? "text-amber" : "text-green"}`} data-testid="tender-margin">
                     Margin {money(m, "USD")}{converted ? " (USD)" : ""} · {loadUsd ? Math.round((m / loadUsd) * 1000) / 10 : 0}% of the load
-                    {others ? <span className="font-normal text-muted"> · after the other legs&rsquo; carriers ({money(others, "USD")})</span> : null}
+                    {others ? <span className="font-normal text-muted"> · after the other legs ({money(others, "USD")}{ownCost ? `: carriers ${money(others - ownCost, "USD")}, our drivers' pay est. ${money(mp!.otherDriverPayCents, "USD")}, fuel ${money(mp!.otherFuelCents, "USD")}` : ""})</span> : null}
                     {converted ? <span className="font-normal text-muted"> · pesos / Canadian dollars at the company rate</span> : null}
                   </div>
                 );

@@ -1,7 +1,7 @@
 // Features: F-30.6 F-30.5
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { PDFDocument } from "pdf-lib";
-import { truncateAll, makeTenant } from "@/test/helpers";
+import { truncateAll, makeTenant, connectEmail } from "@/test/helpers";
 import { create } from "@/data/records";
 import { db } from "@/db/client";
 import { orders as ordersT, invoices, outbox } from "@/db/schema";
@@ -14,6 +14,7 @@ let a: Awaited<ReturnType<typeof makeTenant>>;
 let rxo: string;
 let pdf: Buffer;
 
+afterEach(() => vi.unstubAllGlobals());
 beforeEach(async () => {
   await truncateAll();
   a = await makeTenant("One Click Carrier");
@@ -33,6 +34,7 @@ async function delivered(pod: boolean) {
 
 describe("one click from the billing queue: create, issue and send one load (billing #12)", () => {
   it("makes the invoice, numbers it and emails it in one call", async () => {
+    await connectEmail(a);
     const o = await delivered(true);
     const r = await runBatch(a, [o.id], { issue: true, send: true });
     expect(r.results).toHaveLength(1);
