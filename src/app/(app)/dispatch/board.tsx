@@ -543,7 +543,8 @@ function SidePanel({ r, data, busy, canDispatch, onClose, onPopup, run, onToast 
   if (!closed && nl && canDispatch) {
     if (hold) primary = { label: "Release hold", onClick: () => run("Released", () => A.releaseAction(r.order.id)) };
     else if (nl.state === "unassigned" || nl.state === "declined") primary = { label: `Assign ${LEG_TYPE_LABEL[nl.type]} leg`, onClick: () => onPopup({ kind: "assign", legId: nl.id }) };
-    else if (nl.state === "planned") primary = { label: nl.assigneeKind === "carrier" ? "Send to carrier" : "Send to driver", onClick: () => run("Sent", () => A.dispatchAction(nl.id)) };
+    // a partner carrier is sent through a tender (email, WhatsApp or a link with a deadline), never bare (N1)
+    else if (nl.state === "planned") primary = nl.assigneeKind === "carrier" ? { label: "Send to carrier", onClick: () => onPopup({ kind: "assign", legId: nl.id }) } : { label: "Send to driver", onClick: () => run("Sent", () => A.dispatchAction(nl.id)) };
     else if (forwardLabel(nl, r.stops)) {
       const label = forwardLabel(nl, r.stops)!;
       // steps that stamp a clock at a stop (arrived, loaded, delivered) ask for the time first: a stray click shouldn't deliver a load
@@ -701,7 +702,7 @@ function SidePanel({ r, data, busy, canDispatch, onClose, onPopup, run, onToast 
                       const mins = Math.round((new Date(tn.expiresAt).getTime() - Date.now()) / 60000);
                       return tn.state === "sent" ? (
                         <div className="mt-1 text-footnote">
-                          <span className="pill pill-amber">Tender out</span> {tn.channel} to {tn.sentTo ?? tn.carrierName} · {mins > 0 ? `${mins < 90 ? `${mins} min` : `${Math.round(mins / 60)} h`} left` : "expiring"}
+                          <span className="pill pill-amber">Tender out</span> {tn.channel === "manual" ? "link for" : `${tn.channel} to`} {tn.sentTo ?? tn.carrierName} · {mins > 0 ? `${mins < 90 ? `${mins} min` : `${Math.round(mins / 60)} h`} left` : "expiring"}
                           {tn.delivery && (
                             <span className={`ml-1 pill ${tn.delivery.state === "failed" ? "pill-red" : tn.delivery.state === "queued" ? "pill-amber" : tn.delivery.state === "logged" ? "pill-slate" : "pill-green"}`} title={tn.delivery.error ?? (tn.delivery.state === "logged" ? "no sending provider connected — share the link yourself" : undefined)}>
                               {tn.delivery.state === "logged" ? "not delivered" : tn.delivery.state}
@@ -732,8 +733,8 @@ function SidePanel({ r, data, busy, canDispatch, onClose, onPopup, run, onToast 
                       )}
                       {l.state === "planned" && (
                         <>
-                          <button className="btn btn-sm btn-primary" onClick={() => run("Sent", () => A.dispatchAction(l.id))} disabled={hold}>
-                            Send
+                          <button className="btn btn-sm btn-primary" onClick={() => (l.assigneeKind === "carrier" ? onPopup({ kind: "assign", legId: l.id }) : run("Sent", () => A.dispatchAction(l.id)))} disabled={hold}>
+                            {l.assigneeKind === "carrier" ? "Send tender" : "Send"}
                           </button>
                           <button className="btn btn-sm" onClick={() => onPopup({ kind: "assign", legId: l.id })}>
                             Change
@@ -910,7 +911,9 @@ function AssignModal({ leg, order, data, onClose, onDone }: { leg: Leg; order: O
   const [err, setErr] = useState<string | null>(null);
   const [pending, start] = useTransition();
   const [sendNow, setSendNow] = useState(true);
-  const [tender, setTender] = useState({ channel: "email" as "email" | "phone" | "whatsapp", expires: "60", message: "" });
+  const [tender, setTender] = useState({ channel: "email" as "email" | "manual" | "whatsapp", expires: "60", message: "" });
+  // a tender that could not go (no WhatsApp number / email on file): type it here, it's saved on the carrier (M2)
+  const [contactMissing, setContactMissing] = useState<{ field: "whatsapp" | "dispatchEmail"; value: string } | null>(null);
 
   useEffect(() => {
     A.candidatesAction(leg.id).then((r) => setCands(r.ok ? r.data : []));
@@ -947,11 +950,21 @@ function AssignModal({ leg, order, data, onClose, onDone }: { leg: Leg; order: O
       const opts = { ...(needsOverride && override.trim() ? { override: true, reason: override.trim() } : {}), ...(tab === "truck" ? { plannedMiles: milesN } : {}) };
       if (tab === "carrier") {
         if (!carrierId) return setErr("Pick a carrier");
-        if (sendNow && (tender.channel === "email" || tender.channel === "whatsapp")) {
-          const r = await A.tenderAction(leg.id, { carrierId, rateCents, currency: rateCur, channel: tender.channel, expiresInMinutes: Number(tender.expires), message: tender.message.trim() || null, ...opts });
-          if (r.ok) onDone(`Tender ${tender.channel === "whatsapp" ? "sent on WhatsApp" : "emailed"} to ${r.data.to} — expires in ${tender.expires} min`);
-          else if (r.code === "eligibility") eligibilityFail(r);
-          else setErr(r.error);
+        // the same carrier on a leg already sent: a new rate is saved in place, nothing re-sent
+        const inPlace = sentAlready && leg.carrierId === carrierId;
+        if (sendNow && !inPlace) {
+          const contact = contactMissing?.value.trim() ? { to: contactMissing.value.trim(), saveContact: true } : {};
+          const r = await A.tenderAction(leg.id, { carrierId, rateCents, currency: rateCur, channel: tender.channel, expiresInMinutes: Number(tender.expires), message: tender.message.trim() || null, ...contact, ...opts });
+          if (r.ok) {
+            setContactMissing(null);
+            if (tender.channel === "manual" && r.data.link) navigator.clipboard?.writeText(r.data.link).catch(() => null);
+            onDone(tender.channel === "manual" ? `Tender link copied — share it with ${data.carriers.find((c) => c.id === carrierId)?.name ?? "the carrier"}; it expires in ${tender.expires} min` : `Tender ${tender.channel === "whatsapp" ? "sent on WhatsApp" : "emailed"} to ${r.data.to}${r.data.deliveryError ? ` — but it did not go through yet (${r.data.deliveryError.slice(0, 80)}): check the ${tender.channel === "whatsapp" ? "number" : "address"} or share the link` : ""} — expires in ${tender.expires} min`);
+          } else if (r.code === "eligibility") eligibilityFail(r);
+          else {
+            // nothing was sent and the leg is as it was; a missing number or address can be typed right here
+            if (r.field === "whatsapp" || r.field === "dispatchEmail") setContactMissing((c) => ({ field: r.field as "whatsapp" | "dispatchEmail", value: c && c.field === r.field ? c.value : "" }));
+            setErr(r.error);
+          }
           return;
         }
       }
@@ -966,11 +979,11 @@ function AssignModal({ leg, order, data, onClose, onDone }: { leg: Leg; order: O
             ? "Updated — the leg stays sent, nothing re-dispatched"
             : res?.resent
               ? `${tab === "carrier" ? "New carrier" : "New truck or driver"} — the leg was re-sent`
-              : sendNow
-                ? tab === "carrier"
-                  ? "Marked sent — confirm by phone, then press Accepted"
-                  : "Assigned and sent"
-                : "Assigned — in Planned",
+              : sendNow && tab === "truck"
+                ? "Assigned and sent"
+                : tab === "carrier" && !sendNow
+                  ? "Planned on the carrier — press Send to carrier to tender it"
+                  : "Assigned — in Planned",
         );
       else if (r.code === "eligibility") eligibilityFail(r);
       else setErr(r.error);
@@ -997,7 +1010,7 @@ function AssignModal({ leg, order, data, onClose, onDone }: { leg: Leg; order: O
             Cancel
           </button>
           <button className="btn btn-primary" onClick={go} disabled={pending || (needsOverride?.hard ?? false)}>
-            {pending ? "Working…" : needsOverride && !needsOverride.hard ? (needsOverride.safety ? "Override & assign" : "Assign anyway") : sendNow ? (tab === "carrier" && tender.channel !== "phone" ? "Send tender" : "Assign & send") : "Assign"}
+            {pending ? "Working…" : needsOverride && !needsOverride.hard ? (needsOverride.safety ? "Override & assign" : "Assign anyway") : sendNow ? (tab === "carrier" ? (sentAlready && leg.carrierId === carrierId ? "Save" : contactMissing?.value.trim() ? "Save & send tender" : "Send tender") : "Assign & send") : "Assign"}
           </button>
         </>
       }
@@ -1099,6 +1112,7 @@ function AssignModal({ leg, order, data, onClose, onDone }: { leg: Leg; order: O
               onChange={(e) => {
                 const id = e.target.value;
                 setCarrierId(id);
+                setContactMissing(null);
                 setLane(null);
                 setCscore(null);
                 setCelig(null);
@@ -1179,15 +1193,23 @@ function AssignModal({ leg, order, data, onClose, onDone }: { leg: Leg; order: O
             </div>
             <div>
               <label className="label">Tender by</label>
-              <select className="select" value={tender.channel} onChange={(e) => setTender({ ...tender, channel: e.target.value as "email" | "phone" | "whatsapp" })}>
+              <select
+                className="select"
+                value={tender.channel}
+                onChange={(e) => {
+                  setTender({ ...tender, channel: e.target.value as "email" | "manual" | "whatsapp" });
+                  setContactMissing(null);
+                  setErr(null);
+                }}
+              >
                 <option value="email">Email with accept link</option>
                 <option value="whatsapp">WhatsApp with accept link</option>
-                <option value="phone">Phone — I&apos;ll confirm myself</option>
+                <option value="manual">Link only — I&apos;ll call them and share it</option>
               </select>
             </div>
             <div>
               <label className="label">Answer within</label>
-              <select className="select" value={tender.expires} onChange={(e) => setTender({ ...tender, expires: e.target.value })} disabled={tender.channel !== "email"}>
+              <select className="select" value={tender.expires} onChange={(e) => setTender({ ...tender, expires: e.target.value })}>
                 <option value="30">30 min</option>
                 <option value="60">1 hour</option>
                 <option value="120">2 hours</option>
@@ -1196,6 +1218,24 @@ function AssignModal({ leg, order, data, onClose, onDone }: { leg: Leg; order: O
               </select>
             </div>
           </div>
+          {contactMissing && (
+            <div className="rounded-lg border border-amber/40 bg-amber-soft/40 px-3 py-2" data-testid="add-contact">
+              <label className="label" htmlFor="tender-contact">
+                {contactMissing.field === "whatsapp" ? "Add their WhatsApp number" : "Add their dispatch email"} ({data.carriers.find((c) => c.id === carrierId)?.name})
+              </label>
+              <input
+                id="tender-contact"
+                className="input"
+                autoFocus
+                inputMode={contactMissing.field === "whatsapp" ? "tel" : "email"}
+                value={contactMissing.value}
+                onChange={(e) => setContactMissing({ ...contactMissing, value: e.target.value })}
+                placeholder={contactMissing.field === "whatsapp" ? "+52 867 123 4567" : "dispatch@carrier.com"}
+              />
+              <div className="help">Saved on the carrier&apos;s record and used for this tender. The leg stays as it was until it goes.</div>
+            </div>
+          )}
+          {tender.channel === "manual" && <div className="help">The leg is Sent with a link and a deadline, like any tender. Read them the offer or paste the link in a text; when they say yes, press Accepted (or they accept on the link). No answer by the deadline: back to Needs truck.</div>}
           {tender.channel === "email" && (
             <div>
               <label className="label">Note to the carrier (optional)</label>

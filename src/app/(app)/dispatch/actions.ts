@@ -59,7 +59,7 @@ export async function unplanAction(legId: string, reason?: string) {
 }
 
 export async function dispatchAction(legId: string) {
-  const r = await act((ctx) => O.dispatchLeg(ctx, legId));
+  const r = await act((ctx) => O.sendLeg(ctx, legId));
   if (r.ok) touch();
   return r;
 }
@@ -71,9 +71,11 @@ export async function dispatchAction(legId: string) {
 export async function planAndDispatchAction(legId: string, a: O.Assignment, opts: PlanOpts = {}) {
   const r = await act(async (ctx) => {
     const before = await O.getLeg(ctx, legId);
+    // a partner carrier is sent with a tender; only a change in place (rate, miles) to one already sent is saved here
+    if (a.kind === "carrier" && !(["dispatched", "accepted"].includes(before.state) && O.sameCrew(before, a))) throw new O.ValidationError("A partner carrier's leg goes out with a tender (email, WhatsApp or a link with a deadline).", "tender");
     const planned = await O.planLeg(ctx, legId, a, opts);
     if (planned.kept) return { leg: planned.leg, kept: true, resent: false };
-    const leg = await O.dispatchLeg(ctx, legId);
+    const leg = await O.sendLeg(ctx, legId);
     return { leg, kept: false, resent: ["dispatched", "accepted"].includes(before.state) };
   });
   if (r.ok) touch();

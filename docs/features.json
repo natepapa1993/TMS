@@ -1153,6 +1153,15 @@
       "tests": [
         "src/domain/flow2.test.ts"
       ]
+    },
+    {
+      "id": "F-34.2",
+      "name": "A partner carrier's leg is Sent only through a tender (email, WhatsApp or a link with a deadline); a tender that can't go leaves the leg as it was, with an inline field to add the missing WhatsApp number or email",
+      "milestone": "M34",
+      "status": "done",
+      "tests": [
+        "src/domain/flow2.test.ts"
+      ]
     }
   ]
 }

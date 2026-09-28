@@ -9,7 +9,7 @@ import { assertCtx, requirePermission, systemCtx, type Ctx } from "@/lib/context
 import { writeAudit } from "@/lib/audit";
 import { newToken, publicUrl } from "@/lib/tokens";
 import { enqueue, deliverQueued } from "@/lib/outbox";
-import { planLeg, dispatchLeg, acceptLeg, declineLeg, unplanLeg, NotFoundError, ValidationError, normCurrency } from "./orders";
+import { planLeg, dispatchLeg, acceptLeg, declineLeg, unplanLeg, refreshOrderState, NotFoundError, ValidationError, normCurrency } from "./orders";
 import { TransitionError } from "./states";
 
 /**
@@ -35,32 +35,82 @@ export type SendTenderInput = {
   message?: string | null;
   override?: boolean;
   reason?: string;
+  saveContact?: boolean; // the number / email typed in the dialog goes onto the carrier's record
 };
 
 const LEG_TYPE_LABEL: Record<string, string> = { mx: "Mexico", ca: "Canada", crossing: "Crossing", us: "US", domestic: "Domestic", equipment_move: "Equipment move" };
 
+/** Where a tender goes by each channel; "manual" is a link dispatch shares or reads out on the phone. */
+export function tenderRecipient(channel: TenderChannel, carrier: { name: string; whatsapp?: string | null; dispatchEmail?: string | null }, to?: string | null) {
+  const v = (to ?? (channel === "whatsapp" ? carrier.whatsapp : channel === "email" ? carrier.dispatchEmail : null) ?? "").trim() || null;
+  if (channel === "email" && !v) throw new ValidationError(`${carrier.name} has no dispatch email. Add it here or tender by WhatsApp or a link.`, "dispatchEmail");
+  if (channel === "whatsapp" && !v) throw new ValidationError(`${carrier.name} has no WhatsApp number. Add it here or tender by email or a link.`, "whatsapp");
+  if (channel === "whatsapp" && v && v.replace(/\D/g, "").length < 10) throw new ValidationError(`"${v}" is not a WhatsApp number — use the full number with the country code (+52 …, +1 …)`, "whatsapp");
+  if (channel === "email" && v && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(v)) throw new ValidationError(`"${v}" is not an email address`, "dispatchEmail");
+  return v;
+}
+
+/**
+ * Offer a leg to a carrier. This is the only way a partner carrier's leg is Sent (dispatch N1): the tender carries
+ * the link, the deadline and the expiry back to Needs truck. The carrier's email / WhatsApp is checked before the
+ * leg is touched, and anything that fails on the way (a message the provider refuses) puts the leg back as it was.
+ */
 export async function sendTender(ctx: Ctx, legId: string, input: SendTenderInput) {
   assertCtx(ctx);
   requirePermission(ctx, "dispatch.dispatch");
   const expiresIn = input.expiresInMinutes ?? 60;
   if (expiresIn < 5 || expiresIn > 7 * 24 * 60) throw new ValidationError("expiry must be between 5 minutes and 7 days", "expiresInMinutes");
 
-  // 1. the leg is planned on this carrier (re-plan if it was on someone else)
   const [legBefore] = await db.select().from(s.legs).where(and(eq(s.legs.tenantId, ctx.tenantId), eq(s.legs.id, legId))).limit(1);
   if (!legBefore) throw new NotFoundError("leg", legId);
+  const [carrier] = await db.select().from(s.carriers).where(and(eq(s.carriers.tenantId, ctx.tenantId), eq(s.carriers.id, input.carrierId))).limit(1);
+  if (!carrier) throw new NotFoundError("carrier", input.carrierId);
+  const channel: TenderChannel = input.channel ?? ((carrier.tenderChannel as TenderChannel) || "email");
+  // 0. who it goes to, before anything changes: a tender that can't go out leaves the leg as it was
+  const to = tenderRecipient(channel, carrier, input.to);
+  if (input.saveContact && to && (channel === "whatsapp" || channel === "email")) {
+    const field = channel === "whatsapp" ? "whatsapp" : "dispatchEmail";
+    if ((carrier[field] ?? null) !== to) {
+      await db.update(s.carriers).set({ [field]: to, updatedAt: new Date(), updatedBy: ctx.userId }).where(eq(s.carriers.id, carrier.id));
+      await writeAudit(db, ctx, "carrier", carrier.id, "update", { [field]: { from: carrier[field] ?? null, to } }, "added while tendering");
+      carrier[field] = to;
+    }
+  }
+  try {
+    return await sendTenderTo(ctx, legId, input, { legBefore, carrier, channel, to, expiresIn });
+  } catch (e) {
+    await putLegBack(ctx, legBefore, e instanceof Error ? e.message : String(e));
+    throw e;
+  }
+}
+
+/** A tender that failed on the way: the leg goes back to what it was (Needs truck, or Planned on who it had). */
+async function putLegBack(ctx: Ctx, before: typeof s.legs.$inferSelect, why: string) {
+  const [now] = await db.select().from(s.legs).where(eq(s.legs.id, before.id)).limit(1);
+  if (!now) return;
+  const same = now.state === before.state && now.carrierId === before.carrierId && now.carrierRateCents === before.carrierRateCents && now.truckId === before.truckId;
+  if (same) return;
+  const note = `Tender not sent (${why.slice(0, 160)}) — the leg is back as it was`;
+  if (!before.assigneeKind || ["unassigned", "declined"].includes(before.state)) {
+    await unplanLeg(ctx, before.id, note).catch(() => null);
+    return;
+  }
+  const { id: _id, tenantId: _t, createdAt: _c, createdBy: _cb, ...cols } = before;
+  void _id; void _t; void _c; void _cb;
+  await db.update(s.legs).set({ ...cols, updatedAt: new Date(), updatedBy: ctx.userId }).where(eq(s.legs.id, before.id));
+  await db.insert(s.legEvents).values({ id: newId(), tenantId: ctx.tenantId, legId: before.id, orderId: before.orderId, kind: "note", source: "system", userId: ctx.userId, note });
+  await refreshOrderState(ctx, before.orderId).catch(() => null);
+}
+
+async function sendTenderTo(ctx: Ctx, legId: string, input: SendTenderInput, p: { legBefore: typeof s.legs.$inferSelect; carrier: typeof s.carriers.$inferSelect; channel: TenderChannel; to: string | null; expiresIn: number }) {
+  const { legBefore, carrier, channel, to, expiresIn } = p;
+  // 1. the leg is planned on this carrier (re-plan if it was on someone else)
   // the carrier is paid in its own currency (a Mexican carrier in pesos): the tender, the leg and the bill carry it
   const currency = normCurrency(input.currency ?? legBefore.carrierRateCurrency);
   if (legBefore.state !== "planned" || legBefore.carrierId !== input.carrierId)
     await planLeg(ctx, legId, { kind: "carrier", carrierId: input.carrierId, carrierRateCents: input.rateCents ?? null, carrierRateCurrency: currency }, { override: input.override, reason: input.reason, inPlace: false });
   else if (input.rateCents != null && (input.rateCents !== legBefore.carrierRateCents || currency !== (legBefore.carrierRateCurrency ?? "USD")))
     await db.update(s.legs).set({ carrierRateCents: input.rateCents, carrierRateCurrency: currency, updatedAt: new Date(), updatedBy: ctx.userId }).where(eq(s.legs.id, legId));
-
-  const [carrier] = await db.select().from(s.carriers).where(and(eq(s.carriers.tenantId, ctx.tenantId), eq(s.carriers.id, input.carrierId))).limit(1);
-  if (!carrier) throw new NotFoundError("carrier", input.carrierId);
-  const channel: TenderChannel = input.channel ?? ((carrier.tenderChannel as TenderChannel) || "email");
-  const to = input.to ?? (channel === "whatsapp" ? carrier.whatsapp : carrier.dispatchEmail) ?? null;
-  if (channel === "email" && !to) throw new ValidationError(`${carrier.name} has no dispatch email; add one or tender by another channel`, "to");
-  if (channel === "whatsapp" && !to) throw new ValidationError(`${carrier.name} has no WhatsApp number; add one on the carrier record or tender by another channel`, "to");
 
   // 2. one open tender per leg
   const replaced = await db
@@ -132,14 +182,18 @@ export async function sendTender(ctx: Ctx, legId: string, input: SendTenderInput
       })
       .returning();
     await writeAudit(tx, ctx, "tender", row.id, "create", { carrierId: { from: null, to: carrier.id }, rateCents: { from: null, to: row.rateCents } }, `leg ${leg.seq} of ${order.orderNumber} tendered to ${carrier.name} by ${channel}`);
-    await tenderEvent(tx, ctx, row, "sent", `Tender sent to ${carrier.name} by ${channel}${to ? ` (${to})` : ""} · ${rate} · answer by ${fmt(expiresAt)}`);
+    await tenderEvent(tx, ctx, row, "sent", channel === "manual" ? `Tender link for ${carrier.name} (dispatch shares it or calls them) · ${rate} · answer by ${fmt(expiresAt)}` : `Tender sent to ${carrier.name} by ${channel}${to ? ` (${to})` : ""} · ${rate} · answer by ${fmt(expiresAt)}`);
     if (to && channel === "email") await enqueue(ctx, { channel: "email", to, subject, body, subjectKind: "tender", subjectId: row.id }, tx);
     // WhatsApp: the template (when the company has one approved) takes carrier, lane, rate, link; otherwise the same text
     if (to && channel === "whatsapp") await enqueue(ctx, { channel: "whatsapp", to, subject, body, subjectKind: "tender", subjectId: row.id, meta: { kind: "tender", template: { name: "", params: [carrier.name, `${place(from)} → ${place(toStop)}`, rate, link] } } }, tx);
     return row;
   });
   await deliverQueued().catch(() => null);
-  return { tender, leg, link, subject, body, to };
+  // the provider refused it on the first try (a bad number, a template not approved): the tender stands — it has its
+  // link and deadline and expires back to Needs truck — but dispatch hears it now, not from the pill later
+  const [m] = channel === "email" || channel === "whatsapp" ? await db.select({ state: s.outbox.state, error: s.outbox.error }).from(s.outbox).where(and(eq(s.outbox.tenantId, ctx.tenantId), eq(s.outbox.subjectKind, "tender"), eq(s.outbox.subjectId, tender.id))).limit(1) : [];
+  const deliveryError = m && m.error && m.state !== "sent" && m.state !== "logged" ? m.error : null;
+  return { tender, leg, link, subject, body, to, deliveryError };
 }
 
 export async function tenderByToken(token: string) {

@@ -1,11 +1,12 @@
-// Features: F-34.1
+// Features: F-34.1 F-34.2
 import { describe, it, expect, beforeEach } from "vitest";
 import { and, eq } from "drizzle-orm";
 import { truncateAll, makeTenant } from "@/test/helpers";
 import { create } from "@/data/records";
 import { db } from "@/db/client";
 import * as s from "@/db/schema";
-import { createOrder, planLeg, dispatchLeg, advanceLeg } from "./orders";
+import { createOrder, planLeg, dispatchLeg, advanceLeg, sendLeg, holdOrder } from "./orders";
+import { sendTender } from "./tenders";
 import * as X from "./crossing";
 import { clearedCompletesLeg, crossingDriverNext } from "./crossing";
 
@@ -89,5 +90,78 @@ describe("Cleared is not Delivered (F-34.1, owner N2)", () => {
       { type: "delivery", name: "Dallas DC", country: "US", address: { city: "Dallas", state: "TX" }, windowStart: day(2) },
     ]);
     expect(await legState(leg.id)).toBe("en_route");
+  });
+});
+
+describe("a carrier leg is Sent only through a tender (F-34.2, dispatch N1, M2)", () => {
+  const usStops = () => [
+    { type: "pickup" as const, name: "Laredo Yard", country: "US", address: { city: "Laredo", state: "TX" }, windowStart: day(1) },
+    { type: "delivery" as const, name: "Dallas DC", country: "US", address: { city: "Dallas", state: "TX" }, windowStart: day(2) },
+  ];
+  const carrier = async (extra: Record<string, unknown> = {}) => (await create(a, "carrier", { name: "Lone Star Freight", country: "US", mcNumber: "MC1", dotNumber: "DOT1", ...extra })).id;
+  const tenders = async (legId: string) => db.select().from(s.tenders).where(eq(s.tenders.legId, legId));
+  const leg = async (id: string) => (await db.select().from(s.legs).where(eq(s.legs.id, id)))[0];
+
+  it("Send on a planned carrier leg refuses to dispatch bare; our truck still goes straight to the driver", async () => {
+    const lone = await carrier({ dispatchEmail: "d@lonestar.test" });
+    const o = await createOrder(a, { customerId: f.cust, rateCents: 150000, stops: usStops(), book: true });
+    await planLeg(a, o.legs[0].id, { kind: "carrier", carrierId: lone, carrierRateCents: 90000 });
+    await expect(sendLeg(a, o.legs[0].id)).rejects.toThrow(/goes out with a tender/);
+    expect((await leg(o.legs[0].id)).state).toBe("planned");
+    const o2 = await createOrder(a, { customerId: f.cust, rateCents: 150000, stops: usStops(), book: true });
+    await planLeg(a, o2.legs[0].id, { kind: "truck", truckId: f.t211, driverId: f.ramiro });
+    expect((await sendLeg(a, o2.legs[0].id)).state).toBe("dispatched");
+  });
+
+  it("WhatsApp with no number: a clear error on the WhatsApp field, nothing sent, the leg exactly as it was", async () => {
+    const lone = await carrier();
+    const o = await createOrder(a, { customerId: f.cust, rateCents: 150000, stops: usStops(), book: true });
+    // from Needs truck: stays Needs truck (not Planned on the carrier)
+    const err = await sendTender(a, o.legs[0].id, { carrierId: lone, rateCents: 90000, channel: "whatsapp" }).catch((e) => e);
+    expect(err.message).toMatch(/has no WhatsApp number/);
+    expect(err.field).toBe("whatsapp");
+    let l = await leg(o.legs[0].id);
+    expect([l.state, l.carrierId]).toEqual(["unassigned", null]);
+    // from Planned on the carrier (the panel's Send to carrier): stays Planned
+    await planLeg(a, o.legs[0].id, { kind: "carrier", carrierId: lone, carrierRateCents: 90000 });
+    await expect(sendTender(a, o.legs[0].id, { carrierId: lone, rateCents: 90000, channel: "whatsapp" })).rejects.toThrow(/WhatsApp/);
+    l = await leg(o.legs[0].id);
+    expect([l.state, l.carrierId]).toEqual(["planned", lone]);
+    expect(await tenders(o.legs[0].id)).toHaveLength(0);
+    // a number that can't be one is refused too
+    await expect(sendTender(a, o.legs[0].id, { carrierId: lone, channel: "whatsapp", to: "12345" })).rejects.toThrow(/not a WhatsApp number/);
+  });
+
+  it("the number typed in the dialog is saved on the carrier and the tender goes", async () => {
+    const lone = await carrier();
+    const o = await createOrder(a, { customerId: f.cust, rateCents: 150000, stops: usStops(), book: true });
+    const r = await sendTender(a, o.legs[0].id, { carrierId: lone, rateCents: 90000, channel: "whatsapp", to: "+52 867 555 0101", saveContact: true });
+    expect(r.to).toBe("+52 867 555 0101");
+    const [c] = await db.select().from(s.carriers).where(eq(s.carriers.id, lone));
+    expect(c.whatsapp).toBe("+52 867 555 0101");
+    expect((await leg(o.legs[0].id)).state).toBe("dispatched");
+    const [t] = await tenders(o.legs[0].id);
+    expect([t.state, t.channel]).toEqual(["sent", "whatsapp"]);
+  });
+
+  it("Link only (read out on the phone): a real tender with a deadline and link, nothing messaged", async () => {
+    const lone = await carrier();
+    const o = await createOrder(a, { customerId: f.cust, rateCents: 150000, stops: usStops(), book: true });
+    const r = await sendTender(a, o.legs[0].id, { carrierId: lone, rateCents: 90000, channel: "manual", expiresInMinutes: 30 });
+    expect(r.link).toMatch(/\/t\//);
+    const [t] = await tenders(o.legs[0].id);
+    expect([t.state, t.channel, t.sentTo]).toEqual(["sent", "manual", null]);
+    expect(t.expiresAt.getTime()).toBeGreaterThan(Date.now());
+    expect(await db.select().from(s.outbox).where(eq(s.outbox.subjectId, t.id))).toHaveLength(0);
+  });
+
+  it("a tender that fails after the leg was planned (the load went on hold) puts the leg back", async () => {
+    const lone = await carrier({ dispatchEmail: "d@lonestar.test" });
+    const o = await createOrder(a, { customerId: f.cust, rateCents: 150000, stops: usStops(), book: true });
+    await holdOrder(a, o.order.id, "rate con missing");
+    await expect(sendTender(a, o.legs[0].id, { carrierId: lone, rateCents: 90000 })).rejects.toThrow(/on hold/);
+    const l = await leg(o.legs[0].id);
+    expect([l.state, l.carrierId]).toEqual(["unassigned", null]);
+    expect(await tenders(o.legs[0].id)).toHaveLength(0);
   });
 });

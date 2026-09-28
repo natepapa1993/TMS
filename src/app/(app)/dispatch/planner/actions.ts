@@ -33,7 +33,7 @@ export async function dispatchManyAction(legIds: string[]) {
     const failed: string[] = [];
     for (const id of legIds.slice(0, 200)) {
       try {
-        await O.dispatchLeg(ctx, id);
+        await O.sendLeg(ctx, id);
         sent++;
       } catch (e) {
         failed.push(e instanceof Error ? e.message : String(e));
