@@ -1144,6 +1144,15 @@
         "src/domain/book-again.test.ts",
         "e2e/dispatch.spec.ts"
       ]
+    },
+    {
+      "id": "F-34.1",
+      "name": "Cleared is not Delivered: a crossing leg that runs on to the consignee is en route after Cleared; only a leg ending at a yard, border yard or hand-off completes",
+      "milestone": "M34",
+      "status": "done",
+      "tests": [
+        "src/domain/flow2.test.ts"
+      ]
     }
   ]
 }
