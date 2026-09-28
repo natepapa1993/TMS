@@ -41,7 +41,7 @@ export function ComplianceTable({ kind, path, columns, rows, role }: { kind: Sub
           {rows.map((r) => (
             <tr key={r.id}>
               <td>
-                <Link href={`/settings/${path}/${r.id}#documents`} className="font-bold hover:text-teal">
+                <Link href={`/settings/${path}/${r.id}#documents`} className="font-bold hover:text-teal whitespace-nowrap">
                   {r.label}
                 </Link>
                 <div className="text-[12px] text-muted">{r.sub}</div>
@@ -59,7 +59,7 @@ export function ComplianceTable({ kind, path, columns, rows, role }: { kind: Sub
                   ) : (
                     <div>
                       <span className="pill pill-red">blocked</span>
-                      {canEdit && role === "owner" && (
+                      {canEdit && (
                         <button className="btn btn-ghost btn-sm ml-1 text-[11.5px]" onClick={() => setOverrideFor(r)}>
                           24h override
                         </button>
@@ -71,6 +71,11 @@ export function ComplianceTable({ kind, path, columns, rows, role }: { kind: Sub
                 )}
               </td>
               {columns.map((c) => {
+                if (c.key === "dq:*") return <td key={c.key}><DqCell id={r.id} items={r.st?.items ?? []} /></td>;
+                if (c.key === "da:status") {
+                  const hold = r.st?.items.find((i) => i.key === "da:status");
+                  return <td key={c.key}>{hold?.status === "expired" ? <span className="pill pill-red" title="Off safety-sensitive work — ask Safety">hold</span> : <span className="text-faint">—</span>}</td>;
+                }
                 const it = r.st?.items.find((i) => i.key === c.key);
                 return (
                   <td key={c.key}>
@@ -142,6 +147,22 @@ export function ComplianceTable({ kind, path, columns, rows, role }: { kind: Sub
       <Confirm open={!!overrideFor} onClose={() => setOverrideFor(null)} title={`Dispatch override · ${overrideFor?.label ?? ""}`} body={<span>Blocked by: {[...(overrideFor?.st?.expired.map((x) => `${x} expired`) ?? []), ...(overrideFor?.st?.missing.map((x) => `${x} missing`) ?? [])].join(", ")}. The override lasts 24 hours and is logged with your name. Expired legal documents cannot be overridden.</span>} needReason="Reason" confirmLabel="Override for 24 h" danger onConfirm={async (reason) => { const row = overrideFor!; setOverrideFor(null); const r = await overrideDispatchAction(kind, row.id, reason); if (r.ok) { t.ok("Override active for 24 h"); router.refresh(); } else t.err(r.error); }} />
       <Toast message={t.toast?.message ?? null} tone={t.toast?.tone} onDone={t.clear} />
     </div>
+  );
+}
+
+/** The qualification file in one cell: complete, or how many items are missing / overdue / due, linking to the driver's file. */
+function DqCell({ id, items }: { id: string; items: ComplianceItem[] }) {
+  const dq = items.filter((i) => i.key.startsWith("dq:"));
+  if (!dq.length) return <span className="text-faint">—</span>;
+  const n = (st: string) => dq.filter((i) => (i.status === "snoozed" ? i.underlying : i.status) === st).length;
+  const missing = n("missing");
+  const overdue = n("expired");
+  const due = n("expiring");
+  const text = missing || overdue ? [missing && `${missing} missing`, overdue && `${overdue} overdue`].filter(Boolean).join(", ") : due ? `${due} due soon` : "complete";
+  return (
+    <Link href={`/compliance/drivers/${id}`} className={`pill ${missing || overdue ? "pill-amber" : due ? "pill-amber" : "pill-green"}`} data-testid="dq-cell">
+      {text}
+    </Link>
   );
 }
 

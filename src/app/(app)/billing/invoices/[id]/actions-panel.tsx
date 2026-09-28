@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useTransition } from "react";
+import { localDay } from "@/lib/time";
 import { useRouter } from "next/navigation";
 import { Confirm, Modal, Toast, useToast } from "@/components/ui";
 import { formatCents } from "@/data/fields";
@@ -13,7 +14,7 @@ export function InvoiceActions({ inv, role }: { inv: Inv; role: string }) {
   const t = useToast();
   const [pending, start] = useTransition();
   const [popup, setPopup] = useState<null | "receipt" | "credit" | "void" | "dispute" | "send" | "issue">(null);
-  const fresh = () => ({ amount: "", receivedAt: new Date().toISOString().slice(0, 10), method: "ach", reference: "", note: "", to: inv.billingEmail ?? "", rate: "", dmethod: inv.method, ptp: inv.promiseToPayAt?.slice(0, 10) ?? "" });
+  const fresh = () => ({ amount: "", receivedAt: localDay(), method: "ach", reference: "", note: "", to: inv.billingEmail ?? "", rate: "", dmethod: inv.method, ptp: inv.promiseToPayAt?.slice(0, 10) ?? "" });
   const [f, setF] = useState(fresh);
   // every dialog starts clean: nothing typed in one carries into another
   const openPopup = (p: NonNullable<typeof popup>) => {

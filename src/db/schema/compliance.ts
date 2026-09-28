@@ -87,6 +87,9 @@ export const incidents = pgTable(
     dotRecordable: boolean("dot_recordable").notNull().default(false),
     injuries: boolean("injuries").notNull().default(false),
     towAway: boolean("tow_away").notNull().default(false),
+    fatality: boolean("fatality").notNull().default(false),
+    citation: boolean("citation").notNull().default(false), // the driver was cited at the scene (drives post-accident testing)
+    preventable: text("preventable"), // null = not decided | preventable | not_preventable (FMCSA CPDP)
     policeReport: text("police_report"),
     claimNumber: text("claim_number"),
     status: text("status").notNull().default("open"), // open | under_review | closed

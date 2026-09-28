@@ -10,7 +10,7 @@ import { assertLegTransition, assertOrderTransition, canOrderTransition, LEG_FOR
 import { LEG_TEMPLATES, templateByKey } from "./templates";
 import { checkDriver, checkTruck, checkCarrierZone, summarize, type Finding } from "./eligibility";
 import { legZone, legsFromStops, HANDOFF, stopTimeProblems, type LegZone } from "./zones";
-import { complianceFindings, statusMap, forLeg } from "./compliance";
+import { complianceFindings, statusMap, forLeg, HARD_BLOCK } from "./compliance";
 
 /**
  * Orders & dispatch service (spec §2, §11.1–11.3, §11.15). Every write runs in one transaction,
@@ -883,7 +883,7 @@ export async function planLeg(ctx: Ctx, legId: string, a: Assignment, opts: Plan
       // a schedule call (a double booking, time off) is dispatch's to make; anything about paperwork is Safety's
       requirePermission(ctx, elig.findings.some((f) => f.level === "red" && needsSafety(f)) ? "compliance.override" : "dispatch.override");
       if (!opts.reason?.trim()) throw new ValidationError("an override needs a reason", "reason");
-      await writeAudit(tx, ctx, "leg", leg.id, "override", { findings: { from: null, to: elig.findings.map((f) => f.code) } }, opts.reason);
+      await writeAudit(tx, ctx, "leg", leg.id, "override", overrideChanges(elig.findings, a.kind === "truck" ? { truckId: a.truckId, driverId: a.driverId ?? null, coDriverId: a.coDriverId ?? null, trailerId: a.trailerId ?? null } : { carrierId: a.carrierId }), opts.reason);
     }
 
     const assignment =
@@ -1224,6 +1224,13 @@ export async function setTruckActive(ctx: Ctx, truckId: string) {
   });
 }
 
+/** What an override record keeps: the finding codes and messages it waved through, and who it put on the leg (for the overrides log). */
+function overrideChanges(findings: { code: string; level: string; message: string }[], assignee: Record<string, string | null | undefined>) {
+  const out: Record<string, { from: unknown; to: unknown }> = { findings: { from: null, to: findings.map((f) => f.code) }, messages: { from: null, to: findings.filter((f) => f.level === "red").map((f) => f.message) } };
+  for (const [k, v] of Object.entries(assignee)) if (v) out[k] = { from: null, to: v };
+  return out;
+}
+
 /** Change drivers on a leg that is already assigned (team swap, add co-driver). Eligibility re-runs. */
 export async function setLegDrivers(ctx: Ctx, legId: string, drivers: { driverId?: string | null; coDriverId?: string | null }, opts: PlanOptions = {}) {
   assertCtx(ctx);
@@ -1240,7 +1247,7 @@ export async function setLegDrivers(ctx: Ctx, legId: string, drivers: { driverId
       if (!opts.override) throw new EligibilityError(elig.findings, false);
       requirePermission(ctx, elig.findings.some((f) => f.level === "red" && needsSafety(f)) ? "compliance.override" : "dispatch.override");
       if (!opts.reason?.trim()) throw new ValidationError("an override needs a reason", "reason");
-      await writeAudit(tx, ctx, "leg", leg.id, "override", { findings: { from: null, to: elig.findings.map((f) => f.code) } }, opts.reason);
+      await writeAudit(tx, ctx, "leg", leg.id, "override", overrideChanges(elig.findings, { truckId: leg.truckId, ...next, trailerId: leg.trailerId }), opts.reason);
     }
     const [after] = await tx.update(s.legs).set({ ...next, updatedAt: new Date(), updatedBy: ctx.userId }).where(and(eq(s.legs.tenantId, ctx.tenantId), eq(s.legs.id, leg.id))).returning();
     await writeAudit(tx, ctx, "leg", leg.id, "assign", diff({ driverId: leg.driverId, coDriverId: leg.coDriverId }, next), opts.reason);
@@ -1293,7 +1300,7 @@ export async function candidatesForLeg(ctx: Ctx, legId: string, now = new Date()
     const raw = kind === "truck" ? truckComp.get(id) : driverComp.get(id);
     if (!raw) return [];
     const st = forLeg(raw, zone);
-    if (!st.dispatchable && !st.override) return [{ level: "red", code: "compliance_block", message: `${label}: ${[...st.expired.map((x) => `${x} expired`), ...st.missing.map((x) => `${x} missing`)].join(", ")}`, overridable: !st.expired.some((l) => /licen|medical|I-94|plate/i.test(l)) }];
+    if (!st.dispatchable && !st.override) return [{ level: "red", code: "compliance_block", message: `${label}: ${[...st.expired.map((x) => `${x} expired`), ...st.missing.map((x) => `${x} missing`)].join(", ")}`, overridable: !st.expired.some((l) => HARD_BLOCK.test(l)) }];
     const out: Finding[] = [];
     if (st.override) out.push({ level: "yellow", code: "compliance_override", message: `${label}: dispatch override (${st.override.reason})`, overridable: true });
     if (st.expiring.length) out.push({ level: "yellow", code: "compliance_expiring", message: `${label}: ${st.expiring.join(", ")} expiring`, overridable: true });

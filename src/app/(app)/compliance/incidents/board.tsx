@@ -5,15 +5,16 @@ import { useRouter } from "next/navigation";
 import { Modal, Pill, Toast, useToast } from "@/components/ui";
 import { saveIncidentAction } from "../actions";
 
-type Inc = { id: string; occurredAt: string; kind: string; driverId: string | null; truckId: string | null; trailerId: string | null; location: string | null; description: string; dotRecordable: boolean; injuries: boolean; towAway: boolean; policeReport: string | null; claimNumber: string | null; status: string };
+type Inc = { id: string; occurredAt: string; kind: string; driverId: string | null; truckId: string | null; trailerId: string | null; location: string | null; description: string; dotRecordable: boolean; injuries: boolean; towAway: boolean; fatality: boolean; citation: boolean; preventable: string | null; policeReport: string | null; claimNumber: string | null; status: string; postAccident: { alcoholBy: string; drugBy: string; why: string } | null; tests: { alcohol: boolean; drug: boolean } | null };
 type Opt = { id: string; name: string };
-const KINDS = [["accident", "Accident"], ["injury", "Injury"], ["cargo", "Cargo claim"], ["roadside_inspection", "Roadside inspection"], ["citation", "Citation"], ["near_miss", "Near miss"], ["other", "Other"]];
+const KINDS = [["accident", "Accident"], ["injury", "Injury"], ["cargo", "Cargo claim"], ["roadside_inspection", "Roadside inspection (log it under Inspections)"], ["citation", "Citation"], ["near_miss", "Near miss"], ["other", "Other"]];
 /** An instant as the value of a datetime-local input, in the viewer's own clock (the input has no zone). */
 const toLocalInput = (iso: string | Date) => {
   const d = new Date(iso);
   return new Date(d.getTime() - d.getTimezoneOffset() * 60_000).toISOString().slice(0, 16);
 };
-const blank = () => ({ occurredAt: toLocalInput(new Date()), kind: "accident", driverId: "", truckId: "", trailerId: "", location: "", description: "", dotRecordable: false, injuries: false, towAway: false, policeReport: "", claimNumber: "", status: "open" });
+const blank = () => ({ occurredAt: toLocalInput(new Date()), kind: "accident", driverId: "", truckId: "", trailerId: "", location: "", description: "", dotRecordable: false, injuries: false, towAway: false, fatality: false, citation: false, preventable: "", policeReport: "", claimNumber: "", status: "open" });
+const when = (iso: string) => new Date(iso).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
 
 export function IncidentsBoard({ rows, drivers, trucks, trailers, role }: { rows: Inc[]; drivers: Opt[]; trucks: Opt[]; trailers: Opt[]; role: string }) {
   const router = useRouter();
@@ -51,20 +52,31 @@ export function IncidentsBoard({ rows, drivers, trucks, trailers, role }: { rows
             </thead>
             <tbody>
               {rows.map((r) => (
-                <tr key={r.id} className="cursor-pointer" onClick={() => canEdit && setEdit({ id: r.id, f: { ...blank(), ...r, occurredAt: toLocalInput(r.occurredAt), driverId: r.driverId ?? "", truckId: r.truckId ?? "", trailerId: r.trailerId ?? "", location: r.location ?? "", policeReport: r.policeReport ?? "", claimNumber: r.claimNumber ?? "" } })}>
+                <tr key={r.id} className="cursor-pointer" onClick={() => canEdit && setEdit({ id: r.id, f: { ...blank(), occurredAt: toLocalInput(r.occurredAt), kind: r.kind, driverId: r.driverId ?? "", truckId: r.truckId ?? "", trailerId: r.trailerId ?? "", location: r.location ?? "", description: r.description, dotRecordable: r.dotRecordable, injuries: r.injuries, towAway: r.towAway, fatality: r.fatality, citation: r.citation, preventable: r.preventable ?? "", policeReport: r.policeReport ?? "", claimNumber: r.claimNumber ?? "", status: r.status } })}>
                   <td className="whitespace-nowrap">{new Date(r.occurredAt).toLocaleString("en-US", { month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit" })}</td>
                   <td className="capitalize">{r.kind.replace("_", " ")}</td>
                   <td>
                     {name(drivers, r.driverId)} {r.truckId ? `· ${name(trucks, r.truckId)}` : ""}
                   </td>
-                  <td className="max-w-md truncate" title={r.description}>
-                    {r.description}
-                    {r.location ? <span className="text-muted"> — {r.location}</span> : null}
+                  <td className="max-w-md" title={r.description}>
+                    <div className="truncate">
+                      {r.description}
+                      {r.location ? <span className="text-muted"> — {r.location}</span> : null}
+                    </div>
+                    {r.postAccident && (
+                      <div className="text-[12px] text-amber mt-0.5" data-testid="post-accident">
+                        Post-accident testing ({r.postAccident.why}): alcohol by {when(r.postAccident.alcoholBy)}, drug by {when(r.postAccident.drugBy)}
+                        {r.tests && ` · ${r.tests.alcohol ? "alcohol ✓" : "alcohol not recorded"}, ${r.tests.drug ? "drug ✓" : "drug not recorded"}`}
+                      </div>
+                    )}
                   </td>
-                  <td className="space-x-1">
+                  <td className="space-x-1 whitespace-nowrap">
                     {r.dotRecordable && <Pill tone="red">DOT</Pill>}
+                    {r.fatality && <Pill tone="red">fatality</Pill>}
                     {r.injuries && <Pill tone="red">injury</Pill>}
                     {r.towAway && <Pill tone="amber">tow</Pill>}
+                    {r.citation && <Pill tone="amber">cited</Pill>}
+                    {r.preventable === "not_preventable" && <Pill tone="slate">not preventable</Pill>}
                   </td>
                   <td>
                     <Pill tone={r.status === "closed" ? "slate" : r.status === "under_review" ? "amber" : "teal"}>{r.status.replace("_", " ")}</Pill>
@@ -163,12 +175,26 @@ export function IncidentsBoard({ rows, drivers, trucks, trailers, role }: { rows
               <label className="label">Claim #</label>
               <input className="input" value={edit.f.claimNumber} onChange={(e) => setEdit({ ...edit, f: { ...edit.f, claimNumber: e.target.value } })} />
             </div>
-            <div className="col-span-3 flex gap-5 text-[13px]">
+            {edit.f.kind === "accident" && (
+              <div>
+                <label className="label" htmlFor="inc-prev">
+                  Preventable?
+                </label>
+                <select id="inc-prev" className="select" value={edit.f.preventable} onChange={(e) => setEdit({ ...edit, f: { ...edit.f, preventable: e.target.value } })}>
+                  <option value="">Not decided</option>
+                  <option value="preventable">Preventable</option>
+                  <option value="not_preventable">Not preventable (FMCSA CPDP)</option>
+                </select>
+              </div>
+            )}
+            <div className="col-span-3 flex gap-5 flex-wrap text-[13px]">
               {(
                 [
                   ["dotRecordable", "DOT recordable"],
-                  ["injuries", "Injuries"],
+                  ["fatality", "Fatality"],
+                  ["injuries", "Injury treated away from the scene"],
                   ["towAway", "Tow-away"],
+                  ["citation", "Driver cited"],
                 ] as const
               ).map(([k, l]) => (
                 <label key={k} className="flex items-center gap-2 cursor-pointer">
@@ -177,6 +203,7 @@ export function IncidentsBoard({ rows, drivers, trucks, trailers, role }: { rows
               ))}
             </div>
           </div>
+          {edit.f.kind === "accident" && (edit.f.fatality || (edit.f.citation && (edit.f.injuries || edit.f.towAway))) && <div className="help mt-3 text-amber">Post-accident testing is required (382.303): alcohol within 8 hours, drugs within 32. Record the tests under Drug & alcohol against this accident.</div>}
         </Modal>
       )}
       <Toast message={t.toast?.message ?? null} tone={t.toast?.tone} onDone={t.clear} />

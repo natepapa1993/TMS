@@ -9,6 +9,7 @@ import { assertCtx, requirePermission, systemCtx, type Ctx } from "@/lib/context
 import { writeAudit } from "@/lib/audit";
 import { enqueue } from "@/lib/outbox";
 import { ValidationError, NotFoundError } from "./orders";
+import { dqLines, dqComplianceItems, daStanding, daComplianceItem } from "./safety-rules";
 
 /**
  * Compliance engine (spec §6). Rules = document types the owner edits. For each driver / truck /
@@ -67,6 +68,12 @@ export function scopeMatches(scope: string | null | undefined, leg: LegZone | st
   return scope === z.type;
 }
 
+/** Built-in items (dates on the record, the qualification file): a blank one blocks only with the company's "missing dates block" switch. */
+export const isBuiltIn = (key: string) => key.startsWith("field:") || key.startsWith("dq:");
+
+/** Legal prerequisites nobody can override: licence, medical card, I-94, plates, and a drug & alcohol hold. */
+export const HARD_BLOCK = /licen|medical|I-94|plate|Safety hold/i;
+
 /** The lists and the dispatchable flag from a set of items (the whole subject, or the items that apply to one leg). */
 export function rollup(items: ComplianceItem[]) {
   // a snoozed item still names itself when it blocks (the snooze only quiets the reminder)
@@ -77,7 +84,7 @@ export function rollup(items: ComplianceItem[]) {
   // A snooze hides the reminder, never the block: a snoozed item counts as what it really is.
   // A missing built-in date blocks only when the company says so ("missing dates block dispatch");
   // expired ones and missing required documents always do.
-  const dispatchable = !items.some((i) => i.blocksDispatch && (real(i) === "expired" || (real(i) === "missing" && (!i.key.startsWith("field:") || !!i.blocksWhenMissing))));
+  const dispatchable = !items.some((i) => i.blocksDispatch && (real(i) === "expired" || (real(i) === "missing" && (!isBuiltIn(i.key) || !!i.blocksWhenMissing))));
   return { expired, expiring, missing, dispatchable };
 }
 
@@ -121,12 +128,24 @@ export async function evaluateSubject(ctx: Ctx, kind: SubjectKind, subjectId: st
     if (snooze && underlying) status = "snoozed";
     items.push({ key: `field:${f.key}`, label: f.label, status, underlying: snooze ? underlying : null, blocksWhenMissing: f.blocks && strictMissing, expiresAt: d?.toISOString() ?? null, documentId: null, blocksDispatch: f.blocks, required: true, alertDays: 30, snoozedUntil: snooze?.until.toISOString() ?? null, snoozeReason: snooze?.reason ?? null });
   }
+  if (kind === "driver") items.push(...(await driverSafetyItems(ctx, r, subjectId, strictMissing, now)));
   const { expired, expiring, missing, dispatchable } = rollup(items);
   const [existing] = await db.select({ id: s.complianceStatus.id }).from(s.complianceStatus).where(and(eq(s.complianceStatus.tenantId, ctx.tenantId), eq(s.complianceStatus.subjectKind, kind), eq(s.complianceStatus.subjectId, subjectId))).limit(1);
   const row = { dispatchable, expired, expiring, missing, items, ranAt: now };
   if (existing) await db.update(s.complianceStatus).set(row).where(eq(s.complianceStatus.id, existing.id));
   else await db.insert(s.complianceStatus).values({ id: newId(), tenantId: ctx.tenantId, subjectKind: kind, subjectId, ...row });
   return { kind, subjectId, ...row };
+}
+
+/** The qualification file and the drug & alcohol standing of a driver, as compliance items. */
+async function driverSafetyItems(ctx: Ctx, driver: Record<string, unknown>, driverId: string, strictMissing: boolean, now: Date) {
+  const [records, tests] = await Promise.all([
+    db.select().from(s.dqRecords).where(and(eq(s.dqRecords.tenantId, ctx.tenantId), eq(s.dqRecords.driverId, driverId))),
+    db.select().from(s.daTests).where(and(eq(s.daTests.tenantId, ctx.tenantId), eq(s.daTests.driverId, driverId))),
+  ]);
+  const standing = daStanding(tests);
+  const lines = dqLines({ driverType: String(driver.driverType), licenseState: driver.licenseState as string | null, hireDate: driver.hireDate as Date | null }, records, standing.preEmploymentNegativeAt, now);
+  return [...dqComplianceItems(lines, strictMissing), daComplianceItem(standing.prohibited)];
 }
 
 /** Evaluate every active subject of a tenant (nightly, on rule change, on demand). */
@@ -294,7 +313,7 @@ export async function blankBlockingDates(ctx: Ctx) {
   assertCtx(ctx);
   const rows = await db.select({ kind: s.complianceStatus.subjectKind, items: s.complianceStatus.items }).from(s.complianceStatus).where(eq(s.complianceStatus.tenantId, ctx.tenantId));
   const out: Record<string, number> = {};
-  for (const r of rows) if (r.items.some((i) => i.key.startsWith("field:") && i.blocksDispatch && (i.status === "missing" || (i.status === "snoozed" && i.underlying === "missing")))) out[r.kind] = (out[r.kind] ?? 0) + 1;
+  for (const r of rows) if (r.items.some((i) => isBuiltIn(i.key) && i.blocksDispatch && (i.status === "missing" || (i.status === "snoozed" && i.underlying === "missing")))) out[r.kind] = (out[r.kind] ?? 0) + 1;
   const [t] = await db.select({ settings: s.tenants.settings }).from(s.tenants).where(eq(s.tenants.id, ctx.tenantId)).limit(1);
   return { on: !!(t?.settings as Record<string, unknown> | null)?.missingDatesBlock, counts: out };
 }
@@ -314,7 +333,7 @@ export async function overrideDispatch(ctx: Ctx, kind: SubjectKind, subjectId: s
   if (ctx.role !== "system") requirePermission(ctx, "compliance.override");
   if (!reason?.trim()) throw new ValidationError("a reason is required", "reason");
   const st = await statusFor(ctx, kind, subjectId);
-  if (st.expired.some((l) => /licen|medical|I-94|plate/i.test(l))) throw new ValidationError(`cannot override an expired legal document (${st.expired.join(", ")})`);
+  if (st.expired.some((l) => HARD_BLOCK.test(l))) throw new ValidationError(`cannot override an expired legal document (${st.expired.join(", ")})`);
   const expiresAt = new Date(Date.now() + 24 * 3600_000);
   await db.insert(s.complianceOverrides).values({ id: newId(), tenantId: ctx.tenantId, subjectKind: kind, subjectId, reason: reason.trim(), expiresAt, createdBy: ctx.userId });
   await writeAudit(db, ctx, kind, subjectId, "override", { dispatchable: { from: false, to: "24h" } }, reason.trim());
@@ -331,7 +350,7 @@ export async function complianceFindings(ctx: Ctx, kind: SubjectKind, subjectId:
   const out: { level: "red" | "yellow"; code: string; message: string; overridable: boolean }[] = [];
   if (!st.dispatchable && !st.override) {
     const why = [...st.expired.map((x) => `${x} expired`), ...st.missing.map((x) => `${x} missing`)].join(", ");
-    out.push({ level: "red", code: "compliance_block", message: `${label}: ${why}`, overridable: !st.expired.some((l) => /licen|medical|I-94|plate/i.test(l)) });
+    out.push({ level: "red", code: "compliance_block", message: `${label}: ${why}`, overridable: !st.expired.some((l) => HARD_BLOCK.test(l)) });
   } else if (st.override) out.push({ level: "yellow", code: "compliance_override", message: `${label}: dispatch override until ${st.override.expiresAt.toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric" })} (${st.override.reason})`, overridable: true });
   if (st.expiring.length) out.push({ level: "yellow", code: "compliance_expiring", message: `${label}: ${st.expiring.join(", ")} expiring soon`, overridable: true });
   return out;
@@ -350,12 +369,16 @@ export async function dashboard(ctx: Ctx) {
   subjects.trailer = tr.map((x) => ({ id: x.id, label: x.unitNumber, sub: x.kind, archived: false }));
   subjects.carrier = c.map((x) => ({ id: x.id, label: x.name, sub: x.country, archived: false }));
   const overrides = await db.select().from(s.complianceOverrides).where(and(eq(s.complianceOverrides.tenantId, ctx.tenantId), gt(s.complianceOverrides.expiresAt, new Date())));
-  const tiles = { expired: 0, expiring: 0, missing: 0, blocked: 0, subjects: 0, lastRun: null as Date | null };
+  const tiles = { expired: 0, expiring: 0, missing: 0, blocked: 0, subjects: 0, dq: 0, lastRun: null as Date | null };
   for (const r of status) {
+    // the qualification file counts once per driver in its own tile, not item by item among the documents
+    const docs = r.items.filter((i) => !i.key.startsWith("dq:"));
+    const real = (i: ComplianceItem) => (i.status === "snoozed" ? i.underlying : i.status);
     tiles.subjects++;
-    tiles.expired += r.expired.length;
-    tiles.expiring += r.expiring.length;
-    tiles.missing += r.missing.length;
+    tiles.expired += docs.filter((i) => real(i) === "expired").length;
+    tiles.expiring += docs.filter((i) => i.status === "expiring").length;
+    tiles.missing += docs.filter((i) => real(i) === "missing").length;
+    if (r.items.some((i) => i.key.startsWith("dq:") && (real(i) === "missing" || real(i) === "expired"))) tiles.dq++;
     if (!r.dispatchable) tiles.blocked++;
     if (!tiles.lastRun || r.ranAt > tiles.lastRun) tiles.lastRun = r.ranAt;
   }
@@ -429,7 +452,8 @@ export async function driverOwnItems(tenantId: string, driverId: string): Promis
     db.select({ documentTypeId: s.documents.documentTypeId, status: s.documents.status, fileName: s.documents.fileName, notes: s.documents.notes, at: s.documents.updatedAt }).from(s.documents).where(and(eq(s.documents.tenantId, tenantId), eq(s.documents.subjectKind, "driver"), eq(s.documents.subjectId, driverId), eq(s.documents.source, "driver_app"), inArray(s.documents.status, ["pending", "rejected"]))).orderBy(desc(s.documents.updatedAt)),
   ]);
   return st.items
-    .filter((i) => i.status === "expiring" || i.status === "expired" || i.status === "missing")
+    // the qualification file and the drug & alcohol program are the office's work, not uploads from the driver
+    .filter((i) => !i.key.startsWith("dq:") && !i.key.startsWith("da:") && (i.status === "expiring" || i.status === "expired" || i.status === "missing"))
     .map((i) => {
       const typeId = i.key.startsWith("field:") ? null : i.key;
       const p = typeId ? sent.find((d) => d.documentTypeId === typeId && d.status === "pending") : null;
@@ -460,7 +484,7 @@ export async function saveIncident(ctx: Ctx, id: string | null, v: Partial<typeo
   requirePermission(ctx, "compliance.edit");
   if (!v.description?.trim()) throw new ValidationError("describe what happened", "description");
   if (!v.occurredAt) throw new ValidationError("when did it happen?", "occurredAt");
-  const safe = { occurredAt: v.occurredAt, kind: v.kind ?? "accident", driverId: v.driverId ?? null, truckId: v.truckId ?? null, trailerId: v.trailerId ?? null, orderId: v.orderId ?? null, location: v.location ?? null, description: v.description.trim(), dotRecordable: !!v.dotRecordable || ((v.kind ?? "accident") === "accident" && (!!v.injuries || !!v.towAway)), injuries: !!v.injuries, towAway: !!v.towAway, policeReport: v.policeReport ?? null, claimNumber: v.claimNumber ?? null, status: v.status ?? "open" };
+  const safe = { occurredAt: v.occurredAt, kind: v.kind ?? "accident", driverId: v.driverId ?? null, truckId: v.truckId ?? null, trailerId: v.trailerId ?? null, orderId: v.orderId ?? null, location: v.location ?? null, description: v.description.trim(), dotRecordable: !!v.dotRecordable || ((v.kind ?? "accident") === "accident" && (!!v.injuries || !!v.towAway || !!v.fatality)), injuries: !!v.injuries, towAway: !!v.towAway, fatality: !!v.fatality, citation: !!v.citation, preventable: v.preventable === "preventable" || v.preventable === "not_preventable" ? v.preventable : null, policeReport: v.policeReport ?? null, claimNumber: v.claimNumber ?? null, status: v.status ?? "open" };
   if (id) {
     const [row] = await db.update(s.incidents).set({ ...safe, updatedAt: new Date(), updatedBy: ctx.userId }).where(and(eq(s.incidents.tenantId, ctx.tenantId), eq(s.incidents.id, id))).returning();
     if (!row) throw new NotFoundError("incident", id);

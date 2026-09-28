@@ -26,12 +26,14 @@ beforeEach(async () => {
 });
 
 const pdf = Buffer.from("%PDF-1.4 fixture");
+/** Missing documents and dates, leaving out the qualification file (its own tests are in safety.test.ts). */
+const docMissing = (st: { items: { key: string; status: string; label: string }[] }) => st.items.filter((i) => i.status === "missing" && !i.key.startsWith("dq:")).map((i) => i.label);
 
 describe("engine (spec §6.1)", () => {
   it("a driver with no medical card document is missing it and blocked; uploading fixes it; expiring shows inside alert days", async () => {
     let st = await C.evaluateSubject(a, "driver", ids.benja);
     expect(st.dispatchable).toBe(false);
-    expect(st.missing).toEqual(["Medical card"]);
+    expect(docMissing(st)).toEqual(["Medical card"]);
     expect(st.items.find((i) => i.key === "field:i94Until")!.status).toBe("ok");
     expect(st.items.some((i) => i.key === "field:licenseExpires")).toBe(false); // B-1: US licence not applicable
     await expect(C.uploadSubjectDocument(a, "driver", ids.benja, { documentTypeId: ids.medical, fileName: "med.pdf", mimeType: "application/pdf", bytes: pdf })).rejects.toBeInstanceOf(ValidationError); // expiry required
@@ -140,10 +142,10 @@ describe("engine (spec §6.1)", () => {
     const reyes = await create(a, "driver", { name: "Daniel Reyes", driverType: "CDL", licenseExpires: days(400), medicalExpires: days(300), currentTruckId: t2104.id });
     await C.uploadSubjectDocument(a, "driver", reyes.id, { documentTypeId: ids.medical, fileName: "med.pdf", mimeType: "application/pdf", bytes: pdf, expiresAt: days(300) });
     const st = await C.evaluateSubject(a, "driver", reyes.id);
-    expect(st.missing).toEqual(["FAST card"]);
+    expect(docMissing(st)).toEqual(["FAST card"]);
     expect(st.dispatchable).toBe(false); // the safety board: he has no FAST card on file
     expect(C.forLeg(st, "us").dispatchable).toBe(true);
-    expect(C.forLeg(st, "domestic").missing).toEqual([]);
+    expect(docMissing({ items: st.items.filter((i) => C.scopeMatches(i.legScope, "domestic")) })).toEqual([]);
     expect(C.forLeg(st, "crossing").dispatchable).toBe(false);
     expect(C.scopeMatches("mx", "crossing")).toBe(true);
     expect(C.scopeMatches("us", "domestic")).toBe(true);
@@ -177,6 +179,7 @@ describe("engine (spec §6.1)", () => {
     expect(d.tiles.subjects).toBe(3);
     expect(d.tiles.blocked).toBe(2); // driver (medical) + carrier (insurance)
     expect(d.tiles.missing).toBe(2);
+    expect(d.tiles.dq).toBe(1); // Benjamín's qualification file is empty
     const csv = C.dashboardCsv(d, "driver");
     expect(csv.split("\n")[0]).toContain("Medical card");
     expect(csv).toContain("Benjamín Xochihua");

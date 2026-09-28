@@ -90,6 +90,23 @@ export default async function RecordPage({ params }: PageProps<"/settings/[kind]
               canEdit={["owner", "compliance", "dispatcher", "mx_office"].includes(ctx.role)}
             />
           )}
+          {kind === "driver" && compliance && (() => {
+            const dq = compliance.items.filter((i) => i.key.startsWith("dq:"));
+            const gaps = dq.filter((i) => i.status === "missing" || i.status === "expired" || (i.status === "snoozed" && (i.underlying === "missing" || i.underlying === "expired"))).length;
+            const hold = compliance.items.some((i) => i.key === "da:status" && i.status === "expired");
+            return (
+              <div className="card p-4" data-testid="safety-file-card">
+                <div className="eyebrow mb-2">Safety file</div>
+                <div className="text-[13px]">
+                  Qualification file: {gaps ? <span className="pill pill-amber">{gaps} missing or overdue</span> : <span className="pill pill-green">complete</span>}
+                  {hold && <span className="pill pill-red ml-1">safety hold</span>}
+                </div>
+                <Link href={`/compliance/drivers/${id}`} className="btn btn-sm mt-3">
+                  Open safety file
+                </Link>
+              </div>
+            );
+          })()}
           {kind === "driver" && driverApp && <DriverAppCard driverId={id} url={driverApp} whatsapp={(row.whatsapp as string | null) ?? null} phone={(row.phone as string | null) ?? null} canEdit={["owner", "dispatcher", "compliance"].includes(ctx.role)} />}
           {kind === "customer" && customerPortal && <CustomerPortalCard customerId={id} url={customerPortal.url} email={customerPortal.email} canEdit={["owner", "dispatcher", "billing"].includes(ctx.role)} />}
           {kind === "carrier" && portal && score && <CarrierPortalCard carrierId={id} url={portal.url} whatsapp={portal.whatsapp} email={portal.email} score={score} canEdit={["owner", "dispatcher"].includes(ctx.role)} />}

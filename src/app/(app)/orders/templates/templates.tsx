@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { localDay } from "@/lib/time";
 import { useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Modal, Toast, useToast } from "@/components/ui";
@@ -26,7 +27,7 @@ export function Templates({ rows }: { rows: Row[] }) {
   const t = useToast();
   const [pending, start] = useTransition();
   const [bulk, setBulk] = useState<Row | null>(null);
-  const [f, setF] = useState(() => ({ start: new Date(Date.now() + 86400_000).toISOString().slice(0, 10), weeks: 1, days: [1, 2, 3, 4, 5], book: true }));
+  const [f, setF] = useState(() => ({ start: localDay(1), weeks: 1, days: [1, 2, 3, 4, 5], book: true }));
   const dates = useMemo(() => datesFor(f.start, f.weeks, f.days), [f]);
   if (!rows.length)
     return (

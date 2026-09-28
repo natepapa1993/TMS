@@ -7,6 +7,7 @@
  */
 
 import { useEffect, useMemo, useRef, useState, useTransition, type ReactNode } from "react";
+import { localDay } from "@/lib/time";
 import Link from "next/link";
 import { Toast } from "@/components/ui";
 import {
@@ -262,7 +263,7 @@ export function DataGrid<T extends { id: string }>({
     const blob = new Blob([[head, ...body].join("\n")], { type: "text/csv;charset=utf-8" });
     const a = document.createElement("a");
     a.href = URL.createObjectURL(blob);
-    a.download = `${exportName}-${new Date().toISOString().slice(0, 10)}.csv`;
+    a.download = `${exportName}-${localDay()}.csv`;
     a.click();
     URL.revokeObjectURL(a.href);
   };

@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useEffect, useMemo, useRef, useState, useTransition, type ReactNode } from "react";
 import { createLoadAction, readRateConAction, templateDraftAction, saveBuilderTemplateAction, suggestRateAction } from "../actions";
 import type { RateSuggestion } from "@/domain/rates";
-import { toZoneInput, fromZoneInput } from "@/lib/time";
+import { toZoneInput, fromZoneInput, localDay } from "@/lib/time";
 import { StopFields, blankStop, stopPayload, draftZone, placeLine, timeLine, STOP_LABEL, STOP_TONE, type Loc, type StopDraft } from "@/components/stop-fields";
 import { legsFromStops, LEG_TYPE_LABEL, stopTimeProblems } from "@/domain/zones";
 
@@ -73,7 +73,7 @@ export function OrderForm({ customers, entities, locations, templates = [], zone
   const [rateCon, setRateCon] = useState<{ id: string; fileName: string; warnings: string[] } | null>(null);
   const [readErr, setReadErr] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
-  const [tpl, setTpl] = useState(() => ({ id: "", date: new Date(Date.now() + 86400_000).toISOString().slice(0, 10) }));
+  const [tpl, setTpl] = useState(() => ({ id: "", date: localDay(1) }));
   const [tplMsg, setTplMsg] = useState<string | null>(null);
   const [offer, setOffer] = useState<RateSuggestion | null>(null);
   const [contract, setContract] = useState<RateSuggestion | null>(null);

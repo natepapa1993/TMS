@@ -218,6 +218,13 @@
       "when": 1790538131483,
       "tag": "0030_check_calls",
       "breakpoints": true
+    },
+    {
+      "idx": 31,
+      "version": "7",
+      "when": 1790556864177,
+      "tag": "0031_safety_depth",
+      "breakpoints": true
     }
   ]
 }

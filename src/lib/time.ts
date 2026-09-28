@@ -118,3 +118,9 @@ export function fromZoneInput(v: string | null | undefined, zone: string): Date 
 export function stopZone(st: { country?: string | null; address?: { state?: string | null } | null }, fallback: string) {
   return zoneFor({ state: st.address?.state ?? null, country: st.country ?? null }, fallback);
 }
+
+/** YYYY-MM-DD on the viewer's own calendar, n days from today (a date input's default: after 8 pm in Michigan the UTC date is already tomorrow). */
+export function localDay(offsetDays = 0, now = new Date()) {
+  const d = new Date(now.getTime() + offsetDays * 86400_000);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}

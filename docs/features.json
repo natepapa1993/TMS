@@ -773,6 +773,46 @@
         "src/domain/board.test.ts",
         "e2e/board.spec.ts"
       ]
+    },
+    {
+      "id": "F-25.1",
+      "name": "Driver qualification file (49 CFR 391.51 + Clearinghouse queries): application, record at hire (MVR / driver's abstract / LIFIS), road test, pre-employment test, prior employers within 30 days, annual record, review and query; hire prerequisites block with 'missing dates block'; papers attached; per-driver safety file page",
+      "milestone": "M25",
+      "status": "done",
+      "tests": [
+        "src/domain/safety.test.ts",
+        "e2e/safety.spec.ts"
+      ]
+    },
+    {
+      "id": "F-25.2",
+      "name": "Drug & alcohol program (Parts 40/382), confidential to owner and Safety: random draws with pool and rates on record, tests and results, refusal/positive → a hold dispatch sees without the reason (not overridable) until a negative return-to-duty test, SAP follow-ups, Clearinghouse to-dos, post-accident testing owed from the incident register",
+      "milestone": "M25",
+      "status": "done",
+      "tests": [
+        "src/domain/safety.test.ts",
+        "e2e/safety.spec.ts"
+      ]
+    },
+    {
+      "id": "F-25.3",
+      "name": "Roadside inspections: CVSA level, US/CA/MX jurisdiction, violations filed under their BASIC by CFR part with severity and OOS, DataQs; SMS-style time- and severity-weighted measures per BASIC (US only), crash indicator from recordable, preventable crashes; OOS rates by country; drivers by points; an OOS on a load flags it",
+      "milestone": "M25",
+      "status": "done",
+      "tests": [
+        "src/domain/safety.test.ts",
+        "e2e/safety.spec.ts"
+      ]
+    },
+    {
+      "id": "F-25.4",
+      "name": "Overrides log: every paperwork, schedule, crossing and rate-con override with who, what it waved through (findings and the assignee), on which load or record, and why; filters and CSV",
+      "milestone": "M25",
+      "status": "done",
+      "tests": [
+        "src/domain/safety.test.ts",
+        "e2e/safety.spec.ts"
+      ]
     }
   ]
 }

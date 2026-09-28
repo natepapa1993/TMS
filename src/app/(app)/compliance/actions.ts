@@ -57,9 +57,12 @@ export async function runComplianceAction() {
   return r;
 }
 
-export async function saveIncidentAction(id: string | null, v: { occurredAt: string; kind: string; driverId: string; truckId: string; trailerId: string; location: string; description: string; dotRecordable: boolean; injuries: boolean; towAway: boolean; policeReport: string; claimNumber: string; status: string }) {
-  const r = await act((ctx) => C.saveIncident(ctx, id, { ...v, occurredAt: new Date(v.occurredAt), driverId: v.driverId || null, truckId: v.truckId || null, trailerId: v.trailerId || null, location: v.location || null, policeReport: v.policeReport || null, claimNumber: v.claimNumber || null }));
-  if (r.ok) revalidatePath("/compliance/incidents");
+export async function saveIncidentAction(id: string | null, v: { occurredAt: string; kind: string; driverId: string; truckId: string; trailerId: string; location: string; description: string; dotRecordable: boolean; injuries: boolean; towAway: boolean; fatality?: boolean; citation?: boolean; preventable?: string; policeReport: string; claimNumber: string; status: string }) {
+  const r = await act((ctx) => C.saveIncident(ctx, id, { ...v, occurredAt: new Date(v.occurredAt), driverId: v.driverId || null, truckId: v.truckId || null, trailerId: v.trailerId || null, location: v.location || null, policeReport: v.policeReport || null, claimNumber: v.claimNumber || null, preventable: v.preventable || null }));
+  if (r.ok) {
+    revalidatePath("/compliance/incidents");
+    revalidatePath("/compliance/drug-alcohol");
+  }
   return r;
 }
 

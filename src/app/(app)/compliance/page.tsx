@@ -5,6 +5,7 @@ import { MissingDatesToggle } from "./table";
 import { PageHeader } from "@/components/page-header";
 import { Pill } from "@/components/ui";
 import { ComplianceTable } from "./table";
+import { SafetyNav } from "./nav";
 
 export const metadata = { title: "Compliance" };
 export const dynamic = "force-dynamic";
@@ -36,7 +37,11 @@ export default async function CompliancePage({ searchParams }: PageProps<"/compl
   const types = d.types.filter((t) => t.appliesTo === kind);
   const fields = FIELD_ITEMS[kind];
   // a document type and a built-in expiry field can share a name ("FAST card" scan on file vs the FAST expiry date): say which is which
-  const columns = [...types.map((t) => ({ key: t.id, label: t.name, blocks: t.blocksDispatch, sub: "on file" })), ...fields.map((f) => ({ key: `field:${f.key}`, label: f.label, blocks: f.blocks, sub: "expiry" }))];
+  const columns = [
+    ...types.map((t) => ({ key: t.id, label: t.name, blocks: t.blocksDispatch, sub: "on file" })),
+    ...fields.map((f) => ({ key: `field:${f.key}`, label: f.label, blocks: f.blocks, sub: "expiry" })),
+    ...(kind === "driver" ? [{ key: "dq:*", label: "Qualification file", blocks: true, sub: "391.51" }, { key: "da:status", label: "Hold", blocks: true, sub: "Safety" }] : []),
+  ];
   const rows = d.subjects[kind]
     .map((sub) => ({ ...sub, st: d.status.find((x) => x.subjectKind === kind && x.subjectId === sub.id) ?? null, override: d.overrides.find((o) => o.subjectKind === kind && o.subjectId === sub.id) ?? null }))
     .filter((r) => (filter === "blocked" ? r.st && !r.st.dispatchable : filter === "expired" ? r.st?.expired.length : filter === "expiring" ? r.st?.expiring.length : filter === "missing" ? r.st?.missing.length : true))
@@ -54,9 +59,6 @@ export default async function CompliancePage({ searchParams }: PageProps<"/compl
         title="Compliance"
         actions={
           <>
-            <Link href="/compliance/incidents" className="btn">
-              Incidents
-            </Link>
             <Link href="/settings/document-types" className="btn">
               Rules
             </Link>
@@ -68,6 +70,7 @@ export default async function CompliancePage({ searchParams }: PageProps<"/compl
       >
         Every driver, truck, trailer and carrier against your document rules. Last run {d.tiles.lastRun ? d.tiles.lastRun.toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) : "never"} · re-runs on every save and every hour.
       </PageHeader>
+      <SafetyNav role={ctx.role} />
       <div className="px-7 pb-10">
         {pending.length > 0 && (
           <div className="rounded-lg border border-teal/40 bg-teal-soft/40 px-4 py-3 mb-4 text-[13px]" data-testid="pending-uploads">
@@ -90,22 +93,26 @@ export default async function CompliancePage({ searchParams }: PageProps<"/compl
             <div className="flex-1">
               {blanks.on ? (
                 <>
-                  <b>Missing dates block dispatch.</b> A blank licence, medical card, annual inspection or I-94 date stops a driver or unit like an expired one{blankText ? ` (blocked now: ${blankText})` : ""}.
+                  <b>Missing dates block dispatch.</b> A blank licence, medical card, annual inspection or I-94 date — or a missing hire prerequisite in a driver&rsquo;s qualification file (application, road test, pre-employment test, Clearinghouse query) — stops a driver or unit like an expired one{blankText ? ` (blocked now: ${blankText})` : ""}.
                 </>
               ) : (
                 <>
-                  <b>{blankText} with a required date left blank</b> (licence, medical card, annual inspection, I-94…) — shown as missing but still dispatchable. Enter the dates, then turn on blocking.
+                  <b>{blankText} with a required date or hire prerequisite left blank</b> (licence, medical card, annual inspection, I-94, the qualification file…) — shown as missing but still dispatchable. Enter them, then turn on blocking.
                 </>
               )}
             </div>
             {["owner", "compliance"].includes(ctx.role) && <MissingDatesToggle on={blanks.on} />}
           </div>
         )}
-        <div className="flex gap-3 mb-4">
+        <div className="flex gap-3 mb-4 flex-wrap">
           {tile("blocked", "Blocked from dispatch", d.tiles.blocked, "text-red")}
           {tile("expired", "Expired", d.tiles.expired, "text-red")}
           {tile("expiring", "Expiring", d.tiles.expiring, "text-amber")}
           {tile("missing", "Missing", d.tiles.missing, "text-amber")}
+          <Link href="/compliance/drivers" className="card p-4 flex-1" data-testid="tile-dq">
+            <div className="eyebrow">Driver files incomplete</div>
+            <div className={`text-[26px] font-extrabold ${d.tiles.dq ? "text-amber" : "text-faint"}`}>{d.tiles.dq}</div>
+          </Link>
         </div>
         <div className="flex items-center gap-1.5 mb-3">
           {KINDS.map((k) => (

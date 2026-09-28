@@ -4,7 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
 import { Mark } from "./mark";
-import { ArrowLeftRight, BarChart3, Building2, Cable, CalendarRange, FileText, HandCoins, Handshake, Landmark, LayoutGrid, Map as MapIcon, MapPin, MessageSquare, Package, Plug, Receipt, Route, Settings, ShieldCheck, SlidersHorizontal, Fuel, Scale, TriangleAlert, Truck, Users, Wallet, type LucideIcon } from "lucide-react";
+import { ArrowLeftRight, BarChart3, ClipboardCheck, FlaskConical, FolderCheck, ShieldAlert, Building2, Cable, CalendarRange, FileText, HandCoins, Handshake, Landmark, LayoutGrid, Map as MapIcon, MapPin, MessageSquare, Package, Plug, Receipt, Route, Settings, ShieldCheck, SlidersHorizontal, Fuel, Scale, TriangleAlert, Truck, Users, Wallet, type LucideIcon } from "lucide-react";
 import { logoutAction } from "@/app/(auth)/actions";
 import { GlobalSearch } from "./global-search";
 
@@ -49,7 +49,11 @@ const NAV: { section: string; items: NavItem[] }[] = [
     section: "Safety",
     items: [
       { href: "/compliance", label: "Compliance", icon: ShieldCheck },
+      { href: "/compliance/drivers", label: "Driver files", icon: FolderCheck },
+      { href: "/compliance/drug-alcohol", label: "Drug & alcohol", icon: FlaskConical, roles: ["owner", "compliance"] },
+      { href: "/compliance/inspections", label: "Inspections", icon: ClipboardCheck },
       { href: "/compliance/incidents", label: "Incidents", icon: TriangleAlert },
+      { href: "/compliance/overrides", label: "Overrides", icon: ShieldAlert },
     ],
   },
   {
