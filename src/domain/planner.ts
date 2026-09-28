@@ -7,6 +7,7 @@ import { coords, roadMiles } from "@/lib/geo";
 import { assertCtx, requirePermission, type Ctx } from "@/lib/context";
 import { writeAudit } from "@/lib/audit";
 import type { Finding } from "./eligibility";
+import { rollup } from "./compliance-rules";
 import { NotFoundError, ValidationError } from "./orders";
 
 /**
@@ -15,7 +16,9 @@ import { NotFoundError, ValidationError } from "./orders";
  * it (eligibility first, then deadhead to the pickup).
  */
 
-export const EVENT_LABEL: Record<AssetEventKind, string> = { vacation: "Vacation", home_time: "Home time", restart: "34-h restart", sick: "Sick / emergency", repair: "In the shop", work_order: "Work order", other: "Unavailable" };
+export const EVENT_LABEL: Record<AssetEventKind, string> = { vacation: "Vacation", home_time: "Home time", restart: "34-h restart", sick: "Sick / emergency", repair: "In the shop", work_order: "Work order", other: "Unavailable", credentials: "Licence / medical renewal", oos: "Out-of-service order" };
+/** Time off that is Safety's, not a schedule call: a licence or medical renewal (Safety can override), an out-of-service order (nobody can). */
+export const SAFETY_EVENT: Partial<Record<AssetEventKind, { code: string; overridable: boolean }>> = { credentials: { code: "safety_credentials", overridable: true }, oos: { code: "safety_oos_order", overridable: false } };
 const OPEN_LEG = ["unassigned", "declined", "planned"] as const;
 const ACTIVE = ["planned", "dispatched", "accepted", "en_route_to_pickup", "at_pickup", "loaded", "en_route", "at_delivery"] as const;
 const MOVING = ["en_route_to_pickup", "at_pickup", "loaded", "en_route", "at_delivery"] as const;
@@ -28,6 +31,7 @@ export async function addEvent(ctx: Ctx, input: { subjectKind: string; subjectId
   requirePermission(ctx, "dispatch.plan");
   if (!["driver", "truck", "trailer"].includes(input.subjectKind)) throw new ValidationError("events are for drivers, trucks and trailers");
   if (!(ASSET_EVENT_KINDS as readonly string[]).includes(input.kind)) throw new ValidationError("pick what kind of time off it is", "kind");
+  if (input.kind === "oos") requirePermission(ctx, "compliance.edit"); // an out-of-service order comes from Safety (a roadside inspection)
   if (!(input.startsAt instanceof Date) || Number.isNaN(input.startsAt.getTime()) || !(input.endsAt instanceof Date) || Number.isNaN(input.endsAt.getTime())) throw new ValidationError("enter when it starts and ends", "startsAt");
   if (input.endsAt <= input.startsAt) throw new ValidationError("it has to end after it starts", "endsAt");
   const table = input.subjectKind === "driver" ? s.drivers : input.subjectKind === "truck" ? s.trucks : s.trailers;
@@ -60,12 +64,19 @@ export async function eventsBetween(tx: Tx | typeof db, tenantId: string, from: 
 
 const fmt = (d: Date) => d.toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit", timeZone: "America/Detroit" });
 
-/** What the events say about using these assets in this window: a hard event is red, a soft one yellow. */
+/**
+ * What the events say about using these assets in this window: a hard event is red, a soft one yellow.
+ * A licence / medical renewal or an out-of-service order is a Safety block (only Safety or the owner may
+ * override the first; nobody the second), never a schedule conflict dispatch can wave through.
+ */
 export function eventFindings(events: (typeof s.assetEvents.$inferSelect)[], who: { kind: string; id: string; label: string }[]): Finding[] {
   const out: Finding[] = [];
   for (const w of who)
-    for (const e of events.filter((x) => x.subjectKind === w.kind && x.subjectId === w.id))
-      out.push({ level: e.hard ? "red" : "yellow", code: `event_${e.kind}`, message: `${w.label}: ${EVENT_LABEL[e.kind].toLowerCase()} ${fmt(e.startsAt)} – ${fmt(e.endsAt)}${e.note ? ` (${e.note})` : ""}`, overridable: true });
+    for (const e of events.filter((x) => x.subjectKind === w.kind && x.subjectId === w.id)) {
+      const safety = SAFETY_EVENT[e.kind];
+      if (safety) out.push({ level: "red", code: safety.code, message: `${w.label}: Safety — ${EVENT_LABEL[e.kind].toLowerCase()} until ${fmt(e.endsAt)}${e.note ? ` (${e.note})` : ""}`, overridable: safety.overridable });
+      else out.push({ level: e.hard ? "red" : "yellow", code: `event_${e.kind}`, message: `${w.label}: ${EVENT_LABEL[e.kind].toLowerCase()} ${fmt(e.startsAt)} – ${fmt(e.endsAt)}${e.note ? ` (${e.note})` : ""}`, overridable: true });
+    }
   return out;
 }
 
@@ -244,11 +255,8 @@ export async function plannerData(ctx: Ctx, now = new Date()) {
 
   // ---- by truck ----
   const blockOf = (kind: string, id: string) => blocked.find((b) => b.subjectKind === kind && b.subjectId === id);
-  const blockWhy = (b: (typeof blocked)[number]) => {
-    const i = b.items.find((x) => x.blocksDispatch && ["expired", "missing"].includes(x.status === "snoozed" ? (x.underlying ?? "") : x.status));
-    const label = (i?.label ?? b.expired[0] ?? b.missing[0] ?? "").replace(/ (expiry|expires)$/i, "");
-    return label ? `${label} ${i && (i.status === "missing" || i.underlying === "missing") ? "missing" : "expired"}` : "paperwork blocks dispatch";
-  };
+  // the plain reason that actually blocks (the hard one first): "Pre-employment drug test result not in", "Licence expired"
+  const blockWhy = (b: (typeof blocked)[number]) => rollup(b.items).blockers[0] ?? "paperwork blocks dispatch";
   const byOrder = new Map<string, typeof allLegCounts>();
   for (const l of allLegCounts) byOrder.set(l.orderId, [...(byOrder.get(l.orderId) ?? []), l]);
   const fmtUntil = (d: Date) => d.toLocaleString("en-US", { month: "short", day: "numeric", timeZone: "America/Chicago" });
@@ -278,7 +286,7 @@ export async function plannerData(ctx: Ctx, now = new Date()) {
       let why: string | null = null;
       if (t.status === "oos") { status = "unavailable"; why = `Out of service${t.oosReason ? ` — ${t.oosReason}` : ""}${t.oosUntil ? ` · until ${fmtUntil(t.oosUntil)}` : ""}`; }
       else if (!crewD.length) { status = "unavailable"; why = "No driver in this truck"; }
-      else if (offNow) { status = "unavailable"; why = `${offNow.label} until ${fmtUntil(new Date(offNow.endsAt))}`; }
+      else if (offNow) { status = "unavailable"; why = `${SAFETY_EVENT[offNow.kind as AssetEventKind] ? "Safety: " : ""}${offNow.label} until ${fmtUntil(new Date(offNow.endsAt))}`; }
       const blockText = tBlock ? `Truck: ${blockWhy(tBlock)}` : crewD.length && dBlocks.every(Boolean) ? `${crewD[0].name.split(" ")[0]}: ${blockWhy(dBlocks[0]!)}` : null;
       if (status === "unavailable") {
         /* set above */

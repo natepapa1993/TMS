@@ -2,11 +2,11 @@ import Link from "next/link";
 import { requireCtx } from "@/lib/auth";
 import { can } from "@/lib/context";
 import { inspectionsBoard } from "@/domain/safety";
-import { BASICS } from "@/domain/safety-rules";
+import { BASICS, roadsideOos } from "@/domain/safety-rules";
 import { list } from "@/data/records";
 import { PageHeader } from "@/components/page-header";
 import { SafetyNav } from "../nav";
-import { InspectionButton } from "../safety-ui";
+import { InspectionButton, RepairButton } from "../safety-ui";
 
 export const metadata = { title: "Inspections" };
 export const dynamic = "force-dynamic";
@@ -19,12 +19,21 @@ export default async function InspectionsPage() {
   const ctx = await requireCtx();
   const canEdit = can(ctx, "compliance.edit");
   const [b, drivers, trucks, trailers] = await Promise.all([inspectionsBoard(ctx), list(ctx, "driver", { limit: 2000 }), list(ctx, "truck", { limit: 2000 }), list(ctx, "trailer", { limit: 2000 })]);
-  const opts = { drivers: drivers.map((d) => ({ id: d.id, name: String(d.name) })), trucks: trucks.map((t) => ({ id: t.id, name: String(t.unitNumber) })), trailers: trailers.map((t) => ({ id: t.id, name: String(t.unitNumber) })) };
+  // pickers in name / unit-number order
+  const opts = { drivers: drivers.map((d) => ({ id: d.id, name: String(d.name) })).sort((p, q) => p.name.localeCompare(q.name, "en-US", { numeric: true })), trucks: trucks.map((t) => ({ id: t.id, name: String(t.unitNumber) })).sort((p, q) => p.name.localeCompare(q.name, "en-US", { numeric: true })), trailers: trailers.map((t) => ({ id: t.id, name: String(t.unitNumber) })).sort((p, q) => p.name.localeCompare(q.name, "en-US", { numeric: true })) };
   const name = (o: { id: string; name: string }[], id: string | null) => (id ? (o.find((x) => x.id === id)?.name ?? "") : "");
   const maxMeasure = Math.max(1, ...b.measures.map((m) => m.measure));
   return (
     <div>
-      <PageHeader eyebrow="Safety & compliance" title="Roadside inspections" actions={canEdit ? <InspectionButton {...opts} /> : undefined}>
+      <PageHeader eyebrow="Safety & compliance" title="Roadside inspections" actions={
+          <>
+            <a href="/api/compliance/registers?kind=inspections" className="btn">
+              Export CSV
+            </a>
+            {canEdit && <InspectionButton {...opts} />}
+          </>
+        }
+      >
         Every inspection with its violations, the BASICs they fall in, out-of-service rates by country, and who picks up the points. The measures follow FMCSA&rsquo;s SMS method (24 months, time-weighted, severity-weighted) on your US inspections; your official percentiles need the national peer group — check them on the FMCSA SMS site.
       </PageHeader>
       <SafetyNav role={ctx.role} />
@@ -162,11 +171,39 @@ export default async function InspectionsPage() {
                         <ul className="text-callout space-y-0.5">
                           {i.violations.map((v, k) => (
                             <li key={k} className={v.removed ? "line-through text-faint" : ""}>
-                              <span className="mono">{v.code}</span> {v.description} <span className="text-muted">· {BASICS.find((x) => x.key === v.basic)?.label} · wt {v.severity}</span> {v.oos && <span className="pill pill-red">OOS</span>}
+                              <span className="mono">{v.code}</span> {v.description} <span className="text-muted">· {v.basic ? `${BASICS.find((x) => x.key === v.basic)?.label} · wt ${v.severity}` : "not in SMS"}</span> {v.oos && <span className="pill pill-red">OOS</span>}
                             </li>
                           ))}
                         </ul>
                       )}
+                      {(() => {
+                        const o = roadsideOos(i);
+                        const units = [o.truck.length ? name(opts.trucks, i.truckId) : "", o.trailer.length ? name(opts.trailers, i.trailerId) : ""].filter(Boolean).join(" and ");
+                        return (
+                          <>
+                            {o.driver.length > 0 && i.driverOosUntil && <div className="text-footnote text-red mt-1">Driver out of service until {new Date(i.driverOosUntil).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}</div>}
+                            {units && !i.repair && (
+                              <div className="mt-1.5 flex items-center gap-2" data-testid="unit-oos">
+                                <span className="text-footnote text-red font-semibold">{units} out of service until the repair is signed off</span>
+                                {canEdit && <RepairButton inspectionId={i.id} unit={units} />}
+                              </div>
+                            )}
+                            {units && i.repair && (
+                              <div className="text-footnote text-muted mt-1" data-testid="repair-signed">
+                                Repair signed off by {i.repair.byName}, {day(i.repair.at)}: {i.repair.note}
+                                {i.repair.documentId && (
+                                  <>
+                                    {" · "}
+                                    <a href={`/api/files/${i.repair.documentId}`} target="_blank" rel="noreferrer" className="text-teal">
+                                      repair order
+                                    </a>
+                                  </>
+                                )}
+                              </div>
+                            )}
+                          </>
+                        );
+                      })()}
                     </td>
                     <td className="capitalize">{i.dataQs === "none" ? "—" : i.dataQs}</td>
                     <td className="text-right">{canEdit && <InspectionButton {...opts} edit={JSON.parse(JSON.stringify(i))} />}</td>

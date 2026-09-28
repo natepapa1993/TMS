@@ -85,7 +85,7 @@ export async function driverRenewalAction(token: string, form: FormData): Promis
     const { parseDate } = await import("@/data/fields");
     const expires = String(form.get("expiresAt") ?? "");
     const mime = file.type || (file.name.toLowerCase().endsWith(".pdf") ? "application/pdf" : "image/jpeg");
-    await driverUploadRenewal(t.ctx.tenantId, t.subjectId, { documentTypeId: String(form.get("documentTypeId") ?? ""), fileName: file.name || "renewal.jpg", mimeType: mime, bytes: Buffer.from(await file.arrayBuffer()), expiresAt: expires ? parseDate(expires) : null, number: String(form.get("number") ?? "") || null });
+    await driverUploadRenewal(t.ctx.tenantId, t.subjectId, { uploadKey: String(form.get("uploadKey") ?? "") || null, documentTypeId: String(form.get("documentTypeId") ?? "") || null, fileName: file.name || "renewal.jpg", mimeType: mime, bytes: Buffer.from(await file.arrayBuffer()), expiresAt: expires ? parseDate(expires) : null, number: String(form.get("number") ?? "") || null });
     return { ok: true, data: { ok: true } };
   } catch (e) {
     return toError(e);

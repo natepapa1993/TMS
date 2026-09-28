@@ -79,12 +79,16 @@ export const daDraws = pgTable(
 export type Violation = {
   code: string; // 395.8(e), 393.9 …
   description: string;
-  basic: "unsafe" | "hos" | "fitness" | "substances" | "vehicle" | "hm";
-  severity: number; // 1–10, the SMS severity weight
+  /** null for Canadian and Mexican violations: they go to CVOR / NSC and the SCT, not to SMS */
+  basic: "unsafe" | "hos" | "fitness" | "substances" | "vehicle" | "hm" | null;
+  severity: number; // 1–10, the SMS severity weight; 0 outside the US
   oos: boolean;
   unit: "driver" | "vehicle";
+  on?: "truck" | "trailer"; // a vehicle violation: which unit it was found on (an OOS takes that unit out of service)
   removed?: boolean; // taken off by DataQs / dismissed in court
 };
+
+export type RepairSignoff = { by: string; byName: string; at: string; note: string; documentId?: string | null };
 
 /** A roadside inspection (CVSA level, jurisdiction, report #) with its violations. */
 export const inspections = pgTable(
@@ -106,6 +110,8 @@ export const inspections = pgTable(
     violations: jsonb("violations").$type<Violation[]>().notNull().default(sql`'[]'::jsonb`),
     dataQs: text("data_qs").notNull().default("none"), // none | filed | accepted | denied
     note: text("note"),
+    driverOosUntil: timestamp("driver_oos_until", { withTimezone: true }), // a driver out-of-service order: off until then (10 h, 34 h, 24 h…)
+    repair: jsonb("repair").$type<RepairSignoff>(), // vehicle OOS: who certified the repair, when, what was done (396.9(d))
     ...audit(),
   },
   (t) => [index("inspections_tenant_at").on(t.tenantId, t.inspectedAt), index("inspections_driver").on(t.tenantId, t.driverId)],

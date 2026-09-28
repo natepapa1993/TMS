@@ -10,7 +10,8 @@ import { assertLegTransition, assertOrderTransition, canOrderTransition, LEG_FOR
 import { LEG_TEMPLATES, templateByKey } from "./templates";
 import { checkDriver, checkTruck, checkCarrierZone, summarize, type Finding } from "./eligibility";
 import { legZone, legsFromStops, HANDOFF, stopTimeProblems, type LegZone } from "./zones";
-import { complianceFindings, statusMap, forLeg, HARD_BLOCK } from "./compliance";
+import { complianceFindings, statusMap, forLeg } from "./compliance";
+import { blockSentence } from "./compliance-rules";
 
 /**
  * Orders & dispatch service (spec §2, §11.1–11.3, §11.15). Every write runs in one transaction,
@@ -1248,6 +1249,8 @@ export async function setTruckActive(ctx: Ctx, truckId: string) {
   return db.transaction(async (tx) => {
     const [truck] = await tx.select().from(s.trucks).where(and(eq(s.trucks.tenantId, ctx.tenantId), eq(s.trucks.id, truckId))).limit(1);
     if (!truck) throw new NotFoundError("truck", truckId);
+    // an out-of-service order from a roadside inspection lifts only with the repair signed off on it (396.9(d))
+    if (truck.oosInspectionId) throw new ValidationError(`${truck.unitNumber} was put out of service at a roadside inspection — Safety signs off the repair on the inspection to put it back in service`);
     await tx.update(s.trucks).set({ status: "active", oosReason: null, oosUntil: null, updatedAt: new Date(), updatedBy: ctx.userId }).where(eq(s.trucks.id, truckId));
     await writeAudit(tx, ctx, "truck", truckId, "update", { status: { from: truck.status, to: "active" } });
   });
@@ -1329,7 +1332,7 @@ export async function candidatesForLeg(ctx: Ctx, legId: string, now = new Date()
     const raw = kind === "truck" ? truckComp.get(id) : driverComp.get(id);
     if (!raw) return [];
     const st = forLeg(raw, zone);
-    if (!st.dispatchable && !st.override) return [{ level: "red", code: "compliance_block", message: `${label}: ${[...st.expired.map((x) => `${x} expired`), ...st.missing.map((x) => `${x} missing`)].join(", ")}`, overridable: !st.expired.some((l) => HARD_BLOCK.test(l)) }];
+    if (!st.dispatchable && !st.override) return [{ level: "red", code: "compliance_block", message: `${label}: ${blockSentence(st)}`, overridable: !st.hard }];
     const out: Finding[] = [];
     if (st.override) out.push({ level: "yellow", code: "compliance_override", message: `${label}: dispatch override (${st.override.reason})`, overridable: true });
     if (st.expiring.length) out.push({ level: "yellow", code: "compliance_expiring", message: `${label}: ${st.expiring.join(", ")} expiring`, overridable: true });

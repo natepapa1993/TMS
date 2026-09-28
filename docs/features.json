@@ -776,7 +776,7 @@
     },
     {
       "id": "F-25.1",
-      "name": "Driver qualification file (49 CFR 391.51 + Clearinghouse queries): application, record at hire (MVR / driver's abstract / LIFIS), road test, pre-employment test, prior employers within 30 days, annual record, review and query; hire prerequisites block with 'missing dates block'; papers attached; per-driver safety file page",
+      "name": "Driver qualification file (49 CFR 391.51 + Clearinghouse queries): application, record at hire (MVR / driver's abstract / LIFIS), road test, pre-employment test, prior employers within 30 days, annual record, review and query; hire prerequisites block dispatch (F-25.5); papers attached; per-driver safety file page",
       "milestone": "M25",
       "status": "done",
       "tests": [
@@ -812,6 +812,48 @@
       "tests": [
         "src/domain/safety.test.ts",
         "e2e/safety.spec.ts"
+      ]
+    },
+    {
+      "id": "F-25.5",
+      "name": "What blocks dispatch, per rule: hard (nobody overrides) / owner or Safety can override / warn only, on every document rule and built-in (law-fixed ones can't be softened); hire prerequisites and a pending pre-employment result block by default with plain reasons; a new company's 30-day qualification-file grace; a new blocking rule gets 14 days' grace; the reason shows on the picker row, the planner and the board",
+      "milestone": "M27",
+      "status": "done",
+      "tests": [
+        "src/domain/compliance-rules.test.ts",
+        "src/domain/safety.test.ts",
+        "e2e/safety.spec.ts"
+      ]
+    },
+    {
+      "id": "F-25.6",
+      "name": "One record per credential: licence, medical card, licencia federal, FAST, I-94, plates, annual inspection with the date on the record and images as versions; renewals photographed in the driver app for built-in credentials, confirmed or sent back by Safety, confirm sets the date dispatch reads; driver-app dates with the month in words; annual inspection entered by its date; our company's papers tracked",
+      "milestone": "M27",
+      "status": "done",
+      "tests": [
+        "src/domain/credentials.test.ts",
+        "e2e/compliance.spec.ts"
+      ]
+    },
+    {
+      "id": "F-25.7",
+      "name": "Roadside out-of-service orders take effect: vehicle OOS takes the truck or trailer out of service until Safety signs off the repair (who, when, note, repair order); driver OOS makes the driver unavailable until the order ends (a Safety block); licence / medical renewal time off is a Safety block, not a schedule conflict; Canadian and Mexican violations without BASIC or SMS weight; common US codes fill description, BASIC and weight; random draws refuse future periods and keep the pool roster",
+      "milestone": "M27",
+      "status": "done",
+      "tests": [
+        "src/domain/safety.test.ts",
+        "e2e/safety.spec.ts"
+      ]
+    },
+    {
+      "id": "F-25.8",
+      "name": "Audit-ready records: CSV exports with YYYY-MM-DD dates (records, roadside inspections, accident register) and an importer that never reads a date without its year; record history shows every changed field by label with no same-day no-op lines",
+      "milestone": "M27",
+      "status": "done",
+      "tests": [
+        "src/domain/compliance-rules.test.ts",
+        "src/domain/credentials.test.ts",
+        "src/domain/safety.test.ts"
       ]
     },
     {

@@ -6,6 +6,7 @@ import { coerce, KIND_META } from "@/data/fields";
 import { create, update, archive, restore, type RecordKind, ValidationErrorLike } from "@/data/records";
 import { previewImport, commitImport, type ImportPreview } from "@/data/import";
 import { setTruckOos, setTruckActive } from "@/domain/orders";
+import { withNewRuleGrace } from "@/domain/compliance-rules";
 import { hashPassword } from "@/lib/auth";
 import { requirePermission } from "@/lib/context";
 import { db } from "@/db/client";
@@ -18,8 +19,10 @@ export async function saveRecord(kind: RecordKind, id: string | null, raw: Recor
   const { values, errors, ok } = coerce(kind, raw, { partial: !!id });
   if (!ok) return { ok: false, error: Object.values(errors)[0], errors, code: "validation" };
   if (kind === "user" && raw.password) values.passwordHash = await hashPassword(raw.password);
+  // a new blocking rule made here gets 14 days' grace unless a date was given (the whole fleet doesn't stop at once)
+  const vals = kind === "documentType" && !id ? withNewRuleGrace(values) : values;
   const r = await act(async (ctx) => {
-    const row = id ? await update(ctx, kind, id, values, expectedUpdatedAt ? new Date(expectedUpdatedAt) : undefined) : await create(ctx, kind, values);
+    const row = id ? await update(ctx, kind, id, vals, expectedUpdatedAt ? new Date(expectedUpdatedAt) : undefined) : await create(ctx, kind, vals);
     return { id: row.id as string };
   });
   if (r.ok) {

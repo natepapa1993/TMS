@@ -19,6 +19,12 @@ export type ComplianceItem = {
   snoozedUntil?: string | null;
   snoozeReason?: string | null;
   legScope?: string | null; // a document type "only for legs": crossing | mx (Mexico + crossing) | us (US + domestic); null = every leg
+  /** how hard it blocks: hard (nobody overrides) | override (owner or Safety, 24 h) | warn; absent on rows stored before levels existed */
+  level?: "hard" | "override" | "warn";
+  /** the plain sentence dispatch sees when it blocks ("Pre-employment drug test result not in"); default "<label> expired/missing" */
+  reason?: string | null;
+  /** a rule still in its grace period: shown, never blocks until then */
+  graceUntil?: string | null;
 };
 
 export const complianceStatus = pgTable(

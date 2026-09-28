@@ -1,7 +1,7 @@
 import Papa from "papaparse";
 import { currentCtx } from "@/lib/auth";
 import { list } from "@/data/records";
-import { FIELDS, KIND_META, kindByPath } from "@/data/fields";
+import { FIELDS, KIND_META, kindByPath, csvDate } from "@/data/fields";
 
 export const dynamic = "force-dynamic";
 
@@ -26,7 +26,7 @@ export async function GET(req: Request, { params }: RouteContext<"/api/records/[
     if (v == null) return "";
     if (f.type === "ref") return refOptions.get(f.name)?.get(String(v)) ?? String(v);
     if (f.type === "cents") return (Number(v) / 100).toFixed(2);
-    if (f.type === "date") return String(v).slice(0, 10);
+    if (f.type === "date") return csvDate(v); // with the year: String(Date) was "Sat May 20"
     if (f.type === "boolean") return v ? "yes" : "no";
     if (f.type === "select") return f.options?.find((o) => o.value === v)?.label ?? String(v);
     if (f.type === "list") return Array.isArray(v) ? v.join(", ") : String(v);

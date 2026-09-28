@@ -13,17 +13,20 @@ const touch = (kind?: SubjectKind, id?: string) => {
   if (kind && id) revalidatePath(`/settings/${{ driver: "drivers", truck: "trucks", trailer: "trailers", carrier: "carriers" }[kind]}/${id}`);
 };
 
-export async function uploadSubjectDocAction(kind: SubjectKind, subjectId: string, form: FormData) {
+export async function uploadSubjectDocAction(kind: SubjectKind | "company", subjectId: string, form: FormData) {
   const r = await act(async (ctx) => {
     const file = form.get("file");
     if (!(file instanceof File)) throw Object.assign(new Error("pick a file"), { name: "ValidationError", field: "file" });
     const expires = String(form.get("expiresAt") ?? "");
     const issued = String(form.get("issuedAt") ?? "");
     const mime = file.type || (file.name.toLowerCase().endsWith(".pdf") ? "application/pdf" : "image/jpeg");
-    const doc = await C.uploadSubjectDocument(ctx, kind, subjectId, { documentTypeId: String(form.get("documentTypeId") ?? ""), fileName: file.name, mimeType: mime, bytes: Buffer.from(await file.arrayBuffer()), expiresAt: expires ? parseDate(expires) : null, issuedAt: issued ? parseDate(issued) : null, number: String(form.get("number") ?? "") || null, notes: String(form.get("notes") ?? "") || null });
+    const key = String(form.get("uploadKey") ?? form.get("documentTypeId") ?? "");
+    const common = { fileName: file.name, mimeType: mime, bytes: Buffer.from(await file.arrayBuffer()), expiresAt: expires ? parseDate(expires) : null, issuedAt: issued ? parseDate(issued) : null, number: String(form.get("number") ?? "") || null, notes: String(form.get("notes") ?? "") || null };
+    // a licence, medical card, plate or inspection report: it goes on the record and sets the date
+    const doc = key.startsWith("field:") && kind !== "company" ? await C.uploadCredential(ctx, kind, subjectId, key, common) : await C.uploadSubjectDocument(ctx, kind, subjectId, { ...common, documentTypeId: key });
     return { id: doc.id };
   });
-  if (r.ok) touch(kind, subjectId);
+  if (r.ok) touch(kind === "company" ? undefined : kind, subjectId);
   return r;
 }
 
@@ -51,6 +54,18 @@ export async function missingDatesBlockAction(on: boolean) {
   return r;
 }
 
+export async function dqGraceAction(until: string | null) {
+  const r = await act((ctx) => C.setDqGrace(ctx, until ? parseDate(until) : null));
+  if (r.ok) touch();
+  return r;
+}
+
+export async function blockLevelsAction(levels: Record<string, string>) {
+  const r = await act((ctx) => C.setBlockLevels(ctx, levels));
+  if (r.ok) touch();
+  return r;
+}
+
 export async function runComplianceAction() {
   const r = await act((ctx) => C.evaluateAll(ctx));
   if (r.ok) touch();
@@ -67,12 +82,12 @@ export async function saveIncidentAction(id: string | null, v: { occurredAt: str
 }
 
 /** Read the chosen file with the AI extractor before it is uploaded: expiry, number, holder, for the person to confirm. */
-export async function readSubjectDocAction(kind: SubjectKind, typeName: string, form: FormData) {
+export async function readSubjectDocAction(kind: SubjectKind | "company", typeName: string, form: FormData) {
   return act(async (ctx) => {
     const file = form.get("file");
     if (!(file instanceof File) || file.size === 0) throw Object.assign(new Error("pick a file first"), { name: "ValidationError", field: "file" });
     const mime = file.type || (file.name.toLowerCase().endsWith(".pdf") ? "application/pdf" : "image/jpeg");
-    return C.readSubjectDocument(ctx, kind, typeName, { fileName: file.name, mimeType: mime, bytes: Buffer.from(await file.arrayBuffer()) });
+    return C.readSubjectDocument(ctx, kind === "company" ? "carrier" : kind, typeName, { fileName: file.name, mimeType: mime, bytes: Buffer.from(await file.arrayBuffer()) });
   });
 }
 

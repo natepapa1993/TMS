@@ -1,5 +1,6 @@
 import type { ComplianceItem } from "@/db/schema";
 import type { Violation } from "@/db/schema";
+import { builtInLevel } from "./compliance-rules";
 
 /**
  * Pure rules for the safety file: no database here, so the compliance engine and the pages share them
@@ -82,9 +83,30 @@ export function dqLines(d: DqDriver, records: DqRecordLike[], preEmploymentNegat
   });
 }
 
-/** The DQ lines as compliance items (key dq:<item>): the engine blocks on them like the built-in dates. */
-export function dqComplianceItems(lines: DqLine[], strictMissing: boolean): ComplianceItem[] {
-  return lines.map((l) => ({ key: `dq:${l.key}`, label: l.label, status: l.status, underlying: null, blocksWhenMissing: l.blocks && strictMissing, expiresAt: l.dueAt, documentId: l.documentId, blocksDispatch: l.blocks, required: true, alertDays: 30 }));
+/**
+ * The DQ lines as compliance items (key dq:<item>). The hire prerequisites (●) block dispatch whether or
+ * not the company blocks on blank dates: a driver without them is not qualified to drive (391.11, 382.301,
+ * 382.701(a)). During the company's qualification-file grace period they block only with the blank-dates
+ * switch, as before. A pre-employment test collected but not back yet reads "result not in".
+ */
+export function dqComplianceItems(lines: DqLine[], opts: { levels?: Record<string, unknown> | null; graceUntil?: Date | null; strictMissing?: boolean; preEmploymentPending?: boolean } = {}): ComplianceItem[] {
+  return lines.map((l) => {
+    const key = `dq:${l.key}`;
+    const level = l.blocks ? builtInLevel(key, opts.levels) : "warn";
+    const blocks = level !== "warn";
+    const reason =
+      l.key === "pre_employment_test" && l.status === "missing"
+        ? opts.preEmploymentPending
+          ? "Pre-employment drug test result not in"
+          : "No pre-employment drug test"
+        : l.key === "clearinghouse_full" && l.status === "missing"
+          ? "No Clearinghouse pre-employment query"
+          : null;
+    // a test collected and waiting is a hire in progress: it blocks even while the company's grace runs
+    const inProgress = l.key === "pre_employment_test" && !!opts.preEmploymentPending;
+    const graced = !!opts.graceUntil && !opts.strictMissing && !inProgress;
+    return { key, label: l.label, status: l.status, underlying: null, blocksWhenMissing: blocks && !graced, expiresAt: l.dueAt, documentId: l.documentId, blocksDispatch: blocks, level, reason, graceUntil: blocks && graced && l.status === "missing" ? opts.graceUntil!.toISOString() : null, required: true, alertDays: 30 };
+  });
 }
 
 // ---------- drug & alcohol ----------
@@ -107,18 +129,21 @@ export function daStanding<T extends DaTestLike>(tests: T[]) {
   const prohibited = !!violation && !rtd;
   const followUps = rtd ? sorted.filter((t) => t.reason === "follow_up" && at(t) > at(rtd) && t.result !== "cancelled" && t.result !== "selected" && t.result !== "pending") : [];
   const preEmployment = sorted.find((t) => t.reason === "pre_employment" && t.substance === "drug" && ["negative", "negative_dilute"].includes(t.result)) ?? null;
+  // collected (or ordered) and waiting: a pending result is not a negative one
+  const preEmploymentPending = !preEmployment && sorted.some((t) => t.reason === "pre_employment" && t.substance === "drug" && (t.result === "pending" || t.result === "selected"));
   return {
     prohibited,
     violation,
     rtd,
     followUp: rtd?.followUpPlanned ? { done: followUps.length, planned: rtd.followUpPlanned } : null,
     preEmploymentNegativeAt: preEmployment ? new Date(preEmployment.resultAt ?? preEmployment.collectedAt ?? 0).toISOString() : null,
+    preEmploymentPending,
   };
 }
 
 /** The compliance item for D&A: a neutral label, because dispatch sees it and the reason is confidential. */
 export function daComplianceItem(prohibited: boolean): ComplianceItem {
-  return { key: "da:status", label: "Safety hold", status: prohibited ? "expired" : "ok", underlying: null, expiresAt: null, documentId: null, blocksDispatch: true, required: true, alertDays: 0 };
+  return { key: "da:status", label: "Safety hold", status: prohibited ? "expired" : "ok", underlying: null, expiresAt: null, documentId: null, blocksDispatch: true, level: "hard", reason: "On a safety hold — ask Safety", required: true, alertDays: 0 };
 }
 
 /** What the employer itself must report to the Clearinghouse (382.705(b)): alcohol ≥ 0.04, refusals, and the negative return-to-duty result. The MRO reports verified drug positives. */
@@ -139,6 +164,15 @@ export function randomRequirement(draws: { poolSize: number; drugRate: number; a
 
 /** How many to pick in one draw: the annual rate spread over the year's draws, rounded up. */
 export const perDraw = (pool: number, ratePct: number, drawsPerYear: number) => (pool === 0 || ratePct === 0 ? 0 : Math.min(pool, Math.ceil((pool * ratePct) / 100 / drawsPerYear)));
+
+/** When a random period starts: 2026-Q4 → Oct 1, 2026; 2026-11 → Nov 1, 2026 (UTC). */
+export function periodStart(period: string): Date | null {
+  const q = /^(\d{4})-Q([1-4])$/.exec(period);
+  if (q) return new Date(Date.UTC(+q[1], (+q[2] - 1) * 3, 1));
+  const m = /^(\d{4})-(\d{2})$/.exec(period);
+  if (m && +m[2] >= 1 && +m[2] <= 12) return new Date(Date.UTC(+m[1], +m[2] - 1, 1));
+  return null;
+}
 
 /** Pick n distinct items with a random source (crypto in the app, seeded in tests). */
 export function pick<T>(pool: T[], n: number, rand: (max: number) => number): T[] {
@@ -192,8 +226,70 @@ export function basicOf(code: string): Violation["basic"] | null {
   return null;
 }
 
+/**
+ * Common US violations with their SMS severity weight (Appendix A of the SMS methodology), so the weight
+ * isn't typed from memory. The person can change any of it; codes not here are typed as before.
+ */
+export const VIOLATION_CODES: { code: string; description: string; basic: NonNullable<Violation["basic"]>; severity: number }[] = [
+  { code: "392.2-SLLS2", description: "Speeding 6–10 mph over the limit", basic: "unsafe", severity: 4 },
+  { code: "392.2-SLLS3", description: "Speeding 11–14 mph over the limit", basic: "unsafe", severity: 7 },
+  { code: "392.2-SLLS4", description: "Speeding 15 or more mph over the limit", basic: "unsafe", severity: 10 },
+  { code: "392.2-SLLSWZ", description: "Speeding in a work zone", basic: "unsafe", severity: 10 },
+  { code: "392.2FC", description: "Following too close", basic: "unsafe", severity: 5 },
+  { code: "392.2LC", description: "Improper lane change", basic: "unsafe", severity: 5 },
+  { code: "392.2C", description: "Failure to obey a traffic control device", basic: "unsafe", severity: 5 },
+  { code: "392.16", description: "Failing to use a seat belt", basic: "unsafe", severity: 7 },
+  { code: "392.80(a)", description: "Texting while driving", basic: "unsafe", severity: 10 },
+  { code: "392.82(a)(1)", description: "Using a hand-held phone while driving", basic: "unsafe", severity: 10 },
+  { code: "392.4(a)", description: "Driver uses or is in possession of drugs", basic: "substances", severity: 10 },
+  { code: "392.5(a)", description: "Alcohol within 4 hours of duty / possession", basic: "substances", severity: 5 },
+  { code: "395.3(a)(1)", description: "Driving beyond the 11-hour limit", basic: "hos", severity: 7 },
+  { code: "395.3(a)(2)", description: "Driving beyond the 14-hour window", basic: "hos", severity: 7 },
+  { code: "395.3(a)(3)(ii)", description: "30-minute break not taken", basic: "hos", severity: 7 },
+  { code: "395.3(b)", description: "Driving beyond the 60/70-hour limit", basic: "hos", severity: 7 },
+  { code: "395.8(a)", description: "No record of duty status (ELD) when required", basic: "hos", severity: 5 },
+  { code: "395.8(e)", description: "False report of the record of duty status", basic: "hos", severity: 7 },
+  { code: "395.8(f)(1)", description: "Record of duty status not current", basic: "hos", severity: 5 },
+  { code: "395.8(k)(2)", description: "Previous 7 days' records not kept", basic: "hos", severity: 5 },
+  { code: "383.23(a)(2)", description: "Operating a CMV without a valid CDL", basic: "fitness", severity: 8 },
+  { code: "391.11(b)(2)", description: "Driver can't read or speak English sufficiently", basic: "fitness", severity: 4 },
+  { code: "391.41(a)", description: "No medical certificate in the driver's possession", basic: "fitness", severity: 1 },
+  { code: "391.45(b)", description: "Expired medical certificate", basic: "fitness", severity: 1 },
+  { code: "393.9(a)", description: "Inoperable required lamp", basic: "vehicle", severity: 6 },
+  { code: "393.11", description: "Lamps or reflective devices missing / not as required", basic: "vehicle", severity: 3 },
+  { code: "393.45", description: "Brake hose or tubing damaged", basic: "vehicle", severity: 4 },
+  { code: "393.47(e)", description: "Clamp or roto-chamber brake out of adjustment", basic: "vehicle", severity: 4 },
+  { code: "393.48(a)", description: "Inoperative or defective brakes", basic: "vehicle", severity: 4 },
+  { code: "393.75(a)", description: "Flat tire or fabric exposed", basic: "vehicle", severity: 8 },
+  { code: "393.75(c)", description: "Tire tread depth less than 2/32 inch", basic: "vehicle", severity: 8 },
+  { code: "393.95(a)", description: "No or discharged fire extinguisher", basic: "vehicle", severity: 2 },
+  { code: "393.100(b)", description: "Cargo not secured against shifting", basic: "vehicle", severity: 7 },
+  { code: "396.3(a)(1)", description: "Inspection, repair and maintenance of parts and accessories", basic: "vehicle", severity: 4 },
+  { code: "396.17(c)", description: "No periodic (annual) inspection", basic: "vehicle", severity: 4 },
+];
+
+/** The violation for a code as typed on the report ("49 CFR 393.47(e)", "393.47E"), or null. */
+export function lookupViolation(code: string) {
+  const norm = (c: string) => c.trim().replace(/^49\s*CFR\s*/i, "").replace(/\s+/g, "").toUpperCase();
+  const c = norm(code);
+  if (!c) return null;
+  return VIOLATION_CODES.find((v) => norm(v.code) === c || norm(v.code).replace(/[()]/g, "") === c.replace(/[()]/g, "")) ?? null;
+}
+
 /** Driver-side or vehicle-side, for the OOS rates. */
 export const unitOf = (basic: Violation["basic"]): Violation["unit"] => (basic === "vehicle" || basic === "hm" ? "vehicle" : "driver");
+
+/** What an inspection's out-of-service findings take off the road: the truck, the trailer, the driver. */
+export function roadsideOos(i: { violations: Violation[]; truckId?: string | null; trailerId?: string | null; driverId?: string | null }) {
+  const live = i.violations.filter((v) => v.oos && !v.removed);
+  const vehicle = live.filter((v) => v.unit === "vehicle");
+  const onOf = (v: Violation) => v.on ?? (i.truckId ? "truck" : "trailer");
+  return {
+    truck: i.truckId ? vehicle.filter((v) => onOf(v) === "truck") : [],
+    trailer: i.trailerId ? vehicle.filter((v) => onOf(v) === "trailer") : [],
+    driver: i.driverId ? live.filter((v) => v.unit === "driver") : [],
+  };
+}
 
 /** SMS time weight: 3 in the last 6 months, 2 for 6–12, 1 for 12–24, 0 older. */
 export function timeWeight(when: Date | string, now = new Date()) {

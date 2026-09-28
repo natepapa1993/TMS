@@ -5,6 +5,8 @@ import * as s from "@/db/schema";
 import { newId } from "@/lib/ids";
 import { assertCtx, requirePermission, can, PermissionError, type Ctx } from "@/lib/context";
 import { writeAudit, diff } from "@/lib/audit";
+import { FIELDS } from "./fields";
+import { syncDocumentTypeLevel } from "@/domain/compliance-rules";
 
 /**
  * Generic master-data repository (spec §1.1–1.4). One registry entry per record type:
@@ -174,6 +176,7 @@ export async function create(ctx: Ctx, kind: RecordKind, values: Record<string, 
   requirePermission(ctx, "records.create");
   await assertGuarded(ctx, kind, values);
   assertRecord(kind, values);
+  if (kind === "documentType") values = syncDocumentTypeLevel(values);
   const { table } = REGISTRY[kind];
   const id = (values.id as string) ?? newId();
   const row = { ...values, id, tenantId: ctx.tenantId, createdBy: ctx.userId, updatedBy: ctx.userId };
@@ -197,6 +200,8 @@ export async function update(ctx: Ctx, kind: RecordKind, id: string, values: Rec
     if (b.archivedAt) throw new Error("archived records are read-only; restore first");
     await assertGuarded(ctx, kind, values, b as Record<string, unknown>);
     assertRecord(kind, { ...b, ...values });
+    if (kind === "documentType") values = syncDocumentTypeLevel(values);
+    values = sameDayDates(kind, values, b);
     const { id: _id, tenantId: _t, createdAt: _c, createdBy: _cb, ...safe } = values as Record<string, unknown>;
     void _id; void _t; void _c; void _cb;
     const [after] = await tx
@@ -207,6 +212,20 @@ export async function update(ctx: Ctx, kind: RecordKind, id: string, values: Rec
     await writeAudit(tx, ctx, kind, id, "update", diff(b, after as Row));
     return after as Row;
   });
+}
+
+/**
+ * A date field saved with the same calendar day it already has is not a change: the form sends every date
+ * back as noon UTC, and rewriting 14:23 as 12:00 would log "hireDate: 2025-08-24 → 2025-08-24".
+ */
+function sameDayDates(kind: RecordKind, values: Record<string, unknown>, before: Record<string, unknown>) {
+  const dateFields = new Set(FIELDS[kind].filter((f) => f.type === "date").map((f) => f.name));
+  const out = { ...values };
+  for (const [k, v] of Object.entries(values)) {
+    const was = before[k];
+    if (dateFields.has(k) && v instanceof Date && was instanceof Date && v.toISOString().slice(0, 10) === was.toISOString().slice(0, 10)) delete out[k];
+  }
+  return out;
 }
 
 export async function archiveBlockers(ctx: Ctx, kind: RecordKind, id: string) {

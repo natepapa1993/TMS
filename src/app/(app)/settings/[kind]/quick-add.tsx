@@ -9,7 +9,8 @@ import type { RecordKind } from "@/data/records";
 import { saveRecord } from "../actions";
 
 /** The quick-add popup: essentials only, saves, offers "add another" (spec §1.1 ease rule). */
-export function QuickAdd({ kind, fields, refs, label, openInitially, onSaved, buttonClass = "btn btn-primary" }: { kind: RecordKind; fields: Field[]; refs: RefOptions; label: string; openInitially?: boolean; onSaved?: (id: string) => void; buttonClass?: string }) {
+/** openAfter: the list path — after "Add" the new record opens, so the rest can be filled in without finding the row. */
+export function QuickAdd({ kind, fields, refs, label, openInitially, onSaved, buttonClass = "btn btn-primary", openAfter }: { kind: RecordKind; fields: Field[]; refs: RefOptions; label: string; openInitially?: boolean; onSaved?: (id: string) => void; buttonClass?: string; openAfter?: string }) {
   const [open, setOpen] = useState(!!openInitially);
   const [key, setKey] = useState(0);
   const router = useRouter();
@@ -30,10 +31,11 @@ export function QuickAdd({ kind, fields, refs, label, openInitially, onSaved, bu
           onSubmit={async (raw) => {
             const r = await saveRecord(kind, null, raw);
             if (r.ok) {
-              t.ok(`Added. Open it any time to fill in the rest.`);
               setKey((k) => k + 1);
               setOpen(false);
               onSaved?.(r.data.id);
+              if (openAfter) return router.push(`${openAfter}/${r.data.id}`), r;
+              t.ok(`Added. Open it any time to fill in the rest.`);
               router.refresh();
             }
             return r;

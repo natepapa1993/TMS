@@ -1,4 +1,4 @@
-// Features: F-25.1 F-25.2 F-25.3 F-25.4
+// Features: F-25.1 F-25.2 F-25.3 F-25.4 F-25.5 F-25.7
 import { test, expect } from "@playwright/test";
 import { signupFresh, quickAdd } from "./helpers";
 
@@ -71,23 +71,42 @@ test("safety: a driver's qualification file, a random draw and a refusal that ho
   await page.getByTestId("da-todo").getByTestId("ch-reported").first().click();
   await expect(page.getByTestId("da-todo")).toHaveCount(0); // the only to-do is done
 
-  // the overview: the held driver is blocked with a hold nobody can override
+  // the overview: the held driver is blocked with a hold nobody can override (no override offered), said plainly
   await page.goto("/compliance");
   const heldRow = page.locator("tr", { hasText: who });
   await expect(heldRow).toContainText("blocked");
   await expect(heldRow).toContainText("hold");
-  await heldRow.locator("button:has-text('24h override')").click();
-  dlg = page.getByRole("dialog");
-  await dlg.locator("input.input").fill("Need him on the Laredo run");
-  await dlg.locator("button:has-text('Override for 24 h')").click();
-  await expect(page.getByRole("status").filter({ hasText: "cannot override" })).toBeVisible();
+  await expect(heldRow).toContainText("On a safety hold — ask Safety");
+  await expect(heldRow.locator("button:has-text('24h override')")).toHaveCount(0);
 
-  // blank hire prerequisites block once Safety turns it on; the other driver gets a logged 24-hour override
+  // the new company's grace on qualification files ends: blank hire prerequisites block, the law's ones with no override
   const other = who === "Daniel Reyes" ? "Ana Torres" : "Daniel Reyes";
-  await page.click("button:has-text('Block dispatch on blank dates')");
-  await expect(page.getByRole("status").filter({ hasText: "Blank dates now block dispatch" })).toBeVisible();
-  const otherRow = page.locator("tr", { hasText: other });
+  await expect(page.getByTestId("dq-grace")).toContainText("grace until");
+  await page.getByTestId("end-dq-grace").click();
+  await page.getByRole("dialog").locator("button:has-text('Enforce now')").click();
+  await expect(page.getByRole("status").filter({ hasText: "Enforced" })).toBeVisible();
+  let otherRow = page.locator("tr", { hasText: other });
   await expect(otherRow).toContainText("blocked");
+  await expect(otherRow).toContainText("No Clearinghouse pre-employment query");
+  await expect(otherRow.locator("button:has-text('24h override')")).toHaveCount(0);
+  // Safety records the query and the negative test; what's left (the road test) the owner can vouch for, logged for 24 hours
+  await otherRow.locator("a").first().click();
+  await page.waitForURL("**/settings/drivers/**");
+  await page.goto(page.url().replace("/settings/drivers/", "/compliance/drivers/"));
+  await page.getByTestId("dq-file").getByTestId("dq-record-clearinghouse_full").click();
+  await page.getByRole("dialog").locator("button:has-text('Save')").click();
+  await expect(page.getByTestId("dq-file").locator("#dq-clearinghouse_full")).toContainText("on file");
+  if (other === "Ana Torres") {
+    await page.getByTestId("da-file").getByTestId("add-test").click();
+    dlg = page.getByRole("dialog");
+    await dlg.locator("#t-reason").selectOption("pre_employment");
+    await dlg.locator("#t-result").selectOption("negative");
+    await dlg.locator("button:has-text('Save')").click();
+    await expect(page.getByRole("status").filter({ hasText: "Test recorded" })).toBeVisible();
+  }
+  await page.goto("/compliance");
+  otherRow = page.locator("tr", { hasText: other });
+  await expect(otherRow).toContainText("Road test certificate (or CDL in lieu) missing");
   await otherRow.locator("button:has-text('24h override')").click();
   dlg = page.getByRole("dialog");
   await dlg.locator("input.input").fill("Road test done this morning, certificate on its way");
@@ -107,11 +126,17 @@ test("safety: a driver's qualification file, a random draw and a refusal that ho
   await dlg.getByLabel("Violation 1 description").fill("False report of driver's record of duty status");
   await dlg.getByLabel("Violation 1 severity").fill("7");
   await dlg.getByTestId("violation-row").locator("label:has-text('OOS') input").check();
+  // a driver out-of-service order: until when (10 hours off duty here)
+  await expect(dlg.getByTestId("driver-oos")).toContainText("The driver is out of service");
+  await dlg.locator("button:has-text('Save')").click();
+  await expect(page.getByRole("status").filter({ hasText: "out of service until when" })).toBeVisible();
+  await dlg.locator("#i-oos-until").fill(new Date(Date.now() + 10 * 3600_000 - new Date().getTimezoneOffset() * 60_000).toISOString().slice(0, 16));
   await dlg.locator("button:has-text('Save')").click();
   await expect(page.getByRole("status").filter({ hasText: "Inspection saved" })).toBeVisible();
   await expect(page.getByTestId("basics").locator(".card", { hasText: "HOS Compliance" })).toContainText("9.00");
   await expect(page.getByTestId("driver-points")).toContainText("Daniel Reyes");
   await expect(page.getByTestId("oos-rates")).toContainText("100.0%");
+  await expect(page.getByTestId("inspections-table")).toContainText("Driver out of service until");
 
   // the overrides log
   await page.goto("/compliance/overrides");
