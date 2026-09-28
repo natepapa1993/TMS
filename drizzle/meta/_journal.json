@@ -225,6 +225,20 @@
       "when": 1790556864177,
       "tag": "0031_safety_depth",
       "breakpoints": true
+    },
+    {
+      "idx": 32,
+      "version": "7",
+      "when": 1790559901314,
+      "tag": "0032_cash_application",
+      "breakpoints": true
+    },
+    {
+      "idx": 33,
+      "version": "7",
+      "when": 1790560190815,
+      "tag": "0033_customer_billing_address",
+      "breakpoints": true
     }
   ]
 }

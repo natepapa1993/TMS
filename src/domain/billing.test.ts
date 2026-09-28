@@ -1,4 +1,4 @@
-// Features: F-7 billing — charges, queue with docs + rate-con hard stop, invoice lifecycle with locked snapshot and entity numbering, receipts, void/credit/dispute, AR aging + reminders, carrier bills 3-way + short-pay + pay-when-paid + 1099, driver settlements + deductions + disputes, P&L, month-end close F-4.9
+// Features: F-7 billing — charges, queue with docs + rate-con hard stop, invoice lifecycle with locked snapshot and entity numbering, receipts, void/credit/dispute, AR aging + reminders, carrier bills 3-way + short-pay + pay-when-paid + 1099, driver settlements + deductions + disputes, P&L, month-end close F-4.9 F-26.2
 import { describe, it, expect, beforeEach, vi, afterEach } from "vitest";
 import { PDFDocument } from "pdf-lib";
 import { truncateAll, makeTenant } from "@/test/helpers";
@@ -57,8 +57,9 @@ describe("charges & queue (7.2, 7.3)", () => {
     expect(det[0].data?.stopId).toBeTruthy();
     expect((await B.computeDetention(a, o.order.id)).length).toBe(0); // idempotent
     const q = await B.billingQueue(a);
-    expect(q[0].chargesCents).toBe(191250);
-    expect(q[0].mismatch).toBe(true); // charges ≠ rate con
+    expect(q[0].chargesCents).toBe(180000); // detention waits for the customer's OK
+    expect(q[0].pending).toMatchObject({ count: 1, cents: 11250 });
+    expect(q[0].mismatch).toBe(false); // an extra isn't a rate-con difference: it's an approval
     expect(q[0].docsComplete).toBe(false);
     expect(q[0].requiredDocs.map((d) => `${d.code}:${d.present}`)).toEqual(["POD:false", "RATE_CON:false"]);
   });
@@ -69,7 +70,7 @@ describe("charges & queue (7.2, 7.3)", () => {
     await expect(B.createInvoice(a, [o.order.id])).rejects.toThrow(/missing POD, RATE_CON/);
     await B.uploadOrderDocument(a, o.order.id, { code: "POD", fileName: "pod.pdf", mimeType: "application/pdf", bytes: pdf });
     await B.uploadOrderDocument(a, o.order.id, { code: "RATE_CON", fileName: "rc.pdf", mimeType: "application/pdf", bytes: pdf });
-    await expect(B.createInvoice(a, [o.order.id])).rejects.toThrow(/differ from the rate con/);
+    await expect(B.createInvoice(a, [o.order.id])).rejects.toThrow(/waiting for the customer's approval \(Detention/);
     await expect(B.acceptRateConMismatch(a, o.order.id, "")).rejects.toBeInstanceOf(ValidationError);
     await B.acceptRateConMismatch(a, o.order.id, "detention approved by RXO email 9/26");
     // the customer also requires their PO and ASN on the order before it invoices (spec §7.2 "every customer-required reference")
@@ -85,7 +86,7 @@ describe("charges & queue (7.2, 7.3)", () => {
     expect(inv.state).toBe("draft");
     expect(inv.subtotalCents).toBe(191250);
     expect((await getOrder(a, o.order.id)).order.state).toBe("ready_to_bill");
-    await expect(B.createInvoice(a, [o.order.id])).rejects.toThrow(/already on an invoice|not ready/);
+    await expect(B.createInvoice(a, [o.order.id])).rejects.toThrow(/already on an invoice|not ready|already has a draft/);
   });
 });
 
@@ -118,8 +119,12 @@ describe("invoice lifecycle (7.1, 7.4)", () => {
     // renaming the customer later does not change the issued invoice
     await update(a, "customer", f.rxo, { name: "RXO Logistics" });
     expect((await B.invoiceById(a, inv.id)).invoice.snapshot!.billTo.name).toBe("RXO");
-    // charges are locked
-    await expect(B.addCharge(a, o.order.id, { kind: "lumper", rateCents: 5000 })).rejects.toThrow(/credit memo/);
+    // the invoice's charges are locked; a late one waits for approval, then goes on a supplemental invoice
+    const late = await B.addCharge(a, o.order.id, { kind: "lumper", rateCents: 5000 });
+    expect(late.approvalState).toBe("pending");
+    expect((await B.billingQueue(a)).find((q) => q.order.id === o.order.id)).toMatchObject({ supplemental: true, chargesCents: 0, pending: { count: 1 } });
+    await expect(B.removeCharge(a, (await B.chargesFor(a, o.order.id)).find((c) => c.kind === "linehaul")!.id)).rejects.toThrow(/on an invoice/);
+    await B.removeCharge(a, late.id);
 
     const sent = await B.sendInvoice(a, inv.id);
     expect(sent.state).toBe("sent");

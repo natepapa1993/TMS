@@ -172,8 +172,10 @@ export const customers = pgTable(
     dotNumber: text("dot_number"),
     billingEntityId: text("billing_entity_id"),
     billingEmail: text("billing_email"),
+    billingAddress: jsonb("billing_address").$type<Record<string, string | undefined>>(), // printed under Bill to
     termsDays: integer("terms_days").notNull().default(30),
     payWhenPaid: boolean("pay_when_paid").notNull().default(false),
+    accessorialApproval: boolean("accessorial_approval").notNull().default(true), // extra charges (detention, lumper…) wait for the customer's OK before they bill
     trackingRequirement: text("tracking_requirement").notNull().default("link"), // none | link | edi214 | portal
     requiredDocs: jsonb("required_docs").$type<string[]>(), // blank = POD, BOL, RATE_CON; [] = nothing required
     requiredRefs: jsonb("required_refs").$type<string[]>(), // reference keys the invoice needs on the order (po, asn, shipment, reference, rate_con); blank = none

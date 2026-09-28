@@ -65,8 +65,8 @@ export async function acceptMismatchAction(orderId: string, note: string) {
   if (r.ok) touch();
   return r;
 }
-export async function createInvoiceAction(orderIds: string[]) {
-  const r = await act((ctx) => B.createInvoice(ctx, orderIds));
+export async function createInvoiceAction(orderIds: string[], withoutPending = false) {
+  const r = await act((ctx) => B.createInvoice(ctx, orderIds, { withoutPending }));
   if (r.ok) touch(r.data.id);
   return r;
 }
@@ -325,5 +325,73 @@ export async function copyIftaRatesAction(quarter: string) {
   const I = await import("@/domain/ifta");
   const r = await act((ctx) => I.copyRatesFrom(ctx, quarter, I.previousQuarter(quarter)));
   if (r.ok) iftaTouch();
+  return r;
+}
+
+// ---------- extras the customer approves ----------
+
+export async function approveChargeAction(orderId: string, chargeId: string, by: string, ref: string) {
+  const r = await act((ctx) => B.approveCharge(ctx, chargeId, { by, ref }));
+  if (r.ok) {
+    touch(r.data.joinedDraft ?? undefined);
+    revalidatePath(`/orders/${orderId}`);
+  }
+  return r;
+}
+export async function rejectChargeAction(orderId: string, chargeId: string, reason: string) {
+  const r = await act((ctx) => B.rejectCharge(ctx, chargeId, reason));
+  if (r.ok) {
+    touch();
+    revalidatePath(`/orders/${orderId}`);
+  }
+  return r;
+}
+export async function rebillAction(id: string, reason: string) {
+  const r = await act(async (ctx) => {
+    const inv = await B.rebillInvoice(ctx, id, reason);
+    return { id: inv.id };
+  });
+  if (r.ok) {
+    touch(id);
+    touch(r.data.id);
+  }
+  return r;
+}
+
+// ---------- cash application ----------
+
+const cents = (v: string) => Math.round(Number(String(v).replace(/[$,\s]/g, "")) * 100);
+
+export async function openItemsAction(customerId: string) {
+  const { openItems } = await import("@/domain/cash");
+  return act((ctx) => openItems(ctx, customerId));
+}
+export async function applyPaymentAction(v: { customerId: string; amount: string; receivedAt: string; method: string; reference: string; remittance: string; note: string; applications: { invoiceId: string; amount: string; shortPay: string; reason: string }[] }) {
+  const { applyPayment } = await import("@/domain/cash");
+  const r = await act((ctx) =>
+    applyPayment(ctx, {
+      customerId: v.customerId,
+      amountCents: cents(v.amount),
+      receivedAt: v.receivedAt ? dayOf(v.receivedAt) : undefined,
+      method: v.method,
+      reference: v.reference,
+      remittance: v.remittance,
+      note: v.note,
+      applications: v.applications.map((a) => ({ invoiceId: a.invoiceId, amountCents: a.amount ? cents(a.amount) : 0, shortPay: (a.shortPay || "leave_open") as "leave_open" | "write_off" | "dispute", reason: a.reason })),
+    }),
+  );
+  if (r.ok) {
+    touch();
+    revalidatePath("/billing/payments");
+  }
+  return r;
+}
+export async function applyOnAccountAction(paymentId: string, invoiceId: string, amount: string) {
+  const { applyOnAccount } = await import("@/domain/cash");
+  const r = await act((ctx) => applyOnAccount(ctx, paymentId, invoiceId, cents(amount)));
+  if (r.ok) {
+    touch(invoiceId);
+    revalidatePath("/billing/payments");
+  }
   return r;
 }

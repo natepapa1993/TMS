@@ -1,4 +1,4 @@
-import { and, eq, inArray, desc, sql, isNull, lt, gte, lte, arrayOverlaps } from "drizzle-orm";
+import { and, eq, inArray, desc, sql, isNull, lt, gte, lte, arrayOverlaps, or } from "drizzle-orm";
 import { createHash } from "node:crypto";
 import { db } from "@/db/client";
 import * as s from "@/db/schema";
@@ -55,23 +55,59 @@ export async function ensureCharges(ctx: Ctx, orderId: string) {
   return db.select().from(s.charges).where(and(eq(s.charges.tenantId, ctx.tenantId), eq(s.charges.orderId, orderId)));
 }
 
-export type ChargeInput = { kind: ChargeKind; description?: string; qty?: number; unit?: string; rateCents: number; currency?: string; billable?: boolean; legId?: string | null; data?: Record<string, unknown> };
+export type ChargeInput = { kind: ChargeKind; description?: string; qty?: number; unit?: string; rateCents: number; currency?: string; billable?: boolean; legId?: string | null; data?: Record<string, unknown>; approvalState?: "none" | "pending" | "approved" };
+
+/** Extras beyond the rate con that the customer has to OK before they bill (when the customer asks for approvals, the default). */
+export const NEEDS_APPROVAL: ChargeKind[] = ["detention", "layover", "lumper", "storage", "extra_stop", "accessorial", "other", "border_fee", "crossing_fee"];
+
+/** The customer OK'd an extra charge: who, and how (email, portal, phone). It bills; if a draft invoice is open for the load it joins it. */
+export async function approveCharge(ctx: Ctx, chargeId: string, a: { by: string; ref?: string | null }) {
+  assertCtx(ctx);
+  requirePermission(ctx, "orders.edit");
+  if (!a.by?.trim()) throw new ValidationError("who approved it at the customer?", "by");
+  const [c] = await db.select().from(s.charges).where(and(eq(s.charges.tenantId, ctx.tenantId), eq(s.charges.id, chargeId))).limit(1);
+  if (!c) throw new NotFoundError("charge", chargeId);
+  if (c.invoiceId) throw new ValidationError("this charge is already on an invoice");
+  const [draft] = await db.select().from(s.invoices).where(and(eq(s.invoices.tenantId, ctx.tenantId), eq(s.invoices.state, "draft"), sql`${c.orderId} = any(${s.invoices.orderIds})`)).limit(1);
+  await db.transaction(async (tx) => {
+    await tx.update(s.charges).set({ approvalState: "approved", approvedBy: a.by.trim(), approvalRef: a.ref?.trim() || null, approvedAt: new Date(), rejectedReason: null, billable: true, invoiceId: draft && draft.currency === c.currency ? draft.id : null, updatedAt: new Date(), updatedBy: ctx.userId }).where(eq(s.charges.id, c.id));
+    if (draft && draft.currency === c.currency) await tx.update(s.invoices).set({ subtotalCents: draft.subtotalCents + c.amountCents, totalCents: draft.totalCents + c.amountCents, updatedAt: new Date() }).where(eq(s.invoices.id, draft.id));
+    await writeAudit(tx, ctx, "order", c.orderId, "update", { [c.description]: { from: c.approvalState, to: "approved" } }, `approved by ${a.by.trim()}${a.ref?.trim() ? ` (${a.ref.trim()})` : ""}`);
+  });
+  return { joinedDraft: draft?.id ?? null };
+}
+
+/** The customer said no: the charge stays on the load for the record, not billable. */
+export async function rejectCharge(ctx: Ctx, chargeId: string, reason: string) {
+  assertCtx(ctx);
+  requirePermission(ctx, "orders.edit");
+  if (!reason?.trim()) throw new ValidationError("what did the customer say?", "reason");
+  const [c] = await db.select().from(s.charges).where(and(eq(s.charges.tenantId, ctx.tenantId), eq(s.charges.id, chargeId))).limit(1);
+  if (!c) throw new NotFoundError("charge", chargeId);
+  if (c.invoiceId) throw new ValidationError("this charge is already on an invoice: credit it instead");
+  await db.update(s.charges).set({ approvalState: "rejected", rejectedReason: reason.trim(), billable: false, updatedAt: new Date(), updatedBy: ctx.userId }).where(eq(s.charges.id, c.id));
+  await writeAudit(db, ctx, "order", c.orderId, "update", { [c.description]: { from: c.approvalState, to: "rejected" } }, reason.trim());
+}
 
 export async function addCharge(ctx: Ctx, orderId: string, input: ChargeInput) {
   assertCtx(ctx);
   requirePermission(ctx, "orders.edit");
   const order = await loadOrder(ctx, orderId);
-  if (["invoiced", "paid", "cancelled"].includes(order.state)) throw new ValidationError(`order is ${order.state}: add a credit memo or a new invoice instead`);
+  // after invoicing, a late charge (detention approved later, a lumper receipt) goes on a supplemental invoice
+  if (order.state === "cancelled" && !order.tonu) throw new ValidationError("order is cancelled");
   if (!Number.isFinite(input.rateCents)) throw new ValidationError("rate must be a number", "rateCents");
+  const custId = order.customerId ?? order.brokerId;
+  const [cust] = custId ? await db.select({ approval: s.customers.accessorialApproval }).from(s.customers).where(eq(s.customers.id, custId)).limit(1) : [];
+  const approvalState = input.approvalState ?? (NEEDS_APPROVAL.includes(input.kind) && (cust?.approval ?? true) ? "pending" : "none");
   const qty = input.qty ?? 1;
   const unit = input.unit ?? "flat";
   // qty is in hundredths for hours (150 = 1.50 h) and hundredths of a percent for pct (2000 = 20.00 % of the rate)
   const amount = unit === "h" ? Math.round((input.rateCents * qty) / 100) : unit === "pct" ? Math.round((input.rateCents * qty) / 10000) : Math.round(input.rateCents * qty);
   const [row] = await db
     .insert(s.charges)
-    .values({ id: newId(), tenantId: ctx.tenantId, orderId, legId: input.legId ?? null, kind: input.kind, description: input.description?.trim() || CHARGE_LABEL[input.kind], qty, unit, rateCents: input.rateCents, amountCents: amount, currency: input.currency ?? order.currency, billable: input.billable ?? true, source: input.data ? "computed" : "manual", data: input.data, createdBy: ctx.userId, updatedBy: ctx.userId })
+    .values({ id: newId(), tenantId: ctx.tenantId, orderId, legId: input.legId ?? null, kind: input.kind, description: input.description?.trim() || CHARGE_LABEL[input.kind], qty, unit, rateCents: input.rateCents, amountCents: amount, currency: input.currency ?? order.currency, billable: input.billable ?? true, source: input.data ? "computed" : "manual", data: input.data, approvalState, createdBy: ctx.userId, updatedBy: ctx.userId })
     .returning();
-  await writeAudit(db, ctx, "order", orderId, "update", { charge: { from: null, to: `${row.description} ${amount}` } });
+  await writeAudit(db, ctx, "order", orderId, "update", { charge: { from: null, to: `${row.description} ${amount}` } }, approvalState === "pending" ? "waiting for the customer's approval" : undefined);
   return row;
 }
 
@@ -116,10 +152,11 @@ export async function chargesFor(ctx: Ctx, orderId: string) {
 
 // ---------- billing queue (7.2) ----------
 
-export type QueueRow = { order: Order; customerName: string | null; entityName: string | null; chargesCents: number; rateConCents: number | null; mismatch: boolean; requiredDocs: { code: string; present: boolean }[]; requiredRefs: { key: string; present: boolean }[]; docsComplete: boolean; ageDays: number; invoiceId: string | null; paperSays: string | null };
+export type QueueRow = { order: Order; customerName: string | null; entityName: string | null; chargesCents: number; rateConCents: number | null; mismatch: boolean; requiredDocs: { code: string; present: boolean }[]; requiredRefs: { key: string; present: boolean }[]; docsComplete: boolean; ageDays: number; invoiceId: string | null; paperSays: string | null; pending: { count: number; cents: number; charges: { id: string; description: string; amountCents: number }[] }; supplemental: boolean };
 
 /** The reference keys a customer may require on the order before it invoices, as the customer record spells them. */
 export const REF_KEYS: Record<string, string> = { PO: "po", ASN: "asn", SHIPMENT: "shipment", REFERENCE: "reference", RATE_CON: "rate_con" };
+
 export function requiredRefsFor(cust: { requiredRefs?: string[] | null } | undefined, refs: Record<string, string | null | undefined>) {
   return (cust?.requiredRefs ?? []).map((code) => {
     const key = REF_KEYS[code.toUpperCase()] ?? code.toLowerCase();
@@ -127,11 +164,31 @@ export function requiredRefsFor(cust: { requiredRefs?: string[] | null } | undef
   });
 }
 
+/** A charge that bills now: billable, not on an invoice, agreed or approved (not waiting, not refused). */
+const billsNow = (c: typeof s.charges.$inferSelect) => c.billable && !c.invoiceId && (c.approvalState === "none" || c.approvalState === "approved");
+
+/**
+ * Differs from the rate con: the agreed line haul (or TONU) isn't what the rate con says, or someone typed
+ * their own line haul or fuel. Approved extras don't count: their approval is on the charge.
+ */
+export function rateConMismatch(o: Pick<Order, "rateCents" | "custom">, cs: (typeof s.charges.$inferSelect)[]) {
+  if (o.rateCents == null || (o.custom as Record<string, unknown> | null)?.rateConMismatchAccepted) return false;
+  const live = cs.filter((c) => c.billable && c.approvalState !== "rejected");
+  const base = live.filter((c) => c.kind === "linehaul" || c.kind === "tonu").reduce((a, c) => a + c.amountCents, 0);
+  const typed = live.some((c) => (c.kind === "linehaul" || c.kind === "fuel") && c.source !== "rate_con");
+  return base !== o.rateCents || typed;
+}
+
 export async function billingQueue(ctx: Ctx): Promise<QueueRow[]> {
   assertCtx(ctx);
   requirePermission(ctx, "billing.view");
-  // a tailgate trip never bills: its shipments do
-  const ords = await db.select().from(s.orders).where(and(eq(s.orders.tenantId, ctx.tenantId), inArray(s.orders.state, ["delivered", "ready_to_bill"]), sql`${s.orders.kind} <> 'trip'`)).orderBy(s.orders.deliveredAt);
+  // a tailgate trip never bills: its shipments do. Invoiced / paid loads come back when a late charge is waiting for a supplemental invoice.
+  const late = await db.selectDistinct({ orderId: s.charges.orderId }).from(s.charges).innerJoin(s.orders, eq(s.orders.id, s.charges.orderId)).where(and(eq(s.charges.tenantId, ctx.tenantId), isNull(s.charges.invoiceId), eq(s.charges.billable, true), sql`${s.charges.approvalState} <> 'rejected'`, inArray(s.orders.state, ["invoiced", "paid"])));
+  const ords = await db
+    .select()
+    .from(s.orders)
+    .where(and(eq(s.orders.tenantId, ctx.tenantId), sql`${s.orders.kind} <> 'trip'`, late.length ? or(inArray(s.orders.state, ["delivered", "ready_to_bill"]), inArray(s.orders.id, late.map((l) => l.orderId))) : inArray(s.orders.state, ["delivered", "ready_to_bill"])))
+    .orderBy(s.orders.deliveredAt);
   if (!ords.length) return [];
   const ids = ords.map((o) => o.id);
   const [chargeRows, docs, customers, entities, drafts] = await Promise.all([
@@ -144,16 +201,34 @@ export async function billingQueue(ctx: Ctx): Promise<QueueRow[]> {
   const paperFlags = await db.select({ orderId: s.flags.orderId, title: s.flags.title }).from(s.flags).where(and(eq(s.flags.tenantId, ctx.tenantId), inArray(s.flags.orderId, ids), eq(s.flags.code, "rate_con_differs"), sql`${s.flags.clearedAt} is null`));
   const out: QueueRow[] = [];
   for (const o of ords) {
+    const supplemental = o.state === "invoiced" || o.state === "paid";
     let cs = chargeRows.filter((c) => c.orderId === o.id);
-    if (!cs.some((c) => c.kind === "linehaul" || c.kind === "tonu") && o.rateCents != null) cs = await ensureCharges(ctx, o.id);
+    if (!supplemental && !cs.some((c) => c.kind === "linehaul" || c.kind === "tonu") && o.rateCents != null) cs = await ensureCharges(ctx, o.id);
     const cust = customers.find((c) => c.id === (o.customerId ?? o.brokerId));
     const entity = entities.find((e) => e.id === (o.billingEntityId ?? cust?.billingEntityId)) ?? entities.find((e) => e.isDefault) ?? entities[0];
     // a TONU never picked up: no POD or BOL to wait for
     const required = (cust?.requiredDocs ?? ["POD", "BOL", "RATE_CON"]).filter((code) => !(o.tonu && ["POD", "BOL", "SEAL"].includes(code))).map((code) => ({ code, present: docs.some((d) => d.subjectId === o.id && d.code === code) }));
     const requiredRefs = requiredRefsFor(cust, o.refs ?? {});
-    const chargesCents = cs.filter((c) => c.billable).reduce((a, c) => a + c.amountCents, 0);
-    out.push({ order: o, customerName: cust?.name ?? null, entityName: entity?.legalName ?? null, chargesCents, rateConCents: o.rateCents, mismatch: o.rateCents != null && chargesCents !== o.rateCents && !((o.custom as Record<string, unknown>)?.rateConMismatchAccepted), requiredDocs: required, requiredRefs, docsComplete: required.every((r) => r.present) && requiredRefs.every((r) => r.present), ageDays: o.deliveredAt ? Math.floor((Date.now() - o.deliveredAt.getTime()) / 86400_000) : 0, invoiceId: drafts.find((d) => d.orderIds.includes(o.id))?.id ?? null, paperSays: paperFlags.find((x) => x.orderId === o.id)?.title ?? null });
+    const pendingRows = cs.filter((c) => c.billable && !c.invoiceId && c.approvalState === "pending");
+    const chargesCents = cs.filter(billsNow).reduce((a, c) => a + c.amountCents, 0);
+    out.push({
+      order: o,
+      customerName: cust?.name ?? null,
+      entityName: entity?.legalName ?? null,
+      chargesCents,
+      rateConCents: o.rateCents,
+      mismatch: !supplemental && rateConMismatch(o, cs),
+      requiredDocs: required,
+      requiredRefs,
+      docsComplete: required.every((r) => r.present) && requiredRefs.every((r) => r.present),
+      ageDays: o.deliveredAt ? Math.floor((Date.now() - o.deliveredAt.getTime()) / 86400_000) : 0,
+      invoiceId: drafts.find((d) => d.orderIds.includes(o.id))?.id ?? null,
+      paperSays: paperFlags.find((x) => x.orderId === o.id)?.title ?? null,
+      pending: { count: pendingRows.length, cents: pendingRows.reduce((a, c) => a + c.amountCents, 0), charges: pendingRows.map((c) => ({ id: c.id, description: c.description, amountCents: c.amountCents })) },
+      supplemental,
+    });
   }
+  // a supplemental row with nothing ready to bill (only waiting approvals) still shows, so the approval can be chased
   return out;
 }
 
@@ -163,6 +238,8 @@ export async function acceptRateConMismatch(ctx: Ctx, orderId: string, note: str
   if (!note?.trim()) throw new ValidationError("say why the charges differ from the rate con (e.g. accessorial approved by email)", "note");
   const o = await loadOrder(ctx, orderId);
   await db.update(s.orders).set({ custom: { ...(o.custom ?? {}), rateConMismatchAccepted: note.trim() }, updatedAt: new Date(), updatedBy: ctx.userId }).where(eq(s.orders.id, orderId));
+  // accepting our charges with a note also approves any extras still waiting, on the strength of that note
+  await db.update(s.charges).set({ approvalState: "approved", approvedBy: "accepted with a note", approvalRef: note.trim(), approvedAt: new Date(), updatedAt: new Date(), updatedBy: ctx.userId }).where(and(eq(s.charges.tenantId, ctx.tenantId), eq(s.charges.orderId, orderId), eq(s.charges.approvalState, "pending"), isNull(s.charges.invoiceId)));
   await writeAudit(db, ctx, "order", orderId, "override", { rateCon: { from: "mismatch", to: "accepted" } }, note.trim());
 }
 
@@ -255,34 +332,67 @@ async function assertOpenPeriod(ctx: Ctx, date: Date) {
   if (c && date.getTime() <= c.getTime()) throw new ValidationError(`the period through ${c.toISOString().slice(0, 10)} is closed`);
 }
 
-export async function createInvoice(ctx: Ctx, orderIds: string[], opts: { entityId?: string | null; consolidate?: boolean } = {}) {
+export async function createInvoice(ctx: Ctx, orderIds: string[], opts: { entityId?: string | null; consolidate?: boolean; withoutPending?: boolean; rebillOf?: string | null } = {}) {
   assertCtx(ctx);
   requirePermission(ctx, "billing.issue");
   if (!orderIds.length) throw new ValidationError("pick at least one order", "orderIds");
   const queue = (await billingQueue(ctx)).filter((q) => orderIds.includes(q.order.id));
   if (queue.length !== orderIds.length) throw new ValidationError("an order is not ready to bill (not delivered, cancelled, or already invoiced)");
+  const supplemental = queue.some((q) => q.supplemental);
+  if (supplemental && queue.some((q) => !q.supplemental)) throw new ValidationError("late charges on invoiced loads go on their own supplemental invoice");
   const custIds = new Set(queue.map((q) => q.order.customerId ?? q.order.brokerId));
   if (custIds.size > 1) throw new ValidationError("one invoice is for one customer");
   const customerId = [...custIds][0];
   if (!customerId) throw new ValidationError("the order has no customer");
   const bad = queue.filter((q) => !q.docsComplete || q.mismatch);
   if (bad.length) throw new ValidationError(bad.map((q) => `${q.order.orderNumber}: ${!q.docsComplete ? `missing ${[...q.requiredDocs.filter((d) => !d.present).map((d) => d.code), ...q.requiredRefs.filter((r) => !r.present).map((r) => `${r.key.toUpperCase()} reference`)].join(", ")}` : "charges differ from the rate con"}`).join("; "));
+  const waiting = queue.filter((q) => q.pending.count > 0);
+  if (waiting.length && !opts.withoutPending) throw new ValidationError(waiting.map((q) => `${q.order.orderNumber}: ${q.pending.count} extra charge${q.pending.count === 1 ? "" : "s"} waiting for the customer's approval (${q.pending.charges.map((c) => c.description).join(", ")}) — approve, reject, or bill without ${q.pending.count === 1 ? "it" : "them"}`).join("; "), "pending");
+  if (queue.some((q) => q.invoiceId)) throw new ValidationError("one of these orders already has a draft invoice: open it");
   const [cust] = await db.select().from(s.customers).where(eq(s.customers.id, customerId)).limit(1);
   const entities = await db.select().from(s.billingEntities).where(and(eq(s.billingEntities.tenantId, ctx.tenantId), isNull(s.billingEntities.archivedAt)));
   const entity = entities.find((e) => e.id === (opts.entityId ?? queue[0].order.billingEntityId ?? cust.billingEntityId)) ?? entities.find((e) => e.isDefault) ?? entities[0];
   if (!entity) throw new ValidationError("add a billing entity first (Settings → Billing entities)");
-  const already = await db.select({ id: s.invoices.id }).from(s.invoices).where(and(eq(s.invoices.tenantId, ctx.tenantId), arrayOverlaps(s.invoices.orderIds, orderIds), sql`${s.invoices.state} <> 'void'`)).limit(1);
-  if (already.length) throw new ValidationError("one of these orders is already on an invoice");
-  const chargeRows = await db.select().from(s.charges).where(and(eq(s.charges.tenantId, ctx.tenantId), inArray(s.charges.orderId, orderIds), eq(s.charges.billable, true), isNull(s.charges.invoiceId)));
+  if (!supplemental) {
+    const already = await db.select({ id: s.invoices.id }).from(s.invoices).where(and(eq(s.invoices.tenantId, ctx.tenantId), arrayOverlaps(s.invoices.orderIds, orderIds), sql`${s.invoices.state} <> 'void'`, eq(s.invoices.kind, "standard"))).limit(1);
+    if (already.length) throw new ValidationError("one of these orders is already on an invoice");
+  }
+  const chargeRows = (await db.select().from(s.charges).where(and(eq(s.charges.tenantId, ctx.tenantId), inArray(s.charges.orderId, orderIds)))).filter(billsNow);
+  if (!chargeRows.length) throw new ValidationError("nothing to bill yet: every charge is waiting for approval");
   const subtotal = chargeRows.reduce((a, c) => a + c.amountCents, 0);
   const currency = queue[0].order.currency;
+  const kind = opts.rebillOf ? "rebill" : supplemental ? "supplemental" : "standard";
   return db.transaction(async (tx) => {
-    const [inv] = await tx.insert(s.invoices).values({ id: newId(), tenantId: ctx.tenantId, entityId: entity.id, customerId, orderIds, currency, termsDays: cust.termsDays, subtotalCents: subtotal, totalCents: subtotal, payWhenPaid: cust.payWhenPaid, token: newToken(), createdBy: ctx.userId, updatedBy: ctx.userId }).returning();
+    const [inv] = await tx.insert(s.invoices).values({ id: newId(), tenantId: ctx.tenantId, entityId: entity.id, customerId, orderIds, currency, termsDays: cust.termsDays, subtotalCents: subtotal, totalCents: subtotal, payWhenPaid: cust.payWhenPaid, token: newToken(), kind, rebillOf: opts.rebillOf ?? null, createdBy: ctx.userId, updatedBy: ctx.userId }).returning();
     await tx.update(s.charges).set({ invoiceId: inv.id }).where(inArray(s.charges.id, chargeRows.map((c) => c.id)));
     for (const o of queue) if (o.order.state === "delivered") await tx.update(s.orders).set({ state: "ready_to_bill", previousState: "delivered", updatedAt: new Date(), updatedBy: ctx.userId }).where(eq(s.orders.id, o.order.id));
-    await writeAudit(tx, ctx, "invoice", inv.id, "create", undefined, `draft for ${queue.map((q) => q.order.orderNumber).join(", ")}`);
+    await writeAudit(tx, ctx, "invoice", inv.id, "create", undefined, `${kind === "standard" ? "draft" : `${kind} draft`} for ${queue.map((q) => q.order.orderNumber).join(", ")}${waiting.length ? " (extras waiting for approval left off)" : ""}`);
     return inv;
   });
+}
+
+/**
+ * Rebill: the customer wants the invoice again with a change (their PO, a corrected charge, another bill-to).
+ * No payments on it yet: it voids with the reason and a new draft for the same loads opens, linked to it,
+ * for the change before it issues. With payments on it, credit the difference or bill a supplemental instead.
+ */
+export async function rebillInvoice(ctx: Ctx, invoiceId: string, reason: string) {
+  assertCtx(ctx);
+  requirePermission(ctx, "billing.issue");
+  if (!reason?.trim()) throw new ValidationError("why is it rebilled? (the customer's words)", "reason");
+  const { invoice: inv, receipts: rcpts } = await invoiceById(ctx, invoiceId);
+  if (rcpts.length) throw new ValidationError("this invoice has payments on it: credit the difference, or bill the extra on a supplemental invoice");
+  if (inv.creditedCents) throw new ValidationError("this invoice has a credit memo: rebill isn't clean — credit the rest instead");
+  if (!["issued", "sent", "disputed"].includes(inv.state)) throw new TransitionError("order", inv.state, "void", "only an issued, sent or disputed invoice can be rebilled");
+  if (inv.issuedAt) await assertOpenPeriod(ctx, inv.issuedAt);
+  await db.transaction(async (tx) => {
+    await tx.update(s.charges).set({ invoiceId: null }).where(eq(s.charges.invoiceId, invoiceId));
+    await tx.update(s.invoices).set({ state: "void", voidedAt: new Date(), voidReason: `Rebilled: ${reason.trim()}`, updatedAt: new Date(), updatedBy: ctx.userId }).where(eq(s.invoices.id, invoiceId));
+    // a standard invoice's loads go back to "ready to bill"; a supplemental's stay invoiced
+    if (inv.kind !== "supplemental") for (const oid of inv.orderIds) await tx.update(s.orders).set({ state: "ready_to_bill", previousState: "invoiced", updatedAt: new Date(), updatedBy: ctx.userId }).where(and(eq(s.orders.id, oid), eq(s.orders.state, "invoiced")));
+    await writeAudit(tx, ctx, "invoice", invoiceId, "transition", { state: { from: inv.state, to: "void" } }, `rebilled: ${reason.trim()}`);
+  });
+  return createInvoice(ctx, inv.orderIds, { entityId: inv.entityId, withoutPending: true, rebillOf: inv.id });
 }
 
 export async function invoiceById(ctx: Ctx, invoiceId: string) {
@@ -338,7 +448,8 @@ export async function issueInvoice(ctx: Ctx, invoiceId: string, opts: { issuedAt
   const remitTo = (entity.remitTo as Record<string, string | undefined>) ?? null;
   const snapshot: InvoiceSnapshot = {
     entity: { legalName: entity.legalName, dba: entity.dba, taxId: entity.taxId, remitTo, mc: entity.mcNumber, dot: entity.dotNumber },
-    billTo: { name: customer.name, email: customer.billingEmail, kind: customer.kind },
+    billTo: { name: customer.name, email: customer.billingEmail, kind: customer.kind, address: customer.billingAddress ?? null },
+    loadNumbers: orders.map((o) => o.orderNumber).sort(),
     refs,
     stops: stops.map((st) => ({ seq: st.seq, type: st.type, name: st.name, city: st.address?.city ?? null, state: st.address?.state ?? null, country: st.country, departedAt: st.departedAt?.toISOString() ?? null, arrivedAt: st.arrivedAt?.toISOString() ?? null })),
     lines: lines.map<InvoiceLine>((l) => ({ chargeId: l.id, orderId: l.orderId, orderNumber: orders.find((o) => o.id === l.orderId)?.orderNumber ?? "", kind: l.kind, description: l.description, qty: l.qty, unit: l.unit, rateCents: l.rateCents, amountCents: l.amountCents })),
@@ -360,7 +471,8 @@ export async function issueInvoice(ctx: Ctx, invoiceId: string, opts: { issuedAt
     const [after] = await tx.update(s.invoices).set({ state: "issued", number, issuedAt, dueAt, subtotalCents: subtotal, totalCents: subtotal, snapshot, factored, exchangeRate: opts.exchangeRate ? Math.round(opts.exchangeRate * 10000) : null, pdfStorageKey: `blob:${blob.id}`, updatedAt: new Date(), updatedBy: ctx.userId }).where(eq(s.invoices.id, inv.id)).returning();
     for (const oid of inv.orderIds) {
       const [o] = await tx.select().from(s.orders).where(eq(s.orders.id, oid)).limit(1);
-      if (o && o.state !== "invoiced") {
+      // a supplemental invoice leaves an invoiced or paid load where it is
+      if (o && (o.state === "delivered" || o.state === "ready_to_bill")) {
         assertOrderTransition(o.state === "delivered" ? "ready_to_bill" : o.state, "invoiced");
         await tx.update(s.orders).set({ state: "invoiced", previousState: o.state, updatedAt: new Date(), updatedBy: ctx.userId }).where(eq(s.orders.id, oid));
       }
@@ -393,7 +505,7 @@ export async function invoiceByToken(token: string) {
   return b ? { invoice: inv, blob: b } : null;
 }
 
-export async function recordReceipt(ctx: Ctx, invoiceId: string, r: { amountCents: number; receivedAt?: Date; method?: string; reference?: string | null; note?: string | null }) {
+export async function recordReceipt(ctx: Ctx, invoiceId: string, r: { amountCents: number; receivedAt?: Date; method?: string; reference?: string | null; note?: string | null; paymentId?: string | null }) {
   assertCtx(ctx);
   requirePermission(ctx, "billing.issue");
   if (!Number.isFinite(r.amountCents) || r.amountCents <= 0) throw new ValidationError("amount must be positive", "amountCents");
@@ -402,7 +514,7 @@ export async function recordReceipt(ctx: Ctx, invoiceId: string, r: { amountCent
   const open = inv.totalCents - inv.creditedCents - inv.paidCents;
   if (r.amountCents > open) throw new ValidationError(`over-payment: ${(r.amountCents / 100).toFixed(2)} is more than the ${(open / 100).toFixed(2)} open. Record the remainder as unapplied credit on another invoice.`, "amountCents");
   return db.transaction(async (tx) => {
-    await tx.insert(s.receipts).values({ id: newId(), tenantId: ctx.tenantId, invoiceId, amountCents: r.amountCents, receivedAt: r.receivedAt ?? new Date(), method: r.method ?? "ach", reference: r.reference ?? null, note: r.note ?? null, createdBy: ctx.userId });
+    await tx.insert(s.receipts).values({ id: newId(), tenantId: ctx.tenantId, invoiceId, amountCents: r.amountCents, receivedAt: r.receivedAt ?? new Date(), method: r.method ?? "ach", reference: r.reference ?? null, note: r.note ?? null, paymentId: r.paymentId ?? null, createdBy: ctx.userId });
     const paid = inv.paidCents + r.amountCents;
     const full = paid >= inv.totalCents - inv.creditedCents;
     const [after] = await tx.update(s.invoices).set({ paidCents: paid, state: full ? "paid" : "partially_paid", paidAt: full ? (r.receivedAt ?? new Date()) : null, updatedAt: new Date(), updatedBy: ctx.userId }).where(eq(s.invoices.id, invoiceId)).returning();
@@ -423,7 +535,8 @@ export async function voidInvoice(ctx: Ctx, invoiceId: string, reason: string) {
   return db.transaction(async (tx) => {
     await tx.update(s.charges).set({ invoiceId: null }).where(eq(s.charges.invoiceId, invoiceId));
     const [after] = await tx.update(s.invoices).set({ state: "void", voidedAt: new Date(), voidReason: reason.trim(), updatedAt: new Date(), updatedBy: ctx.userId }).where(eq(s.invoices.id, invoiceId)).returning();
-    for (const oid of inv.orderIds) await tx.update(s.orders).set({ state: "ready_to_bill", previousState: "invoiced", updatedAt: new Date(), updatedBy: ctx.userId }).where(and(eq(s.orders.id, oid), inArray(s.orders.state, ["invoiced", "ready_to_bill"])));
+    // voiding a supplemental leaves its loads invoiced: only its late charges come back to the queue
+    if (inv.kind !== "supplemental") for (const oid of inv.orderIds) await tx.update(s.orders).set({ state: "ready_to_bill", previousState: "invoiced", updatedAt: new Date(), updatedBy: ctx.userId }).where(and(eq(s.orders.id, oid), inArray(s.orders.state, ["invoiced", "ready_to_bill"])));
     await writeAudit(tx, ctx, "invoice", invoiceId, "transition", { state: { from: inv.state, to: "void" } }, reason.trim());
     return after;
   });
@@ -470,13 +583,40 @@ export async function setPromiseToPay(ctx: Ctx, invoiceId: string, at: Date | nu
   await db.update(s.invoices).set({ promiseToPayAt: at, updatedAt: new Date(), updatedBy: ctx.userId }).where(and(eq(s.invoices.tenantId, ctx.tenantId), eq(s.invoices.id, invoiceId)));
 }
 
-export async function listInvoices(ctx: Ctx, opts: { states?: string[]; customerId?: string } = {}) {
+export type InvoiceFilter = { states?: string[]; customerId?: string; q?: string; view?: "open" | "overdue" | "unsent" | "factored" | ""; from?: string; to?: string; kind?: string };
+
+/** Invoices with the filters billing actually uses: who, what state, overdue, not sent yet, factored, dates, and a search over invoice #, load #, any load reference and the customer. */
+export async function listInvoices(ctx: Ctx, opts: InvoiceFilter = {}) {
   assertCtx(ctx);
   requirePermission(ctx, "billing.view");
   const conds = [eq(s.invoices.tenantId, ctx.tenantId)];
   if (opts.states?.length) conds.push(inArray(s.invoices.state, opts.states as never));
   if (opts.customerId) conds.push(eq(s.invoices.customerId, opts.customerId));
-  return db.select().from(s.invoices).where(and(...conds)).orderBy(desc(s.invoices.createdAt)).limit(1000);
+  if (opts.kind) conds.push(eq(s.invoices.kind, opts.kind as never));
+  const open = ["issued", "sent", "partially_paid", "disputed"];
+  if (opts.view === "open") conds.push(inArray(s.invoices.state, open as never));
+  if (opts.view === "overdue") conds.push(inArray(s.invoices.state, open as never), lt(s.invoices.dueAt, new Date()));
+  if (opts.view === "unsent") conds.push(eq(s.invoices.state, "issued"));
+  if (opts.view === "factored") conds.push(eq(s.invoices.factored, true));
+  if (opts.from) conds.push(gte(s.invoices.issuedAt, new Date(`${opts.from}T00:00:00Z`)));
+  if (opts.to) conds.push(lt(s.invoices.issuedAt, new Date(new Date(`${opts.to}T00:00:00Z`).getTime() + 86400_000)));
+  let rows = await db.select().from(s.invoices).where(and(...conds)).orderBy(desc(s.invoices.createdAt)).limit(2000);
+  const q = opts.q?.trim().toLowerCase();
+  if (q) {
+    const ids = [...new Set(rows.flatMap((r) => r.orderIds))];
+    const [orders, customers] = await Promise.all([ids.length ? db.select({ id: s.orders.id, orderNumber: s.orders.orderNumber, refs: s.orders.refs }).from(s.orders).where(inArray(s.orders.id, ids)) : [], db.select({ id: s.customers.id, name: s.customers.name }).from(s.customers).where(eq(s.customers.tenantId, ctx.tenantId))]);
+    const hay = new Map(rows.map((r) => [r.id, [r.number ?? "", customers.find((c) => c.id === r.customerId)?.name ?? "", ...orders.filter((o) => r.orderIds.includes(o.id)).flatMap((o) => [o.orderNumber, ...Object.values(o.refs ?? {}).map((v) => String(v ?? ""))])].join(" ").toLowerCase()]));
+    rows = rows.filter((r) => hay.get(r.id)!.includes(q));
+  }
+  return rows;
+}
+
+export function invoicesCsv(rows: (typeof s.invoices.$inferSelect)[], customerName: (id: string) => string) {
+  const d = (x: Date | null) => (x ? x.toISOString().slice(0, 10) : "");
+  const c = (n: number) => (n / 100).toFixed(2);
+  const lines = [["Number", "Kind", "Customer", "State", "Issued", "Due", "Currency", "Total", "Paid", "Credited", "Open", "Factored", "Loads"]];
+  for (const r of rows) lines.push([r.number ?? "draft", r.kind, customerName(r.customerId), r.state, d(r.issuedAt), d(r.dueAt), r.currency, c(r.totalCents), c(r.paidCents), c(r.creditedCents), ["paid", "void", "closed", "draft"].includes(r.state) ? "0.00" : c(r.totalCents - r.creditedCents - r.paidCents), r.factored ? "yes" : "", String(r.orderIds.length)]);
+  return lines.map((l) => l.map((v) => (/[",\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v)).join(",")).join("\n");
 }
 
 // ---------- AR (7.5) ----------

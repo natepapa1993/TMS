@@ -7,12 +7,13 @@ import { formatCents } from "@/data/fields";
 import type { ChargeKind } from "@/db/schema";
 import { addChargeAction, removeChargeAction, computeDetentionAction } from "@/app/(app)/billing/actions";
 import { UploadDoc } from "@/app/(app)/billing/queue";
+import { ApprovalDialog } from "@/app/(app)/billing/approvals";
 
-type Charge = { id: string; kind: string; description: string; qty: number; unit: string; rateCents: number; amountCents: number; currency: string; billable: boolean; source: string; invoiceId: string | null; data: Record<string, unknown> | null };
+type Charge = { id: string; kind: string; description: string; qty: number; unit: string; rateCents: number; amountCents: number; currency: string; billable: boolean; source: string; invoiceId: string | null; data: Record<string, unknown> | null; approvalState: string; approvedBy: string | null; approvalRef: string | null; rejectedReason: string | null };
 type Doc = { code: string | null; fileName: string; id: string };
 const KINDS: [ChargeKind, string][] = [["accessorial", "Accessorial"], ["detention", "Detention"], ["layover", "Layover"], ["tonu", "TONU"], ["lumper", "Lumper"], ["border_fee", "Border fee"], ["crossing_fee", "Crossing fee"], ["storage", "Storage"], ["extra_stop", "Extra stop"], ["fuel", "Fuel"], ["other", "Other"]];
 
-export function Charges({ orderId, charges, docs, requiredDocs, requiredRefs = [], pnl, locked, role, currency }: { orderId: string; charges: Charge[]; docs: Doc[]; requiredDocs: string[]; requiredRefs?: { key: string; present: boolean }[]; pnl: { revenue: number; carrierCost: number; driverPay: number; fuel: number; miles: number; extra: number; cost: number; margin: number; marginPct: number } | null; locked: boolean; role: string; currency: string }) {
+export function Charges({ orderId, orderNumber, charges, docs, requiredDocs, requiredRefs = [], pnl, locked, invoiced, role, currency }: { orderId: string; orderNumber: string; invoiced?: boolean; charges: Charge[]; docs: Doc[]; requiredDocs: string[]; requiredRefs?: { key: string; present: boolean }[]; pnl: { revenue: number; carrierCost: number; driverPay: number; fuel: number; miles: number; extra: number; cost: number; margin: number; marginPct: number } | null; locked: boolean; role: string; currency: string }) {
   const router = useRouter();
   const t = useToast();
   const [pending, start] = useTransition();
@@ -20,8 +21,10 @@ export function Charges({ orderId, charges, docs, requiredDocs, requiredRefs = [
   const DEFAULT_UNIT: Partial<Record<ChargeKind, string>> = { detention: "h", layover: "flat", extra_stop: "stop" };
   const [f, setF] = useState({ kind: "accessorial" as ChargeKind, description: "", qty: "1", unit: "flat", rate: "" });
   const [uploadFor, setUploadFor] = useState<string | null>(null);
+  const [approving, setApproving] = useState(false);
+  const waiting = charges.filter((c) => c.approvalState === "pending" && c.billable && !c.invoiceId);
   const can = ["owner", "billing", "dispatcher"].includes(role) && !locked;
-  const total = charges.filter((c) => c.billable).reduce((a, c) => a + c.amountCents, 0);
+  const total = charges.filter((c) => c.billable && c.approvalState !== "pending" && c.approvalState !== "rejected").reduce((a, c) => a + c.amountCents, 0);
   const run = (label: string, fn: () => Promise<{ ok: boolean; error?: string }>) =>
     start(async () => {
       const r = await fn();
@@ -54,6 +57,19 @@ export function Charges({ orderId, charges, docs, requiredDocs, requiredRefs = [
           ))}
         </div>
       </div>
+      {waiting.length > 0 && (
+        <div className="rounded-lg border border-amber/50 bg-amber-soft/40 px-3 py-2 mb-3 text-[13px] flex items-center justify-between gap-3" data-testid="charges-waiting">
+          <span>
+            <b>{waiting.length} extra{waiting.length === 1 ? "" : "s"}</b> ({formatCents(waiting.reduce((a, c) => a + c.amountCents, 0), currency)}) waiting for the customer&rsquo;s approval — {invoiced ? "once approved they go on a supplemental invoice" : "they stay off the invoice until approved"}.
+          </span>
+          {can && (
+            <button className="btn btn-sm" onClick={() => setApproving(true)}>
+              Record approval
+            </button>
+          )}
+        </div>
+      )}
+      {invoiced && !waiting.length && <div className="text-[12.5px] text-muted mb-2">Invoiced. A charge added now (detention approved later, a lumper receipt) goes on a supplemental invoice.</div>}
       {charges.length === 0 ? (
         <div className="text-muted text-[13px]">Line haul appears from the rate when the order delivers.</div>
       ) : (
@@ -65,7 +81,14 @@ export function Charges({ orderId, charges, docs, requiredDocs, requiredRefs = [
                   <td className="font-semibold">
                     {c.description}
                     <span className="text-faint text-[12px]"> · {c.source.replace("_", " ")}</span>
-                    {!c.billable && <Pill tone="slate">not billable</Pill>}
+                    {!c.billable && c.approvalState !== "rejected" && <Pill tone="slate">not billable</Pill>}
+                    {c.approvalState === "pending" && (
+                      <span className="ml-1">
+                        <Pill tone="amber">waiting for the customer&rsquo;s OK</Pill>
+                      </span>
+                    )}
+                    {c.approvalState === "approved" && <div className="text-[12px] text-muted font-normal">approved by {c.approvedBy}{c.approvalRef ? ` · ${c.approvalRef}` : ""}</div>}
+                    {c.approvalState === "rejected" && <div className="text-[12px] text-red font-normal">rejected: {c.rejectedReason}</div>}
                   </td>
                   <td className="text-muted text-[12.5px]">{c.unit === "flat" ? "" : `${c.unit === "h" ? (c.qty / 100).toFixed(2) : c.qty} ${c.unit} × ${formatCents(c.rateCents, c.currency)}`}</td>
                   <td className="mono font-semibold text-right">{formatCents(c.amountCents, c.currency)}</td>
@@ -74,7 +97,7 @@ export function Charges({ orderId, charges, docs, requiredDocs, requiredRefs = [
               ))}
               <tr>
                 <td colSpan={2} className="text-right font-extrabold">
-                  Billable total
+                  {waiting.length ? "Billable now" : "Billable total"}
                 </td>
                 <td className="mono text-right font-extrabold">{formatCents(total, currency)}</td>
                 <td></td>
@@ -140,6 +163,7 @@ export function Charges({ orderId, charges, docs, requiredDocs, requiredRefs = [
           </div>
         </div>
       )}
+      {approving && <ApprovalDialog orderId={orderId} orderNumber={orderNumber} charges={waiting.map((c) => ({ id: c.id, description: c.description, amountCents: c.amountCents }))} currency={currency} onClose={() => setApproving(false)} />}
       {uploadFor && <UploadDoc orderId={orderId} code={uploadFor} onClose={() => setUploadFor(null)} onDone={() => { setUploadFor(null); t.ok("Uploaded"); router.refresh(); }} />}
       <Toast message={t.toast?.message ?? null} tone={t.toast?.tone} onDone={t.clear} />
     </div>

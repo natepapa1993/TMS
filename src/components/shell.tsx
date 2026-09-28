@@ -4,7 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
 import { Mark } from "./mark";
-import { ArrowLeftRight, BarChart3, ClipboardCheck, FlaskConical, FolderCheck, ShieldAlert, Building2, Cable, CalendarRange, FileText, HandCoins, Handshake, Landmark, LayoutGrid, Map as MapIcon, MapPin, MessageSquare, Package, Plug, Receipt, Route, Settings, ShieldCheck, SlidersHorizontal, Fuel, Scale, TriangleAlert, Truck, Users, Wallet, type LucideIcon } from "lucide-react";
+import { ArrowLeftRight, Banknote, BarChart3, ClipboardCheck, FlaskConical, FolderCheck, ShieldAlert, Building2, Cable, CalendarRange, FileText, HandCoins, Handshake, Landmark, LayoutGrid, Map as MapIcon, MapPin, MessageSquare, Package, Plug, Receipt, Route, Settings, ShieldCheck, SlidersHorizontal, Fuel, Scale, TriangleAlert, Truck, Users, Wallet, type LucideIcon } from "lucide-react";
 import { logoutAction } from "@/app/(auth)/actions";
 import { GlobalSearch } from "./global-search";
 
@@ -38,6 +38,7 @@ const NAV: { section: string; items: NavItem[] }[] = [
       { href: "/billing", label: "Billing", icon: Receipt, roles: ["owner", "dispatcher", "billing"] },
       { href: "/billing/invoices", label: "Invoices", icon: FileText, roles: ["owner", "billing"] },
       { href: "/billing/ar", label: "Receivables", icon: Landmark, roles: ["owner", "billing"] },
+      { href: "/billing/payments", label: "Payments", icon: Banknote, roles: ["owner", "billing"] },
       { href: "/billing/carriers", label: "Carrier pay", icon: HandCoins, roles: ["owner", "billing"] },
       { href: "/billing/settlements", label: "Driver pay", icon: Wallet, roles: ["owner", "billing"] },
       { href: "/billing/pay-plans", label: "Pay plans", icon: SlidersHorizontal, roles: ["owner", "billing"] },

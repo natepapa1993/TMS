@@ -5,15 +5,15 @@ import { localDay } from "@/lib/time";
 import { useRouter } from "next/navigation";
 import { Confirm, Modal, Toast, useToast } from "@/components/ui";
 import { formatCents } from "@/data/fields";
-import { issueInvoiceAction, deliverInvoiceAction, receiptAction, voidInvoiceAction, creditMemoAction, disputeInvoiceAction, promiseToPayAction } from "../../actions";
+import { issueInvoiceAction, deliverInvoiceAction, receiptAction, voidInvoiceAction, creditMemoAction, disputeInvoiceAction, promiseToPayAction, rebillAction } from "../../actions";
 
-type Inv = { id: string; state: string; currency: string; openCents: number; billingEmail: string | null; promiseToPayAt: string | null; payWhenPaid: boolean; number: string | null; method: string; portalUrl: string | null; factorName: string | null; factorEmail: string | null };
+type Inv = { id: string; state: string; currency: string; openCents: number; paidCents: number; creditedCents: number; billingEmail: string | null; promiseToPayAt: string | null; payWhenPaid: boolean; number: string | null; method: string; portalUrl: string | null; factorName: string | null; factorEmail: string | null };
 
 export function InvoiceActions({ inv, role }: { inv: Inv; role: string }) {
   const router = useRouter();
   const t = useToast();
   const [pending, start] = useTransition();
-  const [popup, setPopup] = useState<null | "receipt" | "credit" | "void" | "dispute" | "send" | "issue">(null);
+  const [popup, setPopup] = useState<null | "receipt" | "credit" | "void" | "dispute" | "send" | "issue" | "rebill">(null);
   const fresh = () => ({ amount: "", receivedAt: localDay(), method: "ach", reference: "", note: "", to: inv.billingEmail ?? "", rate: "", dmethod: inv.method, ptp: inv.promiseToPayAt?.slice(0, 10) ?? "" });
   const [f, setF] = useState(fresh);
   // every dialog starts clean: nothing typed in one carries into another
@@ -62,6 +62,11 @@ export function InvoiceActions({ inv, role }: { inv: Inv; role: string }) {
       {["issued", "sent", "partially_paid"].includes(s) && (
         <button className="btn w-full justify-center" onClick={() => openPopup("dispute")}>
           Mark disputed
+        </button>
+      )}
+      {["issued", "sent", "disputed"].includes(s) && !inv.paidCents && !inv.creditedCents && (
+        <button className="btn w-full justify-center" onClick={() => openPopup("rebill")} title="Void this one and open a new draft for the same loads, to change it before it goes out again">
+          Rebill
         </button>
       )}
       {!canVoid && ["issued", "sent", "partially_paid", "disputed"].includes(s) && <div className="text-[12px] text-muted pt-1">Credit memos and voids need the owner.</div>}
@@ -197,6 +202,22 @@ export function InvoiceActions({ inv, role }: { inv: Inv; role: string }) {
         <div className="help mt-2">Gets its own number in the entity&apos;s sequence. The invoice keeps its number.</div>
       </Modal>
       <Confirm open={popup === "void"} onClose={() => setPopup(null)} title={`Void ${inv.number ?? "this draft"}`} body="Only possible with no receipts. The number is never reused; the orders go back to Ready to bill." needReason="Reason" confirmLabel="Void" danger onConfirm={(reason) => run("Voided", () => voidInvoiceAction(inv.id, reason))} />
+      <Confirm
+        open={popup === "rebill"}
+        onClose={() => setPopup(null)}
+        title={`Rebill ${inv.number ?? ""}`}
+        body="This invoice is voided with your reason (its number is never reused) and a new draft for the same loads opens, linked to it. Change what the customer asked for — their PO, a charge, the bill-to — then issue and send it."
+        needReason="What the customer asked for"
+        confirmLabel="Void & open the new draft"
+        onConfirm={(reason) =>
+          start(async () => {
+            const r = await rebillAction(inv.id, reason);
+            setPopup(null);
+            if (!r.ok) return t.err(r.error);
+            router.push(`/billing/invoices/${r.data.id}`);
+          })
+        }
+      />
       <Confirm open={popup === "dispute"} onClose={() => setPopup(null)} title="Mark disputed" needReason="What the customer disputes" confirmLabel="Disputed" onConfirm={(reason) => run("Marked disputed", () => disputeInvoiceAction(inv.id, reason))} />
       <Toast message={t.toast?.message ?? null} tone={t.toast?.tone} onDone={t.clear} />
     </aside>

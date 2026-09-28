@@ -21,6 +21,7 @@ export async function buildInvoicePdf(inv: { number: string; issuedAt: Date; due
   draw(s.entity.dba || s.entity.legalName, 54, 760, 18, bold, rgb(1, 1, 1));
   draw("INVOICE", 470, 760, 18, bold, rgb(0.6, 0.96, 0.89));
   draw(`# ${inv.number}`, 470, 748, 9, font, rgb(0.8, 0.85, 0.9));
+  if (s.loadNumbers?.length) draw(`${s.loadNumbers.length === 1 ? "Load" : "Loads"} ${s.loadNumbers.length > 3 ? `${s.loadNumbers.slice(0, 3).join(", ")} +${s.loadNumbers.length - 3}` : s.loadNumbers.join(", ")}`, 54, 748, 9, font, rgb(0.8, 0.85, 0.9));
 
   // entity / bill to
   let y = 712;
@@ -33,7 +34,9 @@ export async function buildInvoicePdf(inv: { number: string; issuedAt: Date; due
 
   draw("BILL TO", 330, y, 8, bold, muted);
   draw(s.billTo.name, 330, y - 13, 10, bold);
-  if (s.billTo.email) draw(s.billTo.email, 330, y - 26, 9, font, muted);
+  const ba = s.billTo.address ?? {};
+  const billLines = [ba.line1, ba.line2, [ba.city, ba.state, ba.postalCode].filter(Boolean).join(", "), ba.country && ba.country !== "US" ? ba.country : "", s.billTo.email].filter(Boolean) as string[];
+  billLines.slice(0, 5).forEach((l, i) => draw(l.length > 30 ? `${l.slice(0, 28)}...` : l, 330, y - 26 - 12 * i, 9, font, muted)); // stays clear of the date column
   draw("DATE", 470, y, 8, bold, muted);
   draw(inv.issuedAt.toISOString().slice(0, 10), 470, y - 13, 9);
   draw("DUE", 470, y - 30, 8, bold, muted);

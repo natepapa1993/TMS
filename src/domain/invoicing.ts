@@ -58,6 +58,7 @@ function whyNot(q: QueueRow) {
   if (q.mismatch) return "charges differ from the rate con";
   if (!q.docsComplete) return `missing ${[...q.requiredDocs.filter((d) => !d.present).map((d) => d.code), ...q.requiredRefs.filter((r) => !r.present).map((r) => `${r.key.toUpperCase()} reference`)].join(", ")}`;
   if (!(q.order.customerId ?? q.order.brokerId)) return "no customer";
+  if (q.chargesCents === 0 && q.pending.count) return "only extras waiting for the customer's approval";
   return null;
 }
 
@@ -83,7 +84,8 @@ export async function planBatch(ctx: Ctx, orderIds: string[]): Promise<BatchPlan
     const cust = custs.find((c) => c.id === cid);
     const entity = entities.find((e) => e.id === (q.order.billingEntityId ?? cust?.billingEntityId)) ?? entities.find((e) => e.isDefault) ?? entities[0];
     const mode = cust?.invoiceMode === "summary" ? "summary" : "per_load";
-    const key = mode === "summary" ? `${cid}|${entity?.id}|${q.order.currency}` : q.order.id;
+    // late charges on invoiced loads go on their own supplemental invoice
+    const key = q.supplemental ? `sup|${q.order.id}` : mode === "summary" ? `${cid}|${entity?.id}|${q.order.currency}` : q.order.id;
     const method = resolveDelivery(cust, entity, edi.get(cid) ?? false);
     const g = groups.get(key) ?? { key, customerId: cid, customerName: cust?.name ?? q.customerName ?? "?", entityId: entity?.id ?? null, currency: q.order.currency, orderIds: [], orderNumbers: [], totalCents: 0, mode, method, sendTo: method === "email" ? (cust?.billingEmail ?? null) : method === "factor" ? (entity?.factorEmail ?? null) : method === "portal" ? (cust?.portalUrl ?? null) : null };
     g.orderIds.push(q.order.id);
@@ -120,7 +122,7 @@ export async function runBatch(ctx: Ctx, orderIds: string[], opts: { issue?: boo
     const r: BatchResult["results"][number] = { customerName: g.customerName, orderNumbers: g.orderNumbers, invoiceId: null, number: null, state: "draft", method: g.method, ok: true, note: null };
     results.push(r);
     try {
-      const inv = await createInvoice(ctx, g.orderIds, { entityId: g.entityId, consolidate: g.orderIds.length > 1 });
+      const inv = await createInvoice(ctx, g.orderIds, { entityId: g.entityId, consolidate: g.orderIds.length > 1, withoutPending: true });
       r.invoiceId = inv.id;
       await db.update(s.invoices).set({ batchId }).where(eq(s.invoices.id, inv.id));
       if (!opts.issue) continue;

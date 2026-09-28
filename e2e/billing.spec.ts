@@ -1,4 +1,4 @@
-// Features: F-7 F-7.2 F-9 billing & settlements through the browser, ending with the QuickBooks export and the owner's reports — charges, docs gate, invoice issue/send/receipt, AR, carrier bill three-way, driver statement, driver app pay, company settings
+// Features: F-7 F-7.2 F-9 billing & settlements through the browser, ending with the QuickBooks export and the owner's reports — charges, docs gate, invoice issue/send/receipt, AR, carrier bill three-way, driver statement, driver app pay, company settings F-26.2
 import { test, expect, type Page } from "@playwright/test";
 import path from "node:path";
 import { signupFresh, quickAdd, future, buildLoad, step, confirmStamp } from "./helpers";
@@ -107,18 +107,23 @@ test("billing day: charges, docs gate, invoice to paid, AR, carrier three-way wi
   await charges.locator("input[inputmode=decimal]").last().fill("50");
   await charges.locator("button:has-text('Add')").click();
   await expect(page.getByRole("status")).toContainText("Charge added");
-  await expect(charges).toContainText("$1,850.00");
+  // the lumper is an extra: it waits for RXO's OK before it bills
+  await expect(page.getByTestId("charges-waiting")).toContainText("1 extra");
+  await expect(charges).toContainText("$1,800.00");
   await expect(charges).toContainText("420 mi");
 
-  // ---- billing queue: docs gate + rate con mismatch, both fixed from the queue
+  // ---- billing queue: the extra approved (who and how), then the docs gate, both from the queue
   await page.goto("/billing");
   const row1 = page.locator("tr", { hasText: o1 });
-  await expect(row1).toContainText("≠");
-  await expect(row1.locator("button:has-text('Create invoice')")).toBeDisabled();
-  await row1.locator("button.pill-red:has-text('≠')").click();
-  await page.getByRole("dialog").locator("input.input").fill("lumper approved by RXO on the phone, email on file");
-  await page.getByRole("dialog").locator("button:has-text('Accept our charges')").click();
-  await expect(page.getByRole("status")).toContainText("Accepted");
+  await expect(row1.getByTestId("to-approve")).toContainText("+$50.00 to approve (1)");
+  await row1.getByTestId("to-approve").click();
+  const ap = page.getByRole("dialog");
+  await ap.locator("#ap-by").fill("Maria at RXO");
+  await ap.locator("#ap-ref").fill("phone call, email on file");
+  await ap.locator("button:has-text('Approve')").click();
+  await expect(ap).toBeHidden();
+  await expect(row1.getByTestId("to-approve")).toHaveCount(0);
+  await expect(row1).toContainText("$1,850.00");
   for (const code of ["POD", "RATE CON"]) {
     await page.locator("tr", { hasText: o1 }).locator(`button.pill-red:has-text('${code}')`).click();
     const up = page.getByRole("dialog");

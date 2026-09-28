@@ -1,4 +1,7 @@
 import Link from "next/link";
+import { db } from "@/db/client";
+import { invoices } from "@/db/schema";
+import { and, eq } from "drizzle-orm";
 import { notFound } from "next/navigation";
 import { requireCtx } from "@/lib/auth";
 import { invoiceById } from "@/domain/billing";
@@ -17,6 +20,7 @@ export default async function InvoicePage({ params }: PageProps<"/billing/invoic
   const d = await invoiceById(ctx, id).catch(() => null);
   if (!d) notFound();
   const { invoice: inv, lines, receipts, creditMemos, entity, customer, orders } = d;
+  const [rebilled] = inv.rebillOf ? await db.select({ number: invoices.number }).from(invoices).where(and(eq(invoices.tenantId, ctx.tenantId), eq(invoices.id, inv.rebillOf))).limit(1) : [];
   const open = inv.totalCents - inv.creditedCents - inv.paidCents;
   const { method } = await deliveryForInvoice(ctx, inv.customerId, inv.entityId);
   const snap = inv.snapshot;
@@ -34,6 +38,12 @@ export default async function InvoicePage({ params }: PageProps<"/billing/invoic
             <Pill tone={TONE[inv.state]}>{inv.state.replace("_", " ")}</Pill>
             {inv.factored && <Pill tone="navy">Factored</Pill>}
             {orders.length > 1 && <Pill tone="blue">Summary · {orders.length} loads</Pill>}
+            {inv.kind === "supplemental" && <Pill tone="blue">Supplemental</Pill>}
+            {inv.rebillOf && (
+              <Link href={`/billing/invoices/${inv.rebillOf}`} className="pill pill-slate">
+                rebill of {rebilled?.number ?? "a voided invoice"}
+              </Link>
+            )}
           </span>
         }
         actions={
@@ -180,7 +190,7 @@ export default async function InvoicePage({ params }: PageProps<"/billing/invoic
           {inv.voidReason && <div className="card p-4 text-[13px]">Voided {inv.voidedAt?.toISOString().slice(0, 10)}: {inv.voidReason}</div>}
           {inv.disputeReason && <div className="card p-4 text-[13px] text-red">Disputed: {inv.disputeReason}{inv.disputeExpectedAt ? ` · expected resolution ${inv.disputeExpectedAt.toISOString().slice(0, 10)}` : ""}</div>}
         </div>
-        <InvoiceActions inv={JSON.parse(JSON.stringify({ id: inv.id, state: inv.state, currency: inv.currency, openCents: open, billingEmail: customer?.billingEmail ?? null, promiseToPayAt: inv.promiseToPayAt, payWhenPaid: inv.payWhenPaid, number: inv.number, method, portalUrl: customer?.portalUrl ?? null, factorName: entity?.factorName ?? null, factorEmail: entity?.factorEmail ?? null }))} role={ctx.role} />
+        <InvoiceActions inv={JSON.parse(JSON.stringify({ id: inv.id, state: inv.state, currency: inv.currency, openCents: open, paidCents: inv.paidCents, creditedCents: inv.creditedCents, billingEmail: customer?.billingEmail ?? null, promiseToPayAt: inv.promiseToPayAt, payWhenPaid: inv.payWhenPaid, number: inv.number, method, portalUrl: customer?.portalUrl ?? null, factorName: entity?.factorName ?? null, factorEmail: entity?.factorEmail ?? null }))} role={ctx.role} />
       </div>
     </div>
   );

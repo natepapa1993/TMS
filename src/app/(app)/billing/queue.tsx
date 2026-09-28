@@ -8,8 +8,9 @@ import { Confirm, Modal, Pill, Toast, useToast } from "@/components/ui";
 import { formatCents } from "@/data/fields";
 import { createInvoiceAction, acceptMismatchAction, uploadOrderDocAction } from "./actions";
 import { BillingRun } from "./run";
+import { ApprovalDialog } from "./approvals";
 
-type Row = { order: { id: string; orderNumber: string; state: string; currency: string; deliveredAt: string | null }; customerName: string | null; entityName: string | null; chargesCents: number; rateConCents: number | null; mismatch: boolean; requiredDocs: { code: string; present: boolean }[]; requiredRefs: { key: string; present: boolean }[]; docsComplete: boolean; ageDays: number; invoiceId: string | null; paperSays: string | null };
+type Row = { order: { id: string; orderNumber: string; state: string; currency: string; deliveredAt: string | null }; customerName: string | null; entityName: string | null; chargesCents: number; rateConCents: number | null; mismatch: boolean; requiredDocs: { code: string; present: boolean }[]; requiredRefs: { key: string; present: boolean }[]; docsComplete: boolean; ageDays: number; invoiceId: string | null; paperSays: string | null; pending: { count: number; cents: number; charges: { id: string; description: string; amountCents: number }[] }; supplemental: boolean };
 
 export function Queue({ rows, role }: { rows: Row[]; role: string }) {
   const router = useRouter();
@@ -19,8 +20,9 @@ export function Queue({ rows, role }: { rows: Row[]; role: string }) {
   const [uploadFor, setUploadFor] = useState<{ orderId: string; code: string } | null>(null);
   const [pending, start] = useTransition();
   const [runFor, setRunFor] = useState<string[] | null>(null);
+  const [approveFor, setApproveFor] = useState<Row | null>(null);
   const canBill = ["owner", "billing"].includes(role);
-  const eligible = rows.filter((r) => r.docsComplete && !r.mismatch && !r.invoiceId);
+  const eligible = rows.filter((r) => r.docsComplete && !r.mismatch && !r.invoiceId && r.chargesCents > 0);
   const run = (label: string, fn: () => Promise<{ ok: boolean; error?: string; data?: unknown }>) =>
     start(async () => {
       const r = await fn();
@@ -64,7 +66,7 @@ export function Queue({ rows, role }: { rows: Row[]; role: string }) {
             </thead>
             <tbody>
               {rows.map((r) => {
-                const ok = r.docsComplete && !r.mismatch && !r.invoiceId;
+                const ok = r.docsComplete && !r.mismatch && !r.invoiceId && r.chargesCents > 0;
                 return (
                   <tr key={r.order.id}>
                     <td>{canBill && <input type="checkbox" className="accent-teal" disabled={!ok} checked={sel.includes(r.order.id)} onChange={(e) => setSel(e.target.checked ? [...sel, r.order.id] : sel.filter((x) => x !== r.order.id))} />}</td>
@@ -72,10 +74,24 @@ export function Queue({ rows, role }: { rows: Row[]; role: string }) {
                       <Link href={`/orders/${r.order.id}#charges`} className="font-extrabold mono hover:text-teal">
                         {r.order.orderNumber}
                       </Link>
+                      {r.supplemental && (
+                        <div>
+                          <Pill tone="blue" title="Charges added after the load was invoiced: they go on a supplemental invoice">supplemental</Pill>
+                        </div>
+                      )}
                     </td>
                     <td>{r.customerName ?? <span className="text-faint">—</span>}</td>
                     <td className="text-muted text-[12.5px]">{r.entityName ?? "—"}</td>
-                    <td className="mono font-semibold">{formatCents(r.chargesCents, r.order.currency)}</td>
+                    <td className="mono font-semibold">
+                      {formatCents(r.chargesCents, r.order.currency)}
+                      {r.pending.count > 0 && (
+                        <div>
+                          <button className="pill pill-amber mt-0.5" data-testid="to-approve" onClick={() => setApproveFor(r)} title="Extras waiting for the customer's approval">
+                            +{formatCents(r.pending.cents, r.order.currency)} to approve ({r.pending.count})
+                          </button>
+                        </div>
+                      )}
+                    </td>
                     <td>
                       {r.rateConCents == null ? (
                         <span className="text-faint">TBD</span>
@@ -112,8 +128,8 @@ export function Queue({ rows, role }: { rows: Row[]; role: string }) {
                         </Link>
                       ) : (
                         canBill && (
-                          <button className="btn btn-sm btn-primary" disabled={!ok || pending} onClick={() => run("Draft invoice created", () => createInvoiceAction([r.order.id]))}>
-                            Create invoice
+                          <button className="btn btn-sm btn-primary" disabled={!ok || pending} title={r.pending.count ? "The extras waiting for approval stay off this invoice; once approved they go on a supplemental" : undefined} onClick={() => run(r.supplemental ? "Supplemental draft created" : "Draft invoice created", () => createInvoiceAction([r.order.id], r.pending.count > 0))}>
+                            {r.pending.count ? "Invoice without extras" : r.supplemental ? "Create supplemental" : "Create invoice"}
                           </button>
                         )
                       )}
@@ -126,6 +142,7 @@ export function Queue({ rows, role }: { rows: Row[]; role: string }) {
         )}
       </div>
       <Confirm open={!!mismatchFor} onClose={() => setMismatchFor(null)} title={`Charges ${formatCents(mismatchFor?.chargesCents ?? 0)} vs rate con ${formatCents(mismatchFor?.rateConCents ?? 0)}`} body="Accept ours only with the customer's approval on file (email, revised rate con). Or open the order and fix the charges." needReason="Why the difference is billable" confirmLabel="Accept our charges" onConfirm={(note) => { const r = mismatchFor!; setMismatchFor(null); run("Accepted — the note is on the order", () => acceptMismatchAction(r.order.id, note)); }} />
+      {approveFor && <ApprovalDialog orderId={approveFor.order.id} orderNumber={approveFor.order.orderNumber} charges={approveFor.pending.charges} currency={approveFor.order.currency} onClose={() => setApproveFor(null)} />}
       {uploadFor && (
         <UploadDoc orderId={uploadFor.orderId} code={uploadFor.code} onClose={() => setUploadFor(null)} onDone={() => { setUploadFor(null); t.ok("Uploaded"); router.refresh(); }} />
       )}

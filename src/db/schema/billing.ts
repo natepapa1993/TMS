@@ -25,6 +25,12 @@ export const charges = pgTable(
     source: text("source").notNull().default("manual"), // rate_con | manual | computed | tariff
     data: jsonb("data").$type<Record<string, unknown>>(), // computed-from events, rule version…
     invoiceId: text("invoice_id"),
+    /** none = agreed on the rate con or no approval needed; pending / approved / rejected for extras the customer must OK */
+    approvalState: text("approval_state").$type<"none" | "pending" | "approved" | "rejected">().notNull().default("none"),
+    approvedBy: text("approved_by"), // the customer's person who OK'd it
+    approvalRef: text("approval_ref"), // email subject, portal ref, phone call…
+    approvedAt: timestamp("approved_at", { withTimezone: true }),
+    rejectedReason: text("rejected_reason"),
     ...audit(),
   },
   (t) => [index("charges_tenant_order").on(t.tenantId, t.orderId), index("charges_invoice").on(t.invoiceId)],
@@ -36,7 +42,9 @@ export type InvoiceState = (typeof INVOICE_STATES)[number];
 export type InvoiceLine = { chargeId: string | null; orderId: string; orderNumber: string; kind: string; description: string; qty: number; unit: string; rateCents: number; amountCents: number };
 export type InvoiceSnapshot = {
   entity: { legalName: string; dba: string | null; taxId: string | null; remitTo: Record<string, string | undefined> | null; mc: string | null; dot: string | null };
-  billTo: { name: string; email: string | null; kind: string };
+  billTo: { name: string; email: string | null; kind: string; address?: Record<string, string | undefined> | null };
+  /** the load number(s), printed in the header */
+  loadNumbers?: string[];
   refs: Record<string, string>;
   stops: { seq: number; type: string; name: string; city: string | null; state: string | null; country: string; departedAt: string | null; arrivedAt: string | null }[];
   lines: InvoiceLine[];
@@ -87,6 +95,8 @@ export const invoices = pgTable(
     factored: boolean("factored").notNull().default(false),
     deliveries: jsonb("deliveries").$type<InvoiceDelivery[]>().notNull().default(sql`'[]'::jsonb`),
     batchId: text("batch_id"),
+    kind: text("kind").$type<"standard" | "supplemental" | "rebill">().notNull().default("standard"),
+    rebillOf: text("rebill_of"), // the voided invoice this one replaces
     ...audit(),
   },
   (t) => [index("invoices_tenant_state").on(t.tenantId, t.state), index("invoices_tenant_customer").on(t.tenantId, t.customerId), uniqueIndex("invoices_tenant_number").on(t.tenantId, t.number)],
@@ -104,10 +114,32 @@ export const receipts = pgTable(
     reference: text("reference"),
     note: text("note"),
     exportedAt: timestamp("exported_at", { withTimezone: true }),
+    paymentId: text("payment_id"), // the check / ACH it came from, when one payment paid several invoices
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     createdBy: text("created_by"),
   },
-  (t) => [index("receipts_invoice").on(t.invoiceId)],
+  (t) => [index("receipts_invoice").on(t.invoiceId), index("receipts_payment").on(t.paymentId)],
+);
+
+/** A payment as it arrived (one check, one ACH, one remittance) before and after it is applied to invoices; what's left is on account. */
+export const payments = pgTable(
+  "payments",
+  {
+    id: id(),
+    tenantId: tenantId(),
+    customerId: text("customer_id").notNull(),
+    receivedAt: timestamp("received_at", { withTimezone: true }).notNull(),
+    amountCents: integer("amount_cents").notNull(),
+    currency: text("currency").notNull().default("USD"),
+    method: text("method").notNull().default("ach"),
+    reference: text("reference"), // check #, ACH trace
+    remittance: text("remittance"), // the remittance advice as pasted
+    note: text("note"),
+    appliedCents: integer("applied_cents").notNull().default(0),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    createdBy: text("created_by"),
+  },
+  (t) => [index("payments_tenant_customer").on(t.tenantId, t.customerId)],
 );
 
 export const creditMemos = pgTable(

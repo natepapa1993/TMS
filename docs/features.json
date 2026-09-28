@@ -813,6 +813,38 @@
         "src/domain/safety.test.ts",
         "e2e/safety.spec.ts"
       ]
+    },
+    {
+      "id": "F-26.1",
+      "name": "Cash application: one check or ACH recorded once and split over the invoices it pays (remittance names matched first, else oldest due), short pays left open / written off (owner, credit memo) / disputed, the rest on account and used on a later invoice; Payments page; on-account on Receivables",
+      "milestone": "M26",
+      "status": "done",
+      "tests": [
+        "src/domain/cash.test.ts",
+        "e2e/cash.spec.ts"
+      ]
+    },
+    {
+      "id": "F-26.2",
+      "name": "Extras need the customer's approval (who and how) before they bill, per customer; invoice without them; approved later they join the open draft or go on a supplemental invoice; rejected ones never bill; a typed line haul or fuel stays a rate-con difference",
+      "milestone": "M26",
+      "status": "done",
+      "tests": [
+        "src/domain/cash.test.ts",
+        "e2e/cash.spec.ts",
+        "src/domain/billing.test.ts",
+        "e2e/billing.spec.ts"
+      ]
+    },
+    {
+      "id": "F-26.3",
+      "name": "Rebill (void with the customer's reason + a linked new draft), invoice list filters (search by invoice #, load #, any reference, customer; open / overdue / not sent / factored; dates) with totals and CSV; bill-to address and load # on the invoice",
+      "milestone": "M26",
+      "status": "done",
+      "tests": [
+        "src/domain/cash.test.ts",
+        "e2e/cash.spec.ts"
+      ]
     }
   ]
 }
