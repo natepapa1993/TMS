@@ -427,7 +427,12 @@ export async function rankForLeg(ctx: Ctx, legId: string, now = new Date()): Pro
     if (!c.hardBlocked && c.ok) {
       if (r.status === "late" && r.message) reason = r.message;
       else if (gap.makesNext === false && after) reason = `Can't make its next load ${after.orderNumber} after this one — gets there ~${spoken(gap.nextArriveAt!, after.fromZone)}, pickup ${spoken((after.startBy ?? after.start)!, after.fromZone)}`;
-      else reason = `${freeLater ? `Free ${spoken(gap.freeFrom, gap.freeZone ?? zone)}${gap.freePlace ? ` at ${gap.freePlace}` : ""}` : "Free now"}${after?.start ? ` until ${spoken(after.start, after.fromZone)} (${after.orderNumber})` : ""}${r.message ? ` · ${r.message}` : ""}`;
+      else {
+        // free for this one: say until when (the next booked load), and keep any warning the checks gave
+        const until = after?.start ? ` until ${spoken(after.start, after.fromZone)} (${after.orderNumber})` : "";
+        const base = c.findings.length ? c.reason : `free${c.driverName ? `, ${c.driverName}` : ""}${freeLater ? ` from ${spoken(gap.freeFrom, gap.freeZone ?? zone)}${gap.freePlace ? ` at ${gap.freePlace}` : ""}` : ""}`;
+        reason = `${base}${until}${r.message ? ` · ${r.message}` : ""}`;
+      }
     }
     return {
       ...c,

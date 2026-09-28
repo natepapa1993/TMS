@@ -1160,7 +1160,8 @@
       "milestone": "M34",
       "status": "done",
       "tests": [
-        "src/domain/flow2.test.ts"
+        "src/domain/flow2.test.ts",
+        "e2e/flow2.spec.ts"
       ]
     },
     {
@@ -1187,7 +1188,8 @@
       "milestone": "M34",
       "status": "done",
       "tests": [
-        "src/domain/flow2.test.ts"
+        "src/domain/flow2.test.ts",
+        "e2e/flow2.spec.ts"
       ]
     },
     {
@@ -1197,7 +1199,8 @@
       "status": "done",
       "tests": [
         "src/domain/flow2.test.ts",
-        "src/domain/ratecon-reader.test.ts"
+        "src/domain/ratecon-reader.test.ts",
+        "e2e/flow2.spec.ts"
       ]
     },
     {
@@ -1224,7 +1227,8 @@
       "milestone": "M34",
       "status": "done",
       "tests": [
-        "src/domain/flow2.test.ts"
+        "src/domain/flow2.test.ts",
+        "e2e/flow2.spec.ts"
       ]
     }
   ]

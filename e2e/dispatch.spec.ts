@@ -50,7 +50,7 @@ test("dispatcher day: build a load stop by stop, B-1 blocked on the US leg, carr
   await dlg.locator("select").nth(1).selectOption("manual"); // a tender link read out on the phone: dispatcher confirms
   await dlg.locator("button:has-text('Send tender')").click();
   await expect(page.getByRole("status")).toContainText("Tender link copied");
-  await expect(page.locator(".stage-tab:has-text('Sent') .count")).toHaveText("1"); // sent to the carrier by phone, not rolling yet
+  await expect(page.locator(".stage-tab:has-text('Tendered') .count")).toHaveText("1"); // tendered with a link and a deadline, not rolling yet
 
   // walk the MX leg to completed with the per-leg buttons
   await page.click(".stage-tab:has-text('All')");

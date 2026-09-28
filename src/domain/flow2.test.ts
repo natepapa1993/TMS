@@ -280,7 +280,7 @@ describe("availability as time windows; ranking by fit, then empty miles (F-34.3
     const r220 = ranked.find((c) => c.unitNumber === "220")!;
     expect(r220.nextLoad).toMatchObject({ orderNumber: nx.order.orderNumber, makes: false });
     expect(r220.reason).toMatch(/^Can't make its next load/);
-    expect(ranked.find((c) => c.unitNumber === "207")!.reason).toMatch(/^Free now/);
+    expect(ranked.find((c) => c.unitNumber === "207")!.reason).toMatch(/^free, Driver 207/);
   });
 });
 

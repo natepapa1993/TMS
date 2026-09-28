@@ -91,7 +91,10 @@ async function putLegBack(ctx: Ctx, before: typeof s.legs.$inferSelect, why: str
   const same = now.state === before.state && now.carrierId === before.carrierId && now.carrierRateCents === before.carrierRateCents && now.truckId === before.truckId;
   if (same) return;
   const note = `Tender not sent (${why.slice(0, 160)}) — the leg is back as it was`;
-  if (!before.assigneeKind || ["unassigned", "declined"].includes(before.state)) {
+  // a carrier leg that was out on a tender we just withdrew can't go back to "sent" with no tender behind it (N1)
+  const [open] = await db.select({ id: s.tenders.id }).from(s.tenders).where(and(eq(s.tenders.legId, before.id), eq(s.tenders.state, "sent"))).limit(1);
+  const bareSent = before.assigneeKind === "carrier" && before.state === "dispatched" && !open;
+  if (!before.assigneeKind || ["unassigned", "declined"].includes(before.state) || bareSent) {
     await unplanLeg(ctx, before.id, note).catch(() => null);
     return;
   }

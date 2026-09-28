@@ -20,7 +20,7 @@ const fit = (c: Candidate): { text: string; tone: "red" | "amber" | "green" } =>
   : c.pickupPassed ? { text: "Pickup time passed — move the appointment first", tone: "amber" }
   : c.reach?.status === "late" ? { text: c.reach.message ?? c.reason, tone: "amber" }
   : c.nextLoad?.makes === false ? { text: c.reason, tone: "amber" }
-  : c.reason.startsWith("free") ? { text: c.reach?.message ?? "Ready for this load", tone: "green" }
+  : c.reason.startsWith("free") ? { text: [c.reach?.message ?? "Ready for this load", c.nextLoad?.at ? `next load ${c.nextLoad.orderNumber} ${fmtWhen(c.nextLoad.at, c.nextLoad.zone, { style: "short" })}` : null].filter(Boolean).join(" · "), tone: "green" }
   : { text: c.reason, tone: "green" };
 const FIT_CLASS = { red: "text-red", amber: "text-amber", green: "text-green" } as const;
 const passed = (l: PlannerLeg) => {
