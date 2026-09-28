@@ -865,6 +865,78 @@
         "src/domain/payrun.test.ts",
         "e2e/payrun.spec.ts"
       ]
+    },
+    {
+      "id": "F-7.20",
+      "name": "Money in three currencies: MX$ / CA$ everywhere (and the ISO code on PDFs); MXN and CAD invoices store their rate; a payment has a currency and pays only invoices in it; receivables, invoice totals, payments and statements per currency; reports, margins and RPM in USD at the invoice rate (the company rate until invoiced), rates stated",
+      "milestone": "M27",
+      "status": "done",
+      "tests": [
+        "src/domain/money.test.ts"
+      ]
+    },
+    {
+      "id": "F-7.21",
+      "name": "Rate-con charges follow the load: saving its rate, currency or fuel rule rebuilds the line haul and fuel in its currency; \"Reset charges to the rate con\" in the mismatch dialog; a big difference or another currency is never waved through",
+      "milestone": "M27",
+      "status": "done",
+      "tests": [
+        "src/domain/money.test.ts"
+      ]
+    },
+    {
+      "id": "F-7.22",
+      "name": "Driver pay safe to approve: deductions in a fixed order never take net below $0, the shortfall carries over; no statement without pay; late legs picked up; a load with no miles or an unfinished week blocks approval (owner may approve early with a reason); pay items ledger with balances; % pay in USD without pending, rejected or pass-through charges",
+      "milestone": "M27",
+      "status": "done",
+      "tests": [
+        "src/domain/money.test.ts"
+      ]
+    },
+    {
+      "id": "F-7.23",
+      "name": "QuickBooks export for real books: one deposit per payment with its applications, factoring journals (advance, fee, reserve, chargeback), credit memos, escrow / advances / reimbursements to their own accounts, never a negative bill, amounts in USD at the stored rate, !ACCNT and !INVITEM",
+      "milestone": "M27",
+      "status": "done",
+      "tests": [
+        "src/domain/money.test.ts"
+      ]
+    },
+    {
+      "id": "F-7.24",
+      "name": "Factoring: the factor's remit-to is required to save the factor and to issue a factored invoice; a chargeback repays advance + fee and returns the reserve to Receivables; \"Send corrected invoice (remit to us)\"",
+      "milestone": "M27",
+      "status": "done",
+      "tests": [
+        "src/domain/money.test.ts"
+      ]
+    },
+    {
+      "id": "F-7.25",
+      "name": "Closed period enforced on receipts, payments, factor funding / collection / chargeback, carrier bill and driver pay payments; only the owner sees Close period",
+      "milestone": "M27",
+      "status": "done",
+      "tests": [
+        "src/domain/money.test.ts"
+      ]
+    },
+    {
+      "id": "F-7.26",
+      "name": "Credit memos: own number sequence, PDF, sent like an invoice, listed with invoices; a disputed invoice is resolved with an outcome and a note",
+      "milestone": "M27",
+      "status": "done",
+      "tests": [
+        "src/domain/money.test.ts"
+      ]
+    },
+    {
+      "id": "F-7.27",
+      "name": "Detention billed by the minute; supplemental and rebill invoices name the original; invoice dates on the stop's own day; references printed as PO # / Rate con #",
+      "milestone": "M27",
+      "status": "done",
+      "tests": [
+        "src/domain/money.test.ts"
+      ]
     }
   ]
 }

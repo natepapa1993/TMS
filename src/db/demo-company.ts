@@ -56,7 +56,7 @@ export async function ensureDemoCompany(opts: { force?: boolean; now?: Date } = 
 }
 
 /** Bump when the builder changes: every deployment then rebuilds the demo once with the new data. */
-const DEMO_VERSION = 3;
+const DEMO_VERSION = 4;
 const BASE = { demo: true, dispatchPhone: "+1 956 555 0142" };
 
 async function ensure(opts: { force?: boolean; now?: Date }): Promise<string> {
@@ -181,7 +181,7 @@ async function build(a: Ctx, nowDate: Date) {
   const ov = { override: true, reason: "demo data" };
 
   // ---------------- company, places, partners, fleet ----------------
-  await create(a, "billingEntity", { legalName: "Frontera Freight LLC", dba: "Frontera Freight", country: "US", invoicePrefix: "FF", nextInvoiceNumber: 2401, isDefault: true, taxId: "00-0000000", mcNumber: "000000", dotNumber: "0000000", remitTo: { line1: "4100 Mines Rd", city: "Laredo", state: "TX", postalCode: "78045", country: "US" }, factorName: "Summit Capital Factoring (demo)", factorEmail: `schedules@${DOMAIN}`, factorAdvanceBp: 9500, factorFeeBp: 250, factorRecourseDays: 90 });
+  await create(a, "billingEntity", { legalName: "Frontera Freight LLC", dba: "Frontera Freight", country: "US", invoicePrefix: "FF", nextInvoiceNumber: 2401, isDefault: true, taxId: "00-0000000", mcNumber: "000000", dotNumber: "0000000", remitTo: { line1: "4100 Mines Rd", city: "Laredo", state: "TX", postalCode: "78045", country: "US" }, factorName: "Summit Capital Factoring (demo)", factorEmail: `schedules@${DOMAIN}`, factorRemitTo: { line1: "PO Box 660001 (demo lockbox)", city: "Dallas", state: "TX", postalCode: "75266", country: "US" }, factorAdvanceBp: 9500, factorFeeBp: 250, factorRecourseDays: 90 });
   await create(a, "port", { name: "Laredo / Nuevo Laredo", usCity: "Laredo", usState: "TX", mxCity: "Nuevo Laredo", mxState: "TAMPS", bridges: ["World Trade Bridge", "Colombia Solidarity Bridge"], knowledgeMd: "World Trade Bridge: commercial, FAST lane open 24/7. Colombia: lighter lines at night." });
   const loc = async (name: string, kind: string, country: string, city: string, state: string, lat: number, lng: number, line1?: string) => (await create(a, "location", { name, kind, country, address: { line1, city, state, country }, lat: String(lat), lng: String(lng) })).id;
   const L = {

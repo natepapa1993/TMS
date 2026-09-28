@@ -1166,7 +1166,8 @@ export async function buildSettlement(ctx: Ctx, driverId: string, periodStart: D
     lines.push({ id: newId(), kind: "reimbursement", description: it.description, qty: 1, unit: "flat", rateCents: it.amountCents, amountCents: it.amountCents, source: it.recurring ? "recurring" : "one-off", payItemId: it.id });
   }
   const earned = lines.filter((l) => l.amountCents > 0).reduce((a, l) => a + l.amountCents, 0);
-  if (earned <= 0) {
+  // a load that pays $0 (no miles) still makes a statement, so the problem shows; only deductions never do
+  if (earned <= 0 && !lines.some((l) => l.kind === "leg")) {
     // nothing to pay: no statement. An open one from an earlier build goes away; its deductions wait.
     if (existing) {
       await db.delete(s.settlements).where(eq(s.settlements.id, existing.id));
