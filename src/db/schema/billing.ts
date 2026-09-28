@@ -205,6 +205,7 @@ export const carrierBills = pgTable(
     method: text("method"),
     reference: text("reference"),
     quickPayPct: integer("quick_pay_pct"), // basis points
+    exchangeRate: integer("exchange_rate_e4"), // a MXN / CAD bill: the rate the day it was approved (× 10,000, per USD) — the export converts at it, so a re-download never changes
     exportedAt: timestamp("exported_at", { withTimezone: true }),
     ...audit(),
   },

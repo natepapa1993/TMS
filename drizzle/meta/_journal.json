@@ -260,6 +260,13 @@
       "when": 1790621677328,
       "tag": "0036_money2_fx_advances",
       "breakpoints": true
+    },
+    {
+      "idx": 37,
+      "version": "7",
+      "when": 1790625643041,
+      "tag": "0037_money2_carrier_bill_rate",
+      "breakpoints": true
     }
   ]
 }

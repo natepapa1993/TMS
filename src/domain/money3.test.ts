@@ -179,6 +179,27 @@ describe("FX at receipt", () => {
     expect(rc.exchangeRate).toBe((await getCompany(a)).settings.fx.MXN!.rateE4);
   });
 
+  it("a peso carrier bill keeps the rate of the day it was approved: a later company rate never changes the export", async () => {
+    const garza = await create(a, "carrier", { name: "Transportes Garza", country: "MX", kind: "mx", dispatchEmail: "d@garza.test", caatExpires: future });
+    const o = await createOrder(a, { customerId: f.mxCust, rateCents: 2500000, currency: "MXN", stops: [{ type: "pickup", name: "Planta Monterrey", country: "MX", address: { city: "Monterrey", state: "NL" } }, { type: "delivery", name: "Saltillo DC", country: "MX", address: { city: "Saltillo", state: "COAH" } }], book: true });
+    const leg = o.legs[0].id;
+    await planLeg(a, leg, { kind: "carrier", carrierId: garza.id, carrierRateCents: 1800000, carrierRateCurrency: "MXN" });
+    await dispatchLeg(a, leg);
+    await acceptLeg(a, leg, "carrier");
+    for (const st of ["en_route_to_pickup", "at_pickup", "loaded", "en_route", "at_delivery", "completed"] as const) await advanceLeg(a, leg, st, { source: "carrier" });
+    await updateCompany(a, { fx: { MXN: "18.52" } });
+    await B.syncCarrierBills(a);
+    const [row] = await B.carrierBillsList(a);
+    await B.receiveCarrierBill(a, row.bill.id, { invoicedCents: 1800000 });
+    const bill = await B.approveCarrierBill(a, row.bill.id, { allowNoPod: true });
+    expect(bill.exchangeRate).toBe(185200);
+    await updateCompany(a, { fx: { MXN: "19.00" } });
+    const run = await A.createExport(a, { format: "qbo", from: today(), to: today(), onlyNew: true });
+    const bills = (await A.exportFiles(a, run.id)).files.find((x) => x.name.endsWith("bills.csv"))!.body;
+    expect(bills).toContain(`,${(toHome(1800000, "MXN", 185200) / 100).toFixed(2)},USD`);
+    expect(bills).toContain("MX$18,000.00 MXN at 18.5200");
+  });
+
   it("money can't be received tomorrow; the dialog's day is the company's", async () => {
     const inv = await invoice((await delivered({ customerId: f.usCust, rateCents: 100000 })).order.id);
     const tomorrow = new Date(Date.now() + 36 * 3600_000);

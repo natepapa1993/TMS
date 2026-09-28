@@ -1090,7 +1090,9 @@ export async function approveCarrierBill(ctx: Ctx, id: string, a: { approvedCent
   const approved = a.approvedCents ?? b.invoicedCents ?? chk.expected;
   if (!chk.rateMatch && approved !== chk.expected && !a.note?.trim()) throw new ValidationError(`carrier billed ${(chk.invoiced! / 100).toFixed(2)} vs ${(chk.expected / 100).toFixed(2)} expected: approve the difference with a reason, or short-pay with a note`, "note");
   if (approved < (b.invoicedCents ?? 0) && !a.shortPayNote?.trim()) throw new ValidationError("a short-pay needs a note that goes to the carrier", "shortPayNote");
-  const [after] = await db.update(s.carrierBills).set({ state: a.payDate ? "scheduled" : "approved", approvedCents: approved, approvalNote: a.note ?? null, shortPayNote: a.shortPayNote ?? null, approvedAt: new Date(), payDate: a.payDate ?? null, updatedAt: new Date(), updatedBy: ctx.userId }).where(eq(s.carrierBills.id, id)).returning();
+  // a peso or Canadian-dollar bill keeps the rate of the day it was approved: its dollars never move afterwards
+  const exchangeRate = b.currency === HOME_CURRENCY ? null : pickRate(b.currency, null, (await getCompany(ctx)).settings.fx).rateE4;
+  const [after] = await db.update(s.carrierBills).set({ state: a.payDate ? "scheduled" : "approved", approvedCents: approved, approvalNote: a.note ?? null, shortPayNote: a.shortPayNote ?? null, approvedAt: new Date(), payDate: a.payDate ?? null, exchangeRate, updatedAt: new Date(), updatedBy: ctx.userId }).where(eq(s.carrierBills.id, id)).returning();
   await writeAudit(db, ctx, "carrier_bill", id, "transition", { state: { from: b.state, to: after.state }, approvedCents: { from: null, to: approved } }, a.note ?? a.shortPayNote ?? undefined);
   return after;
 }

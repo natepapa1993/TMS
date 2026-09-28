@@ -174,13 +174,14 @@ async function collect(ctx: Ctx, opts: { from: string; to: string; onlyNew: bool
   const cbRows = await pick(opts.ids?.bills, () => db.select().from(s.carrierBills).where(and(eq(s.carrierBills.tenantId, ctx.tenantId), inArray(s.carrierBills.state, ["approved", "scheduled", "paid"]), inWindow(s.carrierBills.approvedAt), ...(opts.onlyNew ? [isNull(s.carrierBills.exportedAt)] : []))), (ids) => db.select().from(s.carrierBills).where(and(eq(s.carrierBills.tenantId, ctx.tenantId), inArray(s.carrierBills.id, ids))));
   const cbOrders = cbRows.length ? await db.select({ id: s.orders.id, orderNumber: s.orders.orderNumber }).from(s.orders).where(inArray(s.orders.id, cbRows.map((b) => b.orderId))) : [];
   const stRows = await pick(opts.ids?.settlements, () => db.select().from(s.settlements).where(and(eq(s.settlements.tenantId, ctx.tenantId), inArray(s.settlements.state, ["approved", "paid"]), inWindow(s.settlements.approvedAt), ...(opts.onlyNew ? [isNull(s.settlements.exportedAt)] : []))), (ids) => db.select().from(s.settlements).where(and(eq(s.settlements.tenantId, ctx.tenantId), inArray(s.settlements.id, ids))));
-  const billUsd = (c: number, cur: string) => toHome(c, cur, pickRate(cur, null, fx).rateE4);
+  // a carrier bill converts at the rate stored when it was approved (older bills: the company rate)
+  const billUsd = (c: number, cur: string, rateE4?: number | null) => toHome(c, cur, pickRate(cur, rateE4 ?? null, fx).rateE4);
   const bills: ExportData["bills"] = [
     ...cbRows.map((b) => {
       const on = cbOrders.find((o) => o.id === b.orderId)?.orderNumber ?? "";
       const amount = b.paidCents ?? b.approvedCents ?? b.invoicedCents ?? b.expectedCents;
-      const conv = b.currency !== HOME_CURRENCY ? ` (${fxMoney(amount, b.currency, { code: true })} at ${(pickRate(b.currency, null, fx).rateE4 / 10000).toFixed(4)})` : "";
-      return { id: b.id, kind: "carrier" as const, vendor: vname(b.carrierId), date: b.approvedAt ?? b.receivedAt ?? b.createdAt, dueAt: b.payDate, number: b.carrierInvoiceNumber || `CB-${on}`, memo: `${on}${conv}`, currency: HOME_CURRENCY, lines: [{ account: qb.carrierExpenseAccount, description: `${on} carrier freight${b.shortPayNote ? ` (short-paid: ${b.shortPayNote})` : ""}`, amountCents: billUsd(amount, b.currency) }], paidAt: b.paidAt, paidCents: b.paidCents != null ? billUsd(b.paidCents, b.currency) : null, paidRef: b.reference };
+      const conv = b.currency !== HOME_CURRENCY ? ` (${fxMoney(amount, b.currency, { code: true })} at ${(pickRate(b.currency, b.exchangeRate, fx).rateE4 / 10000).toFixed(4)})` : "";
+      return { id: b.id, kind: "carrier" as const, vendor: vname(b.carrierId), date: b.approvedAt ?? b.receivedAt ?? b.createdAt, dueAt: b.payDate, number: b.carrierInvoiceNumber || `CB-${on}`, memo: `${on}${conv}`, currency: HOME_CURRENCY, lines: [{ account: qb.carrierExpenseAccount, description: `${on} carrier freight${b.shortPayNote ? ` (short-paid: ${b.shortPayNote})` : ""}`, amountCents: billUsd(amount, b.currency, b.exchangeRate) }], paidAt: b.paidAt, paidCents: b.paidCents != null ? billUsd(b.paidCents, b.currency, b.exchangeRate) : null, paidRef: b.reference };
     }),
     ...stRows
       .map((st) => ({

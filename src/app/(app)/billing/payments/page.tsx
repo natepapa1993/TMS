@@ -58,8 +58,9 @@ export default async function PaymentsPage({ searchParams }: PageProps<"/billing
                         {p.customer}
                       </Link>
                     </td>
-                    <td className="capitalize">
-                      {p.method}
+                    <td>
+                      {({ ach: "ACH", check: "Check", wire: "Wire", card: "Card", factoring: "Factoring", other: "Other" } as Record<string, string>)[p.method] ?? p.method}
+                      {p.currency !== "USD" && p.exchangeRate ? <span className="text-muted text-footnote"> · at {(p.exchangeRate / 10000).toFixed(4)}</span> : null}
                       {p.reference ? <span className="mono text-muted"> · {p.reference}</span> : null}
                     </td>
                     <td className="mono font-semibold">{formatCents(p.amountCents, p.currency)}</td>
