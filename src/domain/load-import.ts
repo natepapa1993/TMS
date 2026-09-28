@@ -142,7 +142,7 @@ export async function previewLoads(ctx: Ctx, table: Table): Promise<{ layout: "p
     if (dRaw && !date) errors.push(`${label}: can't read the date "${dRaw}"`);
     const hhmm = tRaw ? parseTime(tRaw) : dRaw.match(/\d{1,2}:\d{2}/) ? parseTime(dRaw.slice(dRaw.search(/\d{1,2}:\d{2}/))) : null;
     if (tRaw && !hhmm) errors.push(`${label}: can't read the time "${tRaw}"`);
-    const at = date ? localToInstant(date, hhmm ?? "0000", zoneFor({ state, country }, zone)) : null;
+    const at = date ? localToInstant(date, hhmm ?? "0000", zoneFor({ state, country, city: get(r, "city", prefix), name }, zone)) : null;
     const address = get(r, "address", prefix) || get(r, "city", prefix) || state ? { line1: get(r, "address", prefix) || undefined, city: get(r, "city", prefix) || undefined, state: state || undefined, postalCode: get(r, "zip", prefix) || undefined, country } : null;
     return { type, name, country, address, windowStart: at, windowEnd: null, appointment: /^(y|yes|si|sí|true|1|x)$/i.test(get(r, "appointment", prefix)) } as StopInput & { windowStart: Date | null };
   };

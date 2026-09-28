@@ -1,5 +1,7 @@
 "use client";
 
+import { fmtWhen } from "@/lib/time";
+import { useZone } from "@/components/zone";
 import { useState, useTransition } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -15,9 +17,11 @@ type Customer = { id: string; name: string; kind: string };
 const KIND: Record<MailKind, string> = { rate_con: "Rate confirmation", tender: "Load tender", status_request: "Status question", broker_doc: "Broker document", dispute: "Detention / accessorial", remittance: "Payment", carrier_quote: "Quote request", noise: "Other" };
 const TONE: Record<MailKind, "teal" | "blue" | "amber" | "slate" | "green" | "red"> = { rate_con: "teal", tender: "teal", status_request: "blue", broker_doc: "amber", dispute: "amber", remittance: "green", carrier_quote: "slate", noise: "slate" };
 const ACTION: Record<MailProposal["action"], string> = { create_order: "Create draft order", attach_document: "Attach document", reply: "Send reply", detention: "Compute detention", receipt: "Record receipt", none: "Nothing to run" };
-const when = (d: string) => new Date(d).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+/** Messages are not tied to a stop: the company's clock, labelled. */
+const when = (d: string, zone: string) => fmtWhen(d, zone, { style: "short" }) ?? "";
 
 export function MailCards({ rows, customers, canAct }: { rows: Row[]; customers: Customer[]; canAct: boolean }) {
+  const zone = useZone();
   const router = useRouter();
   const t = useToast();
   const [showAll, setShowAll] = useState(false);
@@ -87,7 +91,7 @@ export function MailCards({ rows, customers, canAct }: { rows: Row[]; customers:
                   <div className="font-bold text-body mt-1 truncate">{r.subject || "(no subject)"}</div>
                   <div className="text-callout text-muted">
                     {r.fromName ? `${r.fromName} · ` : ""}
-                    {r.from} · {when(r.receivedAt)}
+                    {r.from} · {when(r.receivedAt, zone)}
                     {r.attachments.length ? ` · ${r.attachments.map((a) => a.fileName).join(", ")}` : ""}
                   </div>
                   <div className="text-callout mt-1.5">
@@ -207,7 +211,7 @@ export function MailCards({ rows, customers, canAct }: { rows: Row[]; customers:
             <div>
               <div className="eyebrow mb-1">
                 The email · {open.fromName ? `${open.fromName} · ` : ""}
-                {open.from} · {when(open.receivedAt)}
+                {open.from} · {when(open.receivedAt, zone)}
               </div>
               <pre className="whitespace-pre-wrap text-callout bg-ground rounded-lg p-3 max-h-64 overflow-y-auto font-sans">{open.text || "(no text)"}</pre>
               {open.attachments.length > 0 && (

@@ -1,5 +1,7 @@
 "use client";
 
+import { fmtWhen } from "@/lib/time";
+import { useZone } from "@/components/zone";
 import { useState, useTransition } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -15,7 +17,7 @@ type LogRow = { m: Msg; theirId: string; customer: string; orderNumber: string |
 
 const TONE: Record<string, "slate" | "teal" | "amber" | "red" | "green"> = { queued: "amber", sent: "green", logged: "teal", received: "amber", accepted: "green", rejected: "slate", error: "red" };
 const money = (c: number | null) => (c == null ? "TBD" : `$${(c / 100).toLocaleString("en-US", { minimumFractionDigits: 2 })}`);
-const when = (s: string | null) => (s ? new Date(s).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) : "—");
+const when = (s: string | null, zone: string) => fmtWhen(s, zone, { style: "short" }) ?? "—";
 /** A tender's wall-clock time as the customer wrote it (the stop's local time). */
 const local = (l: Local | null) => {
   if (!l) return "—";
@@ -26,6 +28,7 @@ const local = (l: Local | null) => {
 };
 
 export function EdiBoard({ inbox, log, partners, role }: { inbox: InboxRow[]; log: LogRow[]; partners: { id: string; label: string }[]; role: string }) {
+  const zone = useZone();
   const router = useRouter();
   const t = useToast();
   const [tab, setTab] = useState<"inbox" | "log">(inbox.length ? "inbox" : "log");
@@ -93,7 +96,7 @@ export function EdiBoard({ inbox, log, partners, role }: { inbox: InboxRow[]; lo
                     <div className="text-callout mt-1 text-red">{r.m.error ?? "could not be read"}</div>
                   )}
                   {r.m.error && r.tender && <div className="text-callout text-red mt-0.5">{r.m.error}</div>}
-                  <div className="text-footnote text-faint mt-0.5">received {when(r.m.createdAt)}</div>
+                  <div className="text-footnote text-faint mt-0.5">received {when(r.m.createdAt, zone)}</div>
                 </div>
                 <div className="flex gap-2 flex-none">
                   <button className="btn btn-sm" onClick={() => setOpen(r)}>
@@ -135,7 +138,7 @@ export function EdiBoard({ inbox, log, partners, role }: { inbox: InboxRow[]; lo
             <tbody>
               {log.map((r) => (
                 <tr key={r.m.id}>
-                  <td className="text-muted text-callout whitespace-nowrap">{when(r.m.createdAt)}</td>
+                  <td className="text-muted text-callout whitespace-nowrap">{when(r.m.createdAt, zone)}</td>
                   <td className="text-faint">{r.m.direction === "in" ? "⇦ in" : "⇨ out"}</td>
                   <td className="font-extrabold mono">{r.m.type}</td>
                   <td>{r.customer}</td>
@@ -152,7 +155,7 @@ export function EdiBoard({ inbox, log, partners, role }: { inbox: InboxRow[]; lo
                   </td>
                   <td className="mono text-muted">{r.m.controlNumber ?? "—"}</td>
                   <td>
-                    <Pill tone={TONE[r.m.state] ?? "slate"} title={r.m.ackedAt ? `acknowledged ${when(r.m.ackedAt)}` : undefined}>
+                    <Pill tone={TONE[r.m.state] ?? "slate"} title={r.m.ackedAt ? `acknowledged ${when(r.m.ackedAt, zone)}` : undefined}>
                       {r.m.state}
                       {r.m.ackedAt ? " · 997" : ""}
                     </Pill>

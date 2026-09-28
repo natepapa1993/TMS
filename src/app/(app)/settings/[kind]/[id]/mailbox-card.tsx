@@ -1,5 +1,7 @@
 "use client";
 
+import { fmtWhen } from "@/lib/time";
+import { useZone } from "@/components/zone";
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Pill, Toast, useToast } from "@/components/ui";
@@ -9,6 +11,7 @@ type Pub = { enabled: boolean; host: string; port: number; username: string; inb
 
 /** The VAN mailbox (SFTP) on an EDI partner: host, folders, credentials that are never shown back, test and poll. */
 export function MailboxCard({ partnerId, mailbox, delivery, canEdit }: { partnerId: string; mailbox: Pub; delivery: string; canEdit: boolean }) {
+  const zone = useZone();
   const router = useRouter();
   const t = useToast();
   const [pending, start] = useTransition();
@@ -24,7 +27,7 @@ export function MailboxCard({ partnerId, mailbox, delivery, canEdit }: { partner
         router.refresh();
       } else setErr({ message: r.error ?? "failed", field: r.field });
     });
-  const when = (d?: string | null) => (d ? new Date(d).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) : null);
+  const when = (d?: string | null) => fmtWhen(d, zone, { style: "short" });
   return (
     <div className="card p-4" data-testid="mailbox-card">
       <div className="flex items-center justify-between gap-2 mb-2">

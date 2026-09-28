@@ -1,5 +1,7 @@
 "use client";
 
+import { fmtWhen } from "@/lib/time";
+import { useZone } from "@/components/zone";
 import Link from "next/link";
 import { localDay } from "@/lib/time";
 import { useMemo, useState, useTransition } from "react";
@@ -23,6 +25,7 @@ export function datesFor(start: string, weeks: number, days: number[]) {
 }
 
 export function Templates({ rows }: { rows: Row[] }) {
+  const zone = useZone();
   const router = useRouter();
   const t = useToast();
   const [pending, start] = useTransition();
@@ -69,7 +72,7 @@ export function Templates({ rows }: { rows: Row[] }) {
                   </span>
                 </td>
                 <td className="tabular-nums">{r.rateCents == null ? <span className="text-faint">TBD</span> : new Intl.NumberFormat("en-US", { style: "currency", currency: r.currency }).format(r.rateCents / 100)}</td>
-                <td className="text-muted text-callout">{r.timesUsed ? `${r.timesUsed}× · last ${new Date(r.lastUsedAt!).toLocaleDateString("en-US", { month: "short", day: "numeric" })}` : "never"}</td>
+                <td className="text-muted text-callout">{r.timesUsed ? `${r.timesUsed}× · last ${fmtWhen(r.lastUsedAt!, zone, { style: "day" })}` : "never"}</td>
                 <td className="text-right whitespace-nowrap">
                   <button type="button" className="btn btn-sm btn-primary" onClick={() => setBulk(r)}>
                     Create loads

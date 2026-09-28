@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useTransition } from "react";
 import { checkCallAction, checkCallsAction } from "./actions";
-import { fmtIn, fromZoneInput, zoneAbbrev } from "@/lib/time";
+import { fmtWhen, fromZoneInput, zoneAbbrev } from "@/lib/time";
 
 const STATUSES: [string, string][] = [
   ["on_time", "On time"],
@@ -92,10 +92,10 @@ export function CheckCallBox({ orderId, legId, zone, reefer, onDone }: { orderId
             <li key={c.id} className="py-1.5">
               <div className="flex justify-between gap-2">
                 <span className={`font-semibold ${["breakdown", "running_late", "weather", "traffic"].includes(c.status) ? "text-red" : ""}`}>{LABEL[c.status] ?? c.status}</span>
-                <span className="text-faint whitespace-nowrap">{new Date(c.at).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}</span>
+                <span className="text-faint whitespace-nowrap">{fmtWhen(c.at, zone, { style: "short" })}</span>
               </div>
               <div className="text-muted">
-                {[c.location, c.etaAt ? `ETA ${fmtIn(c.etaAt, zone)}` : null, c.tempF != null ? `${c.tempF}°F` : null, c.note].filter(Boolean).join(" · ")}
+                {[c.location, c.etaAt ? `ETA ${fmtWhen(c.etaAt, zone, { style: "short" })}` : null, c.tempF != null ? `${c.tempF}°F` : null, c.note].filter(Boolean).join(" · ")}
                 {c.sentTo && <span className="text-teal"> · sent to {c.sentTo}</span>}
               </div>
             </li>

@@ -5,6 +5,8 @@ import { useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Modal, Pill, Toast, useToast } from "@/components/ui";
 import { roadMiles } from "@/lib/geo";
+import { fmtWhen, zonedDate } from "@/lib/time";
+import { useZone } from "@/components/zone";
 import type { PlannerDriver, PlannerLeg, PlannerTruck } from "@/domain/planner";
 import { planAction, planAndDispatchAction } from "../actions";
 import { rankAction, addEventAction, deleteEventAction, dispatchManyAction } from "./actions";
@@ -31,22 +33,19 @@ const EVENT_KINDS: [string, string][] = [
   ["other", "Unavailable"],
 ];
 
-const when = (s: string | null) => (s ? new Date(s).toLocaleString("en-US", { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) : "—");
-const shortWhen = (s: string | null) => (s ? new Date(s).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) : "");
+// every time on the planner is on an explicit clock with its name: a stop's own, or where the truck comes free, or the company's
+const when = (s: string | null, zone: string) => fmtWhen(s, zone) ?? "—";
+const shortWhen = (s: string | null, zone: string) => fmtWhen(s, zone, { style: "short" }) ?? "";
 const city = (p: { city: string | null; state: string | null; name: string; country: string }) => [[p.city, p.state].filter(Boolean).join(", ") || p.name, p.country !== "US" ? p.country : ""].filter(Boolean).join(" · ");
 const money = (c: number | null, cur: string) => (c == null ? "TBD" : new Intl.NumberFormat("en-US", { style: "currency", currency: cur, maximumFractionDigits: 0 }).format(c / 100));
 const hrs = (m: number | null) => (m == null ? "—" : `${Math.floor(m / 60)}:${String(m % 60).padStart(2, "0")}`);
-/** "Today 3:00 PM", "Tomorrow 9:00 AM", "Wed, Sep 30 9:00 AM" — what a dispatcher says out loud */
-const friendly = (s: string | null) => {
-  if (!s) return "—";
-  const d = new Date(s);
-  const t = d.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
-  const days = Math.round((new Date(d.toDateString()).getTime() - new Date(new Date().toDateString()).getTime()) / 86400_000);
-  return days === 0 ? `Today ${t}` : days === 1 ? `Tomorrow ${t}` : days === -1 ? `Yesterday ${t}` : `${d.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" })} ${t}`;
-};
-const isToday = (s: string | null, add = 0) => !!s && new Date(s).toDateString() === new Date(Date.now() + add * 86400_000).toDateString();
+/** "Today 3:00 PM CDT", "Tomorrow 9:00 AM CST", "Wed Sep 30, 9:00 AM CST" — what a dispatcher says out loud, on the right clock */
+const friendly = (s: string | null, zone: string, now: string) => fmtWhen(s, zone, { now }) ?? "—";
+const isToday = (s: string | null, zone: string, now: string, add = 0) => !!s && zonedDate(new Date(s), zone) === zonedDate(new Date(new Date(now).getTime() + add * 86400_000), zone);
 
-export function Planner({ data, canPlan }: { data: { legs: PlannerLeg[]; drivers: PlannerDriver[]; trucks: PlannerTruck[] }; canPlan: boolean }) {
+export function Planner({ data, canPlan }: { data: { legs: PlannerLeg[]; drivers: PlannerDriver[]; trucks: PlannerTruck[]; now: string }; canPlan: boolean }) {
+  const zone = useZone();
+  const now = data.now;
   const router = useRouter();
   const t = useToast();
   const [pending, start] = useTransition();
@@ -66,7 +65,7 @@ export function Planner({ data, canPlan }: { data: { legs: PlannerLeg[]; drivers
   const leg = data.legs.find((l) => l.legId === sel) ?? null;
   const legs = useMemo(() => {
     const q = legQ.trim().toLowerCase();
-    return data.legs.filter((l) => (legF === "unassigned" ? l.state !== "planned" : legF === "planned" ? l.state === "planned" : legF === "today" ? isToday(l.from.at) : legF === "tomorrow" ? isToday(l.from.at, 1) : true) && (!q || [l.orderNumber, l.customer, l.from.name, l.from.city, l.to.name, l.to.city].some((x) => x?.toLowerCase().includes(q))));
+    return data.legs.filter((l) => (legF === "unassigned" ? l.state !== "planned" : legF === "planned" ? l.state === "planned" : legF === "today" ? isToday(l.from.at, l.from.zone, now) : legF === "tomorrow" ? isToday(l.from.at, l.from.zone, now, 1) : true) && (!q || [l.orderNumber, l.customer, l.from.name, l.from.city, l.to.name, l.to.city].some((x) => x?.toLowerCase().includes(q))));
   }, [data.legs, legQ, legF]);
 
   const cands = sel ? ranked[sel] : undefined;
@@ -217,11 +216,11 @@ export function Planner({ data, canPlan }: { data: { legs: PlannerLeg[]; drivers
                         <div className="grid grid-cols-2 gap-3 mt-1.5 text-callout">
                           <div className="min-w-0">
                             <div className="font-semibold truncate">{city(l.from)}</div>
-                            <div className="text-muted text-footnote truncate">{shortWhen(l.from.at) || "no time"}</div>
+                            <div className="text-muted text-footnote truncate">{shortWhen(l.from.at, l.from.zone) || "no time"}</div>
                           </div>
                           <div className="min-w-0">
                             <div className="font-semibold truncate">→ {city(l.to)}</div>
-                            <div className="text-muted text-footnote truncate">{shortWhen(l.to.at) || "no time"}</div>
+                            <div className="text-muted text-footnote truncate">{shortWhen(l.to.at, l.to.zone) || "no time"}</div>
                           </div>
                         </div>
                         {l.customer && <div className="text-footnote text-muted mt-1 truncate">{l.customer}</div>}
@@ -237,6 +236,7 @@ export function Planner({ data, canPlan }: { data: { legs: PlannerLeg[]; drivers
         {/* trucks (or drivers) */}
         {view === "trucks" ? (
           <TrucksPanel
+            now={now}
             rows={trucks}
             all={data.trucks}
             leg={leg}
@@ -329,7 +329,7 @@ export function Planner({ data, canPlan }: { data: { legs: PlannerLeg[]; drivers
                             <div key={e.id} className="text-footnote mt-0.5 flex items-center gap-1">
                               <span className={e.hard ? "text-red font-semibold" : "text-amber font-semibold"}>{e.label}</span>
                               <span className="text-muted">
-                                {shortWhen(e.startsAt)} – {shortWhen(e.endsAt)}
+                                {shortWhen(e.startsAt, zone)} – {shortWhen(e.endsAt, zone)}
                               </span>
                               {canPlan && (
                                 <button type="button" className="text-faint hover:text-red" aria-label={`Remove ${e.label}`} onClick={() => start(async () => { const r = await deleteEventAction(e.id); if (r.ok) { t.ok("Removed"); router.refresh(); } else t.err(r.error); })}>
@@ -340,11 +340,11 @@ export function Planner({ data, canPlan }: { data: { legs: PlannerLeg[]; drivers
                           ))}
                         </td>
                         <td>
-                          <div className="font-semibold">{d.status === "available" && !d.events.some((e) => e.hard && new Date(e.startsAt) <= new Date()) ? "Now" : when(d.availableAt)}</div>
+                          <div className="font-semibold">{d.status === "available" && !d.events.some((e) => e.hard && new Date(e.startsAt) <= new Date()) ? "Now" : when(d.availableAt, d.availableZone)}</div>
                           <div className="text-footnote text-muted">{d.availableIn ?? "—"}</div>
                         </td>
-                        <td className="text-callout">{d.next ? `${d.next.orderNumber} · ${shortWhen(d.next.at)}` : <span className="text-faint">—</span>}</td>
-                        <td className="text-right tabular-nums text-callout" title={d.hos?.at ? `from the ELD ${when(d.hos.at)}` : "no ELD hours yet"}>
+                        <td className="text-callout">{d.next ? `${d.next.orderNumber} · ${shortWhen(d.next.at, d.next.zone)}` : <span className="text-faint">—</span>}</td>
+                        <td className="text-right tabular-nums text-callout" title={d.hos?.at ? `from the ELD ${when(d.hos.at, zone)}` : "no ELD hours yet"}>
                           {d.hos ? `${hrs(d.hos.driveMin)} / ${hrs(d.hos.cycleMin)}` : <span className="text-faint">—</span>}
                         </td>
                         {leg && <td className="text-right tabular-nums">{dh != null ? `${dh.toLocaleString("en-US")} mi` : <span className="text-faint">—</span>}</td>}
@@ -529,8 +529,10 @@ function TrucksPanel(p: {
   onTimeOff: (t: PlannerTruck) => void;
   onRemoveEvent: (id: string) => void;
   switcher: React.ReactNode;
+  now: string;
 }) {
-  const { leg } = p;
+  const { leg, now } = p;
+  const zone = useZone();
   // no ELD connected yet: the HOS column would be all dashes
   const showHos = p.all.some((t) => t.hos);
   return (
@@ -621,7 +623,7 @@ function TrucksPanel(p: {
                         <div key={e.id} className="text-footnote mt-1">
                           <span className={e.hard ? "text-red font-semibold" : "text-amber font-semibold"}>{e.label}</span>{" "}
                           <span className="text-muted">
-                            {friendly(e.startsAt)} – {friendly(e.endsAt)}
+                            {friendly(e.startsAt, zone, now)} – {friendly(e.endsAt, zone, now)}
                           </span>
                           {p.canPlan && (
                             <button type="button" className="ml-1 text-faint hover:text-red" aria-label={`Remove ${e.label}`} onClick={() => p.onRemoveEvent(e.id)}>
@@ -632,19 +634,19 @@ function TrucksPanel(p: {
                       ))}
                     </td>
                     <td>
-                      <div className="font-semibold whitespace-nowrap">{t.status === "available" ? "Now" : t.status === "waiting_crossing" ? "Once it crosses" : t.status === "unavailable" && !t.availableAt ? "—" : friendly(t.availableAt)}</div>
+                      <div className="font-semibold whitespace-nowrap">{t.status === "available" ? "Now" : t.status === "waiting_crossing" ? "Once it crosses" : t.status === "unavailable" && !t.availableAt ? "—" : friendly(t.availableAt, t.availableZone, now)}</div>
                       <div className="text-footnote text-muted">
                         {t.availableIn ?? "—"}
                         {leg && dh != null && <span className="text-ink-2 font-semibold"> · {dh.toLocaleString("en-US")} mi empty</span>}
                       </div>
                       {!leg && t.next && t.status !== "waiting_crossing" && (
                         <div className="text-footnote text-muted mt-0.5">
-                          Next <span className="mono">{t.next.orderNumber}</span> · {friendly(t.next.at)}
+                          Next <span className="mono">{t.next.orderNumber}</span> · {friendly(t.next.at, t.next.zone, now)}
                         </div>
                       )}
                     </td>
                     {showHos && (
-                      <td className="text-right tabular-nums text-callout whitespace-nowrap" title={t.hos?.at ? `from the ELD ${when(t.hos.at)}` : "no ELD hours yet"}>
+                      <td className="text-right tabular-nums text-callout whitespace-nowrap" title={t.hos?.at ? `from the ELD ${when(t.hos.at, zone)}` : "no ELD hours yet"}>
                         {t.hos ? `${hrs(t.hos.driveMin)} / ${hrs(t.hos.cycleMin)}` : <span className="text-faint">—</span>}
                       </td>
                     )}

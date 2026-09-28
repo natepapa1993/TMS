@@ -1,5 +1,7 @@
 "use client";
 
+import { fmtWhen } from "@/lib/time";
+import { useZone } from "@/components/zone";
 import "leaflet/dist/leaflet.css";
 import L from "leaflet";
 import { useEffect } from "react";
@@ -34,6 +36,7 @@ function Fit({ units, focus }: { units: MapUnit[]; focus: string | null }) {
 }
 
 export function LiveMap({ units, focus }: { units: MapUnit[]; focus: string | null }) {
+  const zone = useZone();
   return (
     <MapContainer center={[31.5, -98.5]} zoom={5} style={{ height: "100%", width: "100%" }} scrollWheelZoom>
       <TileLayer attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>' url="https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png" />
@@ -54,7 +57,7 @@ export function LiveMap({ units, focus }: { units: MapUnit[]; focus: string | nu
               <div style={{ color: "#64748b", marginTop: 4 }}>
                 {u.speedMph != null ? `${u.speedMph} mph · ` : ""}
                 {u.place ? `${u.place} · ` : ""}
-                {new Date(u.at).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })} · {u.source.replace(/_/g, " ")}
+                {fmtWhen(u.at, zone, { style: "short" })} · {u.source.replace(/_/g, " ")}
               </div>
             </div>
           </Popup>

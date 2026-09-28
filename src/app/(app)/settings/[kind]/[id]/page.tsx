@@ -1,4 +1,6 @@
 import Link from "next/link";
+import { fmtWhen } from "@/lib/time";
+import { tenantZone } from "@/domain/company";
 import { notFound } from "next/navigation";
 import { requireCtx } from "@/lib/auth";
 import { get, history, archiveBlockers } from "@/data/records";
@@ -34,6 +36,7 @@ export default async function RecordPage({ params }: PageProps<"/settings/[kind]
   const meta = KIND_META[kind];
   const [{ options }, hist, blockers, people] = await Promise.all([loadRefs(ctx, kind), history(ctx, kind, id), archiveBlockers(ctx, kind, id), db.select({ id: users.id, name: users.name }).from(users).where(eq(users.tenantId, ctx.tenantId))]);
   const who = new Map(people.map((p) => [p.id, p.name]));
+  const companyZone = await tenantZone(ctx.tenantId);
   const isSubject = ["driver", "truck", "trailer", "carrier"].includes(kind);
   const [docs, compliance, types] = isSubject
     ? await Promise.all([subjectDocuments(ctx, kind as SubjectKind, id), statusFor(ctx, kind as SubjectKind, id).catch(() => null), list(ctx, "documentType", { limit: 200 })])
@@ -142,7 +145,7 @@ export default async function RecordPage({ params }: PageProps<"/settings/[kind]
               {row.status === "oos" ? (
                 <div className="text-callout">
                   <span className="pill pill-red">OOS</span> <span className="ml-1">{String(row.oosReason ?? "")}</span>
-                  {row.oosUntil ? <div className="text-muted mt-1">Until {new Date(row.oosUntil as string).toLocaleDateString()}</div> : null}
+                  {row.oosUntil ? <div className="text-muted mt-1">Until {fmtWhen(row.oosUntil as string, companyZone, { style: "short" })}</div> : null}
                 </div>
               ) : (
                 <div className="text-callout">
@@ -162,7 +165,7 @@ export default async function RecordPage({ params }: PageProps<"/settings/[kind]
                   <li key={h.id} className="text-callout">
                     <div className="flex justify-between gap-2">
                       <span className="font-bold capitalize">{h.action}</span>
-                      <span className="text-faint whitespace-nowrap">{new Date(h.at).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}</span>
+                      <span className="text-faint whitespace-nowrap">{fmtWhen(h.at, companyZone, { style: "short" })}</span>
                     </div>
                     <div className="text-muted">{h.userId ? (who.get(h.userId) ?? "someone") : "system"}</div>
                     {h.changes && (

@@ -8,6 +8,8 @@ import { assertCtx, requirePermission, type Ctx } from "@/lib/context";
 import { writeAudit } from "@/lib/audit";
 import type { Finding } from "./eligibility";
 import { NotFoundError, ValidationError } from "./orders";
+import { tenantZone } from "./company";
+import { fmtWhen, stopZone } from "@/lib/time";
 
 /**
  * The dispatch planner: loads that need a truck on one side, drivers on the other with when and where
@@ -58,10 +60,9 @@ export async function eventsBetween(tx: Tx | typeof db, tenantId: string, from: 
   return rows.filter((r) => subjects.some((x) => x.kind === r.subjectKind && x.ids.includes(r.subjectId)));
 }
 
-const fmt = (d: Date) => d.toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit", timeZone: "America/Detroit" });
-
-/** What the events say about using these assets in this window: a hard event is red, a soft one yellow. */
-export function eventFindings(events: (typeof s.assetEvents.$inferSelect)[], who: { kind: string; id: string; label: string }[]): Finding[] {
+/** What the events say about using these assets in this window: a hard event is red, a soft one yellow. Time off is on the company's clock. */
+export function eventFindings(events: (typeof s.assetEvents.$inferSelect)[], who: { kind: string; id: string; label: string }[], zone = "America/Detroit"): Finding[] {
+  const fmt = (d: Date) => fmtWhen(d, zone, { style: "short" });
   const out: Finding[] = [];
   for (const w of who)
     for (const e of events.filter((x) => x.subjectKind === w.kind && x.subjectId === w.id))
@@ -96,8 +97,9 @@ export type PlannerLeg = {
   rateCents: number | null;
   currency: string;
   miles: number | null;
-  from: { name: string; city: string | null; state: string | null; country: string; at: string | null; lat: number | null; lng: number | null };
-  to: { name: string; city: string | null; state: string | null; country: string; at: string | null };
+  /** zone: the stop's own clock; every time on the planner is printed there, with its name */
+  from: { name: string; city: string | null; state: string | null; country: string; at: string | null; zone: string; lat: number | null; lng: number | null };
+  to: { name: string; city: string | null; state: string | null; country: string; at: string | null; zone: string };
   assigned: string | null;
 };
 
@@ -113,10 +115,12 @@ export type PlannerDriver = {
   status: "available" | "planned" | "on_load" | "off";
   current: { orderNumber: string; state: string; to: string } | null;
   availableAt: string | null;
+  /** the clock of the place it comes free (its last stop), else the company's */
+  availableZone: string;
   availableIn: string | null;
   availableLat: number | null;
   availableLng: number | null;
-  next: { orderNumber: string; at: string | null; from: string } | null;
+  next: { orderNumber: string; at: string | null; from: string; zone: string } | null;
   hos: { driveMin: number | null; shiftMin: number | null; cycleMin: number | null; at: string | null } | null;
   events: { id: string; kind: string; label: string; startsAt: string; endsAt: string; hard: boolean; note: string | null; subject: "driver" | "truck" }[];
 };
@@ -138,6 +142,7 @@ export type PlannerTruck = Omit<PlannerDriver, "driverId" | "name" | "driverType
 export async function plannerData(ctx: Ctx, now = new Date()) {
   assertCtx(ctx);
   requirePermission(ctx, "orders.view");
+  await (await import("./tenders")).expireTenders(new Date(), { tenantId: ctx.tenantId });
   const legs = await db
     .select({ leg: s.legs, order: s.orders })
     .from(s.legs)
@@ -164,6 +169,7 @@ export async function plannerData(ctx: Ctx, now = new Date()) {
       .limit(500),
   ]);
   const stop = new Map(stops.map((x) => [x.id, x]));
+  const companyZone = await tenantZone(ctx.tenantId);
   const cName = new Map(customers.map((c) => [c.id, c.name]));
   const uName = new Map(users.map((u) => [u.id, u.name]));
   const legCount = new Map<string, number>();
@@ -190,8 +196,8 @@ export async function plannerData(ctx: Ctx, now = new Date()) {
         rateCents: order.rateTbd ? null : order.rateCents,
         currency: order.currency,
         miles: leg.plannedMiles,
-        from: { name: a?.name ?? "", city: a?.address?.city ?? null, state: a?.address?.state ?? null, country: a?.country ?? "US", at: iso(a?.windowStart), lat: c?.lat ?? null, lng: c?.lng ?? null },
-        to: { name: b?.name ?? "", city: b?.address?.city ?? null, state: b?.address?.state ?? null, country: b?.country ?? "US", at: iso(b?.windowEnd ?? b?.windowStart) },
+        from: { name: a?.name ?? "", city: a?.address?.city ?? null, state: a?.address?.state ?? null, country: a?.country ?? "US", at: iso(a?.windowStart ?? a?.windowEnd), zone: a ? stopZone(a, companyZone) : companyZone, lat: c?.lat ?? null, lng: c?.lng ?? null },
+        to: { name: b?.name ?? "", city: b?.address?.city ?? null, state: b?.address?.state ?? null, country: b?.country ?? "US", at: iso(b?.windowEnd ?? b?.windowStart), zone: b ? stopZone(b, companyZone) : companyZone },
         assigned: leg.state === "planned" ? [trucks.find((t) => t.id === leg.truckId)?.unitNumber, drivers.find((d) => d.id === leg.driverId)?.name].filter(Boolean).join(" · ") || "carrier" : null,
       };
     })
@@ -231,10 +237,11 @@ export async function plannerData(ctx: Ctx, now = new Date()) {
       status,
       current: cur ? { orderNumber: cur.order.orderNumber, state: cur.leg.state, to: place(stop.get(cur.leg.toStopId ?? "")) } : null,
       availableAt: iso(freeAt),
+      availableZone: lastStop ? stopZone(lastStop, companyZone) : companyZone,
       availableIn: lastStop ? place(lastStop) : pos ? `last seen ${pos.at.toISOString()}` : null,
       availableLat: lastC?.lat ?? posC?.lat ?? null,
       availableLng: lastC?.lng ?? posC?.lng ?? null,
-      next: planned[0] ? { orderNumber: planned[0].order.orderNumber, at: iso(start(planned[0])), from: place(stop.get(planned[0].leg.fromStopId ?? "")) } : null,
+      next: planned[0] ? ((st) => ({ orderNumber: planned[0].order.orderNumber, at: iso(start(planned[0])), from: place(st), zone: st ? stopZone(st, companyZone) : companyZone }))(stop.get(planned[0].leg.fromStopId ?? "")) : null,
       hos: d.hosAt ? { driveMin: d.hosDriveMin, shiftMin: d.hosShiftMin, cycleMin: d.hosCycleMin, at: iso(d.hosAt) } : null,
       events: evs.map((e) => ({ id: e.id, kind: e.kind, label: EVENT_LABEL[e.kind], startsAt: e.startsAt.toISOString(), endsAt: e.endsAt.toISOString(), hard: e.hard, note: e.note, subject: e.subjectKind === "truck" ? ("truck" as const) : ("driver" as const) })),
     };
@@ -251,7 +258,7 @@ export async function plannerData(ctx: Ctx, now = new Date()) {
   };
   const byOrder = new Map<string, typeof allLegCounts>();
   for (const l of allLegCounts) byOrder.set(l.orderId, [...(byOrder.get(l.orderId) ?? []), l]);
-  const fmtUntil = (d: Date) => d.toLocaleString("en-US", { month: "short", day: "numeric", timeZone: "America/Chicago" });
+  const fmtUntil = (d: Date) => fmtWhen(d, companyZone, { style: "short", now }) ?? "";
   const outTrucks: PlannerTruck[] = trucks
     .map((t) => {
       const crewD = outDrivers.filter((d) => d.truckId === t.id);
@@ -270,7 +277,12 @@ export async function plannerData(ctx: Ctx, now = new Date()) {
       // its next load waits on freight that hasn't crossed: an earlier MX or crossing leg of the same order isn't done
       const waiting = truckLegs
         .filter((l) => ["planned", "dispatched", "accepted"].includes(l.leg.state))
-        .map((l) => ({ l, before: (byOrder.get(l.order.id) ?? []).filter((o) => o.seq < l.leg.seq && (o.type === "mx" || o.type === "crossing") && o.state !== "completed" && o.state !== "cancelled") }))
+        .map((l) => {
+          const all = byOrder.get(l.order.id) ?? [];
+          // a crossing leg that is done means the freight is across, whatever an earlier leg still says
+          const lastDone = Math.max(0, ...all.filter((o) => o.seq < l.leg.seq && o.state === "completed").map((o) => o.seq));
+          return { l, before: all.filter((o) => o.seq < l.leg.seq && o.seq > lastDone && (o.type === "mx" || o.type === "crossing") && o.state !== "completed" && o.state !== "cancelled") };
+        })
         .find((x) => x.before.length);
       const tBlock = blockOf("truck", t.id);
       const dBlocks = crewD.map((d) => blockOf("driver", d.driverId));
@@ -295,7 +307,7 @@ export async function plannerData(ctx: Ctx, now = new Date()) {
         const cross = waiting.before.find((o) => o.type === "crossing");
         why = `${waiting.l.order.orderNumber} — ${mxOpen ? "freight still on the Mexican side" : cross && (MOVING as readonly string[]).includes(cross.state) ? "freight crossing the bridge now" : "waiting for the crossing"}`;
       }
-      const base = lead ?? ({ current: null, availableAt: iso(now), availableIn: null, availableLat: null, availableLng: null, next: null, hos: null, dispatcher: null } as Partial<PlannerDriver>);
+      const base = lead ?? ({ current: null, availableAt: iso(now), availableZone: companyZone, availableIn: null, availableLat: null, availableLng: null, next: null, hos: null, dispatcher: null } as Partial<PlannerDriver>);
       return {
         truckId: t.id,
         unit: t.unitNumber,
@@ -306,6 +318,7 @@ export async function plannerData(ctx: Ctx, now = new Date()) {
         dispatcher: base.dispatcher ?? null,
         current: base.current ?? null,
         availableAt: status === "unavailable" && offNow ? offNow.endsAt : status === "unavailable" && t.oosUntil ? iso(t.oosUntil) : (base.availableAt ?? null),
+        availableZone: base.availableZone ?? companyZone,
         availableIn: base.availableIn ?? null,
         availableLat: base.availableLat ?? null,
         availableLng: base.availableLng ?? null,
@@ -315,7 +328,7 @@ export async function plannerData(ctx: Ctx, now = new Date()) {
       };
     })
     .sort((p, q) => p.unit.localeCompare(q.unit, "en-US", { numeric: true }));
-  return { legs: openLegs, drivers: outDrivers.sort((p, q) => p.name.localeCompare(q.name)), trucks: outTrucks };
+  return { legs: openLegs, drivers: outDrivers.sort((p, q) => p.name.localeCompare(q.name)), trucks: outTrucks, now: now.toISOString() };
 }
 
 /** Road miles from where the driver comes free to the leg's pickup, when both have coordinates. */
@@ -333,7 +346,6 @@ export async function listEvents(ctx: Ctx, from: Date, to: Date) {
 // ---------- schedule conflicts ----------
 
 const BUSY_LEG = ["planned", "dispatched", "accepted", "en_route_to_pickup", "at_pickup", "loaded", "en_route", "at_delivery"];
-const fmtShort = (d: Date) => d.toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit", timeZone: "America/Chicago", timeZoneName: "short" });
 
 /**
  * Other loads the truck or drivers are already on whose times overlap this leg's window: a double
@@ -353,6 +365,7 @@ export async function scheduleConflicts(tx: Tx | typeof db, tenantId: string, ex
   const out: Finding[] = [];
   const names = drivers.length ? await tx.select({ id: s.drivers.id, name: s.drivers.name }).from(s.drivers).where(inArray(s.drivers.id, drivers)) : [];
   const [truck] = who.truckId ? await tx.select({ unit: s.trucks.unitNumber }).from(s.trucks).where(eq(s.trucks.id, who.truckId)).limit(1) : [];
+  const companyZone = legs.length ? await tenantZone(tenantId) : "America/Detroit";
   for (const { leg, orderNumber } of legs) {
     if (leg.id === excludeLegId) continue;
     const ids = [leg.fromStopId, leg.toStopId].filter((x): x is string => !!x);
@@ -366,7 +379,8 @@ export async function scheduleConflicts(tx: Tx | typeof db, tenantId: string, ex
     const e0 = end ?? new Date(s0.getTime() + 12 * 3600_000);
     if (!(s0 < win.end && win.start < e0)) continue;
     const whoLabel = who.truckId && leg.truckId === who.truckId ? `unit ${truck?.unit ?? ""}` : names.find((n) => n.id === leg.driverId || n.id === leg.coDriverId)?.name ?? "driver";
-    out.push({ level: "red", code: "schedule_conflict", message: `${whoLabel} is on ${orderNumber} until ${fmtShort(e0)}${b?.name ? ` at ${b.name}` : ""}`, overridable: true });
+    // the time it frees up is at that load's last stop: on that stop's clock
+    out.push({ level: "red", code: "schedule_conflict", message: `${whoLabel} is on ${orderNumber} until ${fmtWhen(e0, b ? stopZone(b, companyZone) : companyZone, { style: "short" })}${b?.name ? ` at ${b.name}` : ""}`, overridable: true });
   }
   return out;
 }

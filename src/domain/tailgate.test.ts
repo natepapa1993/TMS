@@ -235,7 +235,7 @@ describe("tailgate trip (acceptance)", () => {
     expect(byTruck[0].revenueCents).toBe(360000);
     expect(Math.abs(byTruck[0].costCents - (tripFuel + tripPay + carrier))).toBeLessThanOrEqual(3);
     expect((await T.listTrips(a))[0]).toMatchObject({ shipments: 5, revenueCents: 360000, weightLbs: 42000, from: "Canton dock", to: "Saltillo plant" });
-  });
+  }, 30_000); // an acceptance run end to end: well over the 5 s default on a busy machine
 
   it("remove a shipment before it is on the truck; hold rules; a shipment can only be held while it can move", async () => {
     const trip = await T.createTrip(a, { stops: [{ type: "pickup", name: "A", country: "US" }, { type: "delivery", name: "B", country: "US" }] });

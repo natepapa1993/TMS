@@ -93,7 +93,7 @@ type StopLike = { type: StopType; locationId: string | null; name: string; addre
 export function toTemplateStops(stops: StopLike[], fallbackZone: string): TemplateStop[] {
   const local = (d: Date | null, st: StopLike) => {
     if (!d) return null;
-    const p = zonedParts(d, zoneFor({ state: st.address?.state, country: st.country }, fallbackZone));
+    const p = zonedParts(d, zoneFor({ state: st.address?.state, city: st.address?.city, name: st.name, country: st.country }, fallbackZone));
     return { date: `${p.y}-${String(p.m).padStart(2, "0")}-${String(p.d).padStart(2, "0")}`, time: `${String(p.h).padStart(2, "0")}:${String(p.min).padStart(2, "0")}` };
   };
   const firstDate = stops.map((st) => local(st.windowStart, st)?.date).find(Boolean) ?? null;
@@ -143,7 +143,7 @@ export async function stopsOn(tenantId: string, data: LoadTemplateData, date: st
   if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) throw new ValidationError("pick the date as YYYY-MM-DD", "date");
   const fallback = await tenantZone(tenantId);
   return data.stops.map((st) => {
-    const zone = zoneFor({ state: st.state, country: st.country }, fallback);
+    const zone = zoneFor({ state: st.state, city: st.city, name: st.name, country: st.country }, fallback);
     const day = addDays(date, st.dayOffset);
     const at = (hhmm: string) => (hhmm ? localToInstant(day, hhmm.replace(":", ""), zone) : null);
     const address = st.line1 || st.city || st.state || st.postalCode ? { line1: st.line1, city: st.city, state: st.state, postalCode: st.postalCode, country: st.country } : null;

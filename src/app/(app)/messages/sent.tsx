@@ -1,15 +1,19 @@
 "use client";
 
+import { fmtWhen } from "@/lib/time";
+import { useZone } from "@/components/zone";
 import { useState } from "react";
 import { Modal, Pill } from "@/components/ui";
 
 type Sent = { id: string; channel: string; to: string; subject: string | null; body: string; subjectKind: string | null; state: string; error: string | null; attempts: number; sentAt: string | null; createdAt: string };
 const KIND: Record<string, string> = { tender: "Tender", packet: "Crossing packet", tracking_link: "Tracking link", driver_link: "Driver app link", carrier_driver_link: "Carrier driver link", invoice: "Invoice", edi: "EDI", digest: "Digest", password_reset: "Password reset", statement: "Statement", reminder: "Reminder", alert: "Dispatch alert", owner_weekly: "Monday numbers", compliance_digest: "Compliance digest", driver_reply: "Reply to driver", mail_reply: "Email reply" };
 const TONE: Record<string, "slate" | "teal" | "amber" | "red" | "green" | "blue"> = { queued: "amber", sent: "green", delivered: "green", read: "green", failed: "red", logged: "slate" };
-const when = (d: string) => new Date(d).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+/** Messages are not tied to a stop: the company's clock, labelled. */
+const when = (d: string, zone: string) => fmtWhen(d, zone, { style: "short" }) ?? "";
 
 /** The sent log: the owner's answer to "did the carrier get the tender?" — with the state the provider reported and the text as it went. */
 export function SentBoard({ rows }: { rows: Sent[] }) {
+  const zone = useZone();
   const [open, setOpen] = useState<Sent | null>(null);
   return (
     <div className="mt-8" data-testid="sent-log">
@@ -33,7 +37,7 @@ export function SentBoard({ rows }: { rows: Sent[] }) {
             <tbody>
               {rows.map((r) => (
                 <tr key={r.id}>
-                  <td className="text-muted text-callout whitespace-nowrap">{when(r.createdAt)}</td>
+                  <td className="text-muted text-callout whitespace-nowrap">{when(r.createdAt, zone)}</td>
                   <td className="mono text-callout">{r.to}</td>
                   <td>
                     <div className="font-semibold text-callout">{KIND[r.subjectKind ?? ""] ?? r.subjectKind ?? "Message"}</div>
@@ -64,7 +68,7 @@ export function SentBoard({ rows }: { rows: Sent[] }) {
             </pre>
             <div className="text-footnote text-muted mt-2">
               {open.channel} · {open.state} · {open.attempts} attempt{open.attempts === 1 ? "" : "s"}
-              {open.sentAt ? ` · sent ${when(open.sentAt)}` : ""}
+              {open.sentAt ? ` · sent ${when(open.sentAt, zone)}` : ""}
               {open.error ? ` · ${open.error}` : ""}
             </div>
           </div>

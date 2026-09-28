@@ -1,7 +1,8 @@
 "use client";
 
+import { shortDate } from "@/lib/time";
 import { useState, useTransition } from "react";
-import { ZoneProvider, useWhen } from "@/components/zone";
+import { ZoneProvider, useClock } from "@/components/zone";
 import { useRouter } from "next/navigation";
 import { Pill } from "@/components/ui";
 import { portalRequestLoadAction } from "../../actions";
@@ -14,7 +15,7 @@ type Invoice = { id: string; number: string | null; state: string; issuedAt: str
 type Data = { company: string; customer: { id: string; name: string; kind: string; termsDays: number | null; country?: string }; active: Load[]; requested: Load[]; delivered: Load[]; cancelled: Load[]; invoices: Invoice[]; balance: { openCents: number; pastDueCents: number; currency: string } };
 
 const money = (c: number, cur = "USD") => `${cur === "USD" ? "$" : cur + " "}${(c / 100).toLocaleString("en-US", { minimumFractionDigits: 2 })}`;
-const day = (d: string | null | undefined) => (d ? new Date(d).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }) : "—");
+const day = (d: string | null | undefined) => (d ? shortDate(d) : "—");
 const placeOf = (s: Stop) => `${s.name}${s.city ? ` · ${s.city}` : ""}${s.state ? `, ${s.state}` : ""}`;
 const TONE: Record<string, "slate" | "teal" | "amber" | "red" | "green" | "blue"> = { draft: "blue", booked: "slate", dispatched: "teal", in_transit: "teal", exception: "red", delivered: "green", ready_to_bill: "green", invoiced: "green", paid: "green", cancelled: "slate" };
 const INV_TONE: Record<string, "slate" | "teal" | "amber" | "red" | "green" | "blue"> = { issued: "amber", sent: "amber", partially_paid: "amber", paid: "green", closed: "green", void: "slate", disputed: "red" };
@@ -186,7 +187,10 @@ function CustomerPortalBody({ token, data }: { token: string; data: Data }) {
 type Strings = (typeof STR)[Lang];
 
 function LoadCard({ l, token, s }: { l: Load; token: string; s: Strings }) {
-  const when = useWhen({});
+  // every stop on its own clock, labelled (a Mexican pickup reads CST, a Laredo delivery CDT)
+  const clock = useClock();
+  const at = (d: string | null | undefined, st: Stop) => clock.stop(d, { country: st.country, name: st.name, address: { city: st.city, state: st.state } }, { style: "short" });
+  const win = (st: Stop) => clock.window({ country: st.country, name: st.name, address: { city: st.city, state: st.state }, windowStart: st.windowStart, windowEnd: st.windowEnd }, { short: true });
   const [open, setOpen] = useState(false);
   const first = l.stops[0];
   const last = l.stops[l.stops.length - 1];
@@ -210,12 +214,12 @@ function LoadCard({ l, token, s }: { l: Load; token: string; s: Strings }) {
           {["booked", "dispatched", "in_transit", "exception"].includes(l.state) && next && (
             <div className="text-callout mt-1">
               {s.nextStop}: <b>{next.name}</b>
-              {next.windowStart ? ` · ${when(next.windowStart)}${next.windowEnd ? ` – ${when(next.windowEnd)}` : ""}` : ""}
-              {next.arrivedAt ? ` · ${s.arrived} ${when(next.arrivedAt)}` : ""}
-              {l.eta && !next.arrivedAt && <span className={`font-semibold ${l.eta.late ? "text-red" : "text-teal"}`}> · {s.etaLabel} {when(l.eta.at)}</span>}
+              {next.windowStart ? ` · ${win(next)}` : ""}
+              {next.arrivedAt ? ` · ${s.arrived} ${at(next.arrivedAt, next)}` : ""}
+              {l.eta && !next.arrivedAt && <span className={`font-semibold ${l.eta.late ? "text-red" : "text-teal"}`}> · {s.etaLabel} {at(l.eta.at, l.stops.find((x) => x.name === l.eta!.stopName) ?? next)}</span>}
             </div>
           )}
-          {l.deliveredAt && <div className="text-callout text-green mt-1">{s.deliveredAt} {when(l.deliveredAt)}</div>}
+          {l.deliveredAt && <div className="text-callout text-green mt-1">{s.deliveredAt} {last ? at(l.deliveredAt, last) : clock.at(l.deliveredAt, { style: "short" })}</div>}
         </div>
         <div className="flex flex-col gap-1.5 items-end shrink-0">
           {l.trackingUrl && ["booked", "dispatched", "in_transit", "exception"].includes(l.state) && (
@@ -248,9 +252,9 @@ function LoadCard({ l, token, s }: { l: Load; token: string; s: Strings }) {
                   {placeOf(st)} <span className="text-faint font-normal">· {st.type.replace("_", " ")}</span>
                 </div>
                 <div className="text-footnote text-muted">
-                  {st.windowStart ? `${s.window} ${when(st.windowStart)}${st.windowEnd ? ` – ${when(st.windowEnd)}` : ""}` : ""}
-                  {st.arrivedAt ? `${st.windowStart ? " · " : ""}${s.in} ${when(st.arrivedAt)}` : ""}
-                  {st.departedAt ? ` · ${s.out} ${when(st.departedAt)}` : ""}
+                  {st.windowStart ? `${s.window} ${win(st)}` : ""}
+                  {st.arrivedAt ? `${st.windowStart ? " · " : ""}${s.in} ${at(st.arrivedAt, st)}` : ""}
+                  {st.departedAt ? ` · ${s.out} ${at(st.departedAt, st)}` : ""}
                 </div>
               </div>
             </li>

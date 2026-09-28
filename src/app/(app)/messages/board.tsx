@@ -1,5 +1,7 @@
 "use client";
 
+import { fmtWhen } from "@/lib/time";
+import { useZone } from "@/components/zone";
 import { useState, useTransition } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -9,6 +11,7 @@ import { markHandledAction, replyToDriverAction } from "./actions";
 type Row = { m: { id: string; channel: string; from: string; fromName: string | null; body: string; receivedAt: string; driverId: string | null; carrierId: string | null; legId: string | null; orderId: string | null; handledAt: string | null }; driverName: string | null; carrierName: string | null; orderNumber: string | null };
 
 export function MessagesBoard({ rows }: { rows: Row[] }) {
+  const zone = useZone();
   const router = useRouter();
   const t = useToast();
   const [showHandled, setShowHandled] = useState(false);
@@ -41,7 +44,7 @@ export function MessagesBoard({ rows }: { rows: Row[] }) {
             <tbody>
               {shown.map((r) => (
                 <tr key={r.m.id} className={r.m.handledAt ? "opacity-60" : ""}>
-                  <td className="text-muted text-callout whitespace-nowrap">{new Date(r.m.receivedAt).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}</td>
+                  <td className="text-muted text-callout whitespace-nowrap">{fmtWhen(r.m.receivedAt, zone, { style: "short" })}</td>
                   <td>
                     {r.driverName ? (
                       <Link href={`/settings/drivers/${r.m.driverId}`} className="font-bold hover:text-teal">

@@ -1,5 +1,7 @@
 "use client";
 
+import { fmtWhen } from "@/lib/time";
+import { useZone } from "@/components/zone";
 import { useState, useTransition } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -26,6 +28,7 @@ const PRESETS: [string, string][] = [
 type Detail = { orderId: string; orderNumber: string; revenue: number; carrierCost: number; driverPay: number; fuel: number; extra: number; miles: number; margin: number; deliveredAt: string | null };
 
 export function ReportsView({ dash, rows, by, preset, period, entityId, entities }: { dash: Dashboard; rows: BreakdownRow[]; by: Breakdown; preset: string; period: Period; entityId: string | null; entities: { id: string; name: string }[] }) {
+  const zone = useZone();
   const router = useRouter();
   const [custom, setCustom] = useState(period);
   const [open, setOpen] = useState<BreakdownRow | null>(null);
@@ -199,7 +202,7 @@ export function ReportsView({ dash, rows, by, preset, period, entityId, entities
                         {d.orderNumber}
                       </Link>
                     </td>
-                    <td className="text-muted text-callout">{d.deliveredAt ? new Date(d.deliveredAt).toLocaleDateString() : "—"}</td>
+                    <td className="text-muted text-callout">{d.deliveredAt ? fmtWhen(d.deliveredAt, zone, { style: "date" }) : "—"}</td>
                     <td className="text-right mono">{formatCents(d.revenue)}</td>
                     <td className="text-right mono text-muted">{d.carrierCost ? formatCents(d.carrierCost) : "—"}</td>
                     <td className="text-right mono text-muted">{d.driverPay ? formatCents(d.driverPay) : "—"}</td>
