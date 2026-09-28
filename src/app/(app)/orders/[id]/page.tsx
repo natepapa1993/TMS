@@ -245,7 +245,17 @@ export default async function OrderPage({ params }: PageProps<"/orders/[id]">) {
             </div>
           </div>
           <div className="flex items-center gap-2 flex-wrap">
-            <OrderActions order={J(order)} />
+            <OrderActions
+              order={J(order)}
+              ends={
+                stops.length
+                  ? {
+                      pickup: { name: stops[0].name, at: stops[0].windowStart?.toISOString() ?? stops[0].windowEnd?.toISOString() ?? null, zone: stopZone({ country: stops[0].country, address: stops[0].address }, companyZone) },
+                      delivery: { name: stops[stops.length - 1].name, at: stops[stops.length - 1].windowStart?.toISOString() ?? stops[stops.length - 1].windowEnd?.toISOString() ?? null, zone: stopZone({ country: stops[stops.length - 1].country, address: stops[stops.length - 1].address }, companyZone) },
+                    }
+                  : null
+              }
+            />
           </div>
         </div>
         <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 mt-5 rounded-xl border border-line overflow-hidden" data-testid="load-facts">

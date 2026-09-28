@@ -242,6 +242,10 @@ test("book it again: a copy of an order is a new draft with the same shape and n
   await page.waitForURL("**/orders/**", { waitUntil: "commit" });
   const first = page.url();
   await page.click("button:has-text('Book again')");
+  // it asks for the new dates first (M11): the old times moved to the next day they can happen
+  const again = page.getByRole("dialog");
+  await expect(again.locator("#again-pu")).not.toHaveValue("");
+  await again.locator("button:has-text('Make the draft')").click();
   await page.waitForURL((u) => u.toString().includes("/orders/") && u.toString() !== first, { waitUntil: "commit" });
   await expect(page.locator("main")).toContainText("26-00002");
   await expect(page.locator("main")).toContainText("Draft");

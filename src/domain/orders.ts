@@ -9,7 +9,7 @@ import { writeAudit, diff } from "@/lib/audit";
 import { assertLegTransition, assertOrderTransition, canOrderTransition, LEG_FORWARD, STAGE_OF_LEG, TransitionError } from "./states";
 import { LEG_TEMPLATES, templateByKey } from "./templates";
 import { checkDriver, checkTruck, checkCarrierZone, summarize, type Finding } from "./eligibility";
-import { legZone, legsFromStops, HANDOFF, stopTimeProblems, type LegZone } from "./zones";
+import { legZone, legsFromStops, legTypeBetween, HANDOFF, stopTimeProblems, type LegZone } from "./zones";
 import { complianceFindings, statusMap, forLeg, HARD_BLOCK } from "./compliance";
 
 /**
@@ -354,21 +354,49 @@ async function bookIn(tx: Tx, ctx: Ctx, order: Order, stops: Stop[]) {
 }
 
 /**
- * "Book it again": a new draft with the same customer, rate, equipment, stops and notes. Windows, references
- * that belong to the old load (rate con, PO, shipment), the crossing paperwork and every leg assignment start
- * over — a recurring lane is the same shape, never the same load.
+ * The old load's stop times moved to the new dates (M11): the first stop to the new pickup, the last to
+ * the new delivery, the stops in between by as much as the pickup moved; each keeps its window's length.
+ * Without a new date a stop has no time (it is filled in on the draft).
  */
-export async function copyOrder(ctx: Ctx, orderId: string) {
+export function shiftStops<T extends { windowStart: Date | null; windowEnd: Date | null }>(stops: T[], pickupAt: Date | null, deliveryAt: Date | null): { windowStart: Date | null; windowEnd: Date | null }[] {
+  const first = stops[0];
+  const base = first?.windowStart ?? first?.windowEnd ?? null;
+  const delta = pickupAt && base ? pickupAt.getTime() - base.getTime() : null;
+  const len = (st: T) => (st.windowStart && st.windowEnd ? st.windowEnd.getTime() - st.windowStart.getTime() : null);
+  return stops.map((st, i) => {
+    const last = i === stops.length - 1 && i > 0;
+    const at = last && deliveryAt ? deliveryAt : i === 0 && pickupAt ? pickupAt : null;
+    if (at) {
+      const l = len(st);
+      return { windowStart: at, windowEnd: l != null ? new Date(at.getTime() + l) : null };
+    }
+    if (delta == null || (!st.windowStart && !st.windowEnd)) return { windowStart: null, windowEnd: null };
+    return { windowStart: st.windowStart ? new Date(st.windowStart.getTime() + delta) : null, windowEnd: st.windowEnd ? new Date(st.windowEnd.getTime() + delta) : null };
+  });
+}
+
+/**
+ * "Book it again": a new draft with the same customer, rate, equipment, stops and notes, for the new pickup
+ * and delivery dates the dispatcher gives (M11). References that belong to the old load (rate con, PO,
+ * customer load #, shipment), the crossing paperwork and every leg assignment start over — a recurring
+ * lane is the same shape, never the same load.
+ */
+export async function copyOrder(ctx: Ctx, orderId: string, opts: { pickupAt?: Date | null; deliveryAt?: Date | null } = {}) {
   assertCtx(ctx);
   requirePermission(ctx, "orders.create");
+  const pickupAt = opts.pickupAt ?? null;
+  const deliveryAt = opts.deliveryAt ?? null;
+  for (const d of [pickupAt, deliveryAt]) if (d && Number.isNaN(d.getTime())) throw new ValidationError("enter the new pickup and delivery dates", "pickupAt");
+  if (pickupAt && deliveryAt && deliveryAt.getTime() < pickupAt.getTime()) throw new ValidationError("the delivery can't be before the pickup", "deliveryAt");
   const { order, stops, legs } = await getOrder(ctx, orderId);
   if (order.kind !== "order") throw new ValidationError("only a plain order can be copied; build a new trip from its stops instead");
   const legPlan = legs
     .filter((l) => l.state !== "cancelled")
     .map((l) => ({ type: l.type, from: stops.findIndex((st) => st.id === l.fromStopId), to: stops.findIndex((st) => st.id === l.toStopId) }))
     .filter((l) => l.from >= 0 && l.to > l.from);
+  // nothing from the old load's paperwork: a PO or a customer load # copied over is a double-billing risk
   const refs: Record<string, string> = {};
-  if (order.refs.reference) refs.reference = order.refs.reference;
+  const times = shiftStops(stops, pickupAt, deliveryAt);
   return createOrder(ctx, {
     customerId: order.customerId,
     brokerId: order.brokerId,
@@ -386,7 +414,7 @@ export async function copyOrder(ctx: Ctx, orderId: string) {
     template: legPlan.length || !order.legTemplate || !templateByKey(order.legTemplate) ? null : order.legTemplate,
     source: "copy",
     sourceRef: order.orderNumber,
-    stops: stops.map((st) => ({ type: st.type, name: st.name, locationId: st.locationId, address: st.address, country: st.country, appointment: st.appointment, contact: st.contact, notes: st.notes })),
+    stops: stops.map((st, i) => ({ type: st.type, name: st.name, locationId: st.locationId, address: st.address, country: st.country, appointment: st.appointment, contact: st.contact, notes: st.notes, windowStart: times[i].windowStart, windowEnd: times[i].windowEnd })),
     book: false,
   });
 }
@@ -1245,6 +1273,11 @@ export async function splitLeg(ctx: Ctx, legId: string, at: StopInput, secondTyp
     const from = stops.find((x) => x.id === leg.fromStopId)!;
     const toStop = stops.find((x) => x.id === leg.toStopId)!;
 
+    // a saved location brings its address and coordinates
+    const [loc] = at.locationId ? await tx.select().from(s.locations).where(and(eq(s.locations.tenantId, ctx.tenantId), eq(s.locations.id, at.locationId))).limit(1) : [];
+    if (loc) {
+      at = { ...at, address: at.address ?? loc.address ?? null, country: at.country ?? loc.country };
+    }
     // insert the stop after `from`
     const newSeq = from.seq + 1;
     for (const st of stops.filter((x) => x.seq >= newSeq).sort((p, q) => q.seq - p.seq))
@@ -1261,6 +1294,8 @@ export async function splitLeg(ctx: Ctx, legId: string, at: StopInput, secondTyp
         name: at.name.trim(),
         address: at.address ?? null,
         country: at.country ?? toStop.country,
+        lat: loc?.lat ?? null,
+        lng: loc?.lng ?? null,
         windowStart: at.windowStart ?? null,
         windowEnd: at.windowEnd ?? null,
         appointment: at.appointment ?? false,
@@ -1294,6 +1329,18 @@ export async function splitLeg(ctx: Ctx, legId: string, at: StopInput, secondTyp
         updatedBy: ctx.userId,
       })
       .returning();
+    // both halves are named again from the countries they now run in (M24): splitting a crossing at the
+    // Mexican border yard gives an MX leg and a crossing leg, not two crossings
+    if (!secondType && leg.type !== "equipment_move") {
+      const now = await loadStops(tx, ctx, leg.orderId);
+      const idx = (id: string | null) => now.findIndex((x) => x.id === id);
+      const t1 = legTypeBetween(now, idx(first.fromStopId), idx(first.toStopId));
+      const t2 = legTypeBetween(now, idx(second.fromStopId), idx(second.toStopId));
+      if (t1 !== first.type) await tx.update(s.legs).set({ type: t1 }).where(eq(s.legs.id, first.id));
+      if (t2 !== second.type) await tx.update(s.legs).set({ type: t2 }).where(eq(s.legs.id, second.id));
+      first.type = t1;
+      second.type = t2;
+    }
     await refreshEstMiles(tx, ctx.tenantId, leg.orderId);
     await writeAudit(tx, ctx, "leg", leg.id, "update", { toStopId: { from: leg.toStopId, to: mid.id } }, `split at ${mid.name}`);
     await writeAudit(tx, ctx, "leg", second.id, "create", diff(null, { seq: second.seq, type: second.type, fromStopId: mid.id, toStopId: leg.toStopId }), `split from leg ${leg.seq}`);

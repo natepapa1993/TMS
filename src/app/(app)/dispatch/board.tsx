@@ -66,6 +66,7 @@ export type BoardData = {
   pings: { byTruck: Record<string, string>; byLeg: Record<string, string> };
   lastCalls: Record<string, { at: string; status: string; location: string | null; note: string | null; etaAt?: string | null; legId?: string | null }>;
   trailers: { id: string; unitNumber: string; status: string }[];
+  locations: { id: string; name: string; kind: string; country: string; city: string | null }[];
 };
 
 const subscribeCompact = (cb: () => void) => {
@@ -365,7 +366,7 @@ export function DispatchBoard({ data, initialOrder, initialBucket, initialChip }
       {selected && popup?.kind === "drivers" && popupLeg && (
         <DriversModal leg={popupLeg} data={data} onClose={() => setPopup(null)} onDone={(msg) => { setPopup(null); t.ok(msg); router.refresh(); }} />
       )}
-      {selected && popup?.kind === "split" && popupLeg && <SplitModal leg={popupLeg} stops={selected.stops} onClose={() => setPopup(null)} onDone={(msg) => { setPopup(null); t.ok(msg); router.refresh(); }} />}
+      {selected && popup?.kind === "split" && popupLeg && <SplitModal leg={popupLeg} stops={selected.stops} locations={data.locations} onClose={() => setPopup(null)} onDone={(msg) => { setPopup(null); t.ok(msg); router.refresh(); }} />}
       <Confirm open={popup?.kind === "hold"} onClose={() => setPopup(null)} title="Put this load on hold" body="Nothing is sent and the driver's steps are frozen until it's released. The reason shows on the row and in the driver's app." needReason="Why?" confirmLabel="Hold" onConfirm={(reason) => { setPopup(null); if (selected) run("On hold", () => A.holdAction(selected.order.id, reason)); }} />
       <Confirm open={popup?.kind === "cancel"} onClose={() => setPopup(null)} title="Cancel this order" body="Open legs are cancelled. Moving legs must come back first." needReason="Reason (goes on the record)" confirmLabel="Cancel order" danger onConfirm={(reason) => { setPopup(null); if (selected) run("Order cancelled", () => A.cancelAction(selected.order.id, reason)); }} />
       <Confirm open={popup?.kind === "decline"} onClose={() => setPopup(null)} title="Mark declined" body="The leg goes back to Pending with a red flag so it's picked up again." needReason="Why did they decline?" confirmLabel="Declined" onConfirm={(reason) => { const legId = popup?.legId; setPopup(null); if (legId) run("Leg declined — back in Pending", () => A.declineAction(legId, reason)); }} />
@@ -1206,10 +1207,29 @@ function DriversModal({ leg, data, onClose, onDone }: { leg: Leg; data: BoardDat
   );
 }
 
-function SplitModal({ leg, stops, onClose, onDone }: { leg: Leg; stops: Stop[]; onClose: () => void; onDone: (msg: string) => void }) {
+const SPLIT_KINDS: [string, string][] = [
+  ["border_yard", "Border yard (hand-off)"],
+  ["yard", "Yard (hand-off)"],
+  ["transload", "Transload"],
+  ["terminal", "Terminal"],
+];
+
+function SplitModal({ leg, stops, locations, onClose, onDone }: { leg: Leg; stops: Stop[]; locations: BoardData["locations"]; onClose: () => void; onDone: (msg: string) => void }) {
   const [name, setName] = useState("");
+  const [locationId, setLocationId] = useState<string | null>(null);
   const [country, setCountry] = useState(stops.find((s) => s.id === leg.toStopId)?.country ?? "US");
-  const [type, setType] = useState<"yard" | "transload" | "terminal">("yard");
+  const [type, setType] = useState<string>(leg.type === "crossing" && stops.find((s) => s.id === leg.fromStopId)?.country === "MX" ? "border_yard" : "yard");
+  // saved yards first: the places loads are handed off at
+  const saved = [...locations].sort((p, q) => Number(["border_yard", "yard", "transload", "terminal"].includes(q.kind)) - Number(["border_yard", "yard", "transload", "terminal"].includes(p.kind)) || p.name.localeCompare(q.name));
+  const pickName = (v: string) => {
+    setName(v);
+    const l = locations.find((x) => x.name === v) ?? locations.find((x) => fold(x.name) === fold(v.trim()));
+    setLocationId(l?.id ?? null);
+    if (l) {
+      setCountry(l.country);
+      if (["border_yard", "yard", "transload", "terminal"].includes(l.kind)) setType(l.kind);
+    }
+  };
   const [err, setErr] = useState<string | null>(null);
   const [pending, start] = useTransition();
   const from = stops.find((s) => s.id === leg.fromStopId);
@@ -1229,8 +1249,8 @@ function SplitModal({ leg, stops, onClose, onDone }: { leg: Leg; stops: Stop[]; 
             disabled={pending || !name.trim()}
             onClick={() =>
               start(async () => {
-                const r = await A.splitAction(leg.id, { type, name: name.trim(), country });
-                if (r.ok) onDone("Split. The second half is in Pending.");
+                const r = await A.splitAction(leg.id, { type: type as never, name: name.trim(), country, locationId });
+                if (r.ok) onDone("Split. The second half is in Pending; both halves are named by the countries they run in.");
                 else setErr(r.error);
               })
             }
@@ -1243,17 +1263,31 @@ function SplitModal({ leg, stops, onClose, onDone }: { leg: Leg; stops: Stop[]; 
       <div className="text-callout text-muted mb-3">
         {from?.name} → <b className="text-ink">new stop</b> → {to?.name}. The first half keeps {leg.truckUnit ? `unit ${leg.truckUnit}` : leg.carrierName ?? "its assignment"}; the second half needs a truck.
       </div>
-      <div className="grid grid-cols-[1fr_110px_88px] gap-2">
+      <div className="grid grid-cols-[1fr_170px_88px] gap-2">
         <div>
-          <label className="label">Where</label>
-          <input className="input" value={name} onChange={(e) => setName(e.target.value)} placeholder="Yard or terminal name" autoFocus />
+          <label className="label" htmlFor="split-where">
+            Where {locationId && <span className="text-teal font-semibold">· saved location</span>}
+          </label>
+          <input id="split-where" className="input" list="split-locations" value={name} onChange={(e) => pickName(e.target.value)} placeholder="Yard or terminal name" autoFocus />
+          <datalist id="split-locations">
+            {saved.map((l) => (
+              <option key={l.id} value={l.name}>
+                {[l.city, l.country].filter(Boolean).join(", ")}
+                {fold(l.name) !== l.name.toLowerCase() ? ` · ${fold(l.name)}` : ""}
+              </option>
+            ))}
+          </datalist>
         </div>
         <div>
-          <label className="label">Kind</label>
-          <select className="select" value={type} onChange={(e) => setType(e.target.value as typeof type)}>
-            <option value="yard">Yard</option>
-            <option value="transload">Transload</option>
-            <option value="terminal">Terminal</option>
+          <label className="label" htmlFor="split-kind">
+            Kind
+          </label>
+          <select id="split-kind" className="select" value={type} onChange={(e) => setType(e.target.value)}>
+            {SPLIT_KINDS.map(([v, l]) => (
+              <option key={v} value={v}>
+                {l}
+              </option>
+            ))}
           </select>
         </div>
         <div>

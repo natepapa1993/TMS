@@ -25,7 +25,7 @@ export default async function DispatchPage({ searchParams }: PageProps<"/dispatc
   const initialBucket = typeof sp.bucket === "string" && BUCKETS.some((b) => b.key === sp.bucket) ? (sp.bucket as BucketKey) : undefined;
   const initialChip = typeof sp.chip === "string" && ALERTS.some((a) => a.key === sp.chip) ? (sp.chip as AlertKey) : undefined;
   const ctx = await requireCtx();
-  const [rows, customers, carriers, drivers, trucks, trailers, [tenant]] = await Promise.all([
+  const [rows, customers, carriers, drivers, trucks, trailers, [tenant], locations] = await Promise.all([
     board(ctx),
     list(ctx, "customer", { limit: 2000 }),
     list(ctx, "carrier", { limit: 2000 }),
@@ -33,6 +33,7 @@ export default async function DispatchPage({ searchParams }: PageProps<"/dispatc
     list(ctx, "truck", { limit: 2000 }),
     list(ctx, "trailer", { limit: 2000 }),
     db.select({ zone: tenants.timeZone }).from(tenants).where(eq(tenants.id, ctx.tenantId)).limit(1),
+    list(ctx, "location", { limit: 2000 }),
   ]);
   const custName = new Map(customers.map((c) => [c.id, String(c.name)]));
   const [tenderRows, inbox, msgs, requests, etas, mail, pings, calls] = await Promise.all([openTendersForOrders(ctx, rows.map((r) => r.order.id)), ediInbox(ctx), messageInbox(ctx, { limit: 50 }), openPortalRequests(ctx), boardEtas(ctx), mailInbox(ctx, { limit: 50 }), lastPings(ctx), lastCheckCalls(ctx, rows.map((r) => r.order.id))]);
@@ -66,6 +67,7 @@ export default async function DispatchPage({ searchParams }: PageProps<"/dispatc
     zone: tenant?.zone ?? "America/Chicago",
     pings,
     lastCalls: Object.fromEntries([...calls].map(([k, c]) => [k, { at: c.at.toISOString(), status: c.status, location: c.location, note: c.note, etaAt: c.etaAt?.toISOString() ?? null, legId: c.legId }])),
+    locations: locations.map((l) => ({ id: l.id, name: String(l.name), kind: String(l.kind), country: String(l.country), city: ((l.address as { city?: string } | null)?.city ?? null) as string | null })).sort((p, q) => p.name.localeCompare(q.name)),
     trailers: trailers.map((t) => ({ id: t.id, unitNumber: String(t.unitNumber), status: String(t.status ?? "active") })).sort((p, q) => p.unitNumber.localeCompare(q.unitNumber, undefined, { numeric: true })),
   };
   return <DispatchBoard data={data} initialOrder={initialOrder} initialBucket={initialBucket} initialChip={initialChip} />;

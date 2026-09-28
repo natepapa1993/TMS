@@ -103,8 +103,8 @@ export async function declineAction(legId: string, reason: string) {
   return r;
 }
 
-export async function splitAction(legId: string, stop: { type: StopType; name: string; country: string }) {
-  const r = await act((ctx) => O.splitLeg(ctx, legId, stop));
+export async function splitAction(legId: string, stop: { type: StopType; name: string; country: string; locationId?: string | null }) {
+  const r = await act((ctx) => O.splitLeg(ctx, legId, { type: stop.type, name: stop.name, country: stop.country, locationId: stop.locationId ?? null }));
   if (r.ok) touch();
   return r;
 }
@@ -127,9 +127,9 @@ export async function cancelAction(orderId: string, reason: string) {
   return r;
 }
 
-export async function copyOrderAction(orderId: string) {
+export async function copyOrderAction(orderId: string, dates: { pickupAt?: string | null; deliveryAt?: string | null } = {}) {
   const r = await act(async (ctx) => {
-    const c = await O.copyOrder(ctx, orderId);
+    const c = await O.copyOrder(ctx, orderId, { pickupAt: dates.pickupAt ? new Date(dates.pickupAt) : null, deliveryAt: dates.deliveryAt ? new Date(dates.deliveryAt) : null });
     return { id: c.order.id, orderNumber: c.order.orderNumber };
   });
   if (r.ok) touch();
