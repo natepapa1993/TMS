@@ -25,6 +25,11 @@ test("safety director day: a blocking rule, the driver goes red everywhere, the 
   await page.locator("#f-blockLevel").selectOption("override");
   await page.click("button:has-text('Save changes')");
   await expect(page.getByRole("status")).toContainText("Saved");
+  // a rule that starts blocking gets 14 days' grace (safety N9); clearing the date enforces it now
+  await expect(page.locator("#f-graceUntil")).toHaveValue(future(14));
+  await page.locator("#f-graceUntil").fill("");
+  await page.click("button:has-text('Save changes')");
+  await expect.poll(async () => (await page.reload(), page.locator("#f-graceUntil").inputValue())).toBe("");
 
   // board: blocked
   await page.goto("/compliance");

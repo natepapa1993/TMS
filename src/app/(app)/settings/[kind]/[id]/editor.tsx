@@ -34,6 +34,7 @@ export function RecordEditor({ kind, id, fields, refs, initial, archived, blocke
       )}
       <fieldset disabled={archived} className="contents">
         <RecordForm
+          key={opened /* after a save the form shows what was stored (a rule's new grace date, a normalized value) */}
           fields={fields}
           refs={refs}
           initial={initial}
