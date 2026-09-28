@@ -242,7 +242,7 @@ describe("availability as time windows; ranking by fit, then empty miles (F-34.3
     };
     const at207 = await mkTruck("207");
     const at213 = await mkTruck("213");
-    const q316 = await mkTruck("Q316");
+    await mkTruck("Q316"); // no location: after the ones we can place
     const busy = await mkTruck("220");
     // park 207 in Detroit and 213 in Dallas: a delivered load each; 220 in Detroit too
     const park = async (x: { t: string; d: string }, city: string, state: string) => {
