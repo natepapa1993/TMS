@@ -58,7 +58,7 @@ test("tender by email: carrier opens the link, accepts with driver details; disp
   const carrier = await ctx2.newPage();
   await carrier.goto(url);
   await expect(carrier.locator("body")).toContainText("Transportes Garza, can you cover this?");
-  await expect(carrier.locator("body")).toContainText("USD 450.00");
+  await expect(carrier.locator("body")).toContainText("MXN 450.00"); // a Mexican carrier is paid in pesos unless the dispatcher picks USD
   await expect(carrier.locator("body")).toContainText("Appointment is firm.");
   await carrier.click("button:has-text('Yes, accept')");
   await carrier.locator("input").first().fill("Luis");

@@ -107,7 +107,11 @@ async function collect(ctx: Ctx, opts: { from: string; to: string; onlyNew: bool
 
   // payments: one deposit per payment (a check that paid four invoices is one deposit with four lines)
   const payRows = await pick(opts.ids?.payments, () => db.select().from(s.payments).where(and(eq(s.payments.tenantId, ctx.tenantId), inWindow(s.payments.receivedAt), ...(opts.onlyNew ? [isNull(s.payments.exportedAt)] : []))), (ids) => db.select().from(s.payments).where(and(eq(s.payments.tenantId, ctx.tenantId), inArray(s.payments.id, ids))));
-  const payRcpts = payRows.length ? await db.select().from(s.receipts).where(inArray(s.receipts.paymentId, payRows.map((p) => p.id))) : [];
+  const payRcptsAll = payRows.length ? await db.select().from(s.receipts).where(inArray(s.receipts.paymentId, payRows.map((p) => p.id))) : [];
+  // a payment whose receipts all went out before payments were exported as deposits (older runs) is not sent again
+  const oldStyle = new Set(opts.ids ? [] : payRows.filter((p) => payRcptsAll.some((r) => r.paymentId === p.id) && payRcptsAll.filter((r) => r.paymentId === p.id).every((r) => r.exportedAt)).map((p) => p.id));
+  payRows.splice(0, payRows.length, ...payRows.filter((p) => !oldStyle.has(p.id)));
+  const payRcpts = payRcptsAll.filter((r) => !oldStyle.has(r.paymentId ?? ""));
   // single receipts recorded on an invoice (not through a payment), and never the factor's collection of a funded invoice
   const rcRowsAll = await pick(opts.ids?.receipts, () => db.select().from(s.receipts).where(and(eq(s.receipts.tenantId, ctx.tenantId), isNull(s.receipts.paymentId), inWindow(s.receipts.receivedAt), ...(opts.onlyNew ? [isNull(s.receipts.exportedAt)] : []))), (ids) => db.select().from(s.receipts).where(and(eq(s.receipts.tenantId, ctx.tenantId), inArray(s.receipts.id, ids))));
   const funded = rcRowsAll.length ? await db.select({ invoiceId: s.factorEntries.invoiceId }).from(s.factorEntries).where(and(eq(s.factorEntries.tenantId, ctx.tenantId), eq(s.factorEntries.kind, "advance"), inArray(s.factorEntries.invoiceId, rcRowsAll.map((r) => r.invoiceId)))) : [];
