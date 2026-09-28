@@ -125,12 +125,14 @@ export async function refreshEstMiles(tx: Tx | typeof db, tenantId: string, orde
   const { estimateMiles } = await import("./miles");
   const [st, lg] = await Promise.all([
     tx.select().from(s.stops).where(and(eq(s.stops.tenantId, tenantId), eq(s.stops.orderId, orderId))),
-    tx.select({ id: s.legs.id, fromStopId: s.legs.fromStopId, toStopId: s.legs.toStopId, estMiles: s.legs.estMiles }).from(s.legs).where(and(eq(s.legs.tenantId, tenantId), eq(s.legs.orderId, orderId))),
+    tx.select({ id: s.legs.id, fromStopId: s.legs.fromStopId, toStopId: s.legs.toStopId, estMiles: s.legs.estMiles, state: s.legs.state }).from(s.legs).where(and(eq(s.legs.tenantId, tenantId), eq(s.legs.orderId, orderId))),
   ]);
   for (const l of lg) {
     const a = st.find((x) => x.id === l.fromStopId);
     const b = st.find((x) => x.id === l.toStopId);
     const est = estimateMiles(a, b);
+    // a leg already run keeps the estimate it was paid and costed on when the stops no longer give one
+    if (est == null && l.estMiles != null && l.state === "completed") continue;
     if (est !== l.estMiles) await tx.update(s.legs).set({ estMiles: est }).where(eq(s.legs.id, l.id));
   }
 }
@@ -558,8 +560,14 @@ function addressMoved(a: Stop["address"], b: Stop["address"]) {
 export async function learnStopCoordinates(tx: Tx | typeof db, ctx: Ctx, stopId: string, lat: string, lng: string) {
   const c = coords(lat, lng);
   if (!c) return;
-  const [stop] = await tx.select({ id: s.stops.id, orderId: s.stops.orderId, lat: s.stops.lat, lng: s.stops.lng, locationId: s.stops.locationId }).from(s.stops).where(and(eq(s.stops.tenantId, ctx.tenantId), eq(s.stops.id, stopId))).limit(1);
+  const [stop] = await tx.select({ id: s.stops.id, orderId: s.stops.orderId, lat: s.stops.lat, lng: s.stops.lng, locationId: s.stops.locationId, name: s.stops.name, address: s.stops.address, country: s.stops.country }).from(s.stops).where(and(eq(s.stops.tenantId, ctx.tenantId), eq(s.stops.id, stopId))).limit(1);
   if (!stop) return;
+  // a fix far from the town the stop names is not where the stop is (a phone with a stale or wrong GPS):
+  // learning it would move the stop, and the leg's estimated miles with it (pay, fuel and margin use them)
+  const { placeOf } = await import("./miles");
+  const { haversineMiles } = await import("@/lib/geo");
+  const named = placeOf({ name: stop.name, address: stop.address, country: stop.country });
+  if (named && haversineMiles(named, c) > 75) return;
   const val = { lat: c.lat.toFixed(6), lng: c.lng.toFixed(6) };
   if (!coords(stop.lat, stop.lng)) {
     await tx.update(s.stops).set(val).where(eq(s.stops.id, stop.id));

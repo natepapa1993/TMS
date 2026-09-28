@@ -981,6 +981,33 @@
       ]
     },
     {
+      "id": "F-7.28",
+      "name": "Re-running the week keeps lines added by hand to an open statement (and a driver's dispute), and says what it kept",
+      "milestone": "M28",
+      "status": "done",
+      "tests": [
+        "src/domain/money2.test.ts"
+      ]
+    },
+    {
+      "id": "F-7.29",
+      "name": "Percent pay is of the leg's share of the load (by miles, else by legs); estimated miles pay drivers and cost fuel on multi-leg loads in statements, the load P&L, reports and the assign margin",
+      "milestone": "M28",
+      "status": "done",
+      "tests": [
+        "src/domain/money2.test.ts"
+      ]
+    },
+    {
+      "id": "F-7.35",
+      "name": "Report tables add up to the tiles: loads split between trucks, drivers or carriers by leg miles to the cent, loads with none of ours in their own row",
+      "milestone": "M28",
+      "status": "done",
+      "tests": [
+        "src/domain/money2.test.ts"
+      ]
+    },
+    {
       "id": "F-31.1",
       "name": "One clock everywhere: every stop time, window, appointment, ETA, free-at, check call and timeline event on the stop's own clock with its zone name (Tue Sep 29, 8:00 AM CST) — load page, Loads grid, planner, assign dialog, import preview, driver app, partner driver link, tender page, carrier and customer portals, tracking, messages, rate con; the rest on the company's clock, labelled; one shared formatter built from numbers so server and browser agree (no hydration mismatch); border cities (Nuevo Laredo, Reynosa, Piedras Negras, Juárez) keep US daylight time while Mexico's interior stays on CST",
       "milestone": "M31",

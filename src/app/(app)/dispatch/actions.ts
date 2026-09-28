@@ -305,3 +305,11 @@ export async function waivePodAction(orderId: string, reason: string) {
   }
   return r;
 }
+
+/** The assign dialog's margin: the load less every other leg's cost, and this leg on the picked truck/driver. */
+export async function marginPreviewAction(legId: string, pick: { driverId?: string | null; coDriverId?: string | null; plannedMiles?: number | null } = {}) {
+  return act(async (ctx) => {
+    const { legMarginPreview } = await import("@/domain/pay-estimate");
+    return legMarginPreview(ctx, legId, pick);
+  });
+}

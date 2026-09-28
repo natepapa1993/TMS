@@ -13,7 +13,7 @@ import { getCompany } from "./company";
  * driver gets a PDF statement with the year to date, in the office and in the driver app.
  */
 
-export type RunRow = { driverId: string; driver: string; settlementId: string | null; state: string; netCents: number; lines: number; note: string | null };
+export type RunRow = { driverId: string; driver: string; settlementId: string | null; state: string; netCents: number; lines: number; note: string | null; /** lines a person added to the open statement, kept through the rebuild */ keptManual?: number };
 
 /**
  * Build every statement for the week. A driver gets one when they have pay: legs completed that week,
@@ -53,8 +53,8 @@ export async function settlementRun(ctx: Ctx, periodStart: Date, periodEnd: Date
     }
     try {
       const built = await buildSettlement(ctx, d.id, periodStart, periodEnd);
-      const notes = [unfinished ? "the week isn't over: approve after it ends" : null, lateFor.has(d.id) ? "includes a late leg from an earlier week" : null, !ran.has(d.id) && !lateFor.has(d.id) ? "pay items only (no legs this week)" : null, built.lines.some((l) => l.blocker) ? "a load has no miles: fix it before approving" : null, built.lines.some((l) => l.shortCents) ? "some deductions didn't fit: they carry over" : null].filter(Boolean);
-      out.push({ driverId: d.id, driver: d.name, settlementId: built.id, state: built.state, netCents: built.netCents, lines: built.lines.length, note: notes.length ? notes.join(" · ") : null });
+      const notes = [unfinished ? "the week isn't over: approve after it ends" : null, lateFor.has(d.id) ? "includes a late leg from an earlier week" : null, !ran.has(d.id) && !lateFor.has(d.id) ? "pay items only (no legs this week)" : null, built.lines.some((l) => l.blocker) ? "a load has no miles: fix it before approving" : null, built.lines.some((l) => l.shortCents) ? "some deductions didn't fit: they carry over" : null, built.keptManual ? `kept ${built.keptManual} line${built.keptManual === 1 ? "" : "s"} added by hand` : null].filter(Boolean);
+      out.push({ driverId: d.id, driver: d.name, settlementId: built.id, state: built.state, netCents: built.netCents, lines: built.lines.length, note: notes.length ? notes.join(" · ") : null, keptManual: built.keptManual ?? 0 });
     } catch (e) {
       const msg = (e as Error).message;
       out.push({ driverId: d.id, driver: d.name, settlementId: null, state: /no pay for the week/.test(msg) ? "skipped" : "error", netCents: 0, lines: 0, note: /no pay for the week/.test(msg) ? "no pay this week: no statement — deductions wait for the next one with pay" : msg });
@@ -68,6 +68,7 @@ export async function approveSettlements(ctx: Ctx, ids: string[], now = new Date
   assertCtx(ctx);
   requirePermission(ctx, "billing.issue");
   const rows = ids.length ? await db.select().from(s.settlements).where(and(eq(s.settlements.tenantId, ctx.tenantId), inArray(s.settlements.id, ids))) : [];
+  const tz = (await getCompany(ctx)).timeZone;
   const approved: string[] = [];
   const skipped: { id: string; reason: string }[] = [];
   for (const st of rows) {
@@ -79,7 +80,7 @@ export async function approveSettlements(ctx: Ctx, ids: string[], now = new Date
       skipped.push({ id: st.id, reason: `already ${st.state}` });
       continue;
     }
-    const why = approvalBlockers(st, now);
+    const why = approvalBlockers(st, now, tz);
     if (why.length) {
       skipped.push({ id: st.id, reason: why.join("; ") });
       continue;

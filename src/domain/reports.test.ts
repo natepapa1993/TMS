@@ -81,9 +81,10 @@ describe("reports", () => {
     expect(dash.revenueCents).toBe(180000 + 90000 + 0 + 285000);
     expect(dash.activeTrucks).toBe(2); // 2104 on o1/o3, 2117 on the equipment move
     expect(dash.revenuePerTruckCents).toBe(Math.round(555000 / 2));
-    // margin: revenue 555000 − carrier 60000 − driver pay 37200 − fuel (400+200+100) × 50 = 35000 − tolls 0
-    expect(dash.marginCents).toBe(555000 - 60000 - 37200 - 35000);
-    expect(dash.marginPct).toBe(Math.round(((555000 - 132200) / 555000) * 1000) / 10);
+    // margin: revenue 555000 − carrier 60000 − driver pay 37200 (statement) − Cruz's 100 mi × .60 on the equipment
+    // move (no statement yet: estimated from his rule) − fuel (400+200+100) × 50 = 35000 − tolls 0
+    expect(dash.marginCents).toBe(555000 - 60000 - 37200 - 6000 - 35000);
+    expect(dash.marginPct).toBe(Math.round(((555000 - 138200) / 555000) * 1000) / 10);
     expect(dash.emptyPct).toBe(Math.round((100 / 700) * 1000) / 10);
     expect(dash.atRisk.count).toBe(1);
     expect(dash.atRisk.orders[0].orderNumber).toBe(o2.order.orderNumber);
@@ -103,8 +104,9 @@ describe("reports", () => {
       ["Unit 2104", 2, 270000, 600],
       ["Unit 2117", 1, 120000, 300],
     ]);
-    expect(byTruck[0].costCents).toBe(600 * 50); // fuel only: no settlement approved yet
-    expect(byTruck[0].marginPct).toBe(Math.round(((270000 - 30000) / 270000) * 1000) / 10);
+    // no statement yet: driver pay is estimated from Reyes' rule (600 mi × .62), plus fuel
+    expect(byTruck[0].costCents).toBe(600 * 50 + 600 * 62);
+    expect(byTruck[0].marginPct).toBe(Math.round(((270000 - 67200) / 270000) * 1000) / 10);
     const byCustomer = await R.breakdown(a, "customer", period());
     expect(byCustomer.map((r) => [r.label, r.loads])).toEqual([
       ["RXO", 2],
@@ -112,13 +114,14 @@ describe("reports", () => {
     ]);
     const byLane = await R.breakdown(a, "lane", period());
     expect(byLane.map((r) => r.label)).toEqual(["Laredo, TX → San Antonio, TX", "Laredo, TX → Dallas, TX"]);
-    expect(await R.breakdown(a, "carrier", period())).toEqual([]);
+    // every load is on our trucks: one row saying so, so the table still adds up to the tiles
+    expect((await R.breakdown(a, "carrier", period())).map((r) => [r.label, r.loads])).toEqual([["Our own trucks (no carrier)", 3]]);
     const byWeek = await R.breakdown(a, "week", period());
     expect(byWeek).toHaveLength(1);
     expect(byWeek[0].loads).toBe(3);
     const csv = R.breakdownCsv("truck", byTruck);
     expect(csv.split("\n")[0]).toBe("truck,loads,revenue,cost,margin,margin_pct,miles");
-    expect(csv.split("\n")[1]).toBe("Unit 2104,2,2700.00,300.00,2400.00,88.9,600");
+    expect(csv.split("\n")[1]).toBe("Unit 2104,2,2700.00,672.00,2028.00,75.1,600");
     // entity filter: nothing is on the entity → empty; after tagging one order → just it
     expect(await R.breakdown(a, "truck", period(), f.entity)).toEqual([]);
     await db.update(orders).set({ billingEntityId: f.entity }).where(eq(orders.orderNumber, "26-00002"));

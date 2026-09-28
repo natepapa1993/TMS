@@ -3,6 +3,7 @@ import type { PayRule, PayRuleKind, SettlementLine } from "@/db/schema";
 /** The pay rules themselves, with no database: shared by statements and the plan editor's live preview. */
 
 import { newId } from "@/lib/ids";
+import { money as fxMoney } from "./fx-rules";
 
 export const RULE_LABEL: Record<PayRuleKind, string> = {
   per_loaded_mile: "Per loaded mile",
@@ -38,7 +39,81 @@ export type LegPayInput = {
   billedCents: number | null;
   firstLegOfLoad: boolean;
   team: boolean;
+  /** this leg's share of the load (see legShare): a percent rule pays on the share, per leg */
+  loadShare?: LegShare;
 };
+
+// ---------- a leg's share of the load (percent pay on a multi-leg load) ----------
+
+export type ShareLeg = { id: string; type: string; state: string; plannedMiles: number | null; estMiles?: number | null };
+/**
+ * What part of a load's money a leg carries. "whole": the load has one leg that moves the freight.
+ * "miles": every leg that moves the freight has miles (typed or est.) — the leg's miles over the load's.
+ * "legs": some leg has no miles — an equal split by the legs that move the freight.
+ * "none": an empty move (equipment move) carries no share of the load's revenue.
+ * Every leg that moves the freight counts, whoever runs it (our truck, a carrier, a transfer partner):
+ * a US leg of a Querétaro → Dearborn load is paid on the US part, not on what the Mexican carrier ran.
+ */
+export type LegShare = { share: number; basis: "whole" | "miles" | "legs" | "none"; legMiles: number | null; loadMiles: number | null; legs: number; est: boolean };
+
+export function legShare(legId: string, legs: ShareLeg[]): LegShare {
+  const me = legs.find((l) => l.id === legId);
+  if (me?.type === "equipment_move") return { share: 0, basis: "none", legMiles: null, loadMiles: null, legs: 0, est: false };
+  const live = legs.filter((l) => l.state !== "cancelled" && l.type !== "equipment_move");
+  const mi = (l: ShareLeg) => l.plannedMiles ?? l.estMiles ?? null;
+  if (live.length <= 1 || !me) return { share: 1, basis: "whole", legMiles: me ? mi(me) : null, loadMiles: me ? mi(me) : null, legs: 1, est: false };
+  const miles = live.map(mi);
+  const est = live.some((l) => l.plannedMiles == null && l.estMiles != null);
+  if (miles.every((m) => m != null && m > 0)) {
+    const total = miles.reduce((a: number, m) => a + (m ?? 0), 0);
+    return { share: mi(me)! / total, basis: "miles", legMiles: mi(me), loadMiles: total, legs: live.length, est };
+  }
+  return { share: 1 / live.length, basis: "legs", legMiles: mi(me), loadMiles: null, legs: live.length, est: false };
+}
+
+const LEG_WORD: Record<string, string> = { us: "US leg", mx: "Mexico leg", ca: "Canada leg", crossing: "crossing leg", domestic: "leg", equipment_move: "empty move" };
+
+/** "US leg share 50.3% (150 of 298 mi est.)" / "leg share 33.3% (1 of 3 legs …)"; "" for a one-leg load. */
+export function shareLabel(type: string, s: LegShare) {
+  const word = LEG_WORD[type] ?? "leg";
+  if (s.basis === "whole") return "";
+  if (s.basis === "none") return `${word}: no share of the load`;
+  const pct = `${Math.round(s.share * 1000) / 10}%`;
+  return s.basis === "miles" ? `${word} share ${pct} (${s.legMiles} of ${s.loadMiles} mi${s.est ? " est." : ""})` : `${word} share ${pct} (1 of ${s.legs} legs — not every leg has miles)`;
+}
+
+/**
+ * Pure: what a driver on a plain pay type (no pay plan) earns for a leg — per mile on the leg's miles
+ * (typed, else the estimate, labelled est.), a percent of the leg's share of the load's line haul in USD,
+ * or flat per leg — plus crossing pay on a crossing leg. Statements and the P&L estimate both use it.
+ */
+export function payTypeLines(
+  driver: { payType: string | null; payRateCents: number | null; crossingPayCents?: number | null },
+  leg: { id: string; seq: number; type: string; plannedMiles: number | null; estMiles?: number | null; coDriverId?: string | null },
+  load: { orderNumber: string; rateCents: number | null; currency: string; linehaulUsdCents: number; share: LegShare },
+): SettlementLine[] {
+  const rate = driver.payRateCents ?? 0;
+  const team = !!leg.coDriverId;
+  const half = team ? 0.5 : 1;
+  const teamTag = team ? " (team ½)" : "";
+  const { orderNumber } = load;
+  const out: SettlementLine[] = [];
+  if (driver.payType === "per_mile") {
+    const miles = leg.plannedMiles ?? leg.estMiles ?? 0;
+    const est = leg.plannedMiles == null && leg.estMiles != null;
+    out.push({ id: newId(), kind: "leg", legId: leg.id, orderNumber, description: `${orderNumber} leg ${leg.seq} · ${miles} mi${est ? " (est.)" : ""} × ${(rate / 100).toFixed(2)}${teamTag}`, qty: miles, unit: "mi", rateCents: rate, amountCents: Math.round(miles * rate * half), source: leg.plannedMiles ? "planned miles" : est ? "estimated miles" : "no miles on the leg" });
+  } else if (driver.payType === "pct") {
+    const sh = load.share;
+    const base = Math.round(load.linehaulUsdCents * sh.share);
+    const orig = load.currency !== "USD" ? fxMoney(load.rateCents ?? 0, load.currency) : "";
+    const why = sh.basis === "whole" ? (orig ? ` (${orig})` : "") : ` — ${shareLabel(leg.type, sh)} of the load's ${fxMoney(load.linehaulUsdCents)}${orig ? ` (${orig})` : ""}`;
+    out.push({ id: newId(), kind: "leg", legId: leg.id, orderNumber, description: `${orderNumber} leg ${leg.seq} · ${rate / 100}% of ${fxMoney(base)}${why}${teamTag}`, qty: rate, unit: "pct", rateCents: base, amountCents: Math.round(((base * rate) / 10000) * half), source: sh.basis === "whole" ? "order rate" : sh.basis === "none" ? "empty move" : "leg share of the order rate" });
+  } else {
+    out.push({ id: newId(), kind: "leg", legId: leg.id, orderNumber, description: `${orderNumber} leg ${leg.seq} · flat${teamTag}`, qty: 1, unit: "flat", rateCents: rate, amountCents: Math.round(rate * half), source: "flat per leg" });
+  }
+  if (leg.type === "crossing" && driver.crossingPayCents) out.push({ id: newId(), kind: "accessorial", legId: leg.id, orderNumber, description: `${orderNumber} border crossing pay`, qty: 1, unit: "flat", rateCents: driver.crossingPayCents, amountCents: driver.crossingPayCents, source: "driver record" });
+  return out;
+}
 
 const matches = (r: PayRule, l: LegPayInput) => {
   const w = r.when ?? {};
@@ -79,9 +154,19 @@ export function legPayLines(plan: { rules: PayRule[]; teamSplit: string }, l: Le
       }
       case "pct_linehaul":
       case "pct_total": {
-        const basis = r.kind === "pct_linehaul" ? l.linehaulCents : (l.billedCents ?? l.linehaulCents);
-        if (!basis || !l.firstLegOfLoad) continue; // a percent is paid once per load, on its first leg for this driver
-        line(r, r.amount / 100, "pct", basis, (basis * r.amount) / 10000, `${r.amount / 100}% of ${money(basis)}`, r.kind === "pct_linehaul" ? "line haul" : "everything billed");
+        const whole = r.kind === "pct_linehaul" ? l.linehaulCents : (l.billedCents ?? l.linehaulCents);
+        if (!whole) continue;
+        const what = r.kind === "pct_linehaul" ? "line haul" : "everything billed";
+        const sh = l.loadShare;
+        if (!sh || sh.basis === "whole") {
+          if (!l.firstLegOfLoad) continue; // one leg moves the whole load: the percent is paid once, on the driver's first leg
+          line(r, r.amount / 100, "pct", whole, (whole * r.amount) / 10000, `${r.amount / 100}% of ${money(whole)}`, what);
+          break;
+        }
+        // a multi-leg load: the percent is of this leg's share, every leg on its own
+        if (sh.basis === "none") continue;
+        const basis = Math.round(whole * sh.share);
+        line(r, r.amount / 100, "pct", basis, (basis * r.amount) / 10000, `${r.amount / 100}% of ${money(basis)} — ${shareLabel(l.type, sh)} of the load's ${money(whole)} ${what}`, `leg share of the ${what}`);
         break;
       }
       case "flat_per_load":
