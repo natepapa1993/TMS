@@ -91,8 +91,9 @@ function checkResult(result: string, collectedAt: Date | null | undefined, opts:
   if (!collectedAt) return;
   const now = opts.now ?? new Date();
   if (collectedAt.getTime() > now.getTime() + 5 * 60_000) throw new ValidationError("the collection time is in the future", "collectedAt");
-  if (opts.selectedAt && collectedAt.getTime() < opts.selectedAt.getTime()) throw new ValidationError("the collection can't be before the driver was selected", "collectedAt");
-  if (opts.after && collectedAt.getTime() < opts.after.at.getTime()) throw new ValidationError(`the collection can't be before ${opts.after.what}`, "collectedAt");
+  // times are typed to the minute: the minute of the selection (or the accident) itself is fine
+  if (opts.selectedAt && collectedAt.getTime() < opts.selectedAt.getTime() - 60_000) throw new ValidationError("the collection can't be before the driver was selected", "collectedAt");
+  if (opts.after && collectedAt.getTime() < opts.after.at.getTime() - 60_000) throw new ValidationError(`the collection can't be before ${opts.after.what}`, "collectedAt");
 }
 
 /** Specimen, MRO verification and observation: what the custody and control form says. */

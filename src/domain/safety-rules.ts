@@ -159,7 +159,8 @@ export function rtdProblem(t: DaTestLike & { collectedAt: Date | string | null }
   if (!t.sapEvaluatedAt) return { message: "When did the SAP evaluate the driver?", field: "sapEvaluatedAt" };
   if (!t.sapEducationDoneAt) return { message: "When was the education or treatment the SAP required done (the SAP's follow-up evaluation)?", field: "sapEducationDoneAt" };
   const ms = (d: Date | string | null | undefined) => (d ? new Date(d).getTime() : null);
-  if (violationAt && ms(t.sapEvaluatedAt)! < new Date(violationAt).getTime()) return { message: "The SAP evaluation comes after the violation", field: "sapEvaluatedAt" };
+  // the SAP dates are calendar days (noon UTC): the evaluation is on or after the day of the violation
+  if (violationAt && ms(t.sapEvaluatedAt)! < new Date(violationAt).getTime() - 86400_000) return { message: "The SAP evaluation comes after the violation", field: "sapEvaluatedAt" };
   if (ms(t.sapEducationDoneAt)! < ms(t.sapEvaluatedAt)!) return { message: "Education or treatment is done after the SAP's evaluation", field: "sapEducationDoneAt" };
   if (t.collectedAt && new Date(t.collectedAt).getTime() < ms(t.sapEducationDoneAt)! - 86400_000) return { message: "The return-to-duty test is collected after the SAP says the education or treatment is done", field: "collectedAt" };
   if (t.substance === "drug" && !t.observed) return { message: "A return-to-duty drug test is collected under direct observation (40.67(b)) — tick Observed", field: "observed" };
