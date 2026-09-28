@@ -40,8 +40,18 @@ export type Permission =
   | "billing.view"
   | "billing.issue"
   | "billing.void"
+  | "compliance.override"
   | "compliance.view"
   | "compliance.edit"
+  /** drug & alcohol records: confidential (49 CFR 40.321), owner and Safety only */
+  | "safety.confidential"
+  /** add people, change anyone's role, email or password, archive them: the owner only */
+  | "users.manage"
+  /** the owner's reports: revenue, margin, receivables (owner and billing) */
+  | "reports.view"
+  /** the IFTA return: miles, fuel, rates — billing's or Safety's job depending on the company */
+  | "ifta.view"
+  | "ifta.edit"
   | "settings.edit";
 
 const ALL: Permission[] = [
@@ -62,15 +72,23 @@ const ALL: Permission[] = [
   "billing.void",
   "compliance.view",
   "compliance.edit",
+  "compliance.override",
+  "safety.confidential",
+  "users.manage",
+  "reports.view",
+  "ifta.view",
+  "ifta.edit",
   "settings.edit",
 ];
 
 export const ROLE_PERMISSIONS: Record<Role | "system", Permission[]> = {
   system: ALL,
   owner: ALL,
-  dispatcher: ["records.view", "records.create", "records.edit", "orders.view", "orders.create", "orders.edit", "orders.cancel", "dispatch.plan", "dispatch.dispatch", "compliance.view", "billing.view"],
-  billing: ["records.view", "records.create", "records.edit", "orders.view", "orders.edit", "billing.view", "billing.issue", "compliance.view"],
-  compliance: ["records.view", "records.create", "records.edit", "records.archive", "orders.view", "compliance.view", "compliance.edit"],
+  // dispatch.override: schedule calls (a double booking, time off). Paperwork blocks need compliance.override (Safety / owner).
+  dispatcher: ["records.view", "records.create", "records.edit", "orders.view", "orders.create", "orders.edit", "orders.cancel", "dispatch.plan", "dispatch.dispatch", "dispatch.override", "compliance.view", "billing.view", "ifta.view"],
+  billing: ["records.view", "records.create", "records.edit", "orders.view", "orders.edit", "billing.view", "billing.issue", "compliance.view", "reports.view", "ifta.view", "ifta.edit"],
+  // Safety keeps the IFTA return in many fleets (miles by state, fuel receipts); revenue and margin reports stay with the owner and billing
+  compliance: ["records.view", "records.create", "records.edit", "records.archive", "orders.view", "compliance.view", "compliance.edit", "compliance.override", "safety.confidential", "ifta.view", "ifta.edit"],
   mx_office: ["records.view", "records.create", "records.edit", "orders.view", "orders.edit", "compliance.view"],
   driver: [],
   carrier: [],

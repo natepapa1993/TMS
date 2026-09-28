@@ -3,7 +3,7 @@ import type { Tx, Db } from "@/db/client";
 import { newId } from "./ids";
 import type { Ctx } from "./context";
 
-export type AuditAction = "create" | "update" | "archive" | "restore" | "delete" | "transition" | "import" | "override" | "assign" | "dispatch";
+export type AuditAction = "create" | "update" | "archive" | "restore" | "delete" | "transition" | "import" | "override" | "assign" | "dispatch" | "lock" | "unlock" | "tonu";
 
 /** Field-level diff of two plain objects; ignores audit columns and unchanged values. */
 export function diff(before: Record<string, unknown> | null, after: Record<string, unknown>) {
@@ -13,7 +13,8 @@ export function diff(before: Record<string, unknown> | null, after: Record<strin
     if (skip.has(key)) continue;
     const a = before ? before[key] : undefined;
     const b = after[key];
-    if (JSON.stringify(a) !== JSON.stringify(b)) changes[key] = { from: a ?? null, to: b ?? null };
+    if (JSON.stringify(a) === JSON.stringify(b)) continue;
+    changes[key] = key === "passwordHash" ? { from: a ? "(set)" : null, to: "(changed)" } : { from: a ?? null, to: b ?? null }; // never a hash in the log
   }
   return changes;
 }

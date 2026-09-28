@@ -98,8 +98,18 @@ export const billingEntities = pgTable(
     remitTo: jsonb("remit_to").$type<Address>(),
     invoicePrefix: text("invoice_prefix").notNull(),
     nextInvoiceNumber: integer("next_invoice_number").notNull().default(1),
+    nextCreditNumber: integer("next_credit_number").notNull().default(1), // credit memos: PREFIX-CM-000001, their own sequence
     isDefault: boolean("is_default").notNull().default(false),
     terms: text("terms"),
+    // factoring: invoices assigned to a factor carry its remit-to and the notice of assignment, and go to it
+    factorName: text("factor_name"),
+    factorEmail: text("factor_email"),
+    factorRemitTo: jsonb("factor_remit_to").$type<Address>(),
+    factorAll: boolean("factor_all").notNull().default(false), // every customer's invoices go to the factor unless the customer says otherwise
+    factorNotice: text("factor_notice"), // the notice-of-assignment wording on the invoice
+    factorAdvanceBp: integer("factor_advance_bp"), // advance as basis points of the invoice (9700 = 97%); blank = 97%
+    factorFeeBp: integer("factor_fee_bp"), // fee in basis points (300 = 3%); blank = 3%
+    factorRecourseDays: integer("factor_recourse_days"), // unpaid after this many days the factor charges it back; blank = 90; 0 = non-recourse
     ...audit(),
   },
   (t) => [index("billing_entities_tenant").on(t.tenantId)],
@@ -146,7 +156,7 @@ export const ports = pgTable(
     usState: text("us_state"),
     mxCity: text("mx_city"),
     mxState: text("mx_state"),
-    bridges: jsonb("bridges").$type<{ name: string; cbpPortId?: string; fast?: boolean }[]>().notNull().default(sql`'[]'::jsonb`),
+    bridges: jsonb("bridges").$type<string[]>().notNull().default(sql`'[]'::jsonb`), // bridge names; the crossing workbench offers them
     notes: text("notes"),
     knowledgeMd: text("knowledge_md"),
     ...audit(),
@@ -166,12 +176,25 @@ export const customers = pgTable(
     dotNumber: text("dot_number"),
     billingEntityId: text("billing_entity_id"),
     billingEmail: text("billing_email"),
+    billingAddress: jsonb("billing_address").$type<Record<string, string | undefined>>(), // printed under Bill to
     termsDays: integer("terms_days").notNull().default(30),
     payWhenPaid: boolean("pay_when_paid").notNull().default(false),
+    accessorialApproval: boolean("accessorial_approval").notNull().default(true), // extra charges (detention, lumper…) wait for the customer's OK before they bill
     trackingRequirement: text("tracking_requirement").notNull().default("link"), // none | link | edi214 | portal
-    requiredDocs: jsonb("required_docs").$type<string[]>().notNull().default(sql`'["POD","BOL","RATE_CON"]'::jsonb`),
+    requiredDocs: jsonb("required_docs").$type<string[]>(), // blank = POD, BOL, RATE_CON; [] = nothing required
+    requiredRefs: jsonb("required_refs").$type<string[]>(), // reference keys the invoice needs on the order (po, asn, shipment, reference, rate_con); blank = none
+    detentionFreeMinutes: integer("detention_free_minutes"), // blank = 120
+    detentionRateCents: integer("detention_rate_cents"), // per hour; blank = 75.00
+    reminderDays: jsonb("reminder_days").$type<number[]>(), // days past due; blank = [3,10,20]; [] = opted out
+    qbName: text("qb_name"), // QuickBooks customer name; blank = name
+    invoiceMode: text("invoice_mode").notNull().default("per_load"), // per_load | summary (one invoice for every load billed together)
+    invoiceDelivery: text("invoice_delivery").notNull().default("auto"), // auto | email | factor | edi | portal | mail
+    invoiceCc: text("invoice_cc"), // more addresses, comma separated
+    invoiceDocs: jsonb("invoice_docs").$type<string[]>(), // documents sent with the invoice; blank = the docs required before invoicing
+    portalUrl: text("portal_url"), // where invoices are uploaded, for portal customers
     mxBrokerId: text("mx_broker_id"),
     usBrokerId: text("us_broker_id"),
+    caBrokerId: text("ca_broker_id"), // owner N10: the Canadian customs broker (PARS / cargo control #)
     knowledgeMd: text("knowledge_md"),
     contacts: jsonb("contacts").$type<Contact[]>().notNull().default(sql`'[]'::jsonb`),
     custom: jsonb("custom").$type<Record<string, unknown>>().notNull().default(sql`'{}'::jsonb`),
@@ -208,6 +231,7 @@ export const carriers = pgTable(
     kind: text("kind").notNull().default("any"), // mx | crossing | us | any
     mcNumber: text("mc_number"),
     dotNumber: text("dot_number"),
+    nscNumber: text("nsc_number"), // Canada: National Safety Code / CVOR — the Canadian operating authority
     scac: text("scac"),
     rfc: text("rfc"),
     caat: text("caat"),
@@ -218,11 +242,19 @@ export const carriers = pgTable(
     ctpatExpires: timestamp("ctpat_expires", { withTimezone: true }),
     tenderChannel: text("tender_channel").notNull().default("email"), // email | portal | edi | sylectus | whatsapp
     dispatchEmail: text("dispatch_email"),
+    quickPayPct: integer("quick_pay_pct"), // whole percent discount when we pay within 7 days of approval
+    qbName: text("qb_name"), // QuickBooks vendor name; blank = name
     dispatchPhone: text("dispatch_phone"),
     whatsapp: text("whatsapp"),
     plateClasses: jsonb("plate_classes").$type<string[]>().notNull().default(sql`'[]'::jsonb`),
     portIds: jsonb("port_ids").$type<string[]>().notNull().default(sql`'[]'::jsonb`),
     fmcsaStatus: jsonb("fmcsa_status").$type<{ authority?: string; insurance?: string; rating?: string; checkedAt?: string }>(),
+    // insurance on file (certificate of insurance): what a broker-carrier agreement and a crossing need
+    autoLiabilityCents: integer("auto_liability_cents"),
+    autoLiabilityExpires: timestamp("auto_liability_expires", { withTimezone: true }),
+    cargoCoverageCents: integer("cargo_coverage_cents"),
+    cargoInsuranceExpires: timestamp("cargo_insurance_expires", { withTimezone: true }),
+    insurer: text("insurer"),
     doNotUse: boolean("do_not_use").notNull().default(false),
     doNotUseReason: text("do_not_use_reason"),
     contacts: jsonb("contacts").$type<Contact[]>().notNull().default(sql`'[]'::jsonb`),
@@ -255,6 +287,60 @@ export const carrierRates = pgTable(
   (t) => [index("carrier_rates_tenant_carrier").on(t.tenantId, t.carrierId)],
 );
 
+/** What a customer pays on a lane: flat or per mile, with its fuel rule; applied when a load is built. */
+export const customerRates = pgTable(
+  "customer_rates",
+  {
+    id: id(),
+    tenantId: tenantId(),
+    customerId: text("customer_id").notNull(),
+    originZone: text("origin_zone").notNull(),
+    destinationZone: text("destination_zone").notNull(),
+    equipment: text("equipment"),
+    rateType: text("rate_type").notNull().default("flat"), // flat | per_mile
+    rateCents: integer("rate_cents").notNull(), // flat amount, or cents per mile
+    minimumCents: integer("minimum_cents"), // per-mile lanes: never less than this
+    currency: text("currency").notNull().default("USD"),
+    fuelRule: text("fuel_rule").notNull().default("included"), // included | pct | per_mile | table
+    fuelValue: integer("fuel_value"), // percent or cents per mile
+    validFrom: timestamp("valid_from", { withTimezone: true }).notNull().defaultNow(),
+    validTo: timestamp("valid_to", { withTimezone: true }),
+    notes: text("notes"),
+    ...audit(),
+  },
+  (t) => [index("customer_rates_tenant_customer").on(t.tenantId, t.customerId)],
+);
+
+/** A fuel surcharge schedule: by the week's diesel price, a percent of line haul or cents per mile. */
+export type FuelBand = { from: number; to: number | null; value: number }; // price in cents per gallon; value: percent × 100 or cents per mile
+export const fuelTables = pgTable(
+  "fuel_tables",
+  {
+    id: id(),
+    tenantId: tenantId(),
+    name: text("name").notNull(),
+    method: text("method").notNull().default("pct"), // pct | per_mile
+    bands: jsonb("bands").$type<FuelBand[]>().notNull().default(sql`'[]'::jsonb`),
+    isDefault: boolean("is_default").notNull().default(false),
+    ...audit(),
+  },
+  (t) => [index("fuel_tables_tenant").on(t.tenantId)],
+);
+
+/** The diesel price the fuel tables read, week by week (entered, or from the DOE/EIA feed). */
+export const fuelPrices = pgTable(
+  "fuel_prices",
+  {
+    id: id(),
+    tenantId: tenantId(),
+    weekOf: text("week_of").notNull(), // YYYY-MM-DD, the Monday
+    priceCents: integer("price_cents").notNull(), // per gallon
+    source: text("source").notNull().default("manual"),
+    ...audit(),
+  },
+  (t) => [uniqueIndex("fuel_prices_tenant_week").on(t.tenantId, t.weekOf)],
+);
+
 export const trucks = pgTable(
   "trucks",
   {
@@ -266,6 +352,9 @@ export const trucks = pgTable(
     make: text("make"),
     model: text("model"),
     equipmentType: text("equipment_type").notNull().default("tractor"), // tractor | sprinter | straight | cargo_van
+    cargoLengthFt: integer("cargo_length_ft"), // straight trucks / vans that carry freight themselves
+    maxWeightLbs: integer("max_weight_lbs"),
+    cubeFt: integer("cube_ft"),
     ownership: text("ownership").notNull().default("company"), // company | owner_op | leased
     usPlate: text("us_plate"),
     usPlateState: text("us_plate_state"),
@@ -273,6 +362,9 @@ export const trucks = pgTable(
     mxPlate: text("mx_plate"),
     mxPlateClass: text("mx_plate_class"), // blue | brown
     mxPlateExpires: timestamp("mx_plate_expires", { withTimezone: true }),
+    caPlate: text("ca_plate"), // Canadian plate (IRP-apportioned Canadian units run the US on it too)
+    caPlateProvince: text("ca_plate_province"),
+    caPlateExpires: timestamp("ca_plate_expires", { withTimezone: true }),
     entityId: text("entity_id"), // billing entity or partner CAAT holder the unit runs under
     caat: text("caat"),
     scac: text("scac"),
@@ -284,6 +376,7 @@ export const trucks = pgTable(
     status: text("status").notNull().default("active"), // active | oos
     oosReason: text("oos_reason"),
     oosUntil: timestamp("oos_until", { withTimezone: true }),
+    oosInspectionId: text("oos_inspection_id"), // put out of service at a roadside inspection: back in service only with a repair sign-off on it
     note: text("note"),
     custom: jsonb("custom").$type<Record<string, unknown>>().notNull().default(sql`'{}'::jsonb`),
     ...audit(),
@@ -300,12 +393,16 @@ export const trailers = pgTable(
     vin: text("vin"),
     kind: text("kind").notNull().default("53_dry"),
     lengthFt: integer("length_ft"),
+    maxWeightLbs: integer("max_weight_lbs"), // payload; blank = by kind
+    cubeFt: integer("cube_ft"),
     usPlate: text("us_plate"),
     mxPlate: text("mx_plate"),
     inspectionExpires: timestamp("inspection_expires", { withTimezone: true }),
     ownership: text("ownership").notNull().default("company"),
     gpsDeviceId: text("gps_device_id"),
     status: text("status").notNull().default("active"),
+    oosReason: text("oos_reason"),
+    oosInspectionId: text("oos_inspection_id"), // out of service from a roadside inspection until the repair is signed off
     custom: jsonb("custom").$type<Record<string, unknown>>().notNull().default(sql`'{}'::jsonb`),
     ...audit(),
   },
@@ -339,9 +436,17 @@ export const drivers = pgTable(
     hireDate: timestamp("hire_date", { withTimezone: true }),
     payType: text("pay_type").notNull().default("per_mile"), // per_mile | pct | flat | hourly
     payRateCents: integer("pay_rate_cents"),
+    crossingPayCents: integer("crossing_pay_cents"), // flat per crossing leg on top of the pay type
+    qbName: text("qb_name"), // QuickBooks vendor name for settlements; blank = name
     homeTerminalId: text("home_terminal_id"),
     eldDriverId: text("eld_driver_id"),
     currentTruckId: text("current_truck_id"),
+    dispatcherUserId: text("dispatcher_user_id"), // the dispatcher who runs this driver
+    payPlanId: text("pay_plan_id"), // a pay plan; blank = the pay type and rate on the driver
+    hosDriveMin: integer("hos_drive_min"), // hours of service left, from the ELD
+    hosShiftMin: integer("hos_shift_min"),
+    hosCycleMin: integer("hos_cycle_min"),
+    hosAt: timestamp("hos_at", { withTimezone: true }),
     status: text("status").notNull().default("active"),
     custom: jsonb("custom").$type<Record<string, unknown>>().notNull().default(sql`'{}'::jsonb`),
     ...audit(),
@@ -360,6 +465,7 @@ export const documentTypes = pgTable(
     alertDays: jsonb("alert_days").$type<number[]>().notNull().default(sql`'[30]'::jsonb`),
     required: boolean("required").notNull().default(false),
     blocksDispatch: boolean("blocks_dispatch").notNull().default(false),
+    blockLevel: text("block_level"), // hard | override | warn; null = rules saved before the setting (derived from the name, as before)
     legScope: text("leg_scope"), // null = all legs; crossing | mx | us
     graceUntil: timestamp("grace_until", { withTimezone: true }),
     ...audit(),
@@ -373,6 +479,7 @@ export const documents = pgTable(
     id: id(),
     tenantId: tenantId(),
     documentTypeId: text("document_type_id"),
+    code: text("code"), // crossing packet code: carta_retiro | carta_porte | doda | entry | ace_manifest | dtops | bol | invoice | packing_list ...
     subjectKind: text("subject_kind").notNull(), // driver | truck | trailer | carrier | customer | order | leg | crossing
     subjectId: text("subject_id").notNull(),
     fileName: text("file_name").notNull(),
@@ -384,9 +491,11 @@ export const documents = pgTable(
     expiresAt: timestamp("expires_at", { withTimezone: true }),
     number: text("number"),
     source: text("source").notNull().default("upload"), // upload | nad | viatpro | generated | driver_app | portal | email
-    status: text("status").notNull().default("present"), // present | verified | superseded | rejected
+    status: text("status").notNull().default("present"), // present | verified | superseded | rejected | pending (from the driver app, counts once safety confirms it)
     version: integer("version").notNull().default(1),
-    extracted: jsonb("extracted").$type<Record<string, { value: unknown; confidence: number }>>(),
+    extracted: jsonb("extracted").$type<Record<string, { value: unknown; confidence: number; source?: "ai" | "human" }>>(),
+    extractionAt: timestamp("extraction_at", { withTimezone: true }), // last AI read
+    extractionNote: text("extraction_note"), // model + tokens, or the error
     notes: text("notes"),
     ...audit(),
   },
@@ -410,4 +519,42 @@ export const importJobs = pgTable(
     ...audit(),
   },
   (t) => [index("import_jobs_tenant").on(t.tenantId)],
+);
+
+/** A saved grid view: columns, order, widths, filters, sort. Personal, or shared with the company. */
+export const savedViews = pgTable(
+  "saved_views",
+  {
+    id: id(),
+    tenantId: tenantId(),
+    userId: text("user_id").notNull(),
+    page: text("page").notNull(), // loads | …
+    name: text("name").notNull(),
+    shared: boolean("shared").notNull().default(false),
+    config: jsonb("config").$type<Record<string, unknown>>().notNull().default(sql`'{}'::jsonb`),
+    ...audit(),
+  },
+  (t) => [index("saved_views_tenant_page").on(t.tenantId, t.page)],
+);
+
+/** credentials = off for a licence / medical renewal (a Safety block, not a schedule call); oos = an out-of-service order on the driver (roadside inspection) */
+export const ASSET_EVENT_KINDS = ["vacation", "home_time", "restart", "sick", "repair", "work_order", "other", "credentials", "oos"] as const;
+export type AssetEventKind = (typeof ASSET_EVENT_KINDS)[number];
+
+/** Time a driver, truck or trailer is not available: vacation, home time, a restart, a repair. A hard event blocks assignment; a soft one warns. */
+export const assetEvents = pgTable(
+  "asset_events",
+  {
+    id: id(),
+    tenantId: tenantId(),
+    subjectKind: text("subject_kind").notNull(), // driver | truck | trailer
+    subjectId: text("subject_id").notNull(),
+    kind: text("kind").$type<AssetEventKind>().notNull(),
+    startsAt: timestamp("starts_at", { withTimezone: true }).notNull(),
+    endsAt: timestamp("ends_at", { withTimezone: true }).notNull(),
+    hard: boolean("hard").notNull().default(true),
+    note: text("note"),
+    ...audit(),
+  },
+  (t) => [index("asset_events_subject").on(t.tenantId, t.subjectKind, t.subjectId)],
 );

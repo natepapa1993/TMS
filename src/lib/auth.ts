@@ -6,6 +6,7 @@ import { db } from "@/db/client";
 import { users, tenants } from "@/db/schema";
 import type { Ctx, Role } from "./context";
 import { newId } from "./ids";
+import { newCompanySettings } from "@/domain/compliance-rules";
 
 export type SessionData = { userId?: string; tenantId?: string; role?: Role };
 
@@ -80,7 +81,8 @@ export async function createTenantWithOwner(input: { tenantName: string; slug: s
   const tenantId = newId();
   const userId = newId();
   await db.transaction(async (tx) => {
-    await tx.insert(tenants).values({ id: tenantId, name: input.tenantName, slug: input.slug, timeZone: input.timeZone ?? "America/Detroit" });
+    // a new company gets 30 days to enter its drivers' qualification files before blank ones block dispatch
+    await tx.insert(tenants).values({ id: tenantId, name: input.tenantName, slug: input.slug, timeZone: input.timeZone ?? "America/Detroit", settings: newCompanySettings() });
     await tx.insert(users).values({
       id: userId,
       tenantId,

@@ -1,36 +1,41 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Crossline TMS
 
-## Getting Started
+Cross-border carrier TMS: Mexican leg, crossing, US leg — one order, one screen, every rule enforced before a truck moves. Sold per truck per month.
 
-First, run the development server:
+The plan, functional spec and personas live in the Claude doc ("TMS plan"). Feature IDs in code and tests refer to that spec.
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
+## Run it
+
+```
+cp .env.example .env.local        # DATABASE_URL, TEST_DATABASE_URL, SESSION_SECRET (≥32 chars)
+pnpm install
+pnpm db:migrate                   # applies ./drizzle to DATABASE_URL
 pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+## Prove it
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+Nothing is "done" until it passes (spec §10.1a). CI runs all of this on every push:
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+```
+pnpm typecheck      # next typegen + tsc
+pnpm lint
+pnpm db:reset-test  # drops and re-migrates TEST_DATABASE_URL
+pnpm test           # vitest: state machines (every pair), eligibility, orders/dispatch, records, import
+pnpm features       # feature board gate: every "done" feature names tests that mention it
+pnpm build
+pnpm test:e2e       # Playwright, real browser, real database: setup, dispatcher day, OOS/split/hold, isolation
+```
 
-## Learn More
+## Where things are
 
-To learn more about Next.js, take a look at the following resources:
+- `src/db/schema` — tables. Every tenant-owned table has `tenant_id`, audit columns and `archived_at`.
+- `src/data/records.ts` — the one repository for master data (tenant scope, permissions, audit, archive blockers, optimistic concurrency).
+- `src/data/fields.ts` — field definitions that drive the quick-add popup, record screen, list columns and CSV import.
+- `src/domain/states.ts` — order and leg transition tables. `src/domain/eligibility.ts` — who may run which leg (B-1 has no override). `src/domain/orders.ts` — create/book/plan/dispatch/advance/split/hold/OOS.
+- `src/app/(app)` — Dispatch board, Orders, Fleet, Settings. Server functions in each `actions.ts` check the session and call the domain; the UI never touches the database.
+- `docs/features.json` — the feature board.
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## Milestones
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+M0 (this) foundation & dispatch · M1 tendering & tracking · M2 crossing · M3 compliance · M4 billing · M5 Sylectus/DAT/portals · M6+ per the plan.

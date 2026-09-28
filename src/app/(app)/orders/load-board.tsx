@@ -1,0 +1,228 @@
+"use client";
+
+import { useRouter } from "next/navigation";
+import { useTransition } from "react";
+import Link from "next/link";
+import type { ColumnDef } from "@tanstack/react-table";
+import { DataGrid, type GridView, type QuickFilter, type ViewConfig } from "@/components/data-grid";
+import { Pill, Toast, useToast } from "@/components/ui";
+import type { LoadRow } from "@/domain/load-grid";
+import { saveLoadViewAction, deleteLoadViewAction, bulkBookAction } from "./actions";
+import { fmtWhen, zonedDate } from "@/lib/time";
+
+const STATE_LABEL: Record<string, string> = { draft: "Draft", booked: "Booked", dispatched: "Dispatched", in_transit: "In transit", exception: "On hold", delivered: "Delivered", ready_to_bill: "Ready to bill", invoiced: "Invoiced", paid: "Paid", cancelled: "Cancelled" };
+const STATE_TONE: Record<string, "slate" | "teal" | "amber" | "red" | "green" | "blue" | "navy"> = { draft: "slate", booked: "blue", dispatched: "amber", in_transit: "teal", exception: "red", delivered: "green", ready_to_bill: "green", invoiced: "navy", paid: "slate", cancelled: "slate" };
+const EQUIPMENT: Record<string, string> = { "53_dry": "53' van", "53_reefer": "53' reefer", "48_dry": "48' van", flatbed: "Flatbed", sprinter: "Sprinter", straight: "Straight", power_only: "Power only" };
+
+const money = (c: number | null, cur = "USD") => (c == null ? "" : new Intl.NumberFormat("en-US", { style: "currency", currency: cur }).format(c / 100));
+const money0 = (c: number | null, cur = "USD") => (c == null ? "" : new Intl.NumberFormat("en-US", { style: "currency", currency: cur, maximumFractionDigits: 0 }).format(c / 100));
+/** On the stop's own clock, with its zone: the same text on the server and in any browser. */
+const when = (s: string | null, zone: string) => fmtWhen(s, zone, { style: "short" }) ?? "";
+/** "Toronto, ON · CA" — or the stop's name when it has no city. */
+const place = (city: string | null, st: string | null, country: string | null, name?: string | null) => {
+  const where = [city, st].filter(Boolean).join(", ") || name || "";
+  return [where, country && country !== "US" ? country : ""].filter(Boolean).join(" · ");
+};
+const sameDay = (s: string | null, d: Date, zone: string) => !!s && zonedDate(new Date(s), zone) === zonedDate(d, zone);
+const OPEN = ["draft", "booked", "dispatched", "in_transit", "exception"];
+
+const col = (c: ColumnDef<LoadRow, unknown>) => c;
+
+const COLUMNS: ColumnDef<LoadRow, unknown>[] = [
+  col({ id: "orderNumber", accessorFn: (r) => r.orderNumber, size: 150, meta: { label: "Load #", mono: true }, header: "Load #", cell: ({ row }) => (
+      <>
+        {row.original.orderNumber}
+        {row.original.kind !== "order" && (
+          <span className="ml-1.5">
+            <Pill tone={row.original.kind === "trip" ? "navy" : "teal"}>{row.original.kind}</Pill>
+          </span>
+        )}
+      </>
+    ) }),
+  col({ id: "state", accessorFn: (r) => (r.tonu ? "TONU" : (STATE_LABEL[r.state] ?? r.state)), size: 124, filterFn: "select" as never, meta: { label: "Status", filter: "select" }, header: "Status", cell: ({ row }) => (
+      <span className="inline-flex items-center gap-1">
+        <Pill tone={row.original.tonu ? "amber" : (STATE_TONE[row.original.state] ?? "slate")}>{row.original.tonu ? "TONU" : (STATE_LABEL[row.original.state] ?? row.original.state)}</Pill>
+        {row.original.podMissing && <Pill tone="red" title="No POD on file — upload it or mark it 'bill without POD' on the load">no POD</Pill>}
+        {row.original.locked && (
+          <svg width="12" height="12" viewBox="0 0 16 16" aria-label="Locked" className="text-muted">
+            <title>Locked</title>
+            <path fill="currentColor" d="M5 7V5a3 3 0 1 1 6 0v2h.5A1.5 1.5 0 0 1 13 8.5v5A1.5 1.5 0 0 1 11.5 15h-7A1.5 1.5 0 0 1 3 13.5v-5A1.5 1.5 0 0 1 4.5 7H5Zm1.5 0h3V5a1.5 1.5 0 0 0-3 0v2Z" />
+          </svg>
+        )}
+      </span>
+    ) }),
+  col({ id: "priority", accessorFn: (r) => ({ high: "High", medium: "Medium", low: "Low" })[r.priority] ?? "", size: 90, filterFn: "select" as never, meta: { label: "Priority", filter: "select" }, header: "Priority", cell: ({ row }) => (row.original.priority === "none" ? "" : <Pill tone={row.original.priority === "high" ? "red" : row.original.priority === "medium" ? "amber" : "slate"}>{row.original.priority}</Pill>) }),
+  col({ id: "salesAgent", accessorFn: (r) => r.salesAgent ?? "", size: 130, filterFn: "select" as never, meta: { label: "Sales agent", filter: "select" }, header: "Sales agent" }),
+  col({ id: "dispatcher", accessorFn: (r) => r.dispatcher ?? "", size: 130, filterFn: "select" as never, meta: { label: "Dispatcher", filter: "select" }, header: "Dispatcher" }),
+  col({ id: "customer", accessorFn: (r) => r.customer ?? "", size: 170, filterFn: "select" as never, meta: { label: "Customer", filter: "select" }, header: "Customer" }),
+  col({ id: "broker", accessorFn: (r) => r.broker ?? "", size: 150, filterFn: "select" as never, meta: { label: "Broker", filter: "select" }, header: "Broker" }),
+  col({ id: "origin", accessorFn: (r) => place(r.pickupCity, r.pickupState, r.pickupCountry, r.pickupName), size: 160, meta: { label: "Origin" }, header: "Origin", cell: ({ row }) => <span title={row.original.pickupName ?? ""}>{place(row.original.pickupCity, row.original.pickupState, row.original.pickupCountry, row.original.pickupName)}</span> }),
+  col({ id: "shipper", accessorFn: (r) => r.pickupName ?? "", size: 170, meta: { label: "Shipper" }, header: "Shipper" }),
+  col({ id: "pickupAt", accessorFn: (r) => r.pickupAt ?? "", size: 132, meta: { label: "Pickup", filter: "none", csv: (r) => r.pickupAt ?? "" }, header: "Pickup", cell: ({ row }) => when(row.original.pickupAt, row.original.pickupZone) }),
+  col({ id: "destination", accessorFn: (r) => place(r.deliveryCity, r.deliveryState, r.deliveryCountry, r.deliveryName), size: 160, meta: { label: "Destination" }, header: "Destination", cell: ({ row }) => <span title={row.original.deliveryName ?? ""}>{place(row.original.deliveryCity, row.original.deliveryState, row.original.deliveryCountry, row.original.deliveryName)}</span> }),
+  col({ id: "consignee", accessorFn: (r) => r.deliveryName ?? "", size: 170, meta: { label: "Consignee" }, header: "Consignee" }),
+  col({ id: "deliveryAt", accessorFn: (r) => r.deliveryAt ?? "", size: 132, meta: { label: "Delivery", filter: "none", csv: (r) => r.deliveryAt ?? "" }, header: "Delivery", cell: ({ row }) => when(row.original.deliveryAt, row.original.deliveryZone) }),
+  col({ id: "stops", accessorFn: (r) => r.stops, size: 70, meta: { label: "Stops", align: "right", filter: "none" }, header: "Stops" }),
+  col({ id: "legs", accessorFn: (r) => r.legs, size: 150, meta: { label: "Legs" }, header: "Legs", cell: ({ row }) => <span className="text-muted">{row.original.legs}</span> }),
+  col({ id: "equipment", accessorFn: (r) => EQUIPMENT[r.equipment] ?? r.equipment, size: 104, filterFn: "select" as never, meta: { label: "Equipment", filter: "select" }, header: "Equipment" }),
+  col({ id: "truck", accessorFn: (r) => r.truck ?? "", size: 90, meta: { label: "Truck", mono: true }, header: "Truck" }),
+  col({ id: "driver", accessorFn: (r) => r.driver ?? "", size: 150, meta: { label: "Driver" }, header: "Driver" }),
+  col({ id: "carrier", accessorFn: (r) => r.carrier ?? "", size: 160, filterFn: "select" as never, meta: { label: "Carrier", filter: "select" }, header: "Carrier" }),
+  col({ id: "rate", accessorFn: (r) => r.rateCents ?? -1, size: 104, meta: { label: "Rate", align: "right", filter: "none", csv: (r) => (r.rateCents == null ? "" : (r.rateCents / 100).toFixed(2)) }, header: "Rate", cell: ({ row }) => (row.original.rateCents == null ? <span className="text-faint">TBD</span> : money(row.original.rateCents, row.original.currency)) }),
+  col({ id: "cost", accessorFn: (r) => r.carrierCostCents, size: 104, meta: { label: "Carrier cost (USD)", align: "right", filter: "none", csv: (r) => (r.carrierCostCents / 100).toFixed(2) }, header: "Cost", cell: ({ row }) => (row.original.carrierCostCents ? money(row.original.carrierCostCents, "USD") : <span className="text-faint">—</span>) }),
+  col({ id: "margin", accessorFn: (r) => r.marginCents ?? -Infinity, size: 104, meta: { label: "Margin (USD)", align: "right", filter: "none", csv: (r) => (r.marginCents == null ? "" : (r.marginCents / 100).toFixed(2)) }, header: "Margin", cell: ({ row }) => (row.original.marginCents == null ? "" : <span className={row.original.marginCents < 0 ? "text-red font-semibold" : ""}>{money(row.original.marginCents, "USD")}</span>) }),
+  col({ id: "marginPct", accessorFn: (r) => (r.rateUsdCents ? (r.marginCents ?? 0) / r.rateUsdCents : -Infinity), size: 84, meta: { label: "Margin %", align: "right", filter: "none", csv: (r) => (r.rateUsdCents ? (((r.marginCents ?? 0) / r.rateUsdCents) * 100).toFixed(1) : "") }, header: "Margin %", cell: ({ row }) => (row.original.rateUsdCents ? `${(((row.original.marginCents ?? 0) / row.original.rateUsdCents) * 100).toFixed(0)}%` : "") }),
+  col({ id: "miles", accessorFn: (r) => r.miles ?? -1, size: 84, meta: { label: "Miles", align: "right", filter: "none", csv: (r) => r.miles ?? "" }, header: "Miles", cell: ({ row }) => (row.original.miles == null ? <span className="text-faint">—</span> : <>{row.original.miles.toLocaleString("en-US")}{row.original.milesEst && <span className="text-faint text-footnote" title="Estimated from the stops — type the real miles on the load"> est.</span>}</>) }),
+  col({ id: "rpm", accessorFn: (r) => r.rpmCents ?? -1, size: 80, meta: { label: "Rate / mile (USD)", align: "right", filter: "none", csv: (r) => (r.rpmCents == null ? "" : (r.rpmCents / 100).toFixed(2)) }, header: "RPM", cell: ({ row }) => (row.original.rpmCents == null ? "" : `$${(row.original.rpmCents / 100).toFixed(2)}`) }),
+  col({ id: "refs", accessorFn: (r) => r.refs, size: 200, meta: { label: "References" }, header: "References", cell: ({ row }) => <span className="text-muted">{row.original.refs}</span> }),
+  col({ id: "po", accessorFn: (r) => r.po ?? "", size: 120, meta: { label: "PO", mono: true }, header: "PO" }),
+  col({ id: "reference", accessorFn: (r) => r.reference ?? "", size: 130, meta: { label: "Customer load #", mono: true }, header: "Cust. load #" }),
+  col({ id: "rateCon", accessorFn: (r) => r.rateCon ?? "", size: 120, meta: { label: "Rate con #", mono: true }, header: "Rate con #" }),
+  col({ id: "bol", accessorFn: (r) => r.bol ?? "", size: 120, meta: { label: "BOL / shipment #", mono: true }, header: "BOL #" }),
+  col({ id: "crossing", accessorFn: (r) => r.crossing ?? "", size: 150, filterFn: "select" as never, meta: { label: "Crossing", filter: "select" }, header: "Crossing" }),
+  col({ id: "flags", accessorFn: (r) => r.flags, size: 72, meta: { label: "Flags", align: "right", filter: "none" }, header: "Flags", cell: ({ row }) => (row.original.flags ? <Pill tone={row.original.redFlags ? "red" : "amber"}>{row.original.flags}</Pill> : "") }),
+  col({ id: "source", accessorFn: (r) => r.source, size: 96, filterFn: "select" as never, meta: { label: "Source", filter: "select" }, header: "Source" }),
+  col({ id: "enteredBy", accessorFn: (r) => r.enteredBy ?? "", size: 130, filterFn: "select" as never, meta: { label: "Entered by", filter: "select" }, header: "Entered by" }),
+  col({ id: "createdAt", accessorFn: (r) => r.createdAt, size: 124, meta: { label: "Created", filter: "none", csv: (r) => r.createdAt }, header: "Created", cell: ({ row }) => when(row.original.createdAt, row.original.companyZone) }),
+  col({ id: "deliveredAt", accessorFn: (r) => r.deliveredAt ?? "", size: 124, meta: { label: "Delivered", filter: "none", csv: (r) => r.deliveredAt ?? "" }, header: "Delivered", cell: ({ row }) => when(row.original.deliveredAt, row.original.deliveryZone) }),
+];
+
+const DEFAULT: ViewConfig = {
+  columns: ["orderNumber", "state", "priority", "customer", "origin", "pickupAt", "destination", "deliveryAt", "legs", "truck", "driver", "carrier", "rate", "margin", "miles", "rpm", "refs", "flags"],
+  hidden: ["salesAgent", "dispatcher", "broker", "shipper", "consignee", "stops", "equipment", "cost", "marginPct", "po", "reference", "rateCon", "bol", "crossing", "source", "enteredBy", "createdAt", "deliveredAt"],
+  sort: [{ id: "createdAt", desc: true }],
+  quick: "all",
+  pageSize: 50,
+};
+
+function Totals({ rows }: { rows: LoadRow[] }) {
+  // revenue kept per currency; cost, margin and rate per mile are USD (MXN / CAD rates converted first)
+  const revBy = new Map<string, number>();
+  let usdRev = 0;
+  let cost = 0;
+  let margin = 0;
+  let marginRev = 0;
+  let revMiles = 0;
+  let milesRated = 0;
+  let miles = 0;
+  for (const r of rows) {
+    if (r.rateCents != null) revBy.set(r.currency, (revBy.get(r.currency) ?? 0) + r.rateCents);
+    if (r.rateUsdCents != null) {
+      usdRev += r.rateUsdCents;
+      if (r.marginCents != null) {
+        margin += r.marginCents;
+        marginRev += r.rateUsdCents;
+      }
+      if (r.miles) {
+        revMiles += r.rateUsdCents;
+        milesRated += r.miles;
+      }
+    }
+    cost += r.carrierCostCents;
+    miles += r.miles ?? 0;
+  }
+  const others = [...revBy.entries()].filter(([c]) => c !== "USD");
+  const cells: [string, string][] = [
+    ["Loads", rows.length.toLocaleString("en-US")],
+    ["Loaded miles", miles.toLocaleString("en-US")],
+    ["Revenue", money0(revBy.get("USD") ?? 0)],
+    ...others.map(([c, v]) => [`Revenue ${c}`, money0(v, c)] as [string, string]),
+    ...(others.length ? [["All revenue in USD", money0(usdRev)] as [string, string]] : []),
+    ["Carrier cost", money0(cost)],
+    ["Margin (covered)", marginRev ? money0(margin) : "—"],
+    ["Margin %", marginRev ? `${((margin / marginRev) * 100).toFixed(1)}%` : "—"],
+    ["Avg rate / mile", milesRated ? `$${(revMiles / milesRated / 100).toFixed(2)}` : "—"],
+  ];
+  return (
+    <>
+      {cells.map(([k, v]) => (
+        <div key={k} className="tot" data-testid={`total-${k}`}>
+          <div className="k">{k}</div>
+          <div className="v">{v}</div>
+        </div>
+      ))}
+    </>
+  );
+}
+
+export function LoadBoard({ rows, views, role }: { rows: LoadRow[]; views: GridView[]; role: string }) {
+  const router = useRouter();
+  const t = useToast();
+  const [pending, start] = useTransition();
+  const today = new Date();
+  const quick: QuickFilter<LoadRow>[] = [
+    { id: "open", label: "Open", test: (r) => OPEN.includes(r.state) },
+    { id: "uncovered", label: "Needs a truck", test: (r) => OPEN.includes(r.state) && r.uncoveredLegs > 0 },
+    { id: "today", label: "Picking up today", test: (r) => sameDay(r.pickupAt, today, r.pickupZone) },
+    { id: "transit", label: "In transit", test: (r) => r.state === "in_transit" || r.state === "dispatched" },
+    { id: "tobill", label: "To bill", test: (r) => (r.state === "delivered" || r.state === "ready_to_bill") && !r.podMissing },
+    { id: "nopod", label: "Missing POD", test: (r) => r.podMissing },
+    { id: "border", label: "Cross-border", test: (r) => r.crossBorder },
+    { id: "flags", label: "Flagged", test: (r) => r.flags > 0 },
+  ];
+  const canBook = ["owner", "dispatcher"].includes(role);
+  return (
+    <>
+      <DataGrid<LoadRow>
+        data={rows}
+        columns={COLUMNS}
+        defaultConfig={DEFAULT}
+        quickFilters={quick}
+        views={views}
+        onSaveView={async (v) => {
+          const r = await saveLoadViewAction(v);
+          if (r.ok) router.refresh();
+          return r;
+        }}
+        onDeleteView={async (id) => {
+          const r = await deleteLoadViewAction(id);
+          if (r.ok) router.refresh();
+          return r;
+        }}
+        rowHref={(r) => (r.kind === "trip" ? `/trips/${r.id}` : `/orders/${r.id}`)}
+        totals={(r) => <Totals rows={r} />}
+        exportName="loads"
+        searchPlaceholder="Search load #, customer, city, PO, driver…"
+        empty={
+          <div>
+            <div className="font-bold">No loads yet</div>
+            <div className="text-muted text-callout mt-1">
+              <Link href="/orders/new" className="text-teal font-semibold">
+                Build the first one
+              </Link>{" "}
+              — or press n on Dispatch.
+            </div>
+          </div>
+        }
+        bulk={
+          canBook
+            ? (sel, clear) => {
+                const drafts = sel.filter((r) => r.state === "draft");
+                return (
+                  <button
+                    type="button"
+                    className="font-semibold text-callout hover:underline disabled:opacity-40"
+                    disabled={!drafts.length || pending}
+                    onClick={() =>
+                      start(async () => {
+                        const r = await bulkBookAction(drafts.map((d) => d.id));
+                        if (!r.ok) return t.err(r.error);
+                        clear();
+                        router.refresh();
+                        if (r.data.failed.length) t.err(`Booked ${r.data.booked}; ${r.data.failed.length} could not be booked: ${r.data.failed[0]}`);
+                        else if (r.data.warnings.length) t.err(`Booked ${r.data.booked} — check: ${r.data.warnings.slice(0, 2).join("; ")}${r.data.warnings.length > 2 ? ` (+${r.data.warnings.length - 2} more)` : ""}`);
+                        else t.ok(`Booked ${r.data.booked}`);
+                      })
+                    }
+                  >
+                    Book {drafts.length ? `${drafts.length} draft${drafts.length === 1 ? "" : "s"}` : "drafts"}
+                  </button>
+                );
+              }
+            : undefined
+        }
+      />
+      <Toast message={t.toast?.message ?? null} tone={t.toast?.tone} onDone={t.clear} />
+    </>
+  );
+}

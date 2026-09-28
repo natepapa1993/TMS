@@ -1,0 +1,1365 @@
+{
+  "_doc": "Feature board (spec §10.1a). Every feature has an ID, a status, and the tests that prove it. `pnpm features` fails CI when a feature marked done has no passing test reference, or a referenced test file is missing / does not mention the ID.",
+  "features": [
+    {
+      "id": "F-1.1",
+      "name": "Quick-add popup for every master-data record",
+      "milestone": "M0",
+      "status": "done",
+      "tests": [
+        "src/data/fields.test.ts",
+        "e2e/setup.spec.ts"
+      ]
+    },
+    {
+      "id": "F-1.2",
+      "name": "Record screen: edit everything, history, concurrent-edit guard",
+      "milestone": "M0",
+      "status": "done",
+      "tests": [
+        "src/data/records.test.ts",
+        "e2e/setup.spec.ts"
+      ]
+    },
+    {
+      "id": "F-1.3",
+      "name": "CSV import with preview, auto-map, de-dup on unique key",
+      "milestone": "M0",
+      "status": "done",
+      "tests": [
+        "src/data/import.test.ts",
+        "e2e/setup.spec.ts"
+      ]
+    },
+    {
+      "id": "F-1.4",
+      "name": "Archive blocked while a record is on an open order/leg; restore",
+      "milestone": "M0",
+      "status": "done",
+      "tests": [
+        "src/data/records.test.ts",
+        "e2e/setup.spec.ts"
+      ]
+    },
+    {
+      "id": "F-1.5",
+      "name": "Roles and permissions enforced server-side",
+      "milestone": "M0",
+      "status": "done",
+      "tests": [
+        "src/data/records.test.ts",
+        "src/domain/orders.test.ts"
+      ]
+    },
+    {
+      "id": "F-2.1",
+      "name": "Orders: YY-NNNNN numbering, legs cut from the stops (hand-off stops end a leg, a leg that changes country is the crossing), book guards",
+      "milestone": "M0",
+      "status": "done",
+      "tests": [
+        "src/domain/orders.test.ts",
+        "e2e/dispatch.spec.ts"
+      ]
+    },
+    {
+      "id": "F-2.2",
+      "name": "Order and leg state machines (exhaustive transition tables)",
+      "milestone": "M0",
+      "status": "done",
+      "tests": [
+        "src/domain/states.test.ts",
+        "src/domain/orders.test.ts"
+      ]
+    },
+    {
+      "id": "F-2.3",
+      "name": "Dispatch board: Pending / Planned / Dispatched / Delivered by next actionable leg",
+      "milestone": "M0",
+      "status": "done",
+      "tests": [
+        "src/domain/orders.test.ts",
+        "e2e/dispatch.spec.ts"
+      ]
+    },
+    {
+      "id": "F-3.1",
+      "name": "Plan a leg on a truck or partner carrier; send; accept/decline; advance",
+      "milestone": "M0",
+      "status": "done",
+      "tests": [
+        "src/domain/orders.test.ts",
+        "e2e/dispatch.spec.ts"
+      ]
+    },
+    {
+      "id": "F-3.2",
+      "name": "Eligibility engine: B-1 hard block on US legs, brown plates, expired docs, overrides audited",
+      "milestone": "M0",
+      "status": "done",
+      "tests": [
+        "src/domain/eligibility.test.ts",
+        "src/domain/orders.test.ts",
+        "e2e/dispatch.spec.ts"
+      ]
+    },
+    {
+      "id": "F-11.1",
+      "name": "Ranked candidate list with a plain-English reason per unit",
+      "milestone": "M0",
+      "status": "done",
+      "tests": [
+        "src/domain/orders.test.ts",
+        "e2e/dispatch.spec.ts"
+      ]
+    },
+    {
+      "id": "F-11.2",
+      "name": "Split a leg at a new stop",
+      "milestone": "M0",
+      "status": "done",
+      "tests": [
+        "src/domain/orders.test.ts",
+        "e2e/dispatch.spec.ts"
+      ]
+    },
+    {
+      "id": "F-11.3",
+      "name": "Unit out of service pulls planned/sent legs back to Pending, flags moving ones",
+      "milestone": "M0",
+      "status": "done",
+      "tests": [
+        "src/domain/orders.test.ts",
+        "e2e/dispatch.spec.ts"
+      ]
+    },
+    {
+      "id": "F-11.4",
+      "name": "Team drivers on a unit / on a leg with eligibility re-check",
+      "milestone": "M0",
+      "status": "done",
+      "tests": [
+        "src/domain/orders.test.ts",
+        "e2e/dispatch.spec.ts"
+      ]
+    },
+    {
+      "id": "F-11.5",
+      "name": "Hold / release an order; cancel with reason",
+      "milestone": "M0",
+      "status": "done",
+      "tests": [
+        "src/domain/orders.test.ts",
+        "e2e/dispatch.spec.ts"
+      ]
+    },
+    {
+      "id": "F-15",
+      "name": "Tenant isolation: every query scoped, cross-tenant reads fail closed",
+      "milestone": "M0",
+      "status": "done",
+      "tests": [
+        "src/data/records.test.ts",
+        "src/domain/orders.test.ts",
+        "e2e/dispatch.spec.ts"
+      ]
+    },
+    {
+      "id": "F-16",
+      "name": "Audit row on every write",
+      "milestone": "M0",
+      "status": "done",
+      "tests": [
+        "src/data/records.test.ts",
+        "src/domain/orders.test.ts"
+      ]
+    },
+    {
+      "id": "F-4",
+      "name": "Tendering: offer a leg to a carrier by email link with a deadline; accept/decline/expire/withdraw",
+      "milestone": "M1",
+      "status": "done",
+      "tests": [
+        "src/domain/tracking.test.ts",
+        "e2e/tracking.spec.ts"
+      ]
+    },
+    {
+      "id": "F-5",
+      "name": "Tracking: driver app (one button per step, GPS), Motive ELD poll, phone pings, customer tracking link, no-position watchdog",
+      "milestone": "M1",
+      "status": "done",
+      "tests": [
+        "src/domain/tracking.test.ts",
+        "src/integrations/motive.test.ts",
+        "e2e/tracking.spec.ts"
+      ]
+    },
+    {
+      "id": "F-4.2",
+      "name": "WhatsApp Business (Meta Cloud API): tenders, packets and links out through the outbox with templates, delivery/read receipts, inbound replies on the leg timeline and a Messages inbox, per-company webhook",
+      "milestone": "M1.5",
+      "status": "done",
+      "tests": [
+        "src/integrations/whatsapp.test.ts",
+        "src/domain/messaging.test.ts",
+        "e2e/whatsapp.spec.ts"
+      ]
+    },
+    {
+      "id": "F-3",
+      "name": "Crossing: rules → checklist, documents with versions, 14 cross-checks with audited overrides, eligibility, packet PDF, generated Solicitud de Retiro, 16-state machine, driver border steps, dwell + packet watchdogs",
+      "milestone": "M2",
+      "status": "done",
+      "tests": [
+        "src/domain/crossing.test.ts",
+        "e2e/crossing.spec.ts"
+      ]
+    },
+    {
+      "id": "F-3.6",
+      "name": "NAD / Viatpro portal connectors (pull crossing documents into the checklist)",
+      "milestone": "M2.5",
+      "status": "planned",
+      "tests": []
+    },
+    {
+      "id": "F-3.4",
+      "name": "AI document reader (Anthropic): crossing document fields read on upload with a confidence per field, human confirms before anything counts, per-company key",
+      "milestone": "M2.5",
+      "status": "done",
+      "tests": [
+        "src/integrations/extractor.test.ts",
+        "src/domain/crossing.test.ts",
+        "e2e/crossing.spec.ts"
+      ]
+    },
+    {
+      "id": "F-6",
+      "name": "Compliance: document rules → status per driver/truck/trailer/carrier, dispatchable flag in the picker/tender/crossing, uploads on the record, snooze, 24-h owner override, CSV export, daily digest, incident register",
+      "milestone": "M3",
+      "status": "done",
+      "tests": [
+        "src/domain/compliance.test.ts",
+        "e2e/compliance.spec.ts"
+      ]
+    },
+    {
+      "id": "F-7",
+      "name": "Billing & settlements: own ledger — charges, docs gate, invoices per entity, receipts, credits, disputes, AR aging/statements/reminders, close, carrier bills (three-way, short-pay, quick pay), driver settlements + app, order P&L",
+      "milestone": "M4",
+      "status": "done",
+      "tests": [
+        "src/domain/billing.test.ts",
+        "e2e/billing.spec.ts"
+      ],
+      "notes": "EDI 210 and QuickBooks export are F-7.2."
+    },
+    {
+      "id": "F-8",
+      "name": "EDI with customers: 204 tenders in → draft orders / inbox with 990, 214 milestones out, 210 invoices out, 997 both ways, partner setup as master data, inbound URL per partner",
+      "milestone": "M5",
+      "status": "done",
+      "tests": [
+        "src/integrations/edi/x12.test.ts",
+        "src/domain/edi.test.ts",
+        "e2e/edi.spec.ts"
+      ]
+    },
+    {
+      "id": "F-9",
+      "name": "Reporting: owner's six numbers (revenue per truck, empty %, margin, loads at risk, crossings pending, expiring documents) + AR, breakdowns by truck / driver / customer / lane / carrier / week with drill-down to the loads, CSV export, per entity, company time zone",
+      "milestone": "M7",
+      "status": "done",
+      "tests": [
+        "src/domain/reports.test.ts",
+        "e2e/billing.spec.ts"
+      ]
+    },
+    {
+      "id": "F-10",
+      "name": "Carrier portal: one persistent link per partner carrier — offers with accept/decline + driver, loads with one-tap steps and driver details, rate confirmation PDF, invoice against the delivered leg into the three-way check, COI/W-9 uploads into compliance, scorecard (acceptance, on-time, tracked) on both sides",
+      "milestone": "M8",
+      "status": "done",
+      "tests": [
+        "src/domain/carrier-portal.test.ts",
+        "e2e/carrier-portal.spec.ts"
+      ]
+    },
+    {
+      "id": "F-12",
+      "name": "Tailgate / LTL: trips built from stops (legs cut automatically, southbound crossings), shipments with their own customer, rate, refs, docs, POD and invoice, capacity + LIFO load plan with live fit, shipment states from the trip's stop clocks, holds / partial release, per-shipment crossing docs on the packet, trip manifest, trip costs shared per shipment in P&L and reports — the plan's acceptance test",
+      "milestone": "M9",
+      "status": "done",
+      "tests": [
+        "src/domain/tailgate.test.ts",
+        "e2e/tailgate.spec.ts"
+      ]
+    },
+    {
+      "id": "F-7.2",
+      "name": "QuickBooks export: IIF for Desktop, CSV lists for Online; invoices, receipts, carrier bills + payments, driver settlements; runs stamp what went out; reopen",
+      "milestone": "M5",
+      "status": "done",
+      "tests": [
+        "src/domain/accounting.test.ts",
+        "e2e/billing.spec.ts"
+      ]
+    },
+    {
+      "id": "F-11.18",
+      "name": "Sylectus Virtual Fleet two-way",
+      "milestone": "M5",
+      "status": "planned",
+      "tests": []
+    },
+    {
+      "id": "F-13",
+      "name": "Customer portal: loads with tracking, POD and invoices, balance, load requests to Dispatch",
+      "milestone": "M10",
+      "status": "done",
+      "tests": [
+        "src/domain/customer-portal.test.ts",
+        "e2e/customer-portal.spec.ts"
+      ]
+    },
+    {
+      "id": "F-14",
+      "name": "EDI VAN mailbox over SFTP: inbox pulled through the 204 path, outbox pushed with 214/210/997/990, files moved to done/failed",
+      "milestone": "M11",
+      "status": "done",
+      "tests": [
+        "src/domain/edi-mailbox.test.ts",
+        "src/integrations/edi/mailbox.test.ts",
+        "e2e/edi-mailbox.spec.ts"
+      ]
+    },
+    {
+      "id": "F-2.9",
+      "name": "Book it again: copy an order into a new draft (same shape, nothing from the old load)",
+      "milestone": "M1",
+      "status": "done",
+      "tests": [
+        "src/domain/orders.test.ts",
+        "e2e/dispatch.spec.ts"
+      ]
+    },
+    {
+      "id": "F-1.6",
+      "name": "Sign-in hardening: throttled attempts, no open redirect, security headers, uploads to 25 MB with a plain message when too big",
+      "milestone": "M0",
+      "status": "done",
+      "tests": [
+        "src/lib/throttle.test.ts",
+        "e2e/dispatch.spec.ts"
+      ]
+    },
+    {
+      "id": "F-5.9",
+      "name": "Appointment windows against the clock: missed-window (red) and nobody-accepted-yet (yellow) flags that clear themselves",
+      "milestone": "M1",
+      "status": "done",
+      "tests": [
+        "src/domain/tracking.test.ts"
+      ]
+    },
+    {
+      "id": "F-3.9",
+      "name": "Trailers (cajas) on Fleet: on a load now, last dropped where, idle days",
+      "milestone": "M1",
+      "status": "done",
+      "tests": [
+        "src/domain/fleet.test.ts",
+        "e2e/compliance.spec.ts"
+      ]
+    },
+    {
+      "id": "F-2.10",
+      "name": "Carrier lane rates prefill the tender: newest valid rate for the carrier, lane and equipment, with its fuel rule",
+      "milestone": "M1",
+      "status": "done",
+      "tests": [
+        "src/domain/orders.test.ts",
+        "e2e/carrier-portal.spec.ts"
+      ]
+    },
+    {
+      "id": "F-5.10",
+      "name": "Detention-running flag and red-flag emails to the people on duty",
+      "milestone": "M1",
+      "status": "done",
+      "tests": [
+        "src/domain/tracking.test.ts"
+      ]
+    },
+    {
+      "id": "F-5.11",
+      "name": "Driver app: seal and POD photos at the stop (POD per shipment on a trip), renewals photographed from the phone that wait for safety's confirm/reject, a line to dispatch with replies in the app and on WhatsApp, driver-app link card on the record with revoke",
+      "milestone": "M1",
+      "status": "done",
+      "tests": [
+        "src/domain/tracking.test.ts",
+        "src/domain/compliance.test.ts",
+        "src/domain/tailgate.test.ts",
+        "e2e/tracking.spec.ts",
+        "e2e/compliance.spec.ts"
+      ]
+    },
+    {
+      "id": "F-5.12",
+      "name": "Partner carrier's driver link: one per carrier leg from the Track popup or the carrier portal — the load, one button per step with the phone's position (verified events, last position on the tracking page, scorecard 'tracked'), POD photo at the delivery, dead when the leg is done",
+      "milestone": "M8",
+      "status": "done",
+      "tests": [
+        "src/domain/carrier-portal.test.ts",
+        "e2e/carrier-portal.spec.ts"
+      ]
+    },
+    {
+      "id": "F-5.13",
+      "name": "Seal continuity: seal applied / seal found recorded at each stop from the driver app, the carrier's driver link, the carrier portal or the office; red seal_mismatch flag naming both stops, cleared on correction; printed on the trip manifest",
+      "milestone": "M1",
+      "status": "done",
+      "tests": [
+        "src/domain/orders.test.ts",
+        "e2e/tracking.spec.ts"
+      ]
+    },
+    {
+      "id": "F-5.14",
+      "name": "Verified ETA: last position (ping or GPS step) to the next stop at learned corridor speeds; stops and locations learn coordinates from verified arrivals; the load builder links stops to saved locations by name; ETA on the dispatch panel, tracking page and customer portal; eta_late flag against the window",
+      "milestone": "M1",
+      "status": "done",
+      "tests": [
+        "src/lib/geo.test.ts",
+        "src/domain/tracking.test.ts",
+        "e2e/tracking.spec.ts"
+      ]
+    },
+    {
+      "id": "F-7.6",
+      "name": "The owner's Monday email: last week's six numbers, top customers and trucks",
+      "milestone": "M7",
+      "status": "done",
+      "tests": [
+        "src/domain/reports.test.ts"
+      ]
+    },
+    {
+      "id": "F-6.9",
+      "name": "Read with AI on compliance uploads: expiry, issue date, number, holder before filing",
+      "milestone": "M6",
+      "status": "done",
+      "tests": [
+        "src/domain/compliance.test.ts",
+        "e2e/compliance.spec.ts"
+      ]
+    },
+    {
+      "id": "F-4.9",
+      "name": "Rate confirmation read against the order: a differing rate is a flag for billing",
+      "milestone": "M6",
+      "status": "done",
+      "tests": [
+        "src/domain/billing.test.ts"
+      ]
+    },
+    {
+      "id": "F-1.7",
+      "name": "Contacts on customers, carriers, customs brokers; port bridges; alert days on rules; tracking link on dispatch for customers who require it; company dispatch phone (Call / WhatsApp in the driver apps)",
+      "milestone": "M0",
+      "status": "done",
+      "tests": [
+        "src/data/fields.test.ts",
+        "src/domain/tracking.test.ts",
+        "src/domain/company.test.ts"
+      ]
+    },
+    {
+      "id": "F-15",
+      "name": "The inbox agent (Module 12): every email to dispatch@ (IMAP with an app password, or the company's inbound URL) is classified by rules and by the AI reader when connected, read into fields, matched deterministically (order number, PO, trailer, sender), and proposed as one card — draft order with the rate con attached, document onto the order or the crossing, a drafted status reply from verified tracking (EN/ES), detention computed, a receipt on the invoice named; Approve / Edit / Ignore; nothing runs without the tap; the email is the source on the timeline",
+      "milestone": "M12",
+      "status": "done",
+      "tests": [
+        "src/domain/mail.test.ts",
+        "e2e/inbox.spec.ts"
+      ]
+    },
+    {
+      "id": "F-2.11",
+      "name": "Load builder: any number of stops in order (pickup, delivery, yard, border yard, transload, customs, terminal), each with location (saved or typed, save-as-location), address, window or appointment, reference, contact and instructions; freight lines; references; USD/MXN/CAD; live legs preview; nothing pre-filled",
+      "milestone": "M2",
+      "status": "done",
+      "tests": [
+        "src/domain/orders.test.ts",
+        "e2e/load-builder.spec.ts"
+      ]
+    },
+    {
+      "id": "F-2.12",
+      "name": "Stops editable on a booked load: add, move, remove; legs re-cut (assignments kept where the leg is unchanged, crossings with documents protected); once rolling, only ahead of the truck",
+      "milestone": "M2",
+      "status": "done",
+      "tests": [
+        "src/domain/orders.test.ts",
+        "e2e/load-builder.spec.ts"
+      ]
+    },
+    {
+      "id": "F-3.10",
+      "name": "Canada: CA as a country everywhere (stops, locations, carriers with NSC, CA plates, CA drivers); cabotage in eligibility; US↔CA crossings with their own checklist (PARS, ACI eManifest, CCI; ACE only into the US) and direction-aware states and checks",
+      "milestone": "M3",
+      "status": "done",
+      "tests": [
+        "src/domain/orders.test.ts",
+        "src/domain/crossing.test.ts",
+        "e2e/load-builder.spec.ts"
+      ]
+    },
+    {
+      "id": "F-20.1",
+      "name": "Load board grid: configurable/pinned columns, column filters, sort, saved views, totals bar (miles, revenue, cost, margin, RPM), CSV export, bulk actions",
+      "milestone": "M20",
+      "status": "done",
+      "tests": [
+        "src/domain/load-grid.test.ts",
+        "e2e/load-board.spec.ts"
+      ]
+    },
+    {
+      "id": "F-20.2",
+      "name": "Load page with tabs; money box (flat / per mile / per weight linehaul, accessorials, FSC); typed notes; roles on the load (sales agent, CSR, dispatcher); priority; TONU; lock",
+      "milestone": "M20",
+      "status": "done",
+      "tests": [
+        "src/domain/load-page.test.ts",
+        "e2e/load-page.spec.ts"
+      ]
+    },
+    {
+      "id": "F-20.3",
+      "name": "Rate con upload in the load builder fills the whole load (customer, rate, refs, freight, every stop); the PDF lands on the load",
+      "milestone": "M20",
+      "status": "done",
+      "tests": [
+        "src/domain/ratecon-reader.test.ts",
+        "e2e/load-builder.spec.ts"
+      ]
+    },
+    {
+      "id": "F-20.4",
+      "name": "Dispatch planner: loads to cover beside drivers with when and where each comes free, what is next, HOS (once an ELD feeds it); picking a load ranks drivers (eligibility, then deadhead); assign or assign & send; bulk send planned legs",
+      "milestone": "M20",
+      "status": "done",
+      "tests": [
+        "src/domain/planner.test.ts",
+        "e2e/planner.spec.ts"
+      ]
+    },
+    {
+      "id": "F-20.5",
+      "name": "Driver and truck events (vacation, home time, restart, sick, shop, work order): a hard event blocks assignment in its window (override with a reason), a soft one warns; shown in the planner and the ranked picker",
+      "milestone": "M20",
+      "status": "done",
+      "tests": [
+        "src/domain/planner.test.ts",
+        "e2e/planner.spec.ts"
+      ]
+    },
+    {
+      "id": "F-20.6",
+      "name": "Live map: every truck at its newest position (moving / stopped / no recent / out of service, heading), its driver, load and next stop; partner carriers on our loads while tracked; search and filters; refreshes every minute",
+      "milestone": "M20",
+      "status": "done",
+      "tests": [
+        "src/domain/asset-map.test.ts",
+        "e2e/map.spec.ts"
+      ]
+    },
+    {
+      "id": "F-20.7",
+      "name": "Professional visual pass: Inter, square badges, 6–8 px radii, calm weights, grouped sidebar (Operations, Assets & partners, Accounting, Safety, Company) with real icons, business copy",
+      "milestone": "M20",
+      "status": "done",
+      "tests": [
+        "e2e/setup.spec.ts",
+        "e2e/load-board.spec.ts"
+      ]
+    },
+    {
+      "id": "F-21.1",
+      "name": "Driver pay plans: per loaded / empty / total mile, % of line haul or of everything billed, flat per load or leg, per stop, per extra stop, hourly, crossing pay — each limited by leg type, customer, equipment or mile range; team split; per diem; minimum per statement; live preview; drivers assigned to plans",
+      "milestone": "M21",
+      "status": "done",
+      "tests": [
+        "src/domain/pay-plans.test.ts",
+        "e2e/pay-plans.spec.ts"
+      ]
+    },
+    {
+      "id": "F-21.2",
+      "name": "Deductions (one-time, recurring, with a total to recover), advances taken back in full, escrow held up to a target with its balance and release",
+      "milestone": "M21",
+      "status": "done",
+      "tests": [
+        "src/domain/pay-plans.test.ts",
+        "e2e/pay-plans.spec.ts"
+      ]
+    },
+    {
+      "id": "F-21.3",
+      "name": "Contracted lane rates and fuel surcharge tables applied automatically",
+      "milestone": "M21",
+      "status": "done",
+      "tests": [
+        "src/domain/rates.test.ts",
+        "e2e/rates.spec.ts"
+      ]
+    },
+    {
+      "id": "F-21.4",
+      "name": "Billing runs (preview, create, issue and send many loads at once), summary invoices per customer, invoice + documents packet by email with CC, factoring (remit-to, notice of assignment, schedule of accounts to the factor), EDI 210, portal and mail recorded",
+      "milestone": "M21",
+      "status": "done",
+      "tests": [
+        "src/domain/invoicing.test.ts",
+        "e2e/invoicing.spec.ts"
+      ]
+    },
+    {
+      "id": "F-21.5",
+      "name": "IFTA quarterly return: miles by state/province from GPS (ELD or driver app) or each load's route split at borders, trip sheets; fuel entered or imported from any fuel card export (DEF excluded); quarterly rates with surcharges; fleet MPG, net taxable gallons, tax/credit per jurisdiction; per-truck MPG checks; CSV",
+      "milestone": "M21",
+      "status": "done",
+      "tests": [
+        "src/domain/ifta.test.ts",
+        "e2e/ifta.spec.ts"
+      ]
+    },
+    {
+      "id": "F-22.1",
+      "name": "ELDs: Samsara, Geotab (plus Motive): positions, HOS, IFTA miles",
+      "milestone": "M22",
+      "status": "planned",
+      "tests": []
+    },
+    {
+      "id": "F-22.2",
+      "name": "Fuel cards (EFS, Comdata, Love's, Relay, Pilot, TCS) and tolls (BestPass, PrePass, iPass) import, matched to driver/truck, deduct or discount",
+      "milestone": "M22",
+      "status": "planned",
+      "tests": []
+    },
+    {
+      "id": "F-22.3",
+      "name": "Load boards: post to DAT and Truckstop",
+      "milestone": "M22",
+      "status": "planned",
+      "tests": []
+    },
+    {
+      "id": "F-22.4",
+      "name": "Carrier vetting: FMCSA lookup, Highway, MyCarrierPackets, RMIS, SaferWatch; block unvetted carriers",
+      "milestone": "M22",
+      "status": "planned",
+      "tests": []
+    },
+    {
+      "id": "F-22.5",
+      "name": "Visibility networks: MacroPoint, FourKites, project44, Trucker Tools",
+      "milestone": "M22",
+      "status": "planned",
+      "tests": []
+    },
+    {
+      "id": "F-22.6",
+      "name": "Expedite tender networks: AOD, XPO-NLM, Expeditors ECCO, Load One",
+      "milestone": "M22",
+      "status": "planned",
+      "tests": []
+    },
+    {
+      "id": "F-22.7",
+      "name": "QuickBooks Online two-way sync; factoring companies (TAFS, RTS, Triumph, OTR…)",
+      "milestone": "M22",
+      "status": "planned",
+      "tests": []
+    },
+    {
+      "id": "F-23.1",
+      "name": "Safety: accidents, claims, roadside inspections, MVR, Clearinghouse, drug and alcohol tests",
+      "milestone": "M23",
+      "status": "planned",
+      "tests": []
+    },
+    {
+      "id": "F-23.2",
+      "name": "Maintenance records and PM alerts (or CircleLogix link)",
+      "milestone": "M23",
+      "status": "planned",
+      "tests": []
+    },
+    {
+      "id": "F-23.3",
+      "name": "Granular roles and permissions, offices, fleets, MFA",
+      "milestone": "M23",
+      "status": "planned",
+      "tests": []
+    },
+    {
+      "id": "F-23.4",
+      "name": "Public REST API and webhooks",
+      "milestone": "M23",
+      "status": "planned",
+      "tests": []
+    },
+    {
+      "id": "F-23.5",
+      "name": "Dashboards (operations, financial) and a report builder; scheduled reports",
+      "milestone": "M23",
+      "status": "planned",
+      "tests": []
+    },
+    {
+      "id": "F-23.6",
+      "name": "Ask-a-question AI over the company's data",
+      "milestone": "M23",
+      "status": "planned",
+      "tests": []
+    },
+    {
+      "id": "F-23.7",
+      "name": "Private load and bid board with partner carriers (exchange)",
+      "milestone": "M23",
+      "status": "planned",
+      "tests": []
+    },
+    {
+      "id": "F-20.8",
+      "name": "Load templates (lanes run often: times of day at each stop's zone, day offsets) — save from the builder or a load, start a load from one, create a run of loads for chosen weekdays; import loads from Excel or CSV (one row per load, or one row per stop grouped by load) with a preview of every problem",
+      "milestone": "M20",
+      "status": "done",
+      "tests": [
+        "src/domain/load-templates.test.ts",
+        "src/domain/load-import.test.ts",
+        "e2e/templates.spec.ts"
+      ]
+    },
+    {
+      "id": "F-24.1",
+      "name": "Trip board: dense rows most urgent first; buckets (Needs truck, Tendered, Planned, Sent, In transit, Delivered, Drafts) with multi-leg loads in every bucket they belong to; alert chips (Late, At risk, No ping 2h+, No truck < 24h, Picks/Delivers today, Flagged); stop-local times with zone; next stop ETA vs appointment; power with trailer; last GPS ping; rate, miles, RPM; j/k; compact mode; overlay panel",
+      "milestone": "M24",
+      "status": "done",
+      "tests": [
+        "src/domain/board.test.ts",
+        "e2e/board.spec.ts"
+      ]
+    },
+    {
+      "id": "F-24.2",
+      "name": "Check calls (status, where — last GPS when blank — ETA on the stop's clock, reefer temp, note, email to the customer's tracking contact; breakdown raises a flag) on the board panel and the load page's tracking card; a time confirmation before arrival, load and delivery stamps",
+      "milestone": "M24",
+      "status": "done",
+      "tests": [
+        "src/domain/board.test.ts",
+        "e2e/board.spec.ts"
+      ]
+    },
+    {
+      "id": "F-24.3",
+      "name": "Global search (⌘K) over load #, any reference, stop city, unit, trailer, driver, customer, carrier; stop times typed and shown on the stop's own clock; assign picker with trailer, free at/where and deadhead; carrier eligibility and tender margin up front; one margin (estimated driver pay and fuel) on the load, the Loads grid and the Money tab",
+      "milestone": "M24",
+      "status": "done",
+      "tests": [
+        "src/domain/board.test.ts",
+        "e2e/board.spec.ts"
+      ]
+    },
+    {
+      "id": "F-25.1",
+      "name": "Driver qualification file (49 CFR 391.51 + Clearinghouse queries): application, record at hire (MVR / driver's abstract / LIFIS), road test, pre-employment test, prior employers within 30 days, annual record, review and query; hire prerequisites block dispatch (F-25.5); papers attached; per-driver safety file page",
+      "milestone": "M25",
+      "status": "done",
+      "tests": [
+        "src/domain/safety.test.ts",
+        "e2e/safety.spec.ts"
+      ]
+    },
+    {
+      "id": "F-25.2",
+      "name": "Drug & alcohol program (Parts 40/382), confidential to owner and Safety: random draws with pool and rates on record, tests and results, refusal/positive → a hold dispatch sees without the reason (not overridable) until a negative return-to-duty test, SAP follow-ups, Clearinghouse to-dos, post-accident testing owed from the incident register",
+      "milestone": "M25",
+      "status": "done",
+      "tests": [
+        "src/domain/safety.test.ts",
+        "e2e/safety.spec.ts"
+      ]
+    },
+    {
+      "id": "F-25.3",
+      "name": "Roadside inspections: CVSA level, US/CA/MX jurisdiction, violations filed under their BASIC by CFR part with severity and OOS, DataQs; SMS-style time- and severity-weighted measures per BASIC (US only), crash indicator from recordable, preventable crashes; OOS rates by country; drivers by points; an OOS on a load flags it",
+      "milestone": "M25",
+      "status": "done",
+      "tests": [
+        "src/domain/safety.test.ts",
+        "e2e/safety.spec.ts"
+      ]
+    },
+    {
+      "id": "F-25.4",
+      "name": "Overrides log: every paperwork, schedule, crossing and rate-con override with who, what it waved through (findings and the assignee), on which load or record, and why; filters and CSV",
+      "milestone": "M25",
+      "status": "done",
+      "tests": [
+        "src/domain/safety.test.ts",
+        "e2e/safety.spec.ts"
+      ]
+    },
+    {
+      "id": "F-25.5",
+      "name": "What blocks dispatch, per rule: hard (nobody overrides) / owner or Safety can override / warn only, on every document rule and built-in (law-fixed ones can't be softened); hire prerequisites and a pending pre-employment result block by default with plain reasons; a new company's 30-day qualification-file grace; a new blocking rule gets 14 days' grace; the reason shows on the picker row, the planner and the board",
+      "milestone": "M27",
+      "status": "done",
+      "tests": [
+        "src/domain/compliance-rules.test.ts",
+        "src/domain/safety.test.ts",
+        "e2e/safety.spec.ts"
+      ]
+    },
+    {
+      "id": "F-25.6",
+      "name": "One record per credential: licence, medical card, licencia federal, FAST, I-94, plates, annual inspection with the date on the record and images as versions; renewals photographed in the driver app for built-in credentials, confirmed or sent back by Safety, confirm sets the date dispatch reads; driver-app dates with the month in words; annual inspection entered by its date; our company's papers tracked",
+      "milestone": "M27",
+      "status": "done",
+      "tests": [
+        "src/domain/credentials.test.ts",
+        "e2e/compliance.spec.ts"
+      ]
+    },
+    {
+      "id": "F-25.7",
+      "name": "Roadside out-of-service orders take effect: vehicle OOS takes the truck or trailer out of service until Safety signs off the repair (who, when, note, repair order); driver OOS makes the driver unavailable until the order ends (a Safety block); licence / medical renewal time off is a Safety block, not a schedule conflict; Canadian and Mexican violations without BASIC or SMS weight; common US codes fill description, BASIC and weight; random draws refuse future periods and keep the pool roster",
+      "milestone": "M27",
+      "status": "done",
+      "tests": [
+        "src/domain/safety.test.ts",
+        "e2e/safety.spec.ts"
+      ]
+    },
+    {
+      "id": "F-25.8",
+      "name": "Audit-ready records: CSV exports with YYYY-MM-DD dates (records, roadside inspections, accident register) and an importer that never reads a date without its year; record history shows every changed field by label with no same-day no-op lines",
+      "milestone": "M27",
+      "status": "done",
+      "tests": [
+        "src/domain/compliance-rules.test.ts",
+        "src/domain/credentials.test.ts",
+        "src/domain/safety.test.ts"
+      ]
+    },
+    {
+      "id": "F-26.1",
+      "name": "Cash application: one check or ACH recorded once and split over the invoices it pays (remittance names matched first, else oldest due), short pays left open / written off (owner, credit memo) / disputed, the rest on account and used on a later invoice; Payments page; on-account on Receivables",
+      "milestone": "M26",
+      "status": "done",
+      "tests": [
+        "src/domain/cash.test.ts",
+        "e2e/cash.spec.ts"
+      ]
+    },
+    {
+      "id": "F-26.2",
+      "name": "Extras need the customer's approval (who and how) before they bill, per customer; invoice without them; approved later they join the open draft or go on a supplemental invoice; rejected ones never bill; a typed line haul or fuel stays a rate-con difference",
+      "milestone": "M26",
+      "status": "done",
+      "tests": [
+        "src/domain/cash.test.ts",
+        "e2e/cash.spec.ts",
+        "src/domain/billing.test.ts",
+        "e2e/billing.spec.ts"
+      ]
+    },
+    {
+      "id": "F-26.3",
+      "name": "Rebill (void with the customer's reason + a linked new draft), invoice list filters (search by invoice #, load #, any reference, customer; open / overdue / not sent / factored; dates) with totals and CSV; bill-to address and load # on the invoice",
+      "milestone": "M26",
+      "status": "done",
+      "tests": [
+        "src/domain/cash.test.ts",
+        "e2e/cash.spec.ts"
+      ]
+    },
+    {
+      "id": "F-26.4",
+      "name": "Weekly pay run: statements for every driver who ran or has a pay item due, approved together (a disputed one waits), paid in one ACH/check batch; statement PDF with the year to date, in the office and in the driver app",
+      "milestone": "M26",
+      "status": "done",
+      "tests": [
+        "src/domain/payrun.test.ts",
+        "e2e/payrun.spec.ts"
+      ]
+    },
+    {
+      "id": "F-26.5",
+      "name": "Factoring ledger: advance, fee and reserve at the entity's terms per funding, collection (invoice paid by factoring, reserve released), chargeback past recourse (back in Receivables); funded invoices leave Receivables and reminders; recourse exposure and at-risk",
+      "milestone": "M26",
+      "status": "done",
+      "tests": [
+        "src/domain/payrun.test.ts",
+        "e2e/payrun.spec.ts"
+      ]
+    },
+    {
+      "id": "F-7.20",
+      "name": "Money in three currencies: MX$ / CA$ everywhere (and the ISO code on PDFs); MXN and CAD invoices store their rate; a payment has a currency and pays only invoices in it; receivables, invoice totals, payments and statements per currency; reports, margins and RPM in USD at the invoice rate (the company rate until invoiced), rates stated",
+      "milestone": "M27",
+      "status": "done",
+      "tests": [
+        "src/domain/money.test.ts"
+      ]
+    },
+    {
+      "id": "F-7.21",
+      "name": "Rate-con charges follow the load: saving its rate, currency or fuel rule rebuilds the line haul and fuel in its currency; \"Reset charges to the rate con\" in the mismatch dialog; a big difference or another currency is never waved through",
+      "milestone": "M27",
+      "status": "done",
+      "tests": [
+        "src/domain/money.test.ts"
+      ]
+    },
+    {
+      "id": "F-7.22",
+      "name": "Driver pay safe to approve: deductions in a fixed order never take net below $0, the shortfall carries over; no statement without pay; late legs picked up; a load with no miles or an unfinished week blocks approval (owner may approve early with a reason); pay items ledger with balances; % pay in USD without pending, rejected or pass-through charges",
+      "milestone": "M27",
+      "status": "done",
+      "tests": [
+        "src/domain/money.test.ts"
+      ]
+    },
+    {
+      "id": "F-7.23",
+      "name": "QuickBooks export for real books: one deposit per payment with its applications, factoring journals (advance, fee, reserve, chargeback), credit memos, escrow / advances / reimbursements to their own accounts, never a negative bill, amounts in USD at the stored rate, !ACCNT and !INVITEM",
+      "milestone": "M27",
+      "status": "done",
+      "tests": [
+        "src/domain/money.test.ts"
+      ]
+    },
+    {
+      "id": "F-7.24",
+      "name": "Factoring: the factor's remit-to is required to save the factor and to issue a factored invoice; a chargeback repays advance + fee and returns the reserve to Receivables; \"Send corrected invoice (remit to us)\"",
+      "milestone": "M27",
+      "status": "done",
+      "tests": [
+        "src/domain/money.test.ts"
+      ]
+    },
+    {
+      "id": "F-7.25",
+      "name": "Closed period enforced on receipts, payments, factor funding / collection / chargeback, carrier bill and driver pay payments; only the owner sees Close period",
+      "milestone": "M27",
+      "status": "done",
+      "tests": [
+        "src/domain/money.test.ts"
+      ]
+    },
+    {
+      "id": "F-7.26",
+      "name": "Credit memos: own number sequence, PDF, sent like an invoice, listed with invoices; a disputed invoice is resolved with an outcome and a note",
+      "milestone": "M27",
+      "status": "done",
+      "tests": [
+        "src/domain/money.test.ts"
+      ]
+    },
+    {
+      "id": "F-7.27",
+      "name": "Detention billed by the minute; supplemental and rebill invoices name the original; invoice dates on the stop's own day; references printed as PO # / Rate con #",
+      "milestone": "M27",
+      "status": "done",
+      "tests": [
+        "src/domain/money.test.ts"
+      ]
+    },
+    {
+      "id": "F-7.28",
+      "name": "Re-running the week keeps lines added by hand to an open statement (and a driver's dispute), and says what it kept",
+      "milestone": "M28",
+      "status": "done",
+      "tests": [
+        "src/domain/money2.test.ts"
+      ]
+    },
+    {
+      "id": "F-7.29",
+      "name": "Percent pay is of the leg's share of the load (by miles, else by legs); estimated miles pay drivers and cost fuel on multi-leg loads in statements, the load P&L, reports and the assign margin",
+      "milestone": "M28",
+      "status": "done",
+      "tests": [
+        "src/domain/money2.test.ts"
+      ]
+    },
+    {
+      "id": "F-7.35",
+      "name": "Report tables add up to the tiles: loads split between trucks, drivers or carriers by leg miles to the cent, loads with none of ours in their own row",
+      "milestone": "M28",
+      "status": "done",
+      "tests": [
+        "src/domain/money2.test.ts"
+      ]
+    },
+    {
+      "id": "F-7.30",
+      "name": "QuickBooks export leaves nothing out: advances when paid out, never-exported records older than the From date (counted), credit memos and money on account applied to invoices, Windows-1252 IIF; the page says what is included",
+      "milestone": "M28",
+      "status": "done",
+      "tests": [
+        "src/domain/money3.test.ts"
+      ]
+    },
+    {
+      "id": "F-7.31",
+      "name": "Month-end close only through a day that has ended, in the company zone; the confirmation names the day and says it can't be reopened",
+      "milestone": "M28",
+      "status": "done",
+      "tests": [
+        "src/domain/money3.test.ts"
+      ]
+    },
+    {
+      "id": "F-7.32",
+      "name": "Honest Sent: with no email provider an invoice or credit memo send is logged, not sent — the invoice stays issued, says so, and can be filtered and counted as not emailed",
+      "milestone": "M28",
+      "status": "done",
+      "tests": [
+        "src/domain/money3.test.ts"
+      ]
+    },
+    {
+      "id": "F-7.33",
+      "name": "Customer portal balances per currency (never pesos plus dollars) and every status label in Spanish",
+      "milestone": "M28",
+      "status": "done",
+      "tests": [
+        "src/domain/money3.test.ts"
+      ]
+    },
+    {
+      "id": "F-7.34",
+      "name": "Apply payment pays what the remittance names (one open invoice, or exactly the ones named) in the payment's currency; received dates can't be in the future and default to the company's day",
+      "milestone": "M28",
+      "status": "done",
+      "tests": [
+        "src/domain/money3.test.ts"
+      ]
+    },
+    {
+      "id": "F-7.36",
+      "name": "FX at receipt: a MXN or CAD receipt keeps the day's rate; the realized exchange gain or loss shows in reports and goes to QuickBooks",
+      "milestone": "M28",
+      "status": "done",
+      "tests": [
+        "src/domain/money3.test.ts"
+      ]
+    },
+    {
+      "id": "F-31.1",
+      "name": "One clock everywhere: every stop time, window, appointment, ETA, free-at, check call and timeline event on the stop's own clock with its zone name (Tue Sep 29, 8:00 AM CST) — load page, Loads grid, planner, assign dialog, import preview, driver app, partner driver link, tender page, carrier and customer portals, tracking, messages, rate con; the rest on the company's clock, labelled; one shared formatter built from numbers so server and browser agree (no hydration mismatch); border cities (Nuevo Laredo, Reynosa, Piedras Negras, Juárez) keep US daylight time while Mexico's interior stays on CST",
+      "milestone": "M31",
+      "status": "done",
+      "tests": [
+        "src/lib/time.test.ts",
+        "src/domain/handoffs.test.ts"
+      ]
+    },
+    {
+      "id": "F-31.2",
+      "name": "Expired tenders: past the deadline (job and on read) the leg goes back to Needs truck with a red Tender expired flag at the top of the board; tender sent / accepted / declined / expired / withdrawn on the load timeline; the board's Power column says which leg a tender is for",
+      "milestone": "M31",
+      "status": "done",
+      "tests": [
+        "src/domain/handoffs.test.ts"
+      ]
+    },
+    {
+      "id": "F-31.3",
+      "name": "Crossing and legs move together: the packet goes out only with the crossing leg sent (or sends it on the dispatcher's click); border steps only once the caja is picked up; Departed the yard puts the leg en route; Cleared delivers it at the yard on the other side and the next leg sees the freight; the leg that brought the caja closes when the next truck picks it up",
+      "milestone": "M31",
+      "status": "done",
+      "tests": [
+        "src/domain/handoffs.test.ts",
+        "src/domain/crossing.test.ts"
+      ]
+    },
+    {
+      "id": "F-31.4",
+      "name": "A partner transfer carrier runs the crossing leg: its accepted driver, unit, plates and caja feed eligibility, the cross-checks and the carta de retiro (which names the carrier); the caja from the tender and from the partner driver's border-yard drop (caja, seal, photo) lands on the crossing; the offer page is in Spanish for Mexican carriers with the full load details",
+      "milestone": "M31",
+      "status": "done",
+      "tests": [
+        "src/domain/handoffs.test.ts",
+        "src/domain/carrier-portal.test.ts"
+      ]
+    },
+    {
+      "id": "F-31.5",
+      "name": "Stop editing on the load page uses the builder's stop editor and saves only what changed: city, state, coordinates and the stop's time zone stay",
+      "milestone": "M31",
+      "status": "done",
+      "tests": [
+        "src/domain/handoffs.test.ts"
+      ]
+    },
+    {
+      "id": "F-31.6",
+      "name": "Assign changes: a new trailer, co-driver, rate or miles on a sent leg keeps it Sent; a new truck, driver or carrier re-sends it and says so; Change opens on the current truck, driver and trailer; a team truck brings its co-driver",
+      "milestone": "M31",
+      "status": "done",
+      "tests": [
+        "src/domain/handoffs.test.ts"
+      ]
+    },
+    {
+      "id": "F-31.7",
+      "name": "Crossing checks tell the truth: northbound always needs the entry / PAPS and DTOPS (a DTOPS decal on the truck record counts); a check without enough documents is unknown, not green; plates from the Fleet record; a dispatcher can waive a failed check with a reason (audited); the seal typed on the crossing is compared; southbound and Canada crossings ask for no carta de retiro and read in their own words",
+      "milestone": "M31",
+      "status": "done",
+      "tests": [
+        "src/domain/handoffs.test.ts",
+        "src/domain/crossing.test.ts"
+      ]
+    },
+    {
+      "id": "F-30.1",
+      "name": "Planner and assign popup rank trucks by whether they can make the pickup: free-at + empty miles at 50 mph + 30 min + ELD hours (10-h break); a late truck says when it would arrive and sinks; a past pickup is flagged",
+      "milestone": "M30",
+      "status": "done",
+      "tests": [
+        "src/domain/reach.test.ts"
+      ]
+    },
+    {
+      "id": "F-30.2",
+      "name": "Check calls drive the board: the dispatcher's ETA overrides GPS until a newer position and drives Late / At risk; a Breakdown flags the load and takes the truck out of the planner until the flag is cleared",
+      "milestone": "M30",
+      "status": "done",
+      "tests": [
+        "src/domain/reach.test.ts",
+        "e2e/speed.spec.ts"
+      ]
+    },
+    {
+      "id": "F-30.3",
+      "name": "Hold / Release at any stage from booked to in transit; a held load's steps are frozen (dispatcher, driver app); pulling back a carrier-accepted leg confirms and sends the carrier a cancellation; TONU tells the carrier",
+      "milestone": "M30",
+      "status": "done",
+      "tests": [
+        "src/domain/hold.test.ts",
+        "e2e/speed.spec.ts"
+      ]
+    },
+    {
+      "id": "F-30.4",
+      "name": "⌘K finds invoice #, credit memo #, carrier invoice #, payment reference, caja, seal, pedimento and a partner carrier's driver; every search and typeahead is accent-insensitive; people and companies first",
+      "milestone": "M30",
+      "status": "done",
+      "tests": [
+        "src/domain/search.test.ts",
+        "e2e/speed.spec.ts"
+      ]
+    },
+    {
+      "id": "F-30.5",
+      "name": "Driver app fits a 390 px phone, loads in pickup order with the stop's numbers and instructions, one primary button at a time, \"I can't take this load\"; POD (or dispatch's bill-without-POD) before ready to bill; implausible deliveries flagged",
+      "milestone": "M30",
+      "status": "done",
+      "tests": [
+        "src/domain/hold.test.ts",
+        "src/domain/one-click.test.ts",
+        "e2e/speed.spec.ts"
+      ]
+    },
+    {
+      "id": "F-30.6",
+      "name": "Billing queue: one click Create, issue & send for a single load, like the batch run",
+      "milestone": "M30",
+      "status": "done",
+      "tests": [
+        "src/domain/one-click.test.ts",
+        "e2e/speed.spec.ts"
+      ]
+    },
+    {
+      "id": "F-30.7",
+      "name": "Owner Today page as the owner's home: cash in and out per currency, approvals waiting, late / at risk / no truck < 24 h, trucks empty tomorrow, expiring documents, each a link; each role lands on its own home",
+      "milestone": "M30",
+      "status": "done",
+      "tests": [
+        "src/domain/today.test.ts",
+        "e2e/speed.spec.ts"
+      ]
+    },
+    {
+      "id": "F-30.8",
+      "name": "Imports read trucking spreadsheets (CDL #, Cell, Truck, Med Card Exp, short labels, 28%), put drivers on the trucks the file names, one phone per driver; load import and bulk book warn on stop order and a PO already used",
+      "milestone": "M30",
+      "status": "done",
+      "tests": [
+        "src/domain/imports.test.ts"
+      ]
+    },
+    {
+      "id": "F-30.9",
+      "name": "Estimated miles on every leg from stop coordinates or a built-in freight-city list, shown as est.; driver pay, RPM and the P&L use them until miles are typed",
+      "milestone": "M30",
+      "status": "done",
+      "tests": [
+        "src/domain/miles.test.ts"
+      ]
+    },
+    {
+      "id": "F-30.10",
+      "name": "Book again asks for the new pickup and delivery dates and drops the PO / customer load #; portal requests come legged like the customer's usual lane; Split offers border yards and saved locations and renames the legs by country",
+      "milestone": "M30",
+      "status": "done",
+      "tests": [
+        "src/domain/book-again.test.ts",
+        "e2e/dispatch.spec.ts"
+      ]
+    },
+    {
+      "id": "F-34.1",
+      "name": "Cleared is not Delivered: a crossing leg that runs on to the consignee is en route after Cleared; only a leg ending at a yard, border yard or hand-off completes",
+      "milestone": "M34",
+      "status": "done",
+      "tests": [
+        "src/domain/flow2.test.ts"
+      ]
+    },
+    {
+      "id": "F-34.2",
+      "name": "A partner carrier's leg is Sent only through a tender (email, WhatsApp or a link with a deadline); a tender that can't go leaves the leg as it was, with an inline field to add the missing WhatsApp number or email",
+      "milestone": "M34",
+      "status": "done",
+      "tests": [
+        "src/domain/flow2.test.ts",
+        "e2e/flow2.spec.ts"
+      ]
+    },
+    {
+      "id": "F-34.3",
+      "name": "Planner availability as time windows: free now until the next booked pickup, the next loads listed, Available count kept when loads are booked ahead; ranking by the gap (makes the window and its next load), then empty miles, then free time",
+      "milestone": "M34",
+      "status": "done",
+      "tests": [
+        "src/domain/flow2.test.ts"
+      ]
+    },
+    {
+      "id": "F-34.4",
+      "name": "One ETA everywhere: the customer tracking page, customer portal and status replies use the board's merged ETA (a check-call ETA beats GPS until a newer position)",
+      "milestone": "M34",
+      "status": "done",
+      "tests": [
+        "src/domain/flow2.test.ts"
+      ]
+    },
+    {
+      "id": "F-34.5",
+      "name": "The partner carrier picker lists the carriers that fit the leg (MX leg: Mexican carriers; crossing: transfer carriers; US/CA legs: US and Canadian carriers), the rest behind Show all",
+      "milestone": "M34",
+      "status": "done",
+      "tests": [
+        "src/domain/flow2.test.ts",
+        "e2e/flow2.spec.ts"
+      ]
+    },
+    {
+      "id": "F-34.6",
+      "name": "Rate con upload with the AI reader off: the PDF is kept on the draft anyway and the builder is filled from the PDF's own text where confident (customer, rate, load #, equipment, stops with address and times, freight), saying what was read",
+      "milestone": "M34",
+      "status": "done",
+      "tests": [
+        "src/domain/flow2.test.ts",
+        "src/domain/ratecon-reader.test.ts",
+        "e2e/flow2.spec.ts"
+      ]
+    },
+    {
+      "id": "F-34.7",
+      "name": "Board hygiene: a stale Tender expired flag clears itself once the leg is covered; a driver's message lands on the leg they are on; a drop at a (border) yard reads Dropped, not Delivered — empty; import with Book now leaves loads with stops out of order as drafts (and bulk book skips them)",
+      "milestone": "M34",
+      "status": "done",
+      "tests": [
+        "src/domain/flow2.test.ts"
+      ]
+    },
+    {
+      "id": "F-34.8",
+      "name": "WhatsApp link texts in Spanish for Mexican drivers (B-1, dual, MX licence or +52) and Mexican carriers' drivers; Crossings has an All tab, and a crossing leg delivered by hand is Cleared with a time",
+      "milestone": "M34",
+      "status": "done",
+      "tests": [
+        "src/domain/flow2.test.ts"
+      ]
+    },
+    {
+      "id": "F-34.9",
+      "name": "Tender counter-offer: the carrier sends its rate from the offer page, dispatch accepts or declines it on the board, the carrier hears back and confirms on the same link",
+      "milestone": "M34",
+      "status": "done",
+      "tests": [
+        "src/domain/flow2.test.ts",
+        "e2e/flow2.spec.ts"
+      ]
+    },
+    {
+      "id": "F-32.21",
+      "name": "Upload a document once and it counts everywhere: one record on the load, a leg or a crossing, read by key across the load for the billing docs gate, the invoice packet, the crossing checklist and checks, the carrier bill three-way match and the customer portal; the Documents tab shows where each came in and where it counts",
+      "milestone": "M32",
+      "status": "done",
+      "tests": [
+        "src/domain/load-docs.test.ts",
+        "src/domain/tracking.test.ts"
+      ]
+    },
+    {
+      "id": "F-32.22",
+      "name": "Owner approval queue for overrides: schedule, paperwork, rate-con and crossing overrides by anyone but the owner land in Approvals on Today with approve / reject (reject reopens and tells the person); company setting makes them requests until approved",
+      "milestone": "M32",
+      "status": "done",
+      "tests": [
+        "src/domain/approvals.test.ts"
+      ]
+    },
+    {
+      "id": "F-32.23",
+      "name": "Invite users by email: name, email, role (Dispatcher by default); the person sets their own password from a one-time 7-day link; pending invites can be copied, re-sent or cancelled",
+      "milestone": "M32",
+      "status": "done",
+      "tests": [
+        "src/domain/invites.test.ts"
+      ]
+    },
+    {
+      "id": "F-32.24",
+      "name": "IFTA tax rate matrix import: the quarterly CSV IFTA, Inc. publishes (Special Diesel, US $/gal lines, surcharges, footnote marks, names or codes) with a preview against the rates on file before saving",
+      "milestone": "M32",
+      "status": "done",
+      "tests": [
+        "src/domain/ifta-matrix.test.ts"
+      ]
+    },
+    {
+      "id": "F-32.25",
+      "name": "Owner minors: equipment mismatch warning and flag (reefer load on a dry van, Sprinter for a 53' load, over weight); record history shows names, addresses and labels; customs broker pickers per country and a Canadian broker on the customer; honest, translated customer-portal status",
+      "milestone": "M32",
+      "status": "done",
+      "tests": [
+        "src/domain/equipment.test.ts",
+        "src/data/history.test.ts",
+        "src/data/refs.test.ts",
+        "src/domain/owner-minors.test.ts"
+      ]
+    }
+  ]
+}

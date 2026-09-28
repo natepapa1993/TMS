@@ -2,6 +2,7 @@ import { db, sqlClient } from "@/db/client";
 import { tenants, users } from "@/db/schema";
 import { newId } from "@/lib/ids";
 import type { Ctx, Role } from "@/lib/context";
+import { newCompanySettings } from "@/domain/compliance-rules";
 
 /** Wipe every tenant-owned table between test files. Cheap and deterministic. */
 export async function truncateAll() {
@@ -14,15 +15,32 @@ export async function truncateAll() {
     end $$;`;
 }
 
-export async function makeTenant(name = "Test Carrier", role: Role = "owner"): Promise<Ctx & { email: string }> {
+/**
+ * A company as signup makes it: including the 30-day qualification-file grace (blank DQ items don't block yet).
+ * Tests of the DQ block pass `{ dqGrace: false }`, a company past its grace.
+ */
+export async function makeTenant(name = "Test Carrier", role: Role = "owner", opts: { dqGrace?: boolean } = {}): Promise<Ctx & { email: string }> {
   const tenantId = newId();
   const userId = newId();
   const email = `${userId}@test.local`;
-  await db.insert(tenants).values({ id: tenantId, name, slug: `t-${tenantId}` });
+  await db.insert(tenants).values({ id: tenantId, name, slug: `t-${tenantId}`, settings: opts.dqGrace === false ? {} : newCompanySettings() });
   await db.insert(users).values({ id: userId, tenantId, email, name: `${role} user`, role });
   return { tenantId, userId, role, email };
 }
 
 export async function closeDb() {
   await sqlClient.end({ timeout: 2 });
+}
+
+/**
+ * Connect an email provider for a test company, with the provider's API answered locally: invoices, credit
+ * memos and reminders then really "send". Without it email is only logged, and the app says so. Call
+ * `vi.unstubAllGlobals()` after the test.
+ */
+export async function connectEmail(ctx: Ctx) {
+  const { vi } = await import("vitest");
+  const { integrations } = await import("@/db/schema");
+  await db.insert(integrations).values({ id: newId(), tenantId: ctx.tenantId, provider: "resend", enabled: true, config: { apiKey: "re_test", from: "Billing <billing@example.com>" } });
+  const real = globalThis.fetch;
+  vi.stubGlobal("fetch", async (url: string | URL | Request, init?: RequestInit) => (String(url).startsWith("https://api.resend.com") ? new Response(JSON.stringify({ id: `re_${newId()}` }), { status: 200, headers: { "content-type": "application/json" } }) : real(url, init)));
 }

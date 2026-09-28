@@ -3,8 +3,10 @@ import type { PgTable } from "drizzle-orm/pg-core";
 import { db } from "@/db/client";
 import * as s from "@/db/schema";
 import { newId } from "@/lib/ids";
-import { assertCtx, requirePermission, type Ctx } from "@/lib/context";
+import { assertCtx, requirePermission, can, PermissionError, type Ctx } from "@/lib/context";
 import { writeAudit, diff } from "@/lib/audit";
+import { FIELDS } from "./fields";
+import { syncDocumentTypeLevel } from "@/domain/compliance-rules";
 
 /**
  * Generic master-data repository (spec §1.1–1.4). One registry entry per record type:
@@ -21,10 +23,12 @@ export type RecordKind =
   | "customsBroker"
   | "carrier"
   | "carrierRate"
+  | "customerRate"
   | "truck"
   | "trailer"
   | "driver"
-  | "documentType";
+  | "documentType"
+  | "ediPartner";
 
 type AnyTable = PgTable & { id: unknown; tenantId: unknown; archivedAt: unknown; updatedAt: unknown; updatedBy: unknown; createdBy: unknown };
 
@@ -66,10 +70,12 @@ export const REGISTRY: Record<RecordKind, Registry> = {
   customsBroker: { table: s.customsBrokers as AnyTable, label: "Customs broker", uniqueKey: ["name", "country"], labelField: "name" },
   carrier: { table: s.carriers as AnyTable, label: "Carrier", uniqueKey: ["mcNumber", "rfc"], labelField: "name", blockers: (ctx, id) => openLegsFor(ctx, "carrier_id", id) },
   carrierRate: { table: s.carrierRates as AnyTable, label: "Carrier rate", uniqueKey: ["carrierId", "originZone", "destinationZone", "equipment"], labelField: "id" },
+  customerRate: { table: s.customerRates as AnyTable, label: "Customer rate", uniqueKey: ["customerId", "originZone", "destinationZone", "equipment"], labelField: "id" },
   truck: { table: s.trucks as AnyTable, label: "Truck", uniqueKey: ["unitNumber"], labelField: "unitNumber", blockers: (ctx, id) => openLegsFor(ctx, "truck_id", id) },
   trailer: { table: s.trailers as AnyTable, label: "Trailer", uniqueKey: ["unitNumber"], labelField: "unitNumber", blockers: (ctx, id) => openLegsFor(ctx, "trailer_id", id) },
   driver: { table: s.drivers as AnyTable, label: "Driver", uniqueKey: ["licenseNumber"], labelField: "name", blockers: (ctx, id) => openLegsFor(ctx, "driver_id", id) },
   documentType: { table: s.documentTypes as AnyTable, label: "Document type", uniqueKey: ["name", "appliesTo"], labelField: "name" },
+  ediPartner: { table: s.ediPartners as AnyTable, label: "EDI partner", uniqueKey: ["customerId"], labelField: "theirId" },
 };
 
 export class NotFoundError extends Error {
@@ -106,7 +112,17 @@ export async function list(ctx: Ctx, kind: RecordKind, opts: { archived?: "activ
     .where(scope ? and(eq(table.tenantId as never, ctx.tenantId), scope) : eq(table.tenantId as never, ctx.tenantId))
     .orderBy(desc(table.updatedAt as never))
     .limit(opts.limit ?? 500);
-  return rows as Row[];
+  return rows.map(strip) as Row[];
+}
+
+/** Secrets never leave the data layer (the user record's password hash is only ever compared in auth). */
+function strip<T extends Record<string, unknown>>(row: T): T {
+  if ("passwordHash" in row) {
+    const { passwordHash: _omit, ...rest } = row;
+    void _omit;
+    return rest as T;
+  }
+  return row;
 }
 
 export async function get(ctx: Ctx, kind: RecordKind, id: string): Promise<Row> {
@@ -115,19 +131,101 @@ export async function get(ctx: Ctx, kind: RecordKind, id: string): Promise<Row> 
   const { table } = REGISTRY[kind];
   const [row] = await db.select().from(table).where(and(eq(table.tenantId as never, ctx.tenantId), eq(table.id as never, id))).limit(1);
   if (!row) throw new NotFoundError(kind, id);
-  return row as Row;
+  return strip(row as Record<string, unknown>) as Row;
+}
+
+/**
+ * Guarded fields (licence and medical dates, inspections, permits) and the document rules are Safety's:
+ * someone without compliance.edit can't set or change them — a dispatcher can't make a driver
+ * dispatchable by typing a new expiry date.
+ */
+async function assertGuarded(ctx: Ctx, kind: RecordKind, values: Record<string, unknown>, before?: Record<string, unknown>) {
+  if (can(ctx, "compliance.edit")) return;
+  if (kind === "documentType") throw new PermissionError("compliance.edit", ctx.role);
+  const { GUARDED, FIELDS } = await import("./fields");
+  for (const k of GUARDED[kind] ?? []) {
+    if (!(k in values)) continue;
+    const v = values[k];
+    const type = FIELDS[kind].find((f) => f.name === k)?.type;
+    if (before ? sameValue(type, v, before[k]) : v == null || v === "" || v === false) continue;
+    const label = FIELDS[kind].find((f) => f.name === k)?.label ?? k;
+    throw Object.assign(new PermissionError("compliance.edit", ctx.role), { message: `${label} is kept by Safety — ask Safety or the owner to change it` });
+  }
+}
+
+/**
+ * Whether a value sent back by a form is the value already stored. A date field is the same when it is the same
+ * calendar day: the form sends every date back as noon UTC while the stored one may be midnight or 05:00 UTC
+ * (imports, the driver app, a renewal), and an unchanged date is not an edit (dispatch N2). Blank, null and
+ * false-for-a-checkbox are all "nothing".
+ */
+export function sameValue(type: string | undefined, a: unknown, b: unknown): boolean {
+  const blank = (x: unknown) => x == null || x === "";
+  if (blank(a) && blank(b)) return true;
+  if (type === "boolean") return !!a === !!b;
+  if (type === "date" || a instanceof Date || b instanceof Date) {
+    if (blank(a) || blank(b)) return false;
+    const da = new Date(a as Date), dbb = new Date(b as Date);
+    if (Number.isNaN(da.getTime()) || Number.isNaN(dbb.getTime())) return String(a) === String(b);
+    return type === "date" ? da.toISOString().slice(0, 10) === dbb.toISOString().slice(0, 10) : da.getTime() === dbb.getTime();
+  }
+  if (typeof a === "string" || typeof b === "string") return String(a ?? "").trim() === String(b ?? "").trim();
+  return JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
+}
+
+/**
+ * Rules a record must meet whatever screen saved it. A billing entity with a factoring company needs the
+ * factor's remit-to address: factored invoices print it as where to pay, and there is no safe fallback.
+ */
+export function recordProblem(kind: RecordKind, merged: Record<string, unknown>): { field: string; message: string } | null {
+  if (kind === "billingEntity") {
+    const name = String(merged.factorName ?? "").trim();
+    const a = (merged.factorRemitTo ?? null) as { line1?: string; city?: string } | null;
+    if (name && !(a?.line1?.trim() && a?.city?.trim())) return { field: "factorRemitTo", message: `${name} needs a remit-to address (street and city): factored invoices tell your customers to pay there` };
+  }
+  return null;
+}
+
+function assertRecord(kind: RecordKind, merged: Record<string, unknown>) {
+  const p = recordProblem(kind, merged);
+  if (p) throw Object.assign(new Error(p.message), { name: "ValidationError", field: p.field });
+}
+
+/** Digits only, for comparing phone numbers typed different ways ("+1 956 555 0159" = "9565550159" once the country code is known). */
+export const phoneKey = (p: unknown) => {
+  const d = String(p ?? "").replace(/\D/g, "");
+  return d.length === 10 ? `1${d}` : d;
+};
+
+/**
+ * Rules a record must keep beyond its field types. A driver's phone is theirs alone in the company:
+ * WhatsApp replies are matched to the driver by number, so two drivers on one number would read each
+ * other's messages (M23). Only checked when the number is set or changed.
+ */
+export async function validateRecord(ctx: Ctx, kind: RecordKind, values: Record<string, unknown>, id?: string) {
+  if (kind !== "driver" || !("phone" in values)) return;
+  const key = phoneKey(values.phone);
+  if (key.length < 7) return;
+  const others = await db.select({ id: s.drivers.id, name: s.drivers.name, phone: s.drivers.phone }).from(s.drivers).where(and(eq(s.drivers.tenantId, ctx.tenantId), isNull(s.drivers.archivedAt)));
+  const clash = others.find((o) => o.id !== id && o.phone && phoneKey(o.phone) === key);
+  if (clash) throw Object.assign(new Error(`${clash.name} already has ${String(values.phone)} — each driver needs their own phone number (WhatsApp messages are matched by number)`), { name: "ValidationError", field: "phone" });
 }
 
 export async function create(ctx: Ctx, kind: RecordKind, values: Record<string, unknown>): Promise<Row> {
   assertCtx(ctx);
   requirePermission(ctx, "records.create");
+  if (kind === "user") await (await import("@/domain/users")).assertUserWrite(db, ctx, "create", values);
+  await assertGuarded(ctx, kind, values);
+  assertRecord(kind, values);
+  if (kind === "documentType") values = syncDocumentTypeLevel(values);
+  await validateRecord(ctx, kind, values);
   const { table } = REGISTRY[kind];
   const id = (values.id as string) ?? newId();
   const row = { ...values, id, tenantId: ctx.tenantId, createdBy: ctx.userId, updatedBy: ctx.userId };
   return db.transaction(async (tx) => {
     const [inserted] = await tx.insert(table).values(row as never).returning();
-    await writeAudit(tx, ctx, kind, id, "create", diff(null, values));
-    return inserted as Row;
+    await writeAudit(tx, ctx, kind, id, "create", diff(null, values), kind === "user" ? `Added as ${(await import("@/domain/users")).ROLE_LABEL[String(values.role)] ?? String(values.role ?? "")}` : undefined);
+    return strip(inserted as Row);
   });
 }
 
@@ -142,6 +240,13 @@ export async function update(ctx: Ctx, kind: RecordKind, id: string, values: Rec
     const b = before as Row;
     if (expectedUpdatedAt && b.updatedAt.getTime() !== expectedUpdatedAt.getTime()) throw new ConflictError();
     if (b.archivedAt) throw new Error("archived records are read-only; restore first");
+    const U = kind === "user" ? await import("@/domain/users") : null;
+    if (U) await U.assertUserWrite(tx, ctx, "update", values, b as never);
+    await assertGuarded(ctx, kind, values, b as Record<string, unknown>);
+    assertRecord(kind, { ...b, ...values });
+    if (kind === "documentType") values = syncDocumentTypeLevel(values);
+    values = sameDayDates(kind, values, b);
+    if (kind === "driver" && "phone" in values && phoneKey(values.phone) !== phoneKey(b.phone)) await validateRecord(ctx, kind, values, id);
     const { id: _id, tenantId: _t, createdAt: _c, createdBy: _cb, ...safe } = values as Record<string, unknown>;
     void _id; void _t; void _c; void _cb;
     const [after] = await tx
@@ -149,9 +254,23 @@ export async function update(ctx: Ctx, kind: RecordKind, id: string, values: Rec
       .set({ ...safe, updatedAt: new Date(), updatedBy: ctx.userId } as never)
       .where(and(eq(table.tenantId as never, ctx.tenantId), eq(table.id as never, id)))
       .returning();
-    await writeAudit(tx, ctx, kind, id, "update", diff(b, after as Row));
-    return after as Row;
+    await writeAudit(tx, ctx, kind, id, "update", diff(b, after as Row), U ? U.userChangeNote(b as never, after as never, ctx, "passwordHash" in values) : undefined);
+    return strip(after as Row);
   });
+}
+
+/**
+ * A date field saved with the same calendar day it already has is not a change: the form sends every date
+ * back as noon UTC, and rewriting 14:23 as 12:00 would log "hireDate: 2025-08-24 → 2025-08-24".
+ */
+function sameDayDates(kind: RecordKind, values: Record<string, unknown>, before: Record<string, unknown>) {
+  const dateFields = new Set(FIELDS[kind].filter((f) => f.type === "date").map((f) => f.name));
+  const out = { ...values };
+  for (const [k, v] of Object.entries(values)) {
+    const was = before[k];
+    if (dateFields.has(k) && v instanceof Date && was instanceof Date && v.toISOString().slice(0, 10) === was.toISOString().slice(0, 10)) delete out[k];
+  }
+  return out;
 }
 
 export async function archiveBlockers(ctx: Ctx, kind: RecordKind, id: string) {
@@ -161,11 +280,16 @@ export async function archiveBlockers(ctx: Ctx, kind: RecordKind, id: string) {
 
 export async function archive(ctx: Ctx, kind: RecordKind, id: string): Promise<void> {
   assertCtx(ctx);
-  requirePermission(ctx, "records.archive");
+  requirePermission(ctx, kind === "user" ? "users.manage" : "records.archive");
   const blockers = await archiveBlockers(ctx, kind, id);
   if (blockers.length) throw new ArchiveBlockedError(blockers);
   const { table } = REGISTRY[kind];
   await db.transaction(async (tx) => {
+    if (kind === "user") {
+      const [u] = await tx.select().from(s.users).where(and(eq(s.users.tenantId, ctx.tenantId), eq(s.users.id, id))).limit(1);
+      if (!u) throw new NotFoundError(kind, id);
+      await (await import("@/domain/users")).assertUserWrite(tx, ctx, "archive", {}, u);
+    }
     const res = await tx
       .update(table)
       .set({ archivedAt: new Date(), updatedAt: new Date(), updatedBy: ctx.userId } as never)
@@ -178,7 +302,7 @@ export async function archive(ctx: Ctx, kind: RecordKind, id: string): Promise<v
 
 export async function restore(ctx: Ctx, kind: RecordKind, id: string): Promise<void> {
   assertCtx(ctx);
-  requirePermission(ctx, "records.archive");
+  requirePermission(ctx, kind === "user" ? "users.manage" : "records.archive");
   const { table } = REGISTRY[kind];
   await db.transaction(async (tx) => {
     const res = await tx
@@ -224,4 +348,9 @@ export async function findByUniqueKey(ctx: Ctx, kind: RecordKind, values: Record
     .where(and(eq(table.tenantId as never, ctx.tenantId), kind === "carrier" ? or(...conds) : and(...conds)))
     .limit(1);
   return (row as Row) ?? null;
+}
+
+/** The field a duplicate-key error most likely refers to (for the form to highlight). */
+export function ValidationErrorLike(kind: RecordKind): string | null {
+  return REGISTRY[kind].uniqueKey[0] ?? null;
 }

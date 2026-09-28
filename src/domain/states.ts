@@ -7,10 +7,10 @@ import type { OrderState, LegState } from "@/db/schema";
 
 export const ORDER_TRANSITIONS: Record<OrderState, readonly OrderState[]> = {
   draft: ["booked", "cancelled"],
-  booked: ["dispatched", "cancelled", "draft"],
+  booked: ["dispatched", "cancelled", "draft", "exception"],
   dispatched: ["in_transit", "booked", "exception", "cancelled"],
   in_transit: ["delivered", "exception", "cancelled"],
-  exception: ["dispatched", "in_transit", "delivered", "cancelled"],
+  exception: ["booked", "dispatched", "in_transit", "delivered", "cancelled"],
   delivered: ["ready_to_bill", "in_transit"],
   ready_to_bill: ["invoiced", "delivered"],
   invoiced: ["paid", "ready_to_bill"],
@@ -95,4 +95,20 @@ export const LEG_LABEL: Record<LegState, string> = {
   completed: "Delivered",
   declined: "Declined",
   cancelled: "Cancelled",
+};
+
+/** The same, in Spanish, for the customer-facing pages. */
+export const LEG_LABEL_ES: Record<LegState, string> = {
+  unassigned: "Pendiente",
+  planned: "Planeado",
+  dispatched: "Enviado",
+  accepted: "Aceptado",
+  en_route_to_pickup: "Hacia la carga",
+  at_pickup: "En la carga",
+  loaded: "Cargado",
+  en_route: "En ruta",
+  at_delivery: "En la entrega",
+  completed: "Entregado",
+  declined: "Rechazado",
+  cancelled: "Cancelado",
 };

@@ -1,0 +1,301 @@
+"use client";
+
+import { useState, useTransition } from "react";
+import { call } from "@/lib/client-call";
+import Link from "next/link";
+import { useRouter } from "next/navigation";
+import { Modal, Pill, Toast, useToast } from "@/components/ui";
+import { formatCents } from "@/data/fields";
+import { createInvoiceAction, acceptMismatchAction, uploadOrderDocAction, resetChargesAction, runBatchAction } from "./actions";
+import { BillingRun } from "./run";
+import { ApprovalDialog } from "./approvals";
+
+type Row = { order: { id: string; orderNumber: string; state: string; currency: string; deliveredAt: string | null }; customerName: string | null; entityName: string | null; chargesCents: number; rateConCents: number | null; mismatch: boolean; mismatchReason: string | null; bigDifference: boolean; requiredDocs: { code: string; present: boolean }[]; requiredRefs: { key: string; present: boolean }[]; docsComplete: boolean; ageDays: number; invoiceId: string | null; paperSays: string | null; pending: { count: number; cents: number; charges: { id: string; description: string; amountCents: number }[] }; supplemental: boolean };
+
+export function Queue({ rows, role }: { rows: Row[]; role: string }) {
+  const router = useRouter();
+  const t = useToast();
+  const [sel, setSel] = useState<string[]>([]);
+  const [mismatchFor, setMismatchFor] = useState<Row | null>(null);
+  const [uploadFor, setUploadFor] = useState<{ orderId: string; code: string } | null>(null);
+  const [pending, start] = useTransition();
+  const [runFor, setRunFor] = useState<string[] | null>(null);
+  const [approveFor, setApproveFor] = useState<Row | null>(null);
+  const canBill = ["owner", "billing"].includes(role);
+  const eligible = rows.filter((r) => r.docsComplete && !r.mismatch && !r.invoiceId && r.chargesCents > 0);
+  const run = (label: string, fn: () => Promise<{ ok: boolean; error?: string; data?: unknown }>) =>
+    start(async () => {
+      const r = await fn();
+      if (r.ok) {
+        t.ok(label);
+        router.refresh();
+      } else t.err(r.error ?? "Could not do that");
+    });
+  // one click for one load (billing #12): the batch run with one load in it — made, issued and sent
+  const billOne = (r: Row) =>
+    start(async () => {
+      const res = await runBatchAction([r.order.id], { issue: true, send: true });
+      if (!res.ok) return t.err(res.error);
+      const x = res.data.results[0];
+      if (!x || !x.ok) return t.err(x?.note ?? "Could not bill it");
+      const where = x.state === "sent" ? (x.method === "factor" ? "sent to the factor" : "sent") : x.state;
+      t.ok(`${x.number ?? "Invoice"} ${where}${x.note ? ` — ${x.note}` : ""}`);
+      router.refresh();
+    });
+  return (
+    <>
+      {canBill && (
+        <div className="flex items-center gap-2 mb-3">
+          <button className="btn btn-primary" disabled={!sel.length || pending} onClick={() => setRunFor(sel)}>
+            Bill selected ({sel.length})
+          </button>
+          <button className="btn btn-ghost btn-sm" onClick={() => setSel(eligible.map((r) => r.order.id))}>
+            Select all eligible ({eligible.length})
+          </button>
+        </div>
+      )}
+      <div className="card overflow-hidden">
+        {rows.length === 0 ? (
+          <div className="py-14 text-center">
+            <div className="font-bold">Nothing to bill</div>
+            <div className="text-muted text-callout mt-1">Delivered orders land here.</div>
+          </div>
+        ) : (
+          <table className="table">
+            <thead>
+              <tr>
+                <th></th>
+                <th>Order</th>
+                <th>Customer</th>
+                <th>Bill from</th>
+                <th>Charges</th>
+                <th>Rate con</th>
+                <th>Docs</th>
+                <th>Age</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((r) => {
+                const ok = r.docsComplete && !r.mismatch && !r.invoiceId && r.chargesCents > 0;
+                return (
+                  <tr key={r.order.id}>
+                    <td>{canBill && <input type="checkbox" className="accent-teal" disabled={!ok} checked={sel.includes(r.order.id)} onChange={(e) => setSel(e.target.checked ? [...sel, r.order.id] : sel.filter((x) => x !== r.order.id))} />}</td>
+                    <td>
+                      <Link href={`/orders/${r.order.id}#charges`} className="font-extrabold mono whitespace-nowrap hover:text-teal">
+                        {r.order.orderNumber}
+                      </Link>
+                      {r.supplemental && (
+                        <div>
+                          <Pill tone="blue" title="Charges added after the load was invoiced: they go on a supplemental invoice">supplemental</Pill>
+                        </div>
+                      )}
+                    </td>
+                    <td>{r.customerName ?? <span className="text-faint">—</span>}</td>
+                    <td className="text-muted text-callout">{r.entityName ?? "—"}</td>
+                    <td className="mono font-semibold">
+                      {formatCents(r.chargesCents, r.order.currency)}
+                      {r.pending.count > 0 && (
+                        <div>
+                          <button className="pill pill-amber mt-0.5" data-testid="to-approve" onClick={() => setApproveFor(r)} title="Extras waiting for the customer's approval">
+                            +{formatCents(r.pending.cents, r.order.currency)} to approve ({r.pending.count})
+                          </button>
+                        </div>
+                      )}
+                    </td>
+                    <td>
+                      {r.rateConCents == null ? (
+                        <span className="text-faint">TBD</span>
+                      ) : r.mismatch ? (
+                        <button className="pill pill-red" onClick={() => canBill && setMismatchFor(r)} title="Charges differ from the rate confirmation">
+                          {formatCents(r.rateConCents, r.order.currency)} ≠
+                        </button>
+                      ) : (
+                        <Pill tone="green">{formatCents(r.rateConCents, r.order.currency)}</Pill>
+                      )}
+                      {r.paperSays && (
+                        <div className="text-footnote text-amber font-semibold mt-0.5 max-w-[220px]" title="Read from the uploaded rate confirmation by the AI extractor">
+                          {r.paperSays}
+                        </div>
+                      )}
+                    </td>
+                    <td className="space-x-1">
+                      {r.requiredDocs.map((d) => (
+                        <button key={d.code} className={`pill ${d.present ? "pill-green" : "pill-red"}`} onClick={() => !d.present && setUploadFor({ orderId: r.order.id, code: d.code })} title={d.present ? "on file" : "missing — click to upload"}>
+                          {d.code.replace("_", " ")}
+                        </button>
+                      ))}
+                      {r.requiredRefs.map((x) => (
+                        <Link key={x.key} href={`/orders/${r.order.id}`} className={`pill ${x.present ? "pill-green" : "pill-red"}`} title={x.present ? "on the order" : "the customer requires this reference — click to add it on the order"}>
+                          {x.key.replace("_", " ")} #
+                        </Link>
+                      ))}
+                    </td>
+                    <td className={r.ageDays > 7 ? "text-red font-semibold" : "text-muted"}>{r.ageDays} d</td>
+                    <td className="text-right whitespace-nowrap">
+                      {r.invoiceId ? (
+                        <Link href={`/billing/invoices/${r.invoiceId}`} className="btn btn-sm">
+                          Open draft
+                        </Link>
+                      ) : (
+                        canBill && (
+                          <span className="inline-flex items-center gap-1">
+                            <button
+                              className="btn btn-sm btn-primary"
+                              disabled={!ok || pending}
+                              data-testid="bill-one"
+                              title={r.pending.count ? "The extras waiting for approval stay off this invoice; once approved they go on a supplemental" : "Make the invoice, number it and send it the customer's way, in one go"}
+                              onClick={() => (r.order.currency !== "USD" ? setRunFor([r.order.id]) : billOne(r))}
+                            >
+                              {r.supplemental ? "Supplemental: issue & send" : r.pending.count ? "Issue & send without extras" : "Create, issue & send"}
+                            </button>
+                            <button className="btn btn-sm btn-ghost" disabled={!ok || pending} title="Only make the draft; issue and send it yourself from the invoice" onClick={() =>
+                                r.supplemental
+                                  ? start(async () => {
+                                      // the load leaves the queue once its late charges are on a draft: open that draft
+                                      const x = await createInvoiceAction([r.order.id], r.pending.count > 0);
+                                      if (!x.ok) return t.err(x.error);
+                                      router.push(`/billing/invoices/${x.data.id}`);
+                                    })
+                                  : run("Draft invoice created", () => createInvoiceAction([r.order.id], r.pending.count > 0))
+                              }>
+                              Draft
+                            </button>
+                          </span>
+                        )
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        )}
+      </div>
+      {mismatchFor && <MismatchDialog row={mismatchFor} onClose={() => setMismatchFor(null)} onDone={(label) => { setMismatchFor(null); t.ok(label); router.refresh(); }} />}
+      {approveFor && <ApprovalDialog orderId={approveFor.order.id} orderNumber={approveFor.order.orderNumber} charges={approveFor.pending.charges} currency={approveFor.order.currency} onClose={() => setApproveFor(null)} />}
+      {uploadFor && (
+        <UploadDoc orderId={uploadFor.orderId} code={uploadFor.code} onClose={() => setUploadFor(null)} onDone={() => { setUploadFor(null); t.ok("Uploaded"); router.refresh(); }} />
+      )}
+      {runFor && (
+        <BillingRun
+          orderIds={runFor}
+          onClose={() => setRunFor(null)}
+          onDone={() => {
+            setRunFor(null);
+            setSel([]);
+            router.refresh();
+          }}
+        />
+      )}
+      <Toast message={t.toast?.message ?? null} tone={t.toast?.tone} onDone={t.clear} />
+    </>
+  );
+}
+
+/**
+ * Charges differ from the rate con. The safe fix is first: put the charges back to what the load's rate con
+ * says. Accepting our own charges needs a reason, and when the difference is big (over 10%, or charges in
+ * another currency) it is tucked away and marked as the exception it is — never the obvious button.
+ */
+function MismatchDialog({ row, onClose, onDone }: { row: Row; onClose: () => void; onDone: (label: string) => void }) {
+  const [note, setNote] = useState("");
+  const [showAccept, setShowAccept] = useState(!row.bigDifference);
+  const [err, setErr] = useState<string | null>(null);
+  const [pending, start] = useTransition();
+  const cur = row.order.currency;
+  const currencyProblem = /but the load is in/.test(row.mismatchReason ?? "");
+  const go = (fn: () => Promise<{ ok: boolean; error?: string }>, label: string) =>
+    start(async () => {
+      setErr(null);
+      const r = await fn();
+      if (r.ok) onDone(label);
+      else setErr(r.error ?? "Could not do that");
+    });
+  return (
+    <Modal
+      open
+      onClose={onClose}
+      title={`Charges ${formatCents(row.chargesCents, cur)} vs rate con ${formatCents(row.rateConCents ?? 0, cur)}`}
+      footer={
+        <>
+          <Link href={`/orders/${row.order.id}#charges`} className="btn btn-ghost mr-auto">
+            Open the load
+          </Link>
+          <button className="btn" onClick={onClose}>
+            Cancel
+          </button>
+          <button className="btn btn-primary" data-testid="reset-to-ratecon" disabled={pending} onClick={() => go(() => resetChargesAction(row.order.id), "Charges reset to the rate con")}>
+            Reset charges to the rate con
+          </button>
+        </>
+      }
+    >
+      <p className="text-callout">
+        <b>{row.order.orderNumber}</b>: {row.mismatchReason ?? "the charges differ from the rate con"}.
+      </p>
+      <p className="text-callout text-muted mt-2">Reset puts the line haul and fuel back to the rate and currency on the load ({formatCents(row.rateConCents ?? 0, cur)}{cur !== "USD" ? ` ${cur}` : ""}). Approved extras stay.</p>
+      {currencyProblem ? (
+        <p className="help mt-3">Charges in another currency can&rsquo;t be accepted as they are: reset them, or remove and re-add them in {cur} on the load.</p>
+      ) : showAccept ? (
+        <div className={`mt-4 ${row.bigDifference ? "border border-red rounded-lg p-3" : ""}`}>
+          {row.bigDifference && <div className="text-callout text-red font-semibold mb-2">The difference is more than 10% of the rate con. Only accept it with the customer&rsquo;s written approval on file.</div>}
+          <label className="label" htmlFor="mm-note">
+            Why the difference is billable
+          </label>
+          <textarea id="mm-note" className="input" rows={2} value={note} onChange={(e) => setNote(e.target.value)} placeholder="e.g. revised rate con from the customer, 9/28 email" />
+          <button className={`btn btn-sm mt-2 ${row.bigDifference ? "btn-danger" : ""}`} disabled={pending || !note.trim()} onClick={() => go(() => acceptMismatchAction(row.order.id, note), "Accepted — the note is on the load")}>
+            Accept our charges
+          </button>
+        </div>
+      ) : (
+        <button className="btn btn-ghost btn-sm mt-3 text-muted" onClick={() => setShowAccept(true)}>
+          The customer approved a different amount…
+        </button>
+      )}
+      {err && <div className="error mt-2">{err}</div>}
+    </Modal>
+  );
+}
+
+export function UploadDoc({ orderId, code, onClose, onDone }: { orderId: string; code: string; onClose: () => void; onDone: () => void }) {
+  const [file, setFile] = useState<File | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  const [pending, start] = useTransition();
+  return (
+    <Modal
+      open
+      onClose={onClose}
+      title={`Upload ${code.replace("_", " ")}`}
+      footer={
+        <>
+          <button className="btn" onClick={onClose}>
+            Cancel
+          </button>
+          <button
+            className="btn btn-primary"
+            disabled={!file || pending}
+            onClick={() =>
+              start(async () => {
+                const fd = new FormData();
+                fd.set("file", file!);
+                fd.set("code", code);
+                const r = await call(() => uploadOrderDocAction(orderId, fd));
+                if (r.ok) onDone();
+                else setErr(r.error);
+              })
+            }
+          >
+            Upload
+          </button>
+        </>
+      }
+    >
+      <label className="block border-2 border-dashed border-line rounded-lg p-5 text-center cursor-pointer hover:border-teal">
+        <input type="file" accept="application/pdf,image/jpeg,image/png" className="hidden" onChange={(e) => setFile(e.target.files?.[0] ?? null)} />
+        <div className="font-semibold">{file?.name ?? "Choose a PDF or photo"}</div>
+      </label>
+      {err && <div className="error mt-2">{err}</div>}
+    </Modal>
+  );
+}
