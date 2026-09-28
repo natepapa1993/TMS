@@ -57,6 +57,13 @@ export const TENDER_COPY = {
     sending: "Sending…",
     confirmAccept: "Confirm — we'll take it",
     confirmDecline: "Confirm decline",
+    counter: "Counter-offer",
+    counterTitle: "Your rate — dispatch answers here",
+    yourRate: (cur: string) => `Your rate (${cur})`,
+    sendCounter: "Send counter-offer",
+    counterPending: (rate: string) => `Your counter-offer of ${rate} is with dispatch. You can still accept the rate above.`,
+    counterAccepted: "Dispatch accepted your rate — confirm with your driver below.",
+    counterDeclined: "Dispatch can't do your rate — the offer stands as above.",
   },
   es: {
     offer: "oferta de carga",
@@ -109,6 +116,13 @@ export const TENDER_COPY = {
     sending: "Enviando…",
     confirmAccept: "Confirmar — la tomamos",
     confirmDecline: "Confirmar rechazo",
+    counter: "Contraoferta",
+    counterTitle: "Su tarifa — despacho responde aquí",
+    yourRate: (cur: string) => `Su tarifa (${cur})`,
+    sendCounter: "Enviar contraoferta",
+    counterPending: (rate: string) => `Su contraoferta de ${rate} está con despacho. Todavía puede aceptar la tarifa de arriba.`,
+    counterAccepted: "Despacho aceptó su tarifa — confirme con su operador abajo.",
+    counterDeclined: "Despacho no puede pagar su tarifa — la oferta sigue como arriba.",
   },
 };
 export type TenderCopy = (typeof TENDER_COPY)["en"];

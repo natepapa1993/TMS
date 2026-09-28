@@ -1208,6 +1208,24 @@
       "tests": [
         "src/domain/flow2.test.ts"
       ]
+    },
+    {
+      "id": "F-34.8",
+      "name": "WhatsApp link texts in Spanish for Mexican drivers (B-1, dual, MX licence or +52) and Mexican carriers' drivers; Crossings has an All tab, and a crossing leg delivered by hand is Cleared with a time",
+      "milestone": "M34",
+      "status": "done",
+      "tests": [
+        "src/domain/flow2.test.ts"
+      ]
+    },
+    {
+      "id": "F-34.9",
+      "name": "Tender counter-offer: the carrier sends its rate from the offer page, dispatch accepts or declines it on the board, the carrier hears back and confirms on the same link",
+      "milestone": "M34",
+      "status": "done",
+      "tests": [
+        "src/domain/flow2.test.ts"
+      ]
     }
   ]
 }

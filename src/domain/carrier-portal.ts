@@ -232,7 +232,8 @@ export async function carrierDriverLink(tenantId: string, legId: string) {
   if (!l || l.assigneeKind !== "carrier" || !l.carrierId) throw new ValidationError("this leg is not with a partner carrier");
   const [at] = await db.select({ driverName: s.tenders.driverName, driverPhone: s.tenders.driverPhone }).from(s.tenders).where(and(eq(s.tenders.legId, legId), eq(s.tenders.state, "accepted"))).orderBy(desc(s.tenders.respondedAt)).limit(1);
   const tok = await issueToken(ctx, "carrier_driver", legId, { label: at?.driverName ?? "carrier driver" });
-  return { url: publicUrl(`/g/${tok.token}`), driverName: at?.driverName ?? null, driverPhone: at?.driverPhone ?? null };
+  const [carrier] = await db.select({ country: s.carriers.country }).from(s.carriers).where(eq(s.carriers.id, l.carrierId)).limit(1);
+  return { url: publicUrl(`/g/${tok.token}`), driverName: at?.driverName ?? null, driverPhone: at?.driverPhone ?? null, carrierCountry: carrier?.country ?? null };
 }
 
 export async function carrierDriverView(tenantId: string, legId: string) {

@@ -820,7 +820,7 @@ export async function recompute(ctx: Ctx, crossingId: string) {
     // (a truck turned back at the border keeps its leg rolling: after a return the border steps start again from the packet)
     const follow: CrossingState | null = xleg.state === "completed" ? "cleared" : xleg.state === "cancelled" ? "cancelled" : ["en_route", "at_delivery"].includes(xleg.state) && beforePacket(c.state) && !c.returnedReason ? "departed_yard" : null;
     if (follow && follow !== c.state) {
-      await setState(db, sys, c, follow, { source: "system", note: `the crossing leg is ${xleg.state.replace(/_/g, " ")}`, at: xleg.completedAt ?? xleg.updatedAt ?? undefined }, follow === "cleared" ? { departedYardAt: c.departedYardAt ?? xleg.completedAt ?? new Date() } : follow === "departed_yard" ? { departedYardAt: c.departedYardAt ?? new Date() } : {});
+      await setState(db, sys, c, follow, { source: "system", note: `the crossing leg is ${xleg.state.replace(/_/g, " ")}`, at: xleg.completedAt ?? xleg.updatedAt ?? undefined }, follow === "cleared" ? { departedYardAt: c.departedYardAt ?? xleg.completedAt ?? new Date(), clearedAt: c.clearedAt ?? xleg.completedAt ?? new Date() } : follow === "departed_yard" ? { departedYardAt: c.departedYardAt ?? new Date() } : {});
       c = await load(ctx, crossingId);
     }
   }

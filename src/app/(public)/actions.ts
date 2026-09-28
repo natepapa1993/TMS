@@ -17,6 +17,17 @@ export async function respondTenderAction(token: string, r: TenderResponse): Pro
   }
 }
 
+/** The carrier's counter-offer from the offer page (M1). */
+export async function counterTenderAction(token: string, r: { name: string; rate: string; note?: string | null }): Promise<ActionResult<{ expiresAt: Date }>> {
+  try {
+    const n = Number(String(r.rate ?? "").replace(/[^0-9.]/g, ""));
+    const { counterTender } = await import("@/domain/tenders");
+    return { ok: true, data: await counterTender(token, { name: r.name, rateCents: Number.isFinite(n) ? Math.round(n * 100) : NaN, note: r.note }) };
+  } catch (e) {
+    return toError(e);
+  }
+}
+
 export async function driverStepAction(token: string, legId: string, input: DriverStepInput): Promise<ActionResult<{ state: string }>> {
   const t = await resolveToken(token, "driver_app");
   if (!t) return { ok: false, error: "This link is no longer valid. Ask dispatch for a new one.", code: "not_found" };

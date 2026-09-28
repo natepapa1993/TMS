@@ -9,6 +9,7 @@ import { LEG_LABEL } from "@/domain/states";
 import type { LegState } from "@/db/schema";
 import type { RankedCandidate as Candidate } from "@/domain/planner";
 import { carriersForLeg } from "@/domain/carrier-fit";
+import { driverLinkText } from "@/domain/driver-copy";
 import * as A from "./actions";
 import { BUCKETS, ALERTS, bucketsOf, alertsOf, urgency, currentLeg, nextStop, type BucketKey, type AlertKey } from "@/domain/board-buckets";
 import { fmtIn, fmtWhen, shortDate, stopZone, zonedDate, toZoneInput, fromZoneInput, zoneAbbrev } from "@/lib/time";
@@ -585,7 +586,17 @@ function SidePanel({ r, data, busy, canDispatch, onClose, onPopup, run, onToast 
               {f.title}
               {f.detail ? <span className="font-normal"> — {f.detail}</span> : null}
             </span>
-            {canDispatch && (
+            {canDispatch && f.code === "tender_counter" && f.legId && (
+              <span className="flex gap-1 shrink-0 -my-1" data-testid="counter-actions">
+                <button className="btn btn-sm btn-primary" onClick={() => run("Counter-offer accepted — the carrier confirms on the link", () => A.answerCounterAction(f.legId!, true))}>
+                  Accept
+                </button>
+                <button className="btn btn-sm" onClick={() => run("Counter-offer declined — the offer stands", () => A.answerCounterAction(f.legId!, false))}>
+                  Decline
+                </button>
+              </span>
+            )}
+            {canDispatch && f.code !== "tender_counter" && (
               <button className="btn btn-ghost btn-sm shrink-0 -my-1" title={f.code === "breakdown" ? "The truck runs again: put it back in the planner" : "Dealt with: take it off the board"} onClick={() => run(f.code === "breakdown" ? "Breakdown cleared — the truck is back in the planner" : "Flag cleared", () => A.clearFlagAction(f.id))}>
                 {f.code === "breakdown" ? "Fixed" : "Clear"}
               </button>
@@ -1462,7 +1473,7 @@ function SplitModal({ leg, stops, locations, onClose, onDone }: { leg: Leg; stop
 
 function TrackModal({ r, onClose }: { r: Row; onClose: () => void }) {
   const [link, setLink] = useState<string | null>(null);
-  const [driverLinks, setDriverLinks] = useState<{ id: string; name: string; url: string; phone: string | null; whatsapp: string | null }[]>([]);
+  const [driverLinks, setDriverLinks] = useState<{ id: string; name: string; url: string; phone: string | null; whatsapp: string | null; es?: boolean }[]>([]);
   const [carrierLinks, setCarrierLinks] = useState<{ legId: string; legLabel: string; url: string; driverName: string | null; driverPhone: string | null }[]>([]);
   const [carrierTo, setCarrierTo] = useState<Record<string, string>>({});
   const [copied, setCopied] = useState<string | null>(null);
@@ -1534,12 +1545,12 @@ function TrackModal({ r, onClose }: { r: Row; onClose: () => void }) {
                 <button className="btn btn-sm" onClick={() => copy(d.url, d.url)}>
                   {copied === d.url ? "Copied" : "Copy link"}
                 </button>
-                {wa(d.whatsapp ?? d.phone, `${d.name}, your loads: ${d.url}`) && (
+                {wa(d.whatsapp ?? d.phone, driverLinkText(d.name, d.url, !!d.es)) && (
                   <>
                     <button className="btn btn-sm" disabled={sending} title="Through the company WhatsApp Business number" onClick={() => send({ kind: "driver", orderId: r.order.id, driverId: d.id })}>
                       Send on WhatsApp
                     </button>
-                    <a className="btn btn-sm btn-ghost" href={wa(d.whatsapp ?? d.phone, `${d.name}, your loads: ${d.url}`)!} target="_blank" rel="noreferrer" title="From your own phone / WhatsApp Web">
+                    <a className="btn btn-sm btn-ghost" href={wa(d.whatsapp ?? d.phone, driverLinkText(d.name, d.url, !!d.es))!} target="_blank" rel="noreferrer" title="From your own phone / WhatsApp Web">
                       wa.me
                     </a>
                   </>

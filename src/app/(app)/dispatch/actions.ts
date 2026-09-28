@@ -6,6 +6,7 @@ import * as O from "@/domain/orders";
 import { sendTender, closeOpenTenderForLeg, type SendTenderInput } from "@/domain/tenders";
 import { issueToken, publicUrl } from "@/lib/tokens";
 import { latestTruckPositions } from "@/domain/tracking";
+import { driverReadsSpanish, driverLinkText, carrierDriverLinkText, type DriverLike } from "@/domain/driver-copy";
 import type { LegState, EventSource, StopType } from "@/db/schema";
 
 const touch = () => {
@@ -170,6 +171,16 @@ export async function tenderAction(legId: string, input: SendTenderInput) {
   return r;
 }
 
+/** Dispatch accepts or declines a carrier's counter-offer (M1). */
+export async function answerCounterAction(legId: string, accept: boolean) {
+  const r = await act(async (ctx) => {
+    const { answerCounter } = await import("@/domain/tenders");
+    return answerCounter(ctx, legId, accept);
+  });
+  if (r.ok) touch();
+  return r;
+}
+
 export async function withdrawTenderAction(legId: string, reason?: string) {
   const r = await act(async (ctx) => {
     await closeOpenTenderForLeg(ctx, legId, "withdrawn", reason ?? "withdrawn by dispatch");
@@ -194,7 +205,8 @@ export async function driverLinkAction(driverId: string) {
     const { get } = await import("@/data/records");
     const d = await get(ctx, "driver", driverId);
     const tok = await issueToken(ctx, "driver_app", driverId, { label: String(d.name) });
-    return { url: publicUrl(`/d/${tok.token}`), name: String(d.name), phone: (d.phone as string | null) ?? null, whatsapp: (d.whatsapp as string | null) ?? null };
+    const { driverReadsSpanish: es } = await import("@/domain/driver-copy");
+    return { url: publicUrl(`/d/${tok.token}`), name: String(d.name), phone: (d.phone as string | null) ?? null, whatsapp: (d.whatsapp as string | null) ?? null, es: es(d as import("@/domain/driver-copy").DriverLike) };
   });
 }
 
@@ -232,12 +244,14 @@ export async function sendLinkWhatsAppAction(input: { kind: "driver" | "tracking
     let to: string | null = null;
     let name = "";
     let url = "";
+    let es = false;
     if (input.kind === "driver") {
       if (!input.driverId) throw Object.assign(new Error("pick a driver"), { name: "ValidationError" });
       const { get } = await import("@/data/records");
       const d = await get(ctx, "driver", input.driverId);
       to = ((d.whatsapp as string | null) || (d.phone as string | null)) ?? null;
       name = String(d.name);
+      es = driverReadsSpanish(d as DriverLike);
       url = publicUrl(`/d/${(await issueToken(ctx, "driver_app", input.driverId, { label: name })).token}`);
       if (!to) throw Object.assign(new Error(`${name} has no phone or WhatsApp on the driver record`), { name: "ValidationError" });
     } else if (input.kind === "carrier_driver") {
@@ -247,6 +261,7 @@ export async function sendLinkWhatsAppAction(input: { kind: "driver" | "tracking
       to = input.to?.trim() || cl.driverPhone || null;
       name = cl.driverName ?? "Driver";
       url = cl.url;
+      es = cl.carrierCountry === "MX";
       if (!to) throw Object.assign(new Error("the carrier has not given a phone for their driver; enter one"), { name: "ValidationError", field: "to" });
     } else {
       to = input.to?.trim() || null;
@@ -254,7 +269,7 @@ export async function sendLinkWhatsAppAction(input: { kind: "driver" | "tracking
       name = "Tracking";
       url = publicUrl(`/track/${(await issueToken(ctx, "tracking_link", input.orderId, { label: "customer" })).token}`);
     }
-    const body = input.kind === "driver" ? `${name}, your loads: ${url}` : input.kind === "carrier_driver" ? `${name}, load ${o.order.orderNumber} — one button per step, keep it open while driving: ${url}` : `Tracking for ${o.order.orderNumber}: ${url}`;
+    const body = input.kind === "driver" ? driverLinkText(name, url, es) : input.kind === "carrier_driver" ? carrierDriverLinkText(name, o.order.orderNumber, url, es) : `Tracking for ${o.order.orderNumber}: ${url}`;
     const row = await enqueue(ctx, { channel: "whatsapp", to, body, subjectKind: input.kind === "driver" ? "driver_link" : input.kind === "carrier_driver" ? "carrier_driver_link" : "tracking_link", subjectId: input.kind === "driver" ? input.driverId! : input.kind === "carrier_driver" ? input.legId! : input.orderId, meta: { kind: "tracking", template: { name: "", params: [name, o.order.orderNumber, url] } } });
     await deliverQueued().catch(() => null);
     const [after] = await db.select({ state: outbox.state, error: outbox.error }).from(outbox).where(eq(outbox.id, row.id)).limit(1);

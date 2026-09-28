@@ -18,7 +18,7 @@ import { TransitionError } from "./states";
  * with a red flag. Every step — sent, accepted, declined, expired, withdrawn — is on the load's timeline.
  */
 
-export type TenderEventState = "sent" | "accepted" | "declined" | "expired" | "withdrawn";
+export type TenderEventState = "sent" | "accepted" | "declined" | "expired" | "withdrawn" | "countered" | "counter accepted" | "counter declined";
 
 /** A tender step on the load's timeline (leg events, kind "tender"). */
 async function tenderEvent(tx: Tx | typeof db, ctx: Ctx, t: { id: string; legId: string; orderId: string; carrierId: string }, state: TenderEventState, note: string, at = new Date()) {
@@ -255,6 +255,65 @@ export async function respondToTender(token: string, r: TenderResponse) {
   return { state: "declined" as const, leg };
 }
 
+const fmtRate = (cents: number, cur: string) => `${cur} ${(cents / 100).toLocaleString("en-US", { minimumFractionDigits: 2 })}`;
+
+/**
+ * The carrier answers "not at that rate — at this one" from the offer page (M1): the counter goes to dispatch as a
+ * flag on the board with Accept / Decline, instead of a decline and a new tender. The offer stays open (a little
+ * longer, so dispatch can answer); the carrier can still accept the original rate meanwhile.
+ */
+export async function counterTender(token: string, r: { name: string; rateCents: number; note?: string | null }) {
+  const found = await tenderByToken(token);
+  if (!found) throw new NotFoundError("tender", token.slice(0, 8));
+  const { ctx, tender, carrier } = found;
+  if (!r.name?.trim()) throw new ValidationError("please type your name", "name");
+  if (tender.state !== "sent") throw new TransitionError("leg", tender.state, "countered", tender.state === "expired" ? "this offer has expired" : `this offer was already ${tender.state}`);
+  if (!Number.isFinite(r.rateCents) || r.rateCents <= 0) throw new ValidationError("type the rate you can do it for", "rate");
+  if (tender.rateCents != null && r.rateCents === tender.rateCents) throw new ValidationError("that is the rate offered — accept it instead", "rate");
+  const now = new Date();
+  const expiresAt = new Date(Math.max(tender.expiresAt.getTime(), now.getTime() + 30 * 60_000));
+  await db.update(s.tenders).set({ counterCents: r.rateCents, counterNote: r.note?.trim() || null, counterBy: r.name.trim(), counterAt: now, expiresAt, updatedAt: now }).where(eq(s.tenders.id, tender.id));
+  await writeAudit(db, ctx, "tender", tender.id, "update", { counterCents: { from: tender.counterCents ?? null, to: r.rateCents } }, `${r.name.trim()} via the offer page`);
+  const was = tender.rateCents != null ? ` (offered ${fmtRate(tender.rateCents, tender.currency)})` : "";
+  await tenderEvent(db, ctx, tender, "countered", `Counter-offer from ${r.name.trim()} (${carrier?.name ?? "carrier"}): ${fmtRate(r.rateCents, tender.currency)}${was}${r.note?.trim() ? ` — ${r.note.trim()}` : ""}`);
+  await db.update(s.flags).set({ clearedAt: now, clearedBy: "system" }).where(and(eq(s.flags.tenantId, ctx.tenantId), eq(s.flags.legId, tender.legId), eq(s.flags.code, "tender_counter"), sql`${s.flags.clearedAt} is null`));
+  await db.insert(s.flags).values({ id: newId(), tenantId: ctx.tenantId, orderId: tender.orderId, legId: tender.legId, code: "tender_counter", level: "yellow", title: `Counter-offer: ${carrier?.name ?? "the carrier"} asks ${fmtRate(r.rateCents, tender.currency)}${was}`, detail: r.note?.trim() || "Accept or decline it on the leg", owner: "dispatch", data: { tenderId: tender.id, counterCents: r.rateCents } });
+  return { expiresAt };
+}
+
+/**
+ * Dispatch answers a counter-offer. Accept: the tender and the leg take the carrier's rate and the carrier confirms
+ * on the same link with its driver (the offer stays open at least an hour). Decline: the offer stands at our rate.
+ */
+export async function answerCounter(ctx: Ctx, legId: string, accept: boolean) {
+  assertCtx(ctx);
+  requirePermission(ctx, "dispatch.dispatch");
+  const [t] = await db.select().from(s.tenders).where(and(eq(s.tenders.tenantId, ctx.tenantId), eq(s.tenders.legId, legId), eq(s.tenders.state, "sent"))).limit(1);
+  if (!t || t.counterCents == null) throw new ValidationError("there is no counter-offer on this leg");
+  if (t.expiresAt.getTime() < Date.now()) throw new TransitionError("leg", "expired", "answer", "the offer expired");
+  const now = new Date();
+  const counter = fmtRate(t.counterCents, t.currency);
+  if (accept) {
+    await db.update(s.tenders).set({ rateCents: t.counterCents, counterCents: null, counterNote: null, counterBy: null, counterAt: null, expiresAt: new Date(Math.max(t.expiresAt.getTime(), now.getTime() + 60 * 60_000)), responseNote: `counter ${counter} accepted by dispatch`, updatedAt: now, updatedBy: ctx.userId }).where(eq(s.tenders.id, t.id));
+    await db.update(s.legs).set({ carrierRateCents: t.counterCents, carrierRateCurrency: t.currency, updatedAt: now, updatedBy: ctx.userId }).where(eq(s.legs.id, legId));
+    await writeAudit(db, ctx, "leg", legId, "update", { carrierRateCents: { from: t.rateCents, to: t.counterCents } }, `counter-offer from ${t.counterBy ?? "the carrier"} accepted`);
+  } else {
+    await db.update(s.tenders).set({ counterCents: null, counterNote: null, counterBy: null, counterAt: null, responseNote: `counter ${counter} declined by dispatch`, updatedAt: now, updatedBy: ctx.userId }).where(eq(s.tenders.id, t.id));
+  }
+  await tenderEvent(db, ctx, t, accept ? "counter accepted" : "counter declined", `Counter-offer ${counter} ${accept ? "accepted — the carrier confirms with its driver on the same link" : "declined — the offer stands"} (dispatch)`);
+  await db.update(s.flags).set({ clearedAt: now, clearedBy: ctx.userId ?? "system" }).where(and(eq(s.flags.tenantId, ctx.tenantId), eq(s.flags.legId, legId), eq(s.flags.code, "tender_counter"), sql`${s.flags.clearedAt} is null`));
+  // the carrier hears it where they got the offer
+  const [carrier] = await db.select().from(s.carriers).where(eq(s.carriers.id, t.carrierId)).limit(1);
+  if (t.sentTo && (t.channel === "email" || t.channel === "whatsapp")) {
+    const es = (carrier?.country ?? "").toUpperCase() === "MX";
+    const link = publicUrl(`/t/${t.token}`);
+    const body = accept ? (es ? `Aceptamos su contraoferta de ${counter}. Confirme con su operador aquí: ${link}` : `We accept your counter-offer of ${counter}. Confirm with your driver here: ${link}`) : es ? `No podemos pagar ${counter}. La oferta sigue en ${t.rateCents != null ? fmtRate(t.rateCents, t.currency) : "la tarifa original"}: ${link}` : `We can't do ${counter}. The offer stands at ${t.rateCents != null ? fmtRate(t.rateCents, t.currency) : "the original rate"}: ${link}`;
+    await enqueue(ctx, { channel: t.channel, to: t.sentTo, subject: `Counter-offer ${accept ? "accepted" : "declined"}`, body, subjectKind: "tender", subjectId: t.id });
+    await deliverQueued().catch(() => null);
+  }
+  return { accepted: accept };
+}
+
 /** Dispatcher heard back by phone: close the open tender to match the leg. */
 export async function closeOpenTenderForLeg(ctx: Ctx, legId: string, state: "accepted" | "declined" | "withdrawn", note?: string) {
   assertCtx(ctx);
@@ -314,6 +373,12 @@ export async function expireTenders(now = new Date(), opts: { tenantId?: string 
     .from(s.flags)
     .innerJoin(s.legs, eq(s.legs.id, s.flags.legId))
     .where(and(eq(s.flags.code, "tender_expired"), sql`${s.flags.clearedAt} is null`, sql`${s.legs.state} not in ('unassigned', 'declined')`, opts.tenantId ? eq(s.flags.tenantId, opts.tenantId) : sql`true`));
-  if (stale.length) await db.update(s.flags).set({ clearedAt: now, clearedBy: "system" }).where(inArray(s.flags.id, stale.map((x) => x.id)));
-  return { expired, cleared: stale.length };
+  // a counter-offer flag whose tender is no longer open with a counter (accepted, declined, expired, replaced) goes too
+  const counters = await db
+    .select({ id: s.flags.id })
+    .from(s.flags)
+    .where(and(eq(s.flags.code, "tender_counter"), sql`${s.flags.clearedAt} is null`, sql`not exists (select 1 from tenders t where t.leg_id = ${s.flags.legId} and t.state = 'sent' and t.counter_cents is not null)`, opts.tenantId ? eq(s.flags.tenantId, opts.tenantId) : sql`true`));
+  const gone = [...stale, ...counters].map((x) => x.id);
+  if (gone.length) await db.update(s.flags).set({ clearedAt: now, clearedBy: "system" }).where(inArray(s.flags.id, gone));
+  return { expired, cleared: gone.length };
 }

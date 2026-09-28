@@ -1,4 +1,4 @@
-// Features: F-34.1 F-34.2 F-34.3 F-34.4 F-34.5 F-34.6 F-34.7
+// Features: F-34.1 F-34.2 F-34.3 F-34.4 F-34.5 F-34.6 F-34.7 F-34.8 F-34.9
 import { describe, it, expect, beforeEach } from "vitest";
 import { and, eq } from "drizzle-orm";
 import { truncateAll, makeTenant } from "@/test/helpers";
@@ -6,11 +6,13 @@ import { create } from "@/data/records";
 import { db } from "@/db/client";
 import * as s from "@/db/schema";
 import { createOrder, planLeg, dispatchLeg, advanceLeg, sendLeg, holdOrder } from "./orders";
-import { sendTender, expireTenders } from "./tenders";
+import { sendTender, expireTenders, counterTender, answerCounter, respondToTender } from "./tenders";
 import { board } from "./orders";
 import { driverMessage, driverToday } from "./tracking";
 import { handoffStep } from "./zones";
 import { readTable, importLoads } from "./load-import";
+import { driverReadsSpanish, driverLinkText, carrierDriverLinkText } from "./driver-copy";
+import * as Xc from "./crossing";
 import { plannerData, rankForLeg } from "./planner";
 import { trackingView, recordPosition, mergedOrderEtas } from "./tracking";
 import { addCheckCall } from "./check-calls";
@@ -450,5 +452,81 @@ describe("board hygiene, messages, hand-off words, import guard (F-34.7, dispatc
     expect(r.created[1].warnings.join("; ")).toMatch(/scheduled before stop 1/);
     expect(r.created[1].draftWhy).toMatch(/left as a draft: the stops are out of order/);
     expect(r.created[0].draftWhy).toBeNull();
+  });
+});
+
+describe("Spanish for MX drivers; every crossing reachable (F-34.8, dispatch m22, m14, N13)", () => {
+  it("a B-1 / dual / Mexican-licence / +52 driver gets the link text in Spanish first", () => {
+    expect(driverReadsSpanish({ driverType: "B1" })).toBe(true);
+    expect(driverReadsSpanish({ driverType: "CDL", whatsapp: "+52 867 555 0101" })).toBe(true);
+    expect(driverReadsSpanish({ driverType: "CDL", mxLicenseNumber: "LF-1" })).toBe(true);
+    expect(driverReadsSpanish({ driverType: "CDL", phone: "+1 956 555 0122" })).toBe(false);
+    expect(driverLinkText("Óscar Peña", "https://x/d/1", true)).toBe("Óscar Peña, tus cargas · your loads: https://x/d/1");
+    expect(driverLinkText("Kevin", "https://x/d/2", false)).toBe("Kevin, your loads: https://x/d/2");
+    expect(carrierDriverLinkText("Pedro", "26-00036", "https://x/g/1", true)).toMatch(/^Pedro, carga 26-00036 — un botón por paso/);
+  });
+
+  it("a crossing leg delivered by hand, without the border steps, is Cleared with a time (it shows under Cleared and All)", async () => {
+    const o = await createOrder(a, { customerId: f.cust, rateCents: 195000, book: true, stops: [
+      { type: "pickup", name: "Magna Romulus", country: "US", address: { city: "Romulus", state: "MI" }, windowStart: day(1) },
+      { type: "delivery", name: "Linamar London", country: "CA", address: { city: "London", state: "ON" }, windowStart: day(2) },
+    ] });
+    const leg = o.legs[0];
+    await planLeg(a, leg.id, { kind: "truck", truckId: f.t211, driverId: f.ramiro });
+    await dispatchLeg(a, leg.id);
+    for (const st of ["accepted", "en_route_to_pickup", "at_pickup", "loaded", "en_route", "at_delivery", "completed"] as const) await advanceLeg(a, leg.id, st);
+    const rows = await Xc.crossingBoard(a);
+    const r = rows.find((x) => x.c.legId === leg.id)!;
+    expect(r.c.state).toBe("cleared");
+    expect(r.c.clearedAt).not.toBeNull();
+    expect(Xc.bucketOf(r.c.state)).toBe("cleared");
+  });
+});
+
+describe("tender counter-offer (F-34.9, dispatch M1)", () => {
+  const setup = async () => {
+    const blue = (await create(a, "carrier", { name: "Bluewater", country: "US", mcNumber: "MC77", dispatchEmail: "d@blue.test" })).id;
+    const o = await createOrder(a, { customerId: f.cust, rateCents: 450000, book: true, stops: [
+      { type: "pickup" as const, name: "Laredo Yard", country: "US", address: { city: "Laredo", state: "TX" }, windowStart: day(1) },
+      { type: "delivery" as const, name: "Joliet DC", country: "US", address: { city: "Joliet", state: "IL" }, windowStart: day(3) },
+    ] });
+    const t = await sendTender(a, o.legs[0].id, { carrierId: blue, rateCents: 300000, expiresInMinutes: 10 });
+    return { o, t, leg: o.legs[0].id };
+  };
+  const flags = async (legId: string) => (await db.select().from(s.flags).where(and(eq(s.flags.legId, legId), eq(s.flags.code, "tender_counter")))).filter((x) => !x.clearedAt);
+
+  it("the carrier counters on the offer page; dispatch sees it on the board and accepts; the carrier confirms at the new rate", async () => {
+    const { t, leg, o } = await setup();
+    await expect(counterTender(t.tender.token, { name: "Mike", rateCents: 300000 })).rejects.toThrow(/accept it instead/);
+    const r = await counterTender(t.tender.token, { name: "Mike", rateCents: 330000, note: "need $3,300" });
+    expect(r.expiresAt.getTime()).toBeGreaterThan(Date.now() + 25 * 60_000); // time for dispatch to answer
+    const row = (await board(a)).find((x) => x.order.id === o.order.id)!;
+    expect(row.openFlags.map((x) => x.code)).toContain("tender_counter");
+    expect(row.openFlags.find((x) => x.code === "tender_counter")!.title).toBe("Counter-offer: Bluewater asks USD 3,300.00 (offered USD 3,000.00)");
+    await answerCounter(a, leg, true);
+    const [tt] = await db.select().from(s.tenders).where(eq(s.tenders.id, t.tender.id));
+    expect([tt.state, tt.rateCents, tt.counterCents]).toEqual(["sent", 330000, null]);
+    expect((await db.select().from(s.legs).where(eq(s.legs.id, leg)))[0].carrierRateCents).toBe(330000);
+    expect(await flags(leg)).toHaveLength(0);
+    // the carrier hears it and confirms with the driver on the same link
+    const mail = await db.select().from(s.outbox).where(and(eq(s.outbox.subjectId, t.tender.id), eq(s.outbox.subject, "Counter-offer accepted")));
+    expect(mail[0].body).toMatch(/We accept your counter-offer of USD 3,300.00/);
+    await respondToTender(t.tender.token, { accept: true, name: "Mike", driverName: "Joe" });
+    expect((await db.select().from(s.legs).where(eq(s.legs.id, leg)))[0].state).toBe("accepted");
+    const ev = await db.select().from(s.legEvents).where(and(eq(s.legEvents.legId, leg), eq(s.legEvents.kind, "tender")));
+    expect(ev.map((e) => (e.data as { state: string }).state).sort()).toEqual(["accepted", "counter accepted", "countered", "sent"]);
+  });
+
+  it("dispatch declines: the offer stands at our rate; a counter flag left behind clears once the tender closes", async () => {
+    const { t, leg } = await setup();
+    await counterTender(t.tender.token, { name: "Mike", rateCents: 330000 });
+    await answerCounter(a, leg, false);
+    const [tt] = await db.select().from(s.tenders).where(eq(s.tenders.id, t.tender.id));
+    expect([tt.state, tt.rateCents, tt.counterCents]).toEqual(["sent", 300000, null]);
+    await counterTender(t.tender.token, { name: "Mike", rateCents: 320000 });
+    await respondToTender(t.tender.token, { accept: false, name: "Mike", note: "no trucks" });
+    await expireTenders(new Date(), { tenantId: a.tenantId });
+    expect(await flags(leg)).toHaveLength(0);
+    await expect(answerCounter(a, leg, true)).rejects.toThrow(/no counter-offer/);
   });
 });
