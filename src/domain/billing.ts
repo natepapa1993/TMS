@@ -317,6 +317,8 @@ export async function acceptRateConMismatch(ctx: Ctx, orderId: string, note: str
   const cs = await db.select().from(s.charges).where(and(eq(s.charges.tenantId, ctx.tenantId), eq(s.charges.orderId, orderId)));
   const wrong = cs.filter((c) => c.billable && c.approvalState !== "rejected" && !c.invoiceId && c.currency !== o.currency);
   if (wrong.length) throw new ValidationError(`${wrong.map((c) => c.description).join(", ")} ${wrong.length === 1 ? "is" : "are"} in ${wrong[0].currency} but the load is in ${o.currency} — reset the charges to the rate con, or remove and re-add ${wrong.length === 1 ? "it" : "them"} in ${o.currency}`);
+  const { overrideGate } = await import("./approvals");
+  await overrideGate(ctx, { kind: "rate_con", title: `${o.orderNumber}: charges differ from the rate con (${mismatchReason(o, cs) ?? "mismatch"})`, reason: note, orderId, replay: { fn: "acceptRateConMismatch", orderId } });
   await db.update(s.orders).set({ custom: { ...(o.custom ?? {}), rateConMismatchAccepted: note.trim() }, updatedAt: new Date(), updatedBy: ctx.userId }).where(eq(s.orders.id, orderId));
   // accepting our charges with a note also approves any extras still waiting, on the strength of that note
   await db.update(s.charges).set({ approvalState: "approved", approvedBy: "accepted with a note", approvalRef: note.trim(), approvedAt: new Date(), updatedAt: new Date(), updatedBy: ctx.userId }).where(and(eq(s.charges.tenantId, ctx.tenantId), eq(s.charges.orderId, orderId), eq(s.charges.approvalState, "pending"), isNull(s.charges.invoiceId)));

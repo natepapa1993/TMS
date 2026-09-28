@@ -1081,6 +1081,10 @@ export async function planLeg(ctx: Ctx, legId: string, a: Assignment, opts: Plan
       // a schedule call (a double booking, time off) is dispatch's to make; anything about paperwork is Safety's
       requirePermission(ctx, elig.findings.some((f) => f.level === "red" && needsSafety(f)) ? "compliance.override" : "dispatch.override");
       if (!opts.reason?.trim()) throw new ValidationError("an override needs a reason", "reason");
+      // the owner approves overrides (owner #18): queued for review, or only a request when the company says so
+      const { overrideGate } = await import("./approvals");
+      const iso = (d: Date | null | undefined) => (d === undefined ? undefined : d ? d.toISOString() : null);
+      await overrideGate(ctx, { kind: elig.findings.some((f) => f.level === "red" && needsSafety(f)) ? "paperwork" : "schedule", title: `${order.orderNumber} leg ${leg.seq}: ${elig.findings.filter((f) => f.level === "red").map((f) => f.message).join("; ")}`, reason: opts.reason, orderId: order.id, legId: leg.id, replay: { fn: "planLeg", legId: leg.id, assignment: a as unknown as Record<string, unknown>, opts: { plannedStart: iso(opts.plannedStart), plannedEnd: iso(opts.plannedEnd), plannedMiles: opts.plannedMiles } } }, tx);
       await writeAudit(tx, ctx, "leg", leg.id, "override", overrideChanges(elig.findings, a.kind === "truck" ? { truckId: a.truckId, driverId: a.driverId ?? null, coDriverId: a.coDriverId ?? null, trailerId: a.trailerId ?? null } : { carrierId: a.carrierId }), opts.reason);
     }
 
@@ -1535,6 +1539,9 @@ export async function setLegDrivers(ctx: Ctx, legId: string, drivers: { driverId
       if (!opts.override) throw new EligibilityError(elig.findings, false);
       requirePermission(ctx, elig.findings.some((f) => f.level === "red" && needsSafety(f)) ? "compliance.override" : "dispatch.override");
       if (!opts.reason?.trim()) throw new ValidationError("an override needs a reason", "reason");
+      const { overrideGate } = await import("./approvals");
+      const [o] = await tx.select({ n: s.orders.orderNumber }).from(s.orders).where(eq(s.orders.id, leg.orderId)).limit(1);
+      await overrideGate(ctx, { kind: elig.findings.some((f) => f.level === "red" && needsSafety(f)) ? "paperwork" : "schedule", title: `${o?.n ?? "Load"} leg ${leg.seq}: ${elig.findings.filter((f) => f.level === "red").map((f) => f.message).join("; ")}`, reason: opts.reason, orderId: leg.orderId, legId: leg.id, replay: { fn: "setLegDrivers", legId: leg.id, drivers } }, tx);
       await writeAudit(tx, ctx, "leg", leg.id, "override", overrideChanges(elig.findings, { truckId: leg.truckId, ...next, trailerId: leg.trailerId }), opts.reason);
     }
     const [after] = await tx.update(s.legs).set({ ...next, updatedAt: new Date(), updatedBy: ctx.userId }).where(and(eq(s.legs.tenantId, ctx.tenantId), eq(s.legs.id, leg.id))).returning();

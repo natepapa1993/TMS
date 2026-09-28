@@ -103,3 +103,33 @@ export const incidents = pgTable(
   },
   (t) => [index("incidents_tenant_at").on(t.tenantId, t.occurredAt)],
 );
+
+/**
+ * Overrides for the owner to approve (owner #18). Every override someone other than the owner makes lands here:
+ * "applied" (it took effect; the owner reviews it after the fact, the default) or "pending" (the company's
+ * "overrides need the owner's approval first" setting: nothing happens until the owner approves). The owner
+ * approves or rejects; a rejection reopens what was waved through and tells the person who asked.
+ */
+export const overrideRequests = pgTable(
+  "override_requests",
+  {
+    id: id(),
+    tenantId: tenantId(),
+    kind: text("kind").notNull(), // schedule | paperwork | rate_con | crossing
+    state: text("state").notNull().default("pending"), // pending | applied | approved | rejected
+    title: text("title").notNull(), // what was waved through, in plain words
+    reason: text("reason").notNull(),
+    orderId: text("order_id"),
+    legId: text("leg_id"),
+    crossingId: text("crossing_id"),
+    subjectKind: text("subject_kind"),
+    subjectId: text("subject_id"),
+    replay: jsonb("replay").$type<Record<string, unknown>>().notNull(), // the call to make when the owner approves a pending one
+    requestedBy: text("requested_by"),
+    decidedBy: text("decided_by"),
+    decidedAt: timestamp("decided_at", { withTimezone: true }),
+    decisionNote: text("decision_note"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("override_requests_tenant_state").on(t.tenantId, t.state)],
+);

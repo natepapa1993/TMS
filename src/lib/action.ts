@@ -37,6 +37,7 @@ export function toError(e: unknown): ActionResult<never> {
   if (name === "EligibilityError") return { ok: false, error: err.message, code: "eligibility", findings: err.findings, hardBlocked: err.hardBlocked };
   if (name === "ValidationError") return { ok: false, error: err.message, field: err.field, code: "validation" };
   if (name === "TransitionError") return { ok: false, error: err.message, code: "transition" };
+  if (name === "ApprovalRequestedError") return { ok: false, error: err.message, code: "approval_requested" };
   const cause = (err as { cause?: { message?: string; code?: string } })?.cause;
   const msg = `${err?.message ?? ""} ${cause?.message ?? ""}`;
   if (/duplicate key/.test(msg) || cause?.code === "23505") return { ok: false, error: "That value already exists on another record.", code: "duplicate" };

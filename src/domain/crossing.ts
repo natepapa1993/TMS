@@ -767,6 +767,10 @@ export async function overrideCheck(ctx: Ctx, crossingId: string, code: string, 
   const [chk] = await db.select().from(s.crossingChecks).where(and(eq(s.crossingChecks.tenantId, ctx.tenantId), eq(s.crossingChecks.crossingId, crossingId), eq(s.crossingChecks.code, code))).limit(1);
   if (!chk) throw new NotFoundError("check", code);
   if (chk.state !== "fail") throw new ValidationError("only a failed check can be overridden");
+  const { overrideGate } = await import("./approvals");
+  const x = await load(ctx, crossingId);
+  const [o] = await db.select({ n: s.orders.orderNumber }).from(s.orders).where(eq(s.orders.id, x.orderId)).limit(1);
+  await overrideGate(ctx, { kind: "crossing", title: `${o?.n ?? "Load"} crossing, ${code} check: ${chk.message ?? "failed"}`, reason, orderId: x.orderId, legId: x.legId, crossingId, replay: { fn: "overrideCheck", crossingId, code } });
   await db.update(s.crossingChecks).set({ state: "overridden", overrideReason: reason.trim(), overrideBy: ctx.userId, overrideAt: new Date() }).where(eq(s.crossingChecks.id, chk.id));
   await event(db, ctx, crossingId, { kind: "check", note: `override ${code}: ${reason.trim()}` });
   await writeAudit(db, ctx, "crossing", crossingId, "override", { check: { from: "fail", to: "overridden" } }, `${code}: ${reason.trim()}`);
@@ -891,6 +895,9 @@ export async function overrideEligibility(ctx: Ctx, crossingId: string, reason: 
   if (!reason?.trim()) throw new ValidationError("a reason is required", "reason");
   const c = await load(ctx, crossingId);
   if (c.eligibility?.hardBlocked) throw new ValidationError("a hard block cannot be overridden: fix the truck or driver");
+  const { overrideGate } = await import("./approvals");
+  const [o] = await db.select({ n: s.orders.orderNumber }).from(s.orders).where(eq(s.orders.id, c.orderId)).limit(1);
+  await overrideGate(ctx, { kind: "crossing", title: `${o?.n ?? "Load"} crossing eligibility: ${(c.eligibility?.findings ?? []).filter((f) => f.level === "red").map((f) => f.message).join("; ") || "red"}`, reason, orderId: c.orderId, legId: c.legId, crossingId, replay: { fn: "overrideEligibility", crossingId } });
   await db.update(s.crossings).set({ eligibilityOverride: { reason: reason.trim(), by: ctx.userId, at: new Date().toISOString() }, updatedAt: new Date(), updatedBy: ctx.userId }).where(eq(s.crossings.id, crossingId));
   await writeAudit(db, ctx, "crossing", crossingId, "override", { eligibility: { from: "red", to: "overridden" } }, reason.trim());
   await recompute(ctx, crossingId);
@@ -1215,7 +1222,7 @@ export async function crossingPage(ctx: Ctx, crossingId: string) {
     crossingDocs(ctx.tenantId, c).then((ds) => ds.filter((d) => d.crossingId !== c.id && c.requirements.some((r) => r.code.toUpperCase() === d.key)).map((d) => ({ ...d, code: d.key.toLowerCase(), fromLoad: true as const }))),
     c.portId ? db.select().from(s.ports).where(eq(s.ports.id, c.portId)).limit(1).then((r) => r[0] ?? null) : Promise.resolve(null),
   ]);
-  const docs = [...own.map((d) => ({ ...d, fromLoad: false })), ...fromLoad.map(({ key: _k, orderId: _o, legId: _l, crossingId: _x, on: _on, ...d }) => d)];
+  const docs = [...own.map((d) => ({ ...d, fromLoad: false })), ...fromLoad.map((d) => ({ id: d.id, tenantId: d.tenantId, documentTypeId: d.documentTypeId, code: d.code, subjectKind: d.subjectKind, subjectId: d.subjectId, fileName: d.fileName, mimeType: d.mimeType, sizeBytes: d.sizeBytes, storageKey: d.storageKey, sha256: d.sha256, issuedAt: d.issuedAt, expiresAt: d.expiresAt, number: d.number, source: d.source, status: d.status, version: d.version, extracted: d.extracted, extractionAt: d.extractionAt, extractionNote: d.extractionNote, notes: d.notes, createdAt: d.createdAt, createdBy: d.createdBy, updatedAt: d.updatedAt, updatedBy: d.updatedBy, archivedAt: d.archivedAt, fromLoad: true }))];
   const truck = leg?.truckId ? (await db.select().from(s.trucks).where(eq(s.trucks.id, leg.truckId)).limit(1))[0] : null;
   const driver = leg?.driverId ? (await db.select().from(s.drivers).where(eq(s.drivers.id, leg.driverId)).limit(1))[0] : null;
   const coDriver = leg?.coDriverId ? (await db.select().from(s.drivers).where(eq(s.drivers.id, leg.coDriverId)).limit(1))[0] : null;

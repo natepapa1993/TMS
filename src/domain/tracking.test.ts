@@ -173,10 +173,13 @@ describe("tracking (F-5)", () => {
     await driverStep(a.tenantId, f.benja, legId, {}); // en route to pickup
     await driverStep(a.tenantId, f.benja, legId, {}); // at pickup
     let today = await driverToday(a.tenantId, f.benja);
-    expect(today.current!.docs).toEqual({ pod: false, seal: false });
+    expect(today.current!.docs).toEqual({ pod: false, seal: false, bol: false });
     await driverUploadPhoto(a.tenantId, f.benja, legId, { code: "SEAL_PHOTO", fileName: "seal.jpg", mimeType: "image/jpeg", bytes: jpg });
+    // F-32.21 (owner #8): the BOL photographed at pickup is the load's BOL (billing, crossing checklist, portal)
+    await driverUploadPhoto(a.tenantId, f.benja, legId, { code: "BOL", fileName: "bol.jpg", mimeType: "image/jpeg", bytes: jpg });
     today = await driverToday(a.tenantId, f.benja);
     expect(today.current!.docs.seal).toBe(true);
+    expect(today.current!.docs.bol).toBe(true);
     await driverStep(a.tenantId, f.benja, legId, {}); // loaded
     await driverStep(a.tenantId, f.benja, legId, {}); // en route
     await driverStep(a.tenantId, f.benja, legId, {}); // at delivery
@@ -189,7 +192,7 @@ describe("tracking (F-5)", () => {
     today = await driverToday(a.tenantId, f.benja);
     expect(today.current!.docs.pod).toBe(true);
     const evs = await db.select().from(legEvents).where(and(eq(legEvents.legId, legId), eq(legEvents.kind, "document")));
-    expect(evs.map((e) => e.note)).toEqual(["Seal photo from the driver app at Santa Fe Yard", "POD photo from the driver app at Laredo Yard"]);
+    expect(evs.map((e) => e.note)).toEqual(["Seal photo from the driver app at Santa Fe Yard", "BOL photo from the driver app at Santa Fe Yard", "POD photo from the driver app at Laredo Yard"]);
     // a second POD photo supersedes the first; the newest is what billing sees
     await driverUploadPhoto(a.tenantId, f.benja, legId, { code: "POD", fileName: "pod2.jpg", mimeType: "image/jpeg", bytes: jpg });
     const pods = await db.select().from(documents).where(and(eq(documents.subjectId, o.order.id), eq(documents.code, "POD")));

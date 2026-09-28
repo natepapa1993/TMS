@@ -495,6 +495,9 @@ export async function overrideDispatch(ctx: Ctx, kind: SubjectKind, subjectId: s
     const hard = st.items.filter((i) => isBlocking(i) && levelOf(i) === "hard").map(blockReason);
     throw new ValidationError(`cannot override ${hard.join(", ")}: nobody can wave that through`);
   }
+  // the owner approves overrides (owner #18): queued for review, or only a request when the company says so
+  const { overrideGate, subjectName } = await import("./approvals");
+  await overrideGate(ctx, { kind: "paperwork", title: `${await subjectName(ctx.tenantId, kind, subjectId)}: ${st.items.filter((i) => isBlocking(i)).map(blockReason).join(", ") || "paperwork block"}`, reason, subjectKind: kind, subjectId, replay: { fn: "overrideDispatch", kind, subjectId } });
   const expiresAt = new Date(Date.now() + 24 * 3600_000);
   await db.insert(s.complianceOverrides).values({ id: newId(), tenantId: ctx.tenantId, subjectKind: kind, subjectId, reason: reason.trim(), expiresAt, createdBy: ctx.userId });
   await writeAudit(db, ctx, kind, subjectId, "override", { dispatchable: { from: false, to: "24h" } }, reason.trim());

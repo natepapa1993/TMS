@@ -1144,6 +1144,34 @@
         "src/domain/book-again.test.ts",
         "e2e/dispatch.spec.ts"
       ]
+    },
+    {
+      "id": "F-32.21",
+      "name": "Upload a document once and it counts everywhere: one record on the load, a leg or a crossing, read by key across the load for the billing docs gate, the invoice packet, the crossing checklist and checks, the carrier bill three-way match and the customer portal; the Documents tab shows where each came in and where it counts",
+      "milestone": "M32",
+      "status": "done",
+      "tests": [
+        "src/domain/load-docs.test.ts",
+        "src/domain/tracking.test.ts"
+      ]
+    },
+    {
+      "id": "F-32.22",
+      "name": "Owner approval queue for overrides: schedule, paperwork, rate-con and crossing overrides by anyone but the owner land in Approvals on Today with approve / reject (reject reopens and tells the person); company setting makes them requests until approved",
+      "milestone": "M32",
+      "status": "done",
+      "tests": [
+        "src/domain/approvals.test.ts"
+      ]
+    },
+    {
+      "id": "F-32.23",
+      "name": "Invite users by email: name, email, role (Dispatcher by default); the person sets their own password from a one-time 7-day link; pending invites can be copied, re-sent or cancelled",
+      "milestone": "M32",
+      "status": "done",
+      "tests": [
+        "src/domain/invites.test.ts"
+      ]
     }
   ]
 }
