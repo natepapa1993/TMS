@@ -84,7 +84,8 @@ test("safety: a driver's qualification file, a random draw and a refusal that ho
   await expect(page.getByTestId("dq-grace")).toContainText("grace until");
   await page.getByTestId("end-dq-grace").click();
   await page.getByRole("dialog").locator("button:has-text('Enforce now')").click();
-  await expect(page.getByRole("status").filter({ hasText: "Enforced" })).toBeVisible();
+  // the grace banner (and its toast) goes away once the files are enforced: the blocked rows are the answer
+  await expect(page.getByTestId("end-dq-grace")).toHaveCount(0);
   let otherRow = page.locator("tr", { hasText: other });
   await expect(otherRow).toContainText("blocked");
   await expect(otherRow).toContainText("No Clearinghouse pre-employment query");

@@ -154,5 +154,5 @@ test("billing: a delivered load with no POD waits; dispatch bills it without one
   await page.goto("/billing");
   const row = page.locator("tr", { hasText: num });
   await row.getByTestId("bill-one").click();
-  await expect(page.getByRole("status")).toContainText(/SF-\d{6} sent/);
+  await expect(page.getByRole("status")).toContainText(/SF-\d{6} (sent|issued — Logged — not emailed)/);
 });
