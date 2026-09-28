@@ -55,18 +55,28 @@ export async function ensureDemoCompany(opts: { force?: boolean; now?: Date } = 
   return building;
 }
 
+/** Bump when the builder changes: every deployment then rebuilds the demo once with the new data. */
+const DEMO_VERSION = 2;
+const BASE = { demo: true, dispatchPhone: "+1 956 555 0142" };
+
 async function ensure(opts: { force?: boolean; now?: Date }): Promise<string> {
   const password = process.env.DEMO_PASSWORD;
   if (!password || password.length < 10) return "DEMO_PASSWORD is not set (10+ characters): demo company not built";
   const now = opts.now ?? new Date();
   const today = zonedDate(now, TZ);
+  const current = (x: typeof s.tenants.$inferSelect) => {
+    const st = (x.settings ?? {}) as Record<string, unknown>;
+    return st.demoBuiltFor === today && st.demoVersion === DEMO_VERSION;
+  };
   let t = await demoTenant();
-  if (t && !opts.force && (t.settings as Record<string, unknown> | null)?.demoBuiltFor === today) return `demo company is up to date (${today})`;
+  if (t && !opts.force && current(t)) return `demo company is up to date (${today})`;
   const { hashPassword } = await import("@/lib/auth");
   const hash = await hashPassword(password);
   if (!t) {
+    // the slug is unique: when two servers start together only one creates (and builds) the company
     const tenantId = newId();
-    await db.insert(s.tenants).values({ id: tenantId, name: "Frontera Freight (demo)", slug: DEMO_SLUG, timeZone: TZ, settings: { demo: true } });
+    const made = await db.insert(s.tenants).values({ id: tenantId, name: "Frontera Freight (demo)", slug: DEMO_SLUG, timeZone: TZ, settings: { ...BASE, demoBuilding: now.toISOString() } }).onConflictDoNothing().returning({ id: s.tenants.id });
+    if (!made.length) return "demo company is being built by another server";
     for (const [role, name, email] of DEMO_LOGINS) {
       const [clash] = await db.select({ id: s.users.id }).from(s.users).where(eq(s.users.email, email)).limit(1);
       if (clash) continue;
@@ -74,16 +84,34 @@ async function ensure(opts: { force?: boolean; now?: Date }): Promise<string> {
     }
     t = (await demoTenant())!;
   } else {
+    // claim the build: one server at a time (a claim older than 20 minutes is a crashed build)
+    const claimed = (await db.execute(sql`
+      update tenants set settings = settings || jsonb_build_object('demoBuilding', ${now.toISOString()}::text)
+      where id = ${t.id} and (settings->>'demoBuilding' is null or (settings->>'demoBuilding')::timestamptz < now() - interval '20 minutes')
+      returning id
+    `)) as unknown as unknown[];
+    if (!claimed.length) return "demo company is being built by another server";
+    const again = await demoTenant();
+    if (again && !opts.force && current(again)) {
+      await db.update(s.tenants).set({ settings: { ...BASE, demoBuiltFor: today, demoVersion: DEMO_VERSION } }).where(eq(s.tenants.id, t.id));
+      return `demo company is up to date (${today})`;
+    }
     await wipe(t.id);
     // the password follows DEMO_PASSWORD
     for (const [, , email] of DEMO_LOGINS) await db.update(s.users).set({ passwordHash: hash }).where(and(eq(s.users.tenantId, t.id), eq(s.users.email, email)));
   }
-  await db.update(s.tenants).set({ settings: { demo: true, dispatchPhone: "+1 956 555 0142" }, timeZone: TZ, name: "Frontera Freight (demo)" }).where(eq(s.tenants.id, t.id));
-  const [owner] = await db.select({ id: s.users.id }).from(s.users).where(and(eq(s.users.tenantId, t.id), eq(s.users.role, "owner"))).limit(1);
-  const ctx: Ctx = { tenantId: t.id, userId: owner?.id ?? null, role: "owner" };
-  const log = await build(ctx, now);
-  await db.update(s.tenants).set({ settings: { demo: true, dispatchPhone: "+1 956 555 0142", demoBuiltFor: today } }).where(eq(s.tenants.id, t.id));
-  return `demo company built for ${today}: ${log.ok} steps ok${log.failed.length ? `, ${log.failed.length} skipped (${log.failed.slice(0, 5).join("; ")})` : ""}`;
+  const tenantId = t.id;
+  try {
+    await db.update(s.tenants).set({ timeZone: TZ, name: "Frontera Freight (demo)" }).where(eq(s.tenants.id, tenantId));
+    const [owner] = await db.select({ id: s.users.id }).from(s.users).where(and(eq(s.users.tenantId, tenantId), eq(s.users.role, "owner"))).limit(1);
+    const ctx: Ctx = { tenantId, userId: owner?.id ?? null, role: "owner" };
+    const log = await build(ctx, now);
+    await db.update(s.tenants).set({ settings: { ...BASE, demoBuiltFor: today, demoVersion: DEMO_VERSION } }).where(eq(s.tenants.id, tenantId));
+    return `demo company built for ${today}: ${log.ok} steps ok${log.failed.length ? `, ${log.failed.length} skipped (${log.failed.slice(0, 5).join("; ")})` : ""}`;
+  } catch (e) {
+    await db.update(s.tenants).set({ settings: { ...BASE } }).where(eq(s.tenants.id, tenantId));
+    throw e;
+  }
 }
 
 /** Remove the demo company and its logins entirely. */
