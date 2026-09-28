@@ -30,12 +30,13 @@ export default async function CrossingBoardPage({ searchParams }: PageProps<"/cr
   const dn = name(drivers, "name");
   const pn = name(ports, "name");
   const kn = name(carriers, "name");
-  const bucket = (BUCKETS as string[]).includes(String(sp.b)) ? (sp.b as Bucket) : "waiting";
+  // "all": every crossing on a live load, newest first — the cleared ones too, however long ago (m14, N13)
+  const bucket = sp.b === "all" ? "all" : (BUCKETS as string[]).includes(String(sp.b)) ? (sp.b as Bucket) : "waiting";
   const now = await currentTime();
   const recent = now - 48 * 3600_000;
   const inBucket = (r: (typeof rows)[number], b: Bucket) => bucketOf(r.c.state) === b && (b !== "cleared" || (r.c.clearedAt && r.c.clearedAt.getTime() > recent));
   const counts = Object.fromEntries(BUCKETS.map((b) => [b, rows.filter((r) => inBucket(r, b)).length]));
-  const shown = rows.filter((r) => inBucket(r, bucket)).sort((p, q) => (q.c.arrivedYardAt?.getTime() ?? 0) - (p.c.arrivedYardAt?.getTime() ?? 0) || (p.c.arrivedYardAt ? -1 : 1));
+  const shown = bucket === "all" ? rows : rows.filter((r) => inBucket(r, bucket)).sort((p, q) => (q.c.arrivedYardAt?.getTime() ?? 0) - (p.c.arrivedYardAt?.getTime() ?? 0) || (p.c.arrivedYardAt ? -1 : 1));
   const hours = (d: Date | null) => (d ? Math.round((now - d.getTime()) / 3600_000) : null);
   return (
     <div>
@@ -48,6 +49,9 @@ export default async function CrossingBoardPage({ searchParams }: PageProps<"/cr
             {BUCKET_LABEL[b]} <span className="count">{counts[b]}</span>
           </Link>
         ))}
+        <Link href="/crossing?b=all" className="stage-tab" data-active={bucket === "all"}>
+          All <span className="count">{rows.length}</span>
+        </Link>
       </div>
       <div className="px-gutter pb-10">
         <div className="card overflow-hidden">

@@ -13,6 +13,7 @@ import { NotFoundError, ValidationError } from "./orders";
 import { TransitionError } from "./states";
 import { buildPacketPdf, buildSolicitudRetiro } from "./crossing-pdf";
 import { extractWithModel } from "@/integrations/extractor";
+import { HANDOFF } from "./zones";
 
 /**
  * Crossing (spec §3). One crossing per crossing leg. Requirements come from crossing_doc_rules
@@ -819,7 +820,7 @@ export async function recompute(ctx: Ctx, crossingId: string) {
     // (a truck turned back at the border keeps its leg rolling: after a return the border steps start again from the packet)
     const follow: CrossingState | null = xleg.state === "completed" ? "cleared" : xleg.state === "cancelled" ? "cancelled" : ["en_route", "at_delivery"].includes(xleg.state) && beforePacket(c.state) && !c.returnedReason ? "departed_yard" : null;
     if (follow && follow !== c.state) {
-      await setState(db, sys, c, follow, { source: "system", note: `the crossing leg is ${xleg.state.replace(/_/g, " ")}`, at: xleg.completedAt ?? xleg.updatedAt ?? undefined }, follow === "cleared" ? { departedYardAt: c.departedYardAt ?? xleg.completedAt ?? new Date() } : follow === "departed_yard" ? { departedYardAt: c.departedYardAt ?? new Date() } : {});
+      await setState(db, sys, c, follow, { source: "system", note: `the crossing leg is ${xleg.state.replace(/_/g, " ")}`, at: xleg.completedAt ?? xleg.updatedAt ?? undefined }, follow === "cleared" ? { departedYardAt: c.departedYardAt ?? xleg.completedAt ?? new Date(), clearedAt: c.clearedAt ?? xleg.completedAt ?? new Date() } : follow === "departed_yard" ? { departedYardAt: c.departedYardAt ?? new Date() } : {});
       c = await load(ctx, crossingId);
     }
   }
@@ -921,7 +922,8 @@ export function stepLabel(state: CrossingState, c?: { fromCountry: string; toCou
 /**
  * One physical step forward (driver tap, GPS, or dispatcher). Backwards needs the owner. The crossing leg moves
  * with it (B3): the border steps need the caja picked up at the yard (the leg Loaded); Departed the yard puts the
- * leg en route; Cleared delivers the leg at the yard on the other side, which wakes up the next leg.
+ * leg en route; Cleared delivers the leg at the yard on the other side, which wakes up the next leg — or, when the
+ * leg runs on to the consignee, leaves it en route there (clearedCompletesLeg).
  */
 export async function step(ctx: Ctx, crossingId: string, to: CrossingState, e: { source?: string; verified?: boolean; note?: string | null; at?: Date; seal?: string | null } = {}) {
   assertCtx(ctx);
@@ -960,13 +962,25 @@ export async function step(ctx: Ctx, crossingId: string, to: CrossingState, e: {
   return after;
 }
 
-/** The crossing leg follows its border step: en route once it left the yard, delivered at the far yard once cleared. */
+/**
+ * Cleared ends the crossing leg only where the freight waits for the next leg: a yard, a border yard, a transload,
+ * a terminal or a customs lot (owner N2). A leg that runs straight to the consignee (Romulus → London ON, a
+ * through-trip to Monterrey) is only on the other side: it rolls on to the delivery, and the driver arrives and
+ * delivers there. Pure.
+ */
+export function clearedCompletesLeg(toStopType: string | null | undefined) {
+  return !!toStopType && ([...HANDOFF, "customs"] as string[]).includes(toStopType);
+}
+
+/** The crossing leg follows its border step: en route once it left the yard; once cleared, delivered at the far yard — or still en route to a consignee. */
 async function legFollowsCrossing(ctx: Ctx, leg: typeof s.legs.$inferSelect, to: CrossingState, e: { source?: string; verified?: boolean; at?: Date; seal?: string | null }) {
   const { advanceLeg } = await import("./orders");
   const src = (["driver_app", "gps", "carrier", "dispatcher", "system"].includes(e.source ?? "") ? e.source : "system") as "driver_app" | "gps" | "carrier" | "dispatcher" | "system";
   const ev = { source: src, verified: e.verified ?? false, at: e.at, note: `border: ${CROSSING_LABEL[to].toLowerCase()}` };
   const border = PHYSICAL.includes(to) && to !== "packet_sent";
-  const walk: LegState[] = !border ? [] : ["accepted", "en_route_to_pickup", "at_pickup", "loaded", "en_route", ...(to === "cleared" ? (["at_delivery", "completed"] as LegState[]) : [])];
+  const [toStop] = leg.toStopId ? await db.select({ type: s.stops.type, name: s.stops.name }).from(s.stops).where(eq(s.stops.id, leg.toStopId)).limit(1) : [];
+  const completes = to === "cleared" && clearedCompletesLeg(toStop?.type);
+  const walk: LegState[] = !border ? [] : ["accepted", "en_route_to_pickup", "at_pickup", "loaded", "en_route", ...(completes ? (["at_delivery", "completed"] as LegState[]) : [])];
   let state = leg.state;
   for (const target of walk) {
     const order: LegState[] = ["dispatched", "accepted", "en_route_to_pickup", "at_pickup", "loaded", "en_route", "at_delivery", "completed"];
@@ -974,6 +988,10 @@ async function legFollowsCrossing(ctx: Ctx, leg: typeof s.legs.$inferSelect, to:
     // the seal the driver reads at the far yard is recorded where the leg arrives (and checked against the one applied)
     const moved = await advanceLeg(systemCtx(ctx.tenantId), leg.id, target, target === "at_delivery" ? { ...ev, seal: e.seal ?? null } : ev, { syncCrossing: false });
     state = moved.state;
+  }
+  if (to === "cleared" && !completes) {
+    // across and rolling to the consignee: the driver still arrives and delivers there; a seal read at the border goes on the timeline
+    await db.insert(s.legEvents).values({ id: newId(), tenantId: ctx.tenantId, legId: leg.id, orderId: leg.orderId, kind: "note", source: src, verified: e.verified ?? false, note: `Cleared customs — en route to ${toStop?.name ?? "the delivery"}${e.seal?.trim() ? ` · seal ${e.seal.trim().toUpperCase()}` : ""}` });
   }
   if (to === "cleared" && state === "completed") {
     // the next leg can go: the freight is at the yard on the other side

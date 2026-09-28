@@ -1225,6 +1225,92 @@
         "src/domain/book-again.test.ts",
         "e2e/dispatch.spec.ts"
       ]
+    },
+    {
+      "id": "F-34.1",
+      "name": "Cleared is not Delivered: a crossing leg that runs on to the consignee is en route after Cleared; only a leg ending at a yard, border yard or hand-off completes",
+      "milestone": "M34",
+      "status": "done",
+      "tests": [
+        "src/domain/flow2.test.ts"
+      ]
+    },
+    {
+      "id": "F-34.2",
+      "name": "A partner carrier's leg is Sent only through a tender (email, WhatsApp or a link with a deadline); a tender that can't go leaves the leg as it was, with an inline field to add the missing WhatsApp number or email",
+      "milestone": "M34",
+      "status": "done",
+      "tests": [
+        "src/domain/flow2.test.ts",
+        "e2e/flow2.spec.ts"
+      ]
+    },
+    {
+      "id": "F-34.3",
+      "name": "Planner availability as time windows: free now until the next booked pickup, the next loads listed, Available count kept when loads are booked ahead; ranking by the gap (makes the window and its next load), then empty miles, then free time",
+      "milestone": "M34",
+      "status": "done",
+      "tests": [
+        "src/domain/flow2.test.ts"
+      ]
+    },
+    {
+      "id": "F-34.4",
+      "name": "One ETA everywhere: the customer tracking page, customer portal and status replies use the board's merged ETA (a check-call ETA beats GPS until a newer position)",
+      "milestone": "M34",
+      "status": "done",
+      "tests": [
+        "src/domain/flow2.test.ts"
+      ]
+    },
+    {
+      "id": "F-34.5",
+      "name": "The partner carrier picker lists the carriers that fit the leg (MX leg: Mexican carriers; crossing: transfer carriers; US/CA legs: US and Canadian carriers), the rest behind Show all",
+      "milestone": "M34",
+      "status": "done",
+      "tests": [
+        "src/domain/flow2.test.ts",
+        "e2e/flow2.spec.ts"
+      ]
+    },
+    {
+      "id": "F-34.6",
+      "name": "Rate con upload with the AI reader off: the PDF is kept on the draft anyway and the builder is filled from the PDF's own text where confident (customer, rate, load #, equipment, stops with address and times, freight), saying what was read",
+      "milestone": "M34",
+      "status": "done",
+      "tests": [
+        "src/domain/flow2.test.ts",
+        "src/domain/ratecon-reader.test.ts",
+        "e2e/flow2.spec.ts"
+      ]
+    },
+    {
+      "id": "F-34.7",
+      "name": "Board hygiene: a stale Tender expired flag clears itself once the leg is covered; a driver's message lands on the leg they are on; a drop at a (border) yard reads Dropped, not Delivered — empty; import with Book now leaves loads with stops out of order as drafts (and bulk book skips them)",
+      "milestone": "M34",
+      "status": "done",
+      "tests": [
+        "src/domain/flow2.test.ts"
+      ]
+    },
+    {
+      "id": "F-34.8",
+      "name": "WhatsApp link texts in Spanish for Mexican drivers (B-1, dual, MX licence or +52) and Mexican carriers' drivers; Crossings has an All tab, and a crossing leg delivered by hand is Cleared with a time",
+      "milestone": "M34",
+      "status": "done",
+      "tests": [
+        "src/domain/flow2.test.ts"
+      ]
+    },
+    {
+      "id": "F-34.9",
+      "name": "Tender counter-offer: the carrier sends its rate from the offer page, dispatch accepts or declines it on the board, the carrier hears back and confirms on the same link",
+      "milestone": "M34",
+      "status": "done",
+      "tests": [
+        "src/domain/flow2.test.ts",
+        "e2e/flow2.spec.ts"
+      ]
     }
   ]
 }

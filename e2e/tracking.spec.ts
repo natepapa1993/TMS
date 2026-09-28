@@ -137,7 +137,7 @@ test("driver app: link from Fleet, one button per step with GPS, customer tracki
   await phone.getByLabel("Seal applied").fill("MX-4471");
   await big.click();
   await phone.waitForTimeout(400);
-  await expect(big).toContainText("En route to delivery");
+  await expect(big).toContainText("En route to the yard"); // the leg ends at the Laredo yard, not a delivery (owner #27)
   await big.click();
   await phone.waitForTimeout(400);
   // en route with a GPS fix and a destination on file: the customer's page and the board carry a verified ETA

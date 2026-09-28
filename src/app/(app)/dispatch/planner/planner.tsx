@@ -13,14 +13,15 @@ import type { PlannerDriver, PlannerLeg, PlannerTruck } from "@/domain/planner";
 import { planAction, planAndDispatchAction } from "../actions";
 import { rankAction, addEventAction, deleteEventAction, dispatchManyAction } from "./actions";
 
-type Candidate = { truckId: string; unitNumber: string; driverId: string | null; driverName: string | null; ok: boolean; hardBlocked: boolean; reason: string; score: number; reach?: { status: "ok" | "late" | "past" | "unknown"; arriveAt: string | null; message: string | null } | null; pickupPassed?: boolean };
+type Candidate = { truckId: string; unitNumber: string; driverId: string | null; driverName: string | null; ok: boolean; hardBlocked: boolean; reason: string; score: number; reach?: { status: "ok" | "late" | "past" | "unknown"; arriveAt: string | null; message: string | null } | null; pickupPassed?: boolean; nextLoad?: { orderNumber: string; at: string | null; zone: string; makes: boolean | null } | null };
 /** How a ranked truck fits the picked load, in one line and one colour. */
 const fit = (c: Candidate): { text: string; tone: "red" | "amber" | "green" } =>
   c.hardBlocked ? { text: `Blocked: ${c.reason}`, tone: "red" }
   : !c.ok ? { text: `Override: ${c.reason.replace(/^needs override:\s*/i, "")}`, tone: "amber" }
   : c.pickupPassed ? { text: "Pickup time passed — move the appointment first", tone: "amber" }
   : c.reach?.status === "late" ? { text: c.reach.message ?? c.reason, tone: "amber" }
-  : c.reason.startsWith("free") ? { text: c.reach?.message ?? "Ready for this load", tone: "green" }
+  : c.nextLoad?.makes === false ? { text: c.reason, tone: "amber" }
+  : c.reason.startsWith("free") ? { text: [c.reach?.message ?? "Ready for this load", c.nextLoad?.at ? `next load ${c.nextLoad.orderNumber} ${fmtWhen(c.nextLoad.at, c.nextLoad.zone, { style: "short" })}` : null].filter(Boolean).join(" · "), tone: "green" }
   : { text: c.reason, tone: "green" };
 const FIT_CLASS = { red: "text-red", amber: "text-amber", green: "text-green" } as const;
 const passed = (l: PlannerLeg) => {
@@ -357,7 +358,7 @@ export function Planner({ data, canPlan }: { data: { legs: PlannerLeg[]; drivers
                           ))}
                         </td>
                         <td>
-                          <div className="font-semibold">{d.status === "available" && !d.events.some((e) => e.hard && new Date(e.startsAt) <= new Date()) ? "Now" : when(d.availableAt, d.availableZone)}</div>
+                          <div className="font-semibold">{d.status === "available" && !d.events.some((e) => e.hard && new Date(e.startsAt) <= new Date()) ? "Now" : when(d.availableAt, d.availableZone)}{d.until && d.status !== "off" ? <span className="font-normal text-ink-2"> until {shortWhen(d.until.at, d.until.zone)} ({d.until.orderNumber})</span> : null}</div>
                           <div className="text-footnote text-muted">{d.availableIn ?? "—"}</div>
                         </td>
                         <td className="text-callout">{d.next ? `${d.next.orderNumber} · ${shortWhen(d.next.at, d.next.zone)}` : <span className="text-faint">—</span>}</td>
@@ -657,14 +658,28 @@ function TrucksPanel(p: {
                       ))}
                     </td>
                     <td>
-                      <div className="font-semibold whitespace-nowrap">{t.status === "available" ? "Now" : t.status === "waiting_crossing" ? "Once it crosses" : t.status === "unavailable" && !t.availableAt ? "—" : friendly(t.availableAt, t.availableZone, now)}</div>
+                      <div className="font-semibold" data-testid="truck-free">
+                        {t.status === "available" ? "Free now" : t.status === "waiting_crossing" ? "Once it crosses" : t.status === "unavailable" && !t.availableAt ? "—" : `Free ${friendly(t.availableAt, t.availableZone, now)}`}
+                        {t.until && t.status !== "unavailable" && t.status !== "waiting_crossing" && (
+                          <span className="font-normal text-ink-2">
+                            {" "}
+                            until {friendly(t.until.at, t.until.zone, now)} <span className="mono">({t.until.orderNumber})</span>
+                          </span>
+                        )}
+                      </div>
                       <div className="text-footnote text-muted">
                         {t.availableIn ?? "—"}
                         {leg && dh != null && <span className="text-ink-2 font-semibold"> · {dh.toLocaleString("en-US")} mi empty</span>}
                       </div>
-                      {!leg && t.next && t.status !== "waiting_crossing" && (
-                        <div className="text-footnote text-muted mt-0.5">
-                          Next <span className="mono">{t.next.orderNumber}</span> · {friendly(t.next.at, t.next.zone, now)}
+                      {!leg && t.upcoming.length > 0 && t.status !== "waiting_crossing" && (
+                        <div className="text-footnote text-muted mt-0.5" data-testid="truck-next">
+                          Next{" "}
+                          {t.upcoming.slice(0, 3).map((u, i) => (
+                            <span key={u.orderNumber + i}>
+                              {i ? " · " : ""}
+                              <span className="mono">{u.orderNumber}</span> {u.at ? shortWhen(u.at, u.zone) : "no time"}
+                            </span>
+                          ))}
                         </div>
                       )}
                     </td>

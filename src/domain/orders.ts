@@ -1127,8 +1127,8 @@ export async function planLeg(ctx: Ctx, legId: string, a: Assignment, opts: Plan
       after = await setLegState(tx, ctx, leg, "planned", { source: "dispatcher", note: opts.reason }, extra);
       await writeAudit(tx, ctx, "leg", leg.id, "assign", diff({}, assignment as Record<string, unknown>));
     }
-    // the leg has someone again: "declined" and "truck removed" are answered
-    await tx.update(s.flags).set({ clearedAt: new Date(), clearedBy: ctx.userId ?? "system" }).where(and(eq(s.flags.tenantId, ctx.tenantId), eq(s.flags.legId, leg.id), inArray(s.flags.code, ["declined", "truck_removed"]), isNull(s.flags.clearedAt)));
+    // the leg has someone again: "declined", "truck removed" and "tender expired" are answered (N9)
+    await tx.update(s.flags).set({ clearedAt: new Date(), clearedBy: ctx.userId ?? "system" }).where(and(eq(s.flags.tenantId, ctx.tenantId), eq(s.flags.legId, leg.id), inArray(s.flags.code, ["declined", "truck_removed", "tender_expired"]), isNull(s.flags.clearedAt)));
     await recomputeOrder(tx, ctx, order.id);
     return { leg: after, findings: elig.findings, kept: false };
   });
@@ -1197,6 +1197,17 @@ export async function dispatchLeg(ctx: Ctx, legId: string) {
     await recomputeOrder(tx, ctx, order.id);
     return after;
   });
+}
+
+/**
+ * Send a planned leg from the board or the planner. Our truck: straight to the driver. A partner carrier's leg is
+ * sent only with a tender (dispatch N1) — a link with a deadline that expires back to Needs truck — never bare.
+ */
+export async function sendLeg(ctx: Ctx, legId: string) {
+  assertCtx(ctx);
+  const leg = await getLeg(ctx, legId);
+  if (leg.assigneeKind === "carrier") throw new ValidationError("A partner carrier's leg goes out with a tender (email, WhatsApp or a link with a deadline). Press Send to carrier.", "tender");
+  return dispatchLeg(ctx, legId);
 }
 
 export async function acceptLeg(ctx: Ctx, legId: string, source: EventSource = "driver_app") {
@@ -1366,6 +1377,12 @@ export function derivedOrderState(legs: Leg[], order: Pick<Order, "state">): Ord
   if (live.some((l) => l.state === "dispatched" || l.state === "accepted")) return "dispatched";
   if (order.state === "draft") return null;
   return "booked";
+}
+
+/** Re-derive the order's state from its legs (after a leg was put back by hand, e.g. a tender that failed). */
+export async function refreshOrderState(ctx: Ctx, orderId: string) {
+  assertCtx(ctx);
+  return db.transaction((tx) => recomputeOrder(tx, ctx, orderId));
 }
 
 async function recomputeOrder(tx: Tx, ctx: Ctx, orderId: string, deliveredAt?: Date) {

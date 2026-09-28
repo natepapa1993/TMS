@@ -273,9 +273,9 @@ async function propose(tenantId: string, m: ParsedEmail, kind: MailKind, ex: Mai
 
 /** "Where is my truck": from verified tracking, in the customer's language, for a person to send. */
 export async function draftStatusReply(tenantId: string, orderId: string, m: { fromName: string | null; text: string; subject: string }) {
-  const { trackingView, orderEtas } = await import("./tracking");
+  const { trackingView, mergedOrderEtas } = await import("./tracking");
   const { tenantZone } = await import("./company");
-  const [v, etas, zone] = await Promise.all([trackingView(tenantId, orderId), orderEtas(tenantId, orderId), tenantZone(tenantId)]);
+  const [v, etas, zone] = await Promise.all([trackingView(tenantId, orderId), mergedOrderEtas(tenantId, orderId), tenantZone(tenantId)]);
   const es = /[¿¡]|\b(d[oó]nde|estatus|unidad|embarque|gracias|saludos|hola|por favor)\b/i.test(`${m.subject} ${m.text}`);
   // a stop's time on that stop's clock, with its zone; anything else on the company's
   const fmt = (d: Date | null | undefined, st?: { country: string; name: string; state: string | null; city: string | null } | null) => fmtWhen(d, st ? stopZone(st, zone) : zone);
@@ -292,7 +292,7 @@ export async function draftStatusReply(tenantId: string, orderId: string, m: { f
   else if (lastDone) lines.push(es ? `El embarque ${v.order.orderNumber} salió de ${lastDone.name} a las ${fmt(lastDone.departedAt, lastDone)}${next ? ` rumbo a ${next.name}` : ""}.` : `Load ${v.order.orderNumber} left ${lastDone.name} at ${fmt(lastDone.departedAt, lastDone)}${next ? `, heading to ${next.name}` : ""}.`);
   else lines.push(es ? `El embarque ${v.order.orderNumber} está programado; aún no sale de ${v.stops[0]?.name ?? "origen"}.` : `Load ${v.order.orderNumber} is booked; it has not left ${v.stops[0]?.name ?? "the origin"} yet.`);
   if (v.lastPosition) lines.push(es ? `Última posición GPS: ${v.lastPosition.place ?? `${Number(v.lastPosition.lat).toFixed(2)}, ${Number(v.lastPosition.lng).toFixed(2)}`} a las ${fmt(v.lastPosition.at)}.` : `Last GPS position: ${v.lastPosition.place ?? `${Number(v.lastPosition.lat).toFixed(2)}, ${Number(v.lastPosition.lng).toFixed(2)}`} at ${fmt(v.lastPosition.at)}.`);
-  if (eta && !v.order.deliveredAt) lines.push(es ? `Llegada estimada a ${eta.stopName}: ${fmt(eta.at, v.stops.find((x) => x.id === eta.stopId) ?? next)} (${eta.miles} mi por recorrer).` : `ETA at ${eta.stopName}: ${fmt(eta.at, v.stops.find((x) => x.id === eta.stopId) ?? next)} (${eta.miles} mi to go).`);
+  if (eta && !v.order.deliveredAt) lines.push(es ? `Llegada estimada a ${eta.stopName}: ${fmt(eta.at, v.stops.find((x) => x.id === eta.stopId) ?? next)}${eta.source === "check_call" ? "" : ` (${eta.miles} mi por recorrer)`}.` : `ETA at ${eta.stopName}: ${fmt(eta.at, v.stops.find((x) => x.id === eta.stopId) ?? next)}${eta.source === "check_call" ? "" : ` (${eta.miles} mi to go)`}.`);
   else if (next?.windowStart && !v.order.deliveredAt) lines.push(es ? `Cita en ${next.name}: ${fmt(next.windowStart, next)}.` : `Appointment at ${next.name}: ${fmt(next.windowStart, next)}.`);
   lines.push("");
   lines.push(es ? `Saludos,\n${v.carrier}` : `Regards,\n${v.carrier}`);

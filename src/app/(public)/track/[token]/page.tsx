@@ -16,8 +16,8 @@ const STOP_TYPE_ES: Record<string, string> = { pickup: "recolección", delivery:
 
 /** English or Spanish: the customer's country decides, ?lang= overrides. */
 const STR = {
-  en: { tracking: "shipment tracking", route: "Route", window: "window", arrived: "Arrived", departed: "Departed", next: "Next", lastPos: "Last known position", openMaps: "Open in Google Maps", noPos: "No position yet. It appears once the truck is moving.", updates: "Updates", times: "Every time is on the stop's local clock", questions: (c: string) => `Questions? Contact ${c} dispatch.`, other: "Español", po: "PO", shipment: "Shipment", ref: "Ref", eta: "ETA", fromGps: "from GPS at" },
-  es: { tracking: "rastreo de embarque", route: "Ruta", window: "cita", arrived: "Llegó", departed: "Salió", next: "Siguiente", lastPos: "Última posición conocida", openMaps: "Abrir en Google Maps", noPos: "Aún sin posición. Aparece cuando el camión está en movimiento.", updates: "Actualizaciones", times: "Cada hora está en la hora local de la parada", questions: (c: string) => `¿Dudas? Contacta a despacho de ${c}.`, other: "English", po: "PO", shipment: "Embarque", ref: "Ref", eta: "Llegada estimada", fromGps: "según GPS de las" },
+  en: { tracking: "shipment tracking", route: "Route", window: "window", arrived: "Arrived", departed: "Departed", next: "Next", lastPos: "Last known position", openMaps: "Open in Google Maps", noPos: "No position yet. It appears once the truck is moving.", updates: "Updates", times: "Every time is on the stop's local clock", questions: (c: string) => `Questions? Contact ${c} dispatch.`, other: "Español", po: "PO", shipment: "Shipment", ref: "Ref", eta: "ETA", fromGps: "from GPS at", fromCall: "from dispatch at" },
+  es: { tracking: "rastreo de embarque", route: "Ruta", window: "cita", arrived: "Llegó", departed: "Salió", next: "Siguiente", lastPos: "Última posición conocida", openMaps: "Abrir en Google Maps", noPos: "Aún sin posición. Aparece cuando el camión está en movimiento.", updates: "Actualizaciones", times: "Cada hora está en la hora local de la parada", questions: (c: string) => `¿Dudas? Contacta a despacho de ${c}.`, other: "English", po: "PO", shipment: "Embarque", ref: "Ref", eta: "Llegada estimada", fromGps: "según GPS de las", fromCall: "según despacho a las" },
 };
 
 export default async function TrackPage({ params, searchParams }: PageProps<"/track/[token]">) {
@@ -96,7 +96,7 @@ export default async function TrackPage({ params, searchParams }: PageProps<"/tr
                       return e && !s.arrivedAt ? (
                         <span className={`font-semibold ${e.late ? "text-red" : "text-teal"}`}>
                           {" "}
-                          · {S.eta} {fmt(e.at, s)} <span className="text-faint font-normal">({S.fromGps} {fmt(e.positionAt)})</span>
+                          · {S.eta} {fmt(e.at, s)} <span className="text-faint font-normal">({e.source === "check_call" ? S.fromCall : S.fromGps} {fmt(e.positionAt)})</span>
                         </span>
                       ) : null;
                     })()}

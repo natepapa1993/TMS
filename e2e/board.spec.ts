@@ -41,10 +41,10 @@ test("trip board: stop-local times, buckets and chips, a carrier on it, check ca
   await dlg.locator("select").first().selectOption({ label: "Lone Star Freight (US)" });
   await dlg.locator("input[placeholder='what you pay them']").fill("1350");
   await expect(dlg.getByTestId("tender-margin")).toContainText("Margin $450 · 25% of the load");
-  await dlg.locator("select").nth(1).selectOption("phone");
-  await dlg.locator("button:has-text('Assign & send')").click();
-  await expect(page.getByRole("status").filter({ hasText: "Marked sent" })).toBeVisible();
-  await expect(page.locator(".stage-tab:has-text('Sent') .count")).toHaveText("1");
+  await dlg.locator("select").nth(1).selectOption("manual");
+  await dlg.locator("button:has-text('Send tender')").click();
+  await expect(page.getByRole("status").filter({ hasText: "Tender link copied" })).toBeVisible();
+  await expect(page.locator(".stage-tab:has-text('Tendered') .count")).toHaveText("1"); // a tender with a deadline, not bare "Sent"
   await expect(row).toContainText("Lone Star Freight");
 
   // rolling: a check call from the panel, then the pickup arrival asks for the time first

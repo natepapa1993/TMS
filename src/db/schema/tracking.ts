@@ -34,6 +34,10 @@ export const tenders = pgTable(
     unitPlate: text("unit_plate"), // the tractor's plates as the carrier gave them (a partner's unit is not in our Fleet)
     trailerNumber: text("trailer_number"),
     message: text("message"), // what we said in the tender
+    counterCents: integer("counter_cents"), // the carrier's counter-offer, in the tender's currency, waiting on dispatch (M1)
+    counterNote: text("counter_note"),
+    counterBy: text("counter_by"),
+    counterAt: timestamp("counter_at", { withTimezone: true }),
     ...audit(),
   },
   (t) => [index("tenders_tenant_leg").on(t.tenantId, t.legId), index("tenders_tenant_state").on(t.tenantId, t.state, t.expiresAt), uniqueIndex("tenders_token").on(t.token)],

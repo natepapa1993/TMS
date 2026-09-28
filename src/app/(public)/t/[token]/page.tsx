@@ -76,8 +76,18 @@ export default async function TenderPage({ params, searchParams }: PageProps<"/t
       </div>
 
       <div className="card p-5 mt-4">
+        {open && tender.counterCents != null && (
+          <div className="mb-3 rounded-lg bg-amber-soft text-amber font-semibold px-3 py-2 text-callout" data-testid="counter-pending">
+            {c.counterPending(`${tender.currency} ${(tender.counterCents / 100).toLocaleString("en-US", { minimumFractionDigits: 2 })}`)}
+          </div>
+        )}
+        {open && tender.counterCents == null && /^counter .* (accepted|declined) by dispatch$/.test(tender.responseNote ?? "") && (
+          <div className={`mb-3 rounded-lg px-3 py-2 text-callout font-semibold ${/accepted/.test(tender.responseNote ?? "") ? "bg-green-soft text-green" : "bg-ground text-ink-2"}`} data-testid="counter-answer">
+            {/accepted/.test(tender.responseNote ?? "") ? c.counterAccepted : c.counterDeclined}
+          </div>
+        )}
         {open ? (
-          <TenderForm token={token} carrierName={carrier?.name ?? ""} lang={lang} askTrailer={leg.type === "crossing" || leg.type === "mx"} />
+          <TenderForm token={token} carrierName={carrier?.name ?? ""} lang={lang} askTrailer={leg.type === "crossing" || leg.type === "mx"} currency={tender.currency} />
         ) : tender.state === "accepted" ? (
           <div>
             <div className="h2">{c.thanks}</div>

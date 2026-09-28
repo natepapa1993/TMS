@@ -127,7 +127,8 @@ export async function ownerToday(ctx: Ctx, now = new Date()): Promise<Today> {
   const { plannerData } = await import("./planner");
   const pd = await plannerData(ctx, now);
   const tomorrowEnd = new Date(now.getTime() + 2 * 86400_000);
-  const empty = pd.trucks.filter((t) => (t.status === "available" || t.status === "on_load") && t.crew.length > 0 && !t.next && (!t.availableAt || new Date(t.availableAt).getTime() < tomorrowEnd.getTime())).length;
+  // nothing booked before tomorrow ends: a load next week doesn't make a truck busy tomorrow (N3)
+  const empty = pd.trucks.filter((t) => (t.status === "available" || t.status === "on_load") && t.crew.length > 0 && (!t.next || (!!t.next.at && new Date(t.next.at).getTime() > tomorrowEnd.getTime())) && (!t.availableAt || new Date(t.availableAt).getTime() < tomorrowEnd.getTime())).length;
 
   // ---- documents about to run out (drivers, trucks, trailers, carriers)
   const comp = await db.select({ items: s.complianceStatus.items }).from(s.complianceStatus).where(eq(s.complianceStatus.tenantId, T));

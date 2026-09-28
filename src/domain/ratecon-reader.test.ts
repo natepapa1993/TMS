@@ -1,4 +1,4 @@
-// Features: F-20.3
+// Features: F-20.3 F-34.6
 import { describe, it, expect, beforeEach } from "vitest";
 import { truncateAll, makeTenant } from "@/test/helpers";
 import { create } from "@/data/records";
@@ -34,8 +34,13 @@ beforeEach(async () => {
 });
 
 describe("reading a rate con into the builder", () => {
-  it("needs the AI reader connected", async () => {
-    await expect(readRateConForBuilder(a, pdf, answer(LOAD))).rejects.toThrow(/connect the AI reader/);
+  it("without the AI reader a PDF with no readable text is still attached, and says how to get it read (F-34.6)", async () => {
+    const d = await readRateConForBuilder(a, pdf, answer(LOAD));
+    expect(d.readBy).toBe("none");
+    expect(d.stops).toEqual([]);
+    expect(d.warnings.join(" ")).toMatch(/connect the AI reader in Settings → Integrations/);
+    const [doc] = await db.select().from(documents).where(eq(documents.id, d.documentId));
+    expect([doc.code, doc.subjectKind]).toEqual(["RATE_CON", "draft_load"]);
   });
 
   it("fills customer, rate, refs, freight and every stop; matches the customer and saved locations; keeps the paper", async () => {

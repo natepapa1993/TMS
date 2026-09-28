@@ -107,7 +107,7 @@ export function CarrierDriverApp({ token, data }: { token: string; data: Data })
           {data.mids.map((m, i) => (
             <Place key={m.id} label={`Stop ${i + 2} · Parada ${i + 2}${m.departedAt ? " · done" : ""}`} s={m} active={st === "en_route" && !m.departedAt && !data.mids.slice(0, i).some((p) => !p.departedAt)} />
           ))}
-          <Place label="Deliver · Entregar" s={data.to} active={["loaded", "at_delivery"].includes(st) || (st === "en_route" && !data.mids.some((m) => !m.departedAt))} />
+          <Place label={["yard", "border_yard", "transload", "terminal"].includes(data.to?.type ?? "") ? "Drop at · Dejar en" : "Deliver · Entregar"} s={data.to} active={["loaded", "at_delivery"].includes(st) || (st === "en_route" && !data.mids.some((m) => !m.departedAt))} />
           {data.order.cargoNote && <div className="text-callout text-muted">📦 {data.order.cargoNote}</div>}
         </div>
         <div className="px-5 pb-5">

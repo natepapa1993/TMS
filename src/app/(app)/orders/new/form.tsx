@@ -70,7 +70,7 @@ export function OrderForm({ customers, entities, locations, templates = [], zone
   const [active, setActive] = useState(SECTIONS[0][0]);
   const [pending, start] = useTransition();
   const [reading, startRead] = useTransition();
-  const [rateCon, setRateCon] = useState<{ id: string; fileName: string; warnings: string[] } | null>(null);
+  const [rateCon, setRateCon] = useState<{ id: string; fileName: string; warnings: string[]; readBy: "ai" | "text" | "none"; read: string[] } | null>(null);
   const [readErr, setReadErr] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const [tpl, setTpl] = useState(() => ({ id: "", date: localDay(1) }));
@@ -126,7 +126,7 @@ export function OrderForm({ customers, entities, locations, templates = [], zone
         setStops(next);
         setOpen(new Set(next.map((x) => x.key)));
       }
-      setRateCon({ id: d.documentId, fileName: file.name, warnings: d.warnings });
+      setRateCon({ id: d.documentId, fileName: file.name, warnings: d.warnings, readBy: d.readBy ?? "ai", read: d.read ?? [] });
     });
 
   const setStop = (i: number, patch: Partial<StopDraft>) => setStops((s) => s.map((x, j) => (j === i ? { ...x, ...patch } : x)));
@@ -259,8 +259,13 @@ export function OrderForm({ customers, entities, locations, templates = [], zone
         )}
         <div className="mt-5 flex items-center gap-4 flex-wrap rounded-xl border border-dashed border-line bg-white px-5 py-4" data-testid="ratecon-drop" onDragOver={(e) => e.preventDefault()} onDrop={(e) => { e.preventDefault(); const file = e.dataTransfer.files?.[0]; if (file) readRateCon(file); }}>
           <div className="flex-1 min-w-[240px]">
-            <div className="font-bold text-body">{rateCon ? `Filled from ${rateCon.fileName}` : "Have the rate con? Start from it."}</div>
-            <div className="text-muted text-callout mt-0.5">{rateCon ? "Check every field below before booking; the rate con goes on the load." : "Drop the PDF here or choose it — the customer, rate, references, freight and every stop fill in."}</div>
+            <div className="font-bold text-body">{rateCon ? (rateCon.readBy === "none" ? `Attached ${rateCon.fileName}` : `Filled from ${rateCon.fileName}`) : "Have the rate con? Start from it."}</div>
+            <div className="text-muted text-callout mt-0.5">{rateCon ? (rateCon.readBy === "none" ? "It goes on the load as its rate con. Type the load from it below." : "Check every field below before booking; the rate con goes on the load.") : "Drop the PDF here or choose it — the customer, rate, references, freight and every stop fill in."}</div>
+            {rateCon && rateCon.read.length > 0 && (
+              <div className="text-callout mt-1" data-testid="ratecon-read">
+                <span className="font-semibold">Read{rateCon.readBy === "text" ? " from the PDF text" : ""}:</span> {rateCon.read.join(" · ")}
+              </div>
+            )}
             {rateCon?.warnings.map((w) => (
               <div key={w} className="text-amber text-callout mt-1 font-semibold">
                 {w}

@@ -2,13 +2,13 @@
 
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { respondTenderAction } from "../../actions";
+import { respondTenderAction, counterTenderAction } from "../../actions";
 import { TENDER_COPY, type Lang } from "@/lib/tender-copy";
 
-export function TenderForm({ token, carrierName, lang = "en", askTrailer = true }: { token: string; carrierName: string; lang?: Lang; askTrailer?: boolean }) {
+export function TenderForm({ token, carrierName, lang = "en", askTrailer = true, currency = "USD" }: { token: string; carrierName: string; lang?: Lang; askTrailer?: boolean; currency?: string }) {
   const c = TENDER_COPY[lang];
-  const [mode, setMode] = useState<"pick" | "accept" | "decline">("pick");
-  const [f, setF] = useState({ name: "", driverName: "", driverPhone: "", unitNumber: "", unitPlate: "", trailerNumber: "", note: "" });
+  const [mode, setMode] = useState<"pick" | "accept" | "decline" | "counter">("pick");
+  const [f, setF] = useState({ name: "", driverName: "", driverPhone: "", unitNumber: "", unitPlate: "", trailerNumber: "", note: "", rate: "" });
   const [err, setErr] = useState<{ field?: string; message: string } | null>(null);
   const [pending, start] = useTransition();
   const router = useRouter();
@@ -20,6 +20,15 @@ export function TenderForm({ token, carrierName, lang = "en", askTrailer = true 
       if (r.ok) router.refresh();
       else setErr({ field: r.field, message: r.error });
     });
+  const counter = () =>
+    start(async () => {
+      setErr(null);
+      const r = await counterTenderAction(token, { name: f.name, rate: f.rate, note: f.note });
+      if (r.ok) {
+        setMode("pick");
+        router.refresh();
+      } else setErr({ field: r.field, message: r.error });
+    });
   if (mode === "pick")
     return (
       <div>
@@ -30,6 +39,46 @@ export function TenderForm({ token, carrierName, lang = "en", askTrailer = true 
           </button>
           <button className="btn btn-lg justify-center" onClick={() => setMode("decline")}>
             {c.no}
+          </button>
+        </div>
+        <button className="btn w-full justify-center mt-2" onClick={() => setMode("counter")} data-testid="counter-open">
+          {c.counter}
+        </button>
+      </div>
+    );
+  if (mode === "counter")
+    return (
+      <div className="space-y-3" data-testid="counter-form">
+        <div className="h2">{c.counterTitle}</div>
+        <div>
+          <label className="label" htmlFor="t-name">
+            {c.yourName}
+          </label>
+          <input id="t-name" className="input" value={f.name} onChange={(e) => set("name", e.target.value)} aria-invalid={err?.field === "name"} autoFocus />
+        </div>
+        <div>
+          <label className="label" htmlFor="t-rate">
+            {c.yourRate(currency)}
+          </label>
+          <input id="t-rate" className="input" inputMode="decimal" value={f.rate} onChange={(e) => set("rate", e.target.value)} aria-invalid={err?.field === "rate"} />
+        </div>
+        <div>
+          <label className="label" htmlFor="t-note">
+            {c.note}
+          </label>
+          <input id="t-note" className="input" value={f.note} onChange={(e) => set("note", e.target.value)} />
+        </div>
+        {err && (
+          <div className="error" role="alert">
+            {err.message}
+          </div>
+        )}
+        <div className="flex gap-2 pt-1">
+          <button className="btn" onClick={() => setMode("pick")} disabled={pending}>
+            {c.back}
+          </button>
+          <button className="btn btn-primary btn-lg flex-1 justify-center" onClick={counter} disabled={pending}>
+            {pending ? c.sending : c.sendCounter}
           </button>
         </div>
       </div>

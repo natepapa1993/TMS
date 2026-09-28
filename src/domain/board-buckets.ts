@@ -97,7 +97,7 @@ export function alertsOf(r: RowLike, c: BoardCtx): Set<AlertKey> {
 /** A tender ran out with nobody on the leg: the load goes to the very top until someone covers it (B1). */
 export const tenderExpired = (r: Pick<RowLike, "openFlags">) => r.openFlags.some((f) => f.code === "tender_expired");
 
-export type EtaEntry = { at: string; stopName: string; miles: number | null; late: boolean; positionAt: string; source?: "gps" | "check_call" };
+export type EtaEntry = { at: string; stopId?: string; stopName: string; miles: number | null; late: boolean; positionAt: string; source?: "gps" | "check_call" };
 type CallLike = { at: string; etaAt: string | null; legId: string | null };
 
 /**
@@ -119,7 +119,7 @@ export function mergeCallEtas<S extends StopLike & { name: string }>(rows: { ord
     const g = gps[cur.id];
     if (g && new Date(g.positionAt).getTime() > new Date(call.at).getTime()) continue;
     const a = appt(ns);
-    out[cur.id] = { at: call.etaAt, stopName: ns.name, miles: g?.miles ?? null, late: !!a && new Date(call.etaAt).getTime() > new Date(a).getTime(), positionAt: call.at, source: "check_call" };
+    out[cur.id] = { at: call.etaAt, stopId: ns.id, stopName: ns.name, miles: g?.miles ?? null, late: !!a && new Date(call.etaAt).getTime() > new Date(a).getTime(), positionAt: call.at, source: "check_call" };
   }
   return out;
 }

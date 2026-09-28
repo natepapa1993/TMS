@@ -79,9 +79,9 @@ test("billing day: charges, docs gate, invoice to paid, AR, carrier three-way wi
   await dlg.locator("button:has-text('Partner carrier')").click();
   await dlg.locator("select").first().selectOption({ label: "Lone Star Freight (US)" });
   await dlg.locator("input[placeholder='what you pay them']").fill("450");
-  await dlg.locator("select").nth(1).selectOption("phone");
-  await dlg.locator("button:has-text('Assign & send')").click();
-  await expect(page.getByRole("status")).toContainText("Marked sent");
+  await dlg.locator("select").nth(1).selectOption("manual");
+  await dlg.locator("button:has-text('Send tender')").click();
+  await expect(page.getByRole("status")).toContainText("Tender link copied");
   await page.click(".stage-tab:has-text('All')");
   await page.locator(".row[role=button]", { hasText: o2 }).click();
   for (const label of ["Accepted", "Rolling to pickup", "Arrived at pickup", "Loaded", "En route", "Arrived at delivery", "Delivered"]) {
