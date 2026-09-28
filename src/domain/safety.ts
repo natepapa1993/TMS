@@ -8,7 +8,7 @@ import { assertCtx, can, requirePermission, type Ctx } from "@/lib/context";
 import { writeAudit } from "@/lib/audit";
 import { NotFoundError, ValidationError } from "./orders";
 import { evaluateSubject, isBuiltIn } from "./compliance";
-import { DQ_ITEMS, dqLines, daStanding, clearinghouseDuty, randomRequirement, perDraw, pick, postAccidentDuty, basicOf, unitOf, basicMeasures, oosRates, driverPoints, BASICS } from "./safety-rules";
+import { DQ_ITEMS, dqLines, daStanding, clearinghouseDuty, randomRequirement, perDraw, pick, postAccidentDuty, basicOf, unitOf, basicMeasures, oosRates, driverPoints, BASICS, periodStart } from "./safety-rules";
 
 /**
  * Safety depth: the driver qualification file, the drug & alcohol program, roadside inspections with the
@@ -158,11 +158,14 @@ async function poolFor(ctx: Ctx) {
  * A random draw (382.305): every driver in the pool has the same chance each time; the annual rate is spread
  * over the year's draws. Drug and alcohol picks are separate, so one driver can be picked for both.
  */
-export async function drawRandom(ctx: Ctx, input: { period: string; drugRate: number; alcoholRate: number; drawsPerYear: number }, rand: (max: number) => number = randomInt) {
+export async function drawRandom(ctx: Ctx, input: { period: string; drugRate: number; alcoholRate: number; drawsPerYear: number }, rand: (max: number) => number = randomInt, now = new Date()) {
   assertCtx(ctx);
   requirePermission(ctx, "safety.confidential");
   const period = input.period.trim();
-  if (!/^\d{4}-(Q[1-4]|\d{2})$/.test(period)) throw new ValidationError("a period like 2026-Q4 or 2026-11", "period");
+  const starts = periodStart(period);
+  if (!starts) throw new ValidationError("a period like 2026-Q4 or 2026-11", "period");
+  // a selection is made during the period it covers (382.305(k)): drawing next quarter's names now would warn them
+  if (starts.getTime() > now.getTime()) throw new ValidationError(`${period} starts ${starts.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: "UTC" })} — draw it then`, "period");
   if (![1, 2, 4, 12].includes(input.drawsPerYear)) throw new ValidationError("draw 1, 2, 4 or 12 times a year", "drawsPerYear");
   if (!(input.drugRate >= 0 && input.drugRate <= 100 && input.alcoholRate >= 0 && input.alcoholRate <= 100)) throw new ValidationError("rates are annual percentages", "drugRate");
   const [dup] = await db.select({ id: s.daDraws.id }).from(s.daDraws).where(and(eq(s.daDraws.tenantId, ctx.tenantId), eq(s.daDraws.period, period))).limit(1);
@@ -173,7 +176,6 @@ export async function drawRandom(ctx: Ctx, input: { period: string; drugRate: nu
   const alcoholCount = perDraw(pool.length, input.alcoholRate, input.drawsPerYear);
   const drug = pick(pool, drugCount, rand);
   const alcohol = pick(pool, alcoholCount, rand);
-  const now = new Date();
   const drawId = newId();
   await db.transaction(async (tx) => {
     await tx.insert(s.daDraws).values({ id: drawId, tenantId: ctx.tenantId, period, drawnAt: now, poolSize: pool.length, poolDriverIds: pool.map((p) => p.id), drugRate: input.drugRate, alcoholRate: input.alcoholRate, drawsPerYear: input.drawsPerYear, drugCount, alcoholCount, drawnBy: ctx.userId });
@@ -214,7 +216,8 @@ export async function daProgram(ctx: Ctx, year: number) {
     });
   return {
     year,
-    draws,
+    // the roster an auditor asks for: who was in the pool at each draw, and who was picked
+    draws: draws.map((d) => ({ ...d, pool: d.poolDriverIds.map((id) => ({ id, name: name.get(id) ?? "(removed driver)" })).sort((p, q) => p.name.localeCompare(q.name)), selected: tests.filter((t) => t.drawId === d.id).map((t) => ({ name: name.get(t.driverId) ?? "?", substance: t.substance, result: t.result })) })),
     required: req,
     done: { drug: doneRandom("drug"), alcohol: doneRandom("alcohol") },
     tests: tests.filter((t) => inYear(t) || t.result === "selected" || t.result === "pending").map((t) => ({ ...t, driver: name.get(t.driverId) ?? "?", duty: clearinghouseDuty(t) })),

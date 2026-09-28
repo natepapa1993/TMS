@@ -102,7 +102,7 @@ describe("engine (spec §6.1)", () => {
     st = await C.evaluateSubject(a, "truck", ids.t2117);
     expect(st.dispatchable).toBe(false);
     expect(st.expired).toEqual(["MX plate"]);
-    await expect(C.overrideDispatch(a, "truck", ids.t2117, "need it today")).rejects.toThrow(/legal document/);
+    await expect(C.overrideDispatch(a, "truck", ids.t2117, "need it today")).rejects.toThrow(/cannot override/);
   });
 
   it("grace period on a new rule prevents an instant block; snooze hides the alert with a reason", async () => {

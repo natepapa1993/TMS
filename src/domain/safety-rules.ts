@@ -1,5 +1,6 @@
 import type { ComplianceItem } from "@/db/schema";
 import type { Violation } from "@/db/schema";
+import { builtInLevel } from "./compliance-rules";
 
 /**
  * Pure rules for the safety file: no database here, so the compliance engine and the pages share them
@@ -82,9 +83,30 @@ export function dqLines(d: DqDriver, records: DqRecordLike[], preEmploymentNegat
   });
 }
 
-/** The DQ lines as compliance items (key dq:<item>): the engine blocks on them like the built-in dates. */
-export function dqComplianceItems(lines: DqLine[], strictMissing: boolean): ComplianceItem[] {
-  return lines.map((l) => ({ key: `dq:${l.key}`, label: l.label, status: l.status, underlying: null, blocksWhenMissing: l.blocks && strictMissing, expiresAt: l.dueAt, documentId: l.documentId, blocksDispatch: l.blocks, required: true, alertDays: 30 }));
+/**
+ * The DQ lines as compliance items (key dq:<item>). The hire prerequisites (●) block dispatch whether or
+ * not the company blocks on blank dates: a driver without them is not qualified to drive (391.11, 382.301,
+ * 382.701(a)). During the company's qualification-file grace period they block only with the blank-dates
+ * switch, as before. A pre-employment test collected but not back yet reads "result not in".
+ */
+export function dqComplianceItems(lines: DqLine[], opts: { levels?: Record<string, unknown> | null; graceUntil?: Date | null; strictMissing?: boolean; preEmploymentPending?: boolean } = {}): ComplianceItem[] {
+  return lines.map((l) => {
+    const key = `dq:${l.key}`;
+    const level = l.blocks ? builtInLevel(key, opts.levels) : "warn";
+    const blocks = level !== "warn";
+    const reason =
+      l.key === "pre_employment_test" && l.status === "missing"
+        ? opts.preEmploymentPending
+          ? "Pre-employment drug test result not in"
+          : "No pre-employment drug test"
+        : l.key === "clearinghouse_full" && l.status === "missing"
+          ? "No Clearinghouse pre-employment query"
+          : null;
+    // a test collected and waiting is a hire in progress: it blocks even while the company's grace runs
+    const inProgress = l.key === "pre_employment_test" && !!opts.preEmploymentPending;
+    const graced = !!opts.graceUntil && !opts.strictMissing && !inProgress;
+    return { key, label: l.label, status: l.status, underlying: null, blocksWhenMissing: blocks && !graced, expiresAt: l.dueAt, documentId: l.documentId, blocksDispatch: blocks, level, reason, graceUntil: blocks && graced && l.status === "missing" ? opts.graceUntil!.toISOString() : null, required: true, alertDays: 30 };
+  });
 }
 
 // ---------- drug & alcohol ----------
@@ -107,18 +129,21 @@ export function daStanding<T extends DaTestLike>(tests: T[]) {
   const prohibited = !!violation && !rtd;
   const followUps = rtd ? sorted.filter((t) => t.reason === "follow_up" && at(t) > at(rtd) && t.result !== "cancelled" && t.result !== "selected" && t.result !== "pending") : [];
   const preEmployment = sorted.find((t) => t.reason === "pre_employment" && t.substance === "drug" && ["negative", "negative_dilute"].includes(t.result)) ?? null;
+  // collected (or ordered) and waiting: a pending result is not a negative one
+  const preEmploymentPending = !preEmployment && sorted.some((t) => t.reason === "pre_employment" && t.substance === "drug" && (t.result === "pending" || t.result === "selected"));
   return {
     prohibited,
     violation,
     rtd,
     followUp: rtd?.followUpPlanned ? { done: followUps.length, planned: rtd.followUpPlanned } : null,
     preEmploymentNegativeAt: preEmployment ? new Date(preEmployment.resultAt ?? preEmployment.collectedAt ?? 0).toISOString() : null,
+    preEmploymentPending,
   };
 }
 
 /** The compliance item for D&A: a neutral label, because dispatch sees it and the reason is confidential. */
 export function daComplianceItem(prohibited: boolean): ComplianceItem {
-  return { key: "da:status", label: "Safety hold", status: prohibited ? "expired" : "ok", underlying: null, expiresAt: null, documentId: null, blocksDispatch: true, required: true, alertDays: 0 };
+  return { key: "da:status", label: "Safety hold", status: prohibited ? "expired" : "ok", underlying: null, expiresAt: null, documentId: null, blocksDispatch: true, level: "hard", reason: "On a safety hold — ask Safety", required: true, alertDays: 0 };
 }
 
 /** What the employer itself must report to the Clearinghouse (382.705(b)): alcohol ≥ 0.04, refusals, and the negative return-to-duty result. The MRO reports verified drug positives. */
@@ -139,6 +164,15 @@ export function randomRequirement(draws: { poolSize: number; drugRate: number; a
 
 /** How many to pick in one draw: the annual rate spread over the year's draws, rounded up. */
 export const perDraw = (pool: number, ratePct: number, drawsPerYear: number) => (pool === 0 || ratePct === 0 ? 0 : Math.min(pool, Math.ceil((pool * ratePct) / 100 / drawsPerYear)));
+
+/** When a random period starts: 2026-Q4 → Oct 1, 2026; 2026-11 → Nov 1, 2026 (UTC). */
+export function periodStart(period: string): Date | null {
+  const q = /^(\d{4})-Q([1-4])$/.exec(period);
+  if (q) return new Date(Date.UTC(+q[1], (+q[2] - 1) * 3, 1));
+  const m = /^(\d{4})-(\d{2})$/.exec(period);
+  if (m && +m[2] >= 1 && +m[2] <= 12) return new Date(Date.UTC(+m[1], +m[2] - 1, 1));
+  return null;
+}
 
 /** Pick n distinct items with a random source (crypto in the app, seeded in tests). */
 export function pick<T>(pool: T[], n: number, rand: (max: number) => number): T[] {

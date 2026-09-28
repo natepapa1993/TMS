@@ -246,6 +246,13 @@
       "when": 1790561614744,
       "tag": "0034_factoring_ledger",
       "breakpoints": true
+    },
+    {
+      "idx": 35,
+      "version": "7",
+      "when": 1790606946870,
+      "tag": "0035_safety_levels_oos",
+      "breakpoints": true
     }
   ]
 }

@@ -374,6 +374,7 @@ export const trucks = pgTable(
     status: text("status").notNull().default("active"), // active | oos
     oosReason: text("oos_reason"),
     oosUntil: timestamp("oos_until", { withTimezone: true }),
+    oosInspectionId: text("oos_inspection_id"), // put out of service at a roadside inspection: back in service only with a repair sign-off on it
     note: text("note"),
     custom: jsonb("custom").$type<Record<string, unknown>>().notNull().default(sql`'{}'::jsonb`),
     ...audit(),
@@ -398,6 +399,8 @@ export const trailers = pgTable(
     ownership: text("ownership").notNull().default("company"),
     gpsDeviceId: text("gps_device_id"),
     status: text("status").notNull().default("active"),
+    oosReason: text("oos_reason"),
+    oosInspectionId: text("oos_inspection_id"), // out of service from a roadside inspection until the repair is signed off
     custom: jsonb("custom").$type<Record<string, unknown>>().notNull().default(sql`'{}'::jsonb`),
     ...audit(),
   },
@@ -460,6 +463,7 @@ export const documentTypes = pgTable(
     alertDays: jsonb("alert_days").$type<number[]>().notNull().default(sql`'[30]'::jsonb`),
     required: boolean("required").notNull().default(false),
     blocksDispatch: boolean("blocks_dispatch").notNull().default(false),
+    blockLevel: text("block_level"), // hard | override | warn; null = rules saved before the setting (derived from the name, as before)
     legScope: text("leg_scope"), // null = all legs; crossing | mx | us
     graceUntil: timestamp("grace_until", { withTimezone: true }),
     ...audit(),
@@ -531,7 +535,8 @@ export const savedViews = pgTable(
   (t) => [index("saved_views_tenant_page").on(t.tenantId, t.page)],
 );
 
-export const ASSET_EVENT_KINDS = ["vacation", "home_time", "restart", "sick", "repair", "work_order", "other"] as const;
+/** credentials = off for a licence / medical renewal (a Safety block, not a schedule call); oos = an out-of-service order on the driver (roadside inspection) */
+export const ASSET_EVENT_KINDS = ["vacation", "home_time", "restart", "sick", "repair", "work_order", "other", "credentials", "oos"] as const;
 export type AssetEventKind = (typeof ASSET_EVENT_KINDS)[number];
 
 /** Time a driver, truck or trailer is not available: vacation, home time, a restart, a repair. A hard event blocks assignment; a soft one warns. */

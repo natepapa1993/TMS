@@ -2,6 +2,7 @@ import { db, sqlClient } from "@/db/client";
 import { tenants, users } from "@/db/schema";
 import { newId } from "@/lib/ids";
 import type { Ctx, Role } from "@/lib/context";
+import { newCompanySettings } from "@/domain/compliance-rules";
 
 /** Wipe every tenant-owned table between test files. Cheap and deterministic. */
 export async function truncateAll() {
@@ -14,11 +15,15 @@ export async function truncateAll() {
     end $$;`;
 }
 
-export async function makeTenant(name = "Test Carrier", role: Role = "owner"): Promise<Ctx & { email: string }> {
+/**
+ * A company as signup makes it: including the 30-day qualification-file grace (blank DQ items don't block yet).
+ * Tests of the DQ block pass `{ dqGrace: false }`, a company past its grace.
+ */
+export async function makeTenant(name = "Test Carrier", role: Role = "owner", opts: { dqGrace?: boolean } = {}): Promise<Ctx & { email: string }> {
   const tenantId = newId();
   const userId = newId();
   const email = `${userId}@test.local`;
-  await db.insert(tenants).values({ id: tenantId, name, slug: `t-${tenantId}` });
+  await db.insert(tenants).values({ id: tenantId, name, slug: `t-${tenantId}`, settings: opts.dqGrace === false ? {} : newCompanySettings() });
   await db.insert(users).values({ id: userId, tenantId, email, name: `${role} user`, role });
   return { tenantId, userId, role, email };
 }

@@ -149,12 +149,15 @@ describe("drug & alcohol program", () => {
   it("draws from the pool, records results; a refusal holds the driver (not overridable), flags the load for dispatch without the reason, and leaves a Clearinghouse to-do", async () => {
     const o = await createOrder(a, { customerId: f.cust, rateCents: 100000, stops: [{ type: "pickup", name: "A", country: "US" }, { type: "delivery", name: "B", country: "US" }], book: true });
     await planLeg(a, o.legs[0].id, { kind: "truck", truckId: f.t1, driverId: f.d1 });
-    const draw = await S.drawRandom(a, { period: "2026-Q4", drugRate: 50, alcoholRate: 10, drawsPerYear: 4 }, (m) => m - 1);
+    const draw = await S.drawRandom(a, { period: "2026-Q3", drugRate: 50, alcoholRate: 10, drawsPerYear: 4 }, (m) => m - 1);
     expect(draw.poolSize).toBe(2);
     expect(draw.drug).toHaveLength(1);
     expect(draw.alcohol).toHaveLength(1);
-    await expect(S.drawRandom(a, { period: "2026-Q4", drugRate: 50, alcoholRate: 10, drawsPerYear: 4 })).rejects.toThrow(/already drawn/);
-    await expect(S.drawRandom({ ...a, role: "dispatcher" }, { period: "2026-Q3", drugRate: 50, alcoholRate: 10, drawsPerYear: 4 })).rejects.toThrow(/permission/);
+    await expect(S.drawRandom(a, { period: "2026-Q3", drugRate: 50, alcoholRate: 10, drawsPerYear: 4 })).rejects.toThrow(/already drawn/);
+    // who was in the pool is kept with the draw, by name on the program; next quarter can't be drawn early
+    await expect(S.drawRandom(a, { period: "2099-Q1", drugRate: 50, alcoholRate: 10, drawsPerYear: 4 })).rejects.toThrow(/2099-Q1 starts Jan 1, 2099/);
+    expect((await S.daProgram(a, 2026)).draws.find((x) => x.period === "2026-Q3")!.pool.map((p) => p.name).sort()).toEqual(["Ana Torres", "Daniel Reyes"]);
+    await expect(S.drawRandom({ ...a, role: "dispatcher" }, { period: "2026-Q2", drugRate: 50, alcoholRate: 10, drawsPerYear: 4 })).rejects.toThrow(/permission/);
     let prog = await S.daProgram(a, 2026);
     expect(prog.open).toBe(2);
     expect(prog.required).toEqual({ avgPool: 2, drug: 1, alcohol: 1 });
@@ -170,7 +173,7 @@ describe("drug & alcohol program", () => {
     expect(fl.map((x) => x.code)).toContain("safety_hold");
     expect(fl.find((x) => x.code === "safety_hold")!.detail).not.toMatch(/refus|drug|alcohol/i);
     const cands = await candidatesForLeg(a, o.legs[0].id);
-    expect(cands.find((c) => c.truckId === f.t1)?.findings.some((x) => x.code === "compliance_block" && !x.overridable && x.message.includes("Safety hold"))).toBe(true);
+    expect(cands.find((c) => c.truckId === f.t1)?.findings.some((x) => x.code === "compliance_block" && !x.overridable && x.message.includes("On a safety hold — ask Safety"))).toBe(true);
     prog = await S.daProgram(a, 2026);
     expect(prog.duties.map((d) => d.duty)).toEqual([expect.stringMatching(/refusal/)]);
     expect(prog.holds.map((h) => h.name)).toEqual(["Daniel Reyes"]);
@@ -222,6 +225,11 @@ describe("overrides log", () => {
   it("lists a 24-hour paperwork override and a dispatch override with who, what and why", async () => {
     await db.update(tenants).set({ settings: {} }).where(eq(tenants.id, a.tenantId));
     await C.setMissingDatesBlock(a, true);
+    // the drug test and the Clearinghouse query are the law: only the road test and application are left to vouch for
+    await S.recordDq(a, f.d1, "clearinghouse_full", { completedAt: days(-9) });
+    await S.addTest(a, { driverId: f.d1, reason: "pre_employment", substance: "drug", collectedAt: days(-12), result: "negative" });
+    await S.recordDq(a, f.d2, "clearinghouse_full", { completedAt: days(-9) });
+    await S.addTest(a, { driverId: f.d2, reason: "pre_employment", substance: "drug", collectedAt: days(-12), result: "negative" });
     await C.overrideDispatch(a, "driver", f.d1, "Road test done today, paper on the way");
     const o = await createOrder(a, { customerId: f.cust, rateCents: 100000, stops: [{ type: "pickup", name: "A", country: "US" }, { type: "delivery", name: "B", country: "US" }], book: true });
     await planLeg(a, o.legs[0].id, { kind: "truck", truckId: f.t1, driverId: f.d2 }, { override: true, reason: "Ana's file is in the mail" }).catch(() => null);
@@ -232,5 +240,68 @@ describe("overrides log", () => {
     expect(leg!.what).toContain("Ana Torres");
     expect(leg!.reason).toBe("Ana's file is in the mail");
     expect(S.overridesCsv(log).split("\n")[0]).toBe("When (UTC),Who,Kind,Subject,What,Reason");
+  });
+});
+
+describe("hire prerequisites block by default (blocker 1)", () => {
+  it("a new hire with no file is blocked whatever the blank-dates switch says; a pending pre-employment result reads plainly and nobody can override it", async () => {
+    const co = await makeTenant("Past its grace", "owner", { dqGrace: false });
+    const t = await create(co, "truck", { unitNumber: "Q216", usPlate: "TX216", usPlateExpires: days(300), dotInspectionExpires: days(300) });
+    const diego = await create(co, "driver", { name: "Diego Ramírez", driverType: "CDL", licenseState: "TX", licenseExpires: days(400), medicalExpires: days(400), hireDate: days(-1), currentTruckId: t.id });
+    let st = await C.statusFor(co, "driver", diego.id);
+    expect(st.dispatchable).toBe(false); // switch is off, still blocked
+    expect(st.blockers).toEqual(expect.arrayContaining(["No pre-employment drug test", "No Clearinghouse pre-employment query", "Employment application missing"]));
+    await S.addTest(co, { driverId: diego.id, reason: "pre_employment", substance: "drug", collectedAt: days(-1), result: "pending" });
+    for (const k of ["application", "road_test", "clearinghouse_full"]) await S.recordDq(co, diego.id, k, { completedAt: days(-1) });
+    st = await C.statusFor(co, "driver", diego.id);
+    expect(st.dispatchable).toBe(false);
+    expect(st.blockers).toEqual(["Pre-employment drug test result not in"]);
+    expect(st.hard).toBe(true);
+    await expect(C.overrideDispatch(co, "driver", diego.id, "need him today")).rejects.toThrow(/cannot override Pre-employment drug test result not in/);
+    // the picker never offers him as free: hard-blocked, with the plain reason
+    const cust = await create(co, "customer", { name: "Acme", kind: "customer" });
+    const o = await createOrder(co, { customerId: cust.id, rateCents: 100000, stops: [{ type: "pickup", name: "A", country: "US" }, { type: "delivery", name: "B", country: "US" }], book: true });
+    const c = (await candidatesForLeg(co, o.legs[0].id)).find((x) => x.truckId === t.id)!;
+    expect(c.hardBlocked).toBe(true);
+    expect(c.reason).toBe("Diego Ramírez: Pre-employment drug test result not in");
+    // the result comes back negative: dispatchable
+    const test = (await S.driverTests(co, diego.id)).tests[0];
+    await S.recordResult(co, test.id, { result: "negative" });
+    st = await C.statusFor(co, "driver", diego.id);
+    expect(st.dispatchable).toBe(true);
+  });
+
+  it("the application and road test can be vouched for by the owner (24 h override); the company can soften them but never the drug test", async () => {
+    const co = await makeTenant("Past its grace", "owner", { dqGrace: false });
+    const d = await create(co, "driver", { name: "Rosa", driverType: "CDL", licenseExpires: days(400), medicalExpires: days(400), hireDate: days(-1) });
+    await S.recordDq(co, d.id, "clearinghouse_full", { completedAt: days(-1) });
+    await S.addTest(co, { driverId: d.id, reason: "pre_employment", substance: "drug", collectedAt: days(-2), result: "negative" });
+    let st = await C.statusFor(co, "driver", d.id);
+    expect(st.dispatchable).toBe(false);
+    expect(st.hard).toBe(false);
+    await C.overrideDispatch(co, "driver", d.id, "application signed, scanning tonight");
+    // warn-only for the road test and application: not blocked; a fixed item ignores the company setting
+    await expect(C.setBlockLevels(co, { "dq:pre_employment_test": "warn" })).rejects.toThrow(/set by law/);
+    await C.setBlockLevels(co, { "dq:application": "warn", "dq:road_test": "warn" });
+    st = await C.statusFor(co, "driver", d.id);
+    expect(st.dispatchable).toBe(true);
+    await expect(C.setBlockLevels(co, { "da:status": "warn" })).rejects.toThrow(/set by law/);
+  });
+
+  it("a new company's 30-day grace lets blank files through — but not a pre-employment test waiting on its result", async () => {
+    const co = await makeTenant("New company");
+    const d = await create(co, "driver", { name: "Existing driver", driverType: "CDL", licenseExpires: days(400), medicalExpires: days(400) });
+    let st = await C.statusFor(co, "driver", d.id);
+    expect(st.dispatchable).toBe(true);
+    expect(st.items.find((i) => i.key === "dq:application")!.graceUntil).toBeTruthy();
+    await S.addTest(co, { driverId: d.id, reason: "pre_employment", substance: "drug", collectedAt: days(-1), result: "pending" });
+    st = await C.statusFor(co, "driver", d.id);
+    expect(st.blockers).toEqual(["Pre-employment drug test result not in"]);
+    // Safety ends the grace: blank files block
+    await S.recordResult(co, (await S.driverTests(co, d.id)).tests[0].id, { result: "negative" });
+    await C.setDqGrace(co, null);
+    st = await C.statusFor(co, "driver", d.id);
+    expect(st.dispatchable).toBe(false);
+    expect(st.blockers).toContain("No Clearinghouse pre-employment query");
   });
 });

@@ -59,7 +59,7 @@ export default async function DriverSafetyFilePage({ params }: PageProps<"/compl
           </Link>
         }
       >
-        {d.driverType} · licence {d.licenseNumber ?? "—"} {d.licenseState ?? ""} {d.licenseClass ? `class ${d.licenseClass}` : ""} · hired {d.hireDate ? day(d.hireDate) : "— (add the hire date on the driver record: 30-day and annual items count from it)"}
+        {d.driverType} · {d.driverType === "B1" ? `licencia federal ${d.mxLicenseNumber ?? "—"}` : `licence ${d.licenseNumber ?? "—"} ${d.licenseState ?? ""} ${d.licenseClass ? `class ${d.licenseClass}` : ""}`} · hired {d.hireDate ? day(d.hireDate) : "— (add the hire date on the driver record: 30-day and annual items count from it)"}
       </PageHeader>
       <SafetyNav role={ctx.role} />
       <div className="px-gutter pb-10 grid xl:grid-cols-[1fr_380px] gap-5 items-start [&>*]:min-w-0">
@@ -78,7 +78,7 @@ export default async function DriverSafetyFilePage({ params }: PageProps<"/compl
                     <td className="w-[45%]">
                       <div className="font-semibold">
                         {l.label}
-                        {l.blocks && <span className="text-faint" title="A hire prerequisite: blocks dispatch when missing, once 'missing dates block' is on"> ●</span>}
+                        {l.blocks && <span className="text-faint" title="A hire prerequisite: the driver can't be dispatched until it is recorded"> ●</span>}
                       </div>
                       <div className="text-footnote text-muted">
                         {l.cite} · {l.hint}
@@ -106,7 +106,11 @@ export default async function DriverSafetyFilePage({ params }: PageProps<"/compl
                       )}
                     </td>
                     <td className="whitespace-nowrap">
-                      <span className={`pill ${TONE[l.status] ?? "pill-slate"}`}>{l.notRequired ? "not required" : l.status === "ok" ? "on file" : l.status === "expired" ? "overdue" : l.status === "expiring" ? "due soon" : "missing"}</span>
+                      {l.status === "ok" && !l.completedAt && !l.notRequired ? (
+                        <span className="pill pill-slate">not due yet</span>
+                      ) : (
+                        <span className={`pill ${TONE[l.status] ?? "pill-slate"}`}>{l.notRequired ? "not required" : l.status === "ok" ? "on file" : l.status === "expired" ? "overdue" : l.status === "expiring" ? "due soon" : "missing"}</span>
+                      )}
                     </td>
                     <td className="text-callout whitespace-nowrap">
                       {l.completedAt && <div>Done {day(l.completedAt)}</div>}
@@ -207,7 +211,7 @@ export default async function DriverSafetyFilePage({ params }: PageProps<"/compl
                           <ul className="text-callout space-y-0.5">
                             {i.violations.map((v, k) => (
                               <li key={k} className={v.removed ? "line-through text-faint" : ""}>
-                                <span className="mono">{v.code}</span> {v.description} <span className="text-muted">· {basicLabel(v.basic)} · wt {v.severity}</span> {v.oos && <span className="pill pill-red">OOS</span>}
+                                <span className="mono">{v.code}</span> {v.description} <span className="text-muted">· {v.basic ? `${basicLabel(v.basic)} · wt ${v.severity}` : "not in SMS"}</span> {v.oos && <span className="pill pill-red">OOS</span>}
                               </li>
                             ))}
                           </ul>
