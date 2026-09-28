@@ -1,4 +1,4 @@
-// Features: F-34.1 F-34.2 F-34.3 F-34.4 F-34.5
+// Features: F-34.1 F-34.2 F-34.3 F-34.4 F-34.5 F-34.6
 import { describe, it, expect, beforeEach } from "vitest";
 import { and, eq } from "drizzle-orm";
 import { truncateAll, makeTenant } from "@/test/helpers";
@@ -13,6 +13,10 @@ import { addCheckCall } from "./check-calls";
 import { customerPortalView } from "./customer-portal";
 import { draftStatusReply } from "./mail";
 import { carrierFitsLeg, carriersForLeg } from "./carrier-fit";
+import { readRateConForBuilder, parseRateConText, attachDraftRateCon } from "./ratecon-reader";
+import { pdfPlainText, textFromContent } from "@/lib/pdf-text";
+import { readFileSync } from "node:fs";
+import path from "node:path";
 import { availability, gapFor, type Booking } from "./planner-rules";
 import * as X from "./crossing";
 import { clearedCompletesLeg, crossingDriverNext } from "./crossing";
@@ -334,5 +338,47 @@ describe("the carrier picker fits the leg (F-34.5, dispatch M2)", () => {
     // nobody is lost: the rest are behind Show all
     const us = carriersForLeg(all, { type: "us" });
     expect(us.fits.length + us.others.length).toBe(all.length);
+  });
+});
+
+describe("a rate con with the AI reader off (F-34.6, dispatch M26)", () => {
+  const bytes = readFileSync(path.join(process.cwd(), "e2e/fixtures/ratecon-ns-8812.pdf"));
+
+  it("reads the PDF's own text: ASCII85 + Flate streams, Tj / TJ strings, a line per text line", () => {
+    const text = pdfPlainText(bytes);
+    expect(text).toContain("NORTHSTAR BROKERAGE - LOAD CONFIRMATION");
+    expect(text).toContain("PICKUP 1: Alamo Auto Plant, 1200 Industrial Blvd, San Antonio TX 78219");
+    expect(textFromContent("BT /F1 12 Tf 72 700 Td (Rate: \\$1,200) Tj 0 -14 Td [(Load) -300 (# A-1)] TJ ET")).toBe("Rate: $1,200\nLoad # A-1");
+    expect(textFromContent("BT <4869> Tj ET")).toBe("Hi");
+    expect(pdfPlainText(Buffer.from("%PDF-1.4 nothing here"))).toBe("");
+  });
+
+  it("fills what it is sure of and says what it read", () => {
+    const d = parseRateConText(pdfPlainText(bytes));
+    expect(d.customerName).toBe("NORTHSTAR BROKERAGE");
+    expect([d.rate, d.currency, d.equipment, d.refs.reference]).toEqual(["2275.00", "USD", "53_dry", "NS-8812"]);
+    expect(d.stops.map((x) => [x.type, x.name, x.line1, x.city, x.state, x.postalCode, x.windowStart, x.windowEnd, x.ref])).toEqual([
+      ["pickup", "Alamo Auto Plant", "1200 Industrial Blvd", "San Antonio", "TX", "78219", "2026-10-01T07:00", "2026-10-01T09:00", "AAP-5521"],
+      ["delivery", "Trinity DC", "800 Commerce St", "Dallas", "TX", "75201", "2026-10-01T16:00", "", "TDC-9901"],
+    ]);
+    expect(d.stops[1].appointment).toBe(true);
+    expect(d.freight[0]).toMatchObject({ commodity: "Auto parts", pieces: "24", packaging: "pallets", weightLb: "31000" });
+    expect(d.read).toEqual(['customer "NORTHSTAR BROKERAGE"', "rate USD 2,275.00", "load # NS-8812", "equipment 53' Dry Van", "1 pickup and 1 delivery", "freight"]);
+    // Canada and pesos
+    const ca = parseRateConText("MAPLE LOGISTICS RATE CONFIRMATION\nTotal: CA$1,950.00\nPickup: Magna, 1 Main St, Romulus MI 48174 10/05/2026 08:00\nDelivery: Linamar, 700 Clarke Rd, London ON N5V 3B1 10/06/2026 2:00 PM");
+    expect([ca.rate, ca.currency, ca.stops[1].country, ca.stops[1].postalCode, ca.stops[1].windowStart]).toEqual(["1950.00", "CAD", "CA", "N5V 3B1", "2026-10-06T14:00"]);
+  });
+
+  it("the upload keeps the PDF on the draft and fills the builder, the customer matched; the paper goes onto the load", async () => {
+    const north = await create(a, "customer", { name: "Northstar Brokerage", kind: "broker" });
+    const d = await readRateConForBuilder(a, { fileName: "ratecon-NS-8812.pdf", mimeType: "application/pdf", bytes });
+    expect(d.readBy).toBe("text");
+    expect(d.customerId).toBe(north.id);
+    expect(d.warnings[0]).toMatch(/AI reader is off: filled from the PDF's text/);
+    expect(d.stops).toHaveLength(2);
+    const o = await createOrder(a, { customerId: north.id, rateCents: 227500, stops: [{ type: "pickup", name: "Alamo Auto Plant", country: "US" }, { type: "delivery", name: "Trinity DC", country: "US" }] });
+    await attachDraftRateCon(a, d.documentId, o.order.id);
+    const [doc] = await db.select().from(s.documents).where(eq(s.documents.id, d.documentId));
+    expect([doc.subjectKind, doc.subjectId, doc.code]).toEqual(["order", o.order.id, "RATE_CON"]);
   });
 });

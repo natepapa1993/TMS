@@ -1189,6 +1189,16 @@
       "tests": [
         "src/domain/flow2.test.ts"
       ]
+    },
+    {
+      "id": "F-34.6",
+      "name": "Rate con upload with the AI reader off: the PDF is kept on the draft anyway and the builder is filled from the PDF's own text where confident (customer, rate, load #, equipment, stops with address and times, freight), saying what was read",
+      "milestone": "M34",
+      "status": "done",
+      "tests": [
+        "src/domain/flow2.test.ts",
+        "src/domain/ratecon-reader.test.ts"
+      ]
     }
   ]
 }
