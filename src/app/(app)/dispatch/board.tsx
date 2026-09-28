@@ -11,6 +11,7 @@ import * as A from "./actions";
 import { BUCKETS, ALERTS, bucketsOf, alertsOf, urgency, currentLeg, nextStop, type BucketKey, type AlertKey } from "@/domain/board-buckets";
 import { fmtIn, stopZone, zonedDate, toZoneInput, fromZoneInput, zoneAbbrev } from "@/lib/time";
 import { CheckCallBox } from "./check-call";
+import { money as fxMoney } from "@/domain/fx-rules";
 
 /**
  * The trip board: every open load on one dense screen, most urgent first. Buckets (Needs truck,
@@ -31,6 +32,7 @@ type Leg = {
   coDriverId: string | null;
   carrierId: string | null;
   carrierRateCents: number | null;
+  carrierRateCurrency?: string | null;
   plannedMiles: number | null;
   fromStopId: string | null;
   toStopId: string | null;
@@ -64,6 +66,8 @@ export type BoardData = {
   pings: { byTruck: Record<string, string>; byLeg: Record<string, string> };
   lastCalls: Record<string, { at: string; status: string; location: string | null; note: string | null }>;
   trailers: { id: string; unitNumber: string; status: string }[];
+  /** MXN / CAD per USD × 10,000 (the company's latest rate, else the default), to put money in USD */
+  fx?: Record<string, number>;
 };
 
 const subscribeCompact = (cb: () => void) => {
@@ -482,7 +486,7 @@ function BoardRow({ r, alerts, data, now, selected, onClick }: { r: Row; alerts:
       </div>
       <div className="text-right min-w-0">
         <div className="font-semibold tabular-nums">{r.order.rateTbd ? "TBD" : money(r.order.rateCents, r.order.currency)}</div>
-        <div className="sub tabular-nums">{miles ? `${miles.toLocaleString()} mi${r.order.rateCents ? ` · $${(r.order.rateCents / 100 / miles).toFixed(2)}` : ""}` : ""}</div>
+        <div className="sub tabular-nums">{miles ? `${miles.toLocaleString()} mi${r.order.rateCents ? ` · ${fxMoney(Math.round(r.order.rateCents / miles), r.order.currency)}` : ""}` : ""}</div>
       </div>
     </div>
   );
@@ -624,7 +628,7 @@ function SidePanel({ r, data, busy, canDispatch, onClose, onPopup, run, onToast 
                     ) : l.assigneeKind === "carrier" ? (
                       <>
                         <b className="text-ink">{l.carrierName}</b>
-                        {l.carrierRateCents != null && <> · {money(l.carrierRateCents)}</>}
+                        {l.carrierRateCents != null && <> · {money(l.carrierRateCents, l.carrierRateCurrency ?? "USD")}</>}
                       </>
                     ) : (
                       "Nobody assigned"
@@ -800,6 +804,12 @@ function AssignModal({ leg, order, data, onClose, onDone }: { leg: Leg; order: O
   const [celig, setCelig] = useState<{ ok: boolean; hardBlocked: boolean; findings: { level: string; message: string }[] } | null>(null);
   const [cscore, setCscore] = useState<{ score: { days: number; loads: number; answered: number; acceptancePct: number | null; onTimePct: number | null; trackedPct: number | null; billed: number; billedOver: number; overCents: number }; dispatchable: boolean; problems: string[] } | null>(null);
   const [carrierRate, setCarrierRate] = useState(leg.carrierRateCents != null ? (leg.carrierRateCents / 100).toFixed(2) : "");
+  // what the carrier is paid in: pesos for a Mexican carrier, Canadian dollars for a Canadian one, unless the rate on file says otherwise
+  const curFor = (id: string) => {
+    const c = data.carriers.find((x) => x.id === id);
+    return c?.country === "MX" ? "MXN" : c?.country === "CA" ? "CAD" : "USD";
+  };
+  const [rateCur, setRateCur] = useState(leg.carrierRateCurrency ?? (leg.carrierId ? curFor(leg.carrierId) : leg.type === "mx" ? "MXN" : "USD"));
   const [lane, setLane] = useState<{ lane: string; rateCents: number; fuelRule: string; fuelValue: number | null; validTo: string | null } | null>(null);
   const [miles, setMiles] = useState(leg.plannedMiles != null ? String(leg.plannedMiles) : "");
   const [override, setOverride] = useState("");
@@ -829,14 +839,14 @@ function AssignModal({ leg, order, data, onClose, onDone }: { leg: Leg; order: O
       if (tab === "carrier") {
         if (!carrierId) return setErr("Pick a carrier");
         if (sendNow && (tender.channel === "email" || tender.channel === "whatsapp")) {
-          const r = await A.tenderAction(leg.id, { carrierId, rateCents, channel: tender.channel, expiresInMinutes: Number(tender.expires), message: tender.message.trim() || null, ...opts });
+          const r = await A.tenderAction(leg.id, { carrierId, rateCents, currency: rateCur, channel: tender.channel, expiresInMinutes: Number(tender.expires), message: tender.message.trim() || null, ...opts });
           if (r.ok) onDone(`Tender ${tender.channel === "whatsapp" ? "sent on WhatsApp" : "emailed"} to ${r.data.to} — expires in ${tender.expires} min`);
           else if (r.code === "eligibility") eligibilityFail(r);
           else setErr(r.error);
           return;
         }
       }
-      const a = tab === "truck" ? (pick ? { kind: "truck" as const, ...pick, trailerId: trailerId || null } : null) : { kind: "carrier" as const, carrierId, carrierRateCents: rateCents };
+      const a = tab === "truck" ? (pick ? { kind: "truck" as const, ...pick, trailerId: trailerId || null } : null) : { kind: "carrier" as const, carrierId, carrierRateCents: rateCents, carrierRateCurrency: rateCur };
       if (!a) return setErr("Pick a unit");
       const r = sendNow && (leg.state === "unassigned" || leg.state === "declined" || leg.state === "planned") ? await A.planAndDispatchAction(leg.id, a, opts) : await A.planAction(leg.id, a, opts);
       if (r.ok) onDone(sendNow ? (tab === "carrier" ? "Marked sent — confirm by phone, then press Accepted" : "Assigned and sent") : "Assigned — in Planned");
@@ -957,10 +967,12 @@ function AssignModal({ leg, order, data, onClose, onDone }: { leg: Leg; order: O
                 A.carrierEligibilityAction(leg.id, id).then((r) => r.ok && setCelig(r.data as never));
                 A.carrierPickAction(id).then((r) => r.ok && setCscore(r.data));
                 // the lane rate on file prefills what we pay; the dispatcher can still type another number
+                if (id) setRateCur(curFor(id));
                 A.laneRateAction(leg.id, id).then((r) => {
                   if (r.ok && r.data) {
                     setLane({ ...r.data, validTo: r.data.validTo ? String(r.data.validTo) : null });
                     setCarrierRate((r.data.rateCents / 100).toFixed(2));
+                    if (r.data.currency) setRateCur(r.data.currency);
                   }
                 });
               }}
@@ -991,13 +1003,32 @@ function AssignModal({ leg, order, data, onClose, onDone }: { leg: Leg; order: O
           </div>
           <div className="grid grid-cols-3 gap-2">
             <div>
-              <label className="label">Carrier rate (USD)</label>
-              <input className="input" inputMode="decimal" value={carrierRate} onChange={(e) => setCarrierRate(e.target.value)} placeholder="what you pay them" />
-              {rateCents != null && order.rateCents != null && !order.rateTbd && (
-                <div className={`help font-semibold ${order.rateCents - rateCents < order.rateCents * 0.1 ? "text-red" : order.rateCents - rateCents < order.rateCents * 0.15 ? "text-amber" : "text-green"}`} data-testid="tender-margin">
-                  Margin {money(order.rateCents - rateCents, order.currency)} · {Math.round(((order.rateCents - rateCents) / order.rateCents) * 1000) / 10}% of the load
+              <label className="label">Carrier rate ({rateCur})</label>
+              <div className="flex gap-1 items-center">
+                <input className="input" inputMode="decimal" value={carrierRate} onChange={(e) => setCarrierRate(e.target.value)} placeholder="what you pay them" aria-label={`Carrier rate in ${rateCur}`} />
+                <div className="segmented shrink-0" role="group" aria-label="Carrier rate currency">
+                  {["USD", "MXN", "CAD"].map((c) => (
+                    <button key={c} type="button" data-active={rateCur === c} aria-pressed={rateCur === c} onClick={() => setRateCur(c)}>
+                      {c}
+                    </button>
+                  ))}
                 </div>
-              )}
+              </div>
+              {rateCents != null && order.rateCents != null && !order.rateTbd && (() => {
+                // true load margin, in USD: the load's rate less every other leg's carrier and this one, each converted
+                const usd = (c: number, cur: string) => (cur === "USD" ? c : Math.round((c * 10000) / (data.fx?.[cur] ?? (cur === "CAD" ? 13700 : 180000))));
+                const loadUsd = usd(order.rateCents, order.currency);
+                const others = (data.rows.find((x) => x.order.id === order.id)?.legs ?? []).filter((l) => l.id !== leg.id && l.state !== "cancelled" && l.carrierRateCents != null).reduce((a, l) => a + usd(l.carrierRateCents!, l.carrierRateCurrency ?? "USD"), 0);
+                const m = loadUsd - others - usd(rateCents, rateCur);
+                const converted = order.currency !== "USD" || rateCur !== "USD";
+                return (
+                  <div className={`help font-semibold ${m < loadUsd * 0.1 ? "text-red" : m < loadUsd * 0.15 ? "text-amber" : "text-green"}`} data-testid="tender-margin">
+                    Margin {money(m, "USD")}{converted ? " (USD)" : ""} · {loadUsd ? Math.round((m / loadUsd) * 1000) / 10 : 0}% of the load
+                    {others ? <span className="font-normal text-muted"> · after the other legs&rsquo; carriers ({money(others, "USD")})</span> : null}
+                    {converted ? <span className="font-normal text-muted"> · pesos / Canadian dollars at the company rate</span> : null}
+                  </div>
+                );
+              })()}
               {lane && (
                 <div className="help" data-testid="lane-rate">
                   Lane rate on file: {lane.lane} · fuel {lane.fuelRule === "included" ? "included" : lane.fuelRule === "pct" ? `${lane.fuelValue ?? 0}% extra` : `${((lane.fuelValue ?? 0) / 100).toFixed(2)}/mi extra`}

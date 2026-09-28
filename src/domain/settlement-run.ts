@@ -3,7 +3,7 @@ import { db } from "@/db/client";
 import * as s from "@/db/schema";
 import { assertCtx, requirePermission, systemCtx, type Ctx } from "@/lib/context";
 import { NotFoundError, ValidationError } from "./orders";
-import { buildSettlement, settlementTransition } from "./billing";
+import { buildSettlement, settlementTransition, approvalBlockers } from "./billing";
 import { buildSettlementPdf } from "./billing-pdf";
 import { getCompany } from "./company";
 
@@ -15,38 +15,56 @@ import { getCompany } from "./company";
 
 export type RunRow = { driverId: string; driver: string; settlementId: string | null; state: string; netCents: number; lines: number; note: string | null };
 
-export async function settlementRun(ctx: Ctx, periodStart: Date, periodEnd: Date): Promise<RunRow[]> {
+/**
+ * Build every statement for the week. A driver gets one when they have pay: legs completed that week,
+ * legs completed in a week whose statement was already approved or paid (late), or a reimbursement.
+ * Deductions alone never make a statement. A week that hasn't ended can be built to look at, but not approved.
+ */
+export async function settlementRun(ctx: Ctx, periodStart: Date, periodEnd: Date, now = new Date()): Promise<RunRow[]> {
   assertCtx(ctx);
   requirePermission(ctx, "billing.issue");
   if (!(periodEnd > periodStart)) throw new ValidationError("the week");
-  const [drivers, legs, items, existing] = await Promise.all([
+  const lookBack = new Date(periodStart.getTime() - 8 * 7 * 86400_000);
+  const [drivers, legs, items, existing, older] = await Promise.all([
     db.select().from(s.drivers).where(and(eq(s.drivers.tenantId, ctx.tenantId), isNull(s.drivers.archivedAt))).orderBy(s.drivers.name),
-    db.select({ driverId: s.legs.driverId, coDriverId: s.legs.coDriverId }).from(s.legs).where(and(eq(s.legs.tenantId, ctx.tenantId), eq(s.legs.state, "completed"), gte(s.legs.completedAt, periodStart), lt(s.legs.completedAt, periodEnd))),
-    db.select({ driverId: s.payItems.driverId }).from(s.payItems).where(and(eq(s.payItems.tenantId, ctx.tenantId), eq(s.payItems.active, true))),
+    db.select({ id: s.legs.id, driverId: s.legs.driverId, coDriverId: s.legs.coDriverId, completedAt: s.legs.completedAt }).from(s.legs).where(and(eq(s.legs.tenantId, ctx.tenantId), eq(s.legs.state, "completed"), gte(s.legs.completedAt, lookBack), lt(s.legs.completedAt, periodEnd))),
+    db.select({ driverId: s.payItems.driverId, kind: s.payItems.kind }).from(s.payItems).where(and(eq(s.payItems.tenantId, ctx.tenantId), eq(s.payItems.active, true))),
     db.select().from(s.settlements).where(and(eq(s.settlements.tenantId, ctx.tenantId), eq(s.settlements.periodStart, periodStart))),
+    db.select({ driverId: s.settlements.driverId, state: s.settlements.state, periodStart: s.settlements.periodStart, periodEnd: s.settlements.periodEnd, lines: s.settlements.lines }).from(s.settlements).where(and(eq(s.settlements.tenantId, ctx.tenantId), gte(s.settlements.periodEnd, lookBack))),
   ]);
-  const ran = new Set(legs.flatMap((l) => [l.driverId, l.coDriverId]).filter(Boolean) as string[]);
+  const onStatement = new Set(older.flatMap((x) => x.lines.map((l) => l.legId).filter((v): v is string => !!v)));
+  const people = (l: { driverId: string | null; coDriverId: string | null }) => [l.driverId, l.coDriverId].filter((x): x is string => !!x);
+  const ran = new Set(legs.filter((l) => l.completedAt! >= periodStart).flatMap(people));
+  // late legs: completed in a week this driver's statement was already approved or paid for, and on no statement
+  const lateFor = new Set(
+    legs
+      .filter((l) => l.completedAt! < periodStart && !onStatement.has(l.id))
+      .flatMap((l) => people(l).filter((d) => older.some((x) => x.driverId === d && (x.state === "approved" || x.state === "paid") && l.completedAt! >= x.periodStart && l.completedAt! < x.periodEnd))),
+  );
   const due = new Set(items.map((i) => i.driverId));
+  const unfinished = periodEnd.getTime() > now.getTime();
   const out: RunRow[] = [];
   for (const d of drivers) {
-    if (!ran.has(d.id) && !due.has(d.id)) continue;
+    if (!ran.has(d.id) && !due.has(d.id) && !lateFor.has(d.id)) continue;
     const st = existing.find((x) => x.driverId === d.id);
     if (st && st.state !== "open") {
-      out.push({ driverId: d.id, driver: d.name, settlementId: st.id, state: st.state, netCents: st.netCents, lines: st.lines.length, note: `already ${st.state}` });
+      out.push({ driverId: d.id, driver: d.name, settlementId: st.id, state: st.state, netCents: st.netCents, lines: st.lines.length, note: `already ${st.state}${lateFor.has(d.id) ? " — a late leg goes on next week's statement" : ""}` });
       continue;
     }
     try {
       const built = await buildSettlement(ctx, d.id, periodStart, periodEnd);
-      out.push({ driverId: d.id, driver: d.name, settlementId: built.id, state: built.state, netCents: built.netCents, lines: built.lines.length, note: ran.has(d.id) ? null : "pay items only (no legs this week)" });
+      const notes = [unfinished ? "the week isn't over: approve after it ends" : null, lateFor.has(d.id) ? "includes a late leg from an earlier week" : null, !ran.has(d.id) && !lateFor.has(d.id) ? "pay items only (no legs this week)" : null, built.lines.some((l) => l.blocker) ? "a load has no miles: fix it before approving" : null, built.lines.some((l) => l.shortCents) ? "some deductions didn't fit: they carry over" : null].filter(Boolean);
+      out.push({ driverId: d.id, driver: d.name, settlementId: built.id, state: built.state, netCents: built.netCents, lines: built.lines.length, note: notes.length ? notes.join(" · ") : null });
     } catch (e) {
-      out.push({ driverId: d.id, driver: d.name, settlementId: null, state: "error", netCents: 0, lines: 0, note: (e as Error).message });
+      const msg = (e as Error).message;
+      out.push({ driverId: d.id, driver: d.name, settlementId: null, state: /no pay for the week/.test(msg) ? "skipped" : "error", netCents: 0, lines: 0, note: /no pay for the week/.test(msg) ? "no pay this week: no statement — deductions wait for the next one with pay" : msg });
     }
   }
   return out;
 }
 
-/** Approve statements together: open ones are marked reviewed first; one with an unanswered dispute waits. */
-export async function approveSettlements(ctx: Ctx, ids: string[]) {
+/** Approve statements together: open ones are marked reviewed first; one with a dispute, a load with no miles, or an unfinished week waits (with the reason). */
+export async function approveSettlements(ctx: Ctx, ids: string[], now = new Date()) {
   assertCtx(ctx);
   requirePermission(ctx, "billing.issue");
   const rows = ids.length ? await db.select().from(s.settlements).where(and(eq(s.settlements.tenantId, ctx.tenantId), inArray(s.settlements.id, ids))) : [];
@@ -57,17 +75,24 @@ export async function approveSettlements(ctx: Ctx, ids: string[]) {
       skipped.push({ id: st.id, reason: "the driver disputed a line: answer it first" });
       continue;
     }
+    if (st.state !== "open" && st.state !== "reviewed") {
+      skipped.push({ id: st.id, reason: `already ${st.state}` });
+      continue;
+    }
+    const why = approvalBlockers(st, now);
+    if (why.length) {
+      skipped.push({ id: st.id, reason: why.join("; ") });
+      continue;
+    }
     if (st.state === "open") await settlementTransition(ctx, st.id, "reviewed");
-    if (st.state === "open" || st.state === "reviewed") {
-      await settlementTransition(ctx, st.id, "approved");
-      approved.push(st.id);
-    } else skipped.push({ id: st.id, reason: `already ${st.state}` });
+    await settlementTransition(ctx, st.id, "approved", { now });
+    approved.push(st.id);
   }
   return { approved: approved.length, skipped };
 }
 
 /** Pay approved statements under one batch reference (the ACH file, the check run). */
-export async function paySettlements(ctx: Ctx, ids: string[], p: { method: string; reference?: string | null }) {
+export async function paySettlements(ctx: Ctx, ids: string[], p: { method: string; reference?: string | null; now?: Date }) {
   assertCtx(ctx);
   requirePermission(ctx, "billing.issue");
   if (!p.method) throw new ValidationError("how are they paid?", "method");
@@ -76,7 +101,7 @@ export async function paySettlements(ctx: Ctx, ids: string[], p: { method: strin
   let paid = 0;
   for (const st of rows) {
     if (st.state !== "approved") continue;
-    await settlementTransition(ctx, st.id, "paid", { method: p.method, reference: p.reference ?? undefined });
+    await settlementTransition(ctx, st.id, "paid", { method: p.method, reference: p.reference ?? undefined, now: p.now });
     total += st.netCents;
     paid++;
   }

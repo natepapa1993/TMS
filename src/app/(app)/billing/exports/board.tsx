@@ -9,7 +9,7 @@ import { previewExportAction, createExportAction, reopenExportAction } from "../
 const n = (c: number, word: string) => `${c} ${word}${c === 1 ? "" : "s"}`;
 
 type Run = { id: string; format: string; fromDate: string; toDate: string; onlyNew: boolean; counts: Record<string, number>; fileName: string; createdAt: string; reopenedAt: string | null };
-type Preview = { invoices: number; receipts: number; carrierBills: number; settlements: number; invoicedCents: number; receivedCents: number; billsCents: number };
+type Preview = { invoices: number; receipts: number; credits: number; carrierBills: number; settlements: number; invoicedCents: number; receivedCents: number; billsCents: number; carrierBillsCents: number; settlementsCents: number; factorEntries: number };
 
 export function Exports({ runs, defaults, role }: { runs: Run[]; defaults: { from: string; to: string }; role: string }) {
   const router = useRouter();
@@ -37,7 +37,7 @@ export function Exports({ runs, defaults, role }: { runs: Run[]; defaults: { fro
       alive = false;
     };
   }, [f.from, f.to, f.onlyNew, tick]);
-  const nothing = preview && preview.invoices + preview.receipts + preview.carrierBills + preview.settlements === 0;
+  const nothing = preview && preview.invoices + preview.receipts + preview.carrierBills + preview.settlements + preview.credits + preview.factorEntries === 0;
   return (
     <>
       <div className="card p-4 mb-4">
@@ -75,11 +75,18 @@ export function Exports({ runs, defaults, role }: { runs: Run[]; defaults: { fro
             <span className="text-muted">Nothing in that period{f.onlyNew ? " that has not been exported" : ""}.</span>
           ) : (
             <span>
-              <b>{preview.invoices}</b> invoices ({formatCents(preview.invoicedCents)}) · <b>{preview.receipts}</b> receipts ({formatCents(preview.receivedCents)}) · <b>{preview.carrierBills}</b> carrier bills · <b>{preview.settlements}</b> driver settlements ({formatCents(preview.billsCents)} in bills)
+              <b>{preview.invoices}</b> invoices ({formatCents(preview.invoicedCents)}) · <b>{preview.receipts}</b> deposits ({formatCents(preview.receivedCents)}) · <b>{preview.credits}</b> credit memos · <b>{preview.carrierBills}</b> carrier bills ({formatCents(preview.carrierBillsCents)}) · <b>{preview.settlements}</b> driver settlements ({formatCents(preview.settlementsCents)}) · <b>{preview.factorEntries}</b> factoring entries
             </span>
           )}
         </div>
-        <div className="help mt-1">Invoices by issue date, receipts by received date, carrier bills and settlements by approval date (payments ride along). Creating an export stamps the records so the next “only new” run skips them.</div>
+        <div className="help mt-1">Invoices by issue date, payments by received date, carrier bills and settlements by approval date (their payments ride along), factoring by the day it happened. Creating an export stamps the records so the next “only new” run skips them.</div>
+        <ul className="help mt-2 list-disc pl-5 space-y-0.5" data-testid="export-rules">
+          <li>All amounts are in US dollars. A MXN or CAD invoice, its payments and credit memos are converted at the rate stored on the invoice; a carrier bill in pesos at the company rate (Settings → Company). The memo keeps the original amount and the rate.</li>
+          <li>Each customer payment is one deposit to {"Undeposited Funds"} (set under Settings → Company) with a line per invoice it paid; money left on account stays as the customer&rsquo;s credit.</li>
+          <li>Factoring goes as journal entries: the advance to the bank, the fee to Factoring fees, the reserve to Factor reserve and the invoice off Receivables; the reserve released on collection; a chargeback puts the invoice back on Receivables.</li>
+          <li>Driver statements are bills: earnings to Driver pay, per diem and reimbursements to Driver reimbursements, advances recovered to Driver advances, escrow to Driver escrow, other deductions to Driver deductions. Credit memos go out as credit memos.</li>
+          <li>The Desktop file lists the accounts and items it uses first, so QuickBooks creates any that are missing.</li>
+        </ul>
       </div>
       <div className="card overflow-hidden">
         {runs.length === 0 ? (
@@ -109,7 +116,7 @@ export function Exports({ runs, defaults, role }: { runs: Run[]; defaults: { fro
                     {!r.onlyNew && <span className="text-faint"> (everything)</span>}
                   </td>
                   <td className="text-callout">
-                    {n(r.counts.invoices, "invoice")} · {n(r.counts.receipts, "receipt")} · {n(r.counts.carrierBills, "carrier bill")} · {n(r.counts.settlements, "settlement")}
+                    {n(r.counts.invoices, "invoice")} · {n(r.counts.receipts, "deposit")} · {n(r.counts.credits ?? 0, "credit memo")} · {n(r.counts.carrierBills, "carrier bill")} · {n(r.counts.settlements, "settlement")}{r.counts.factor ? ` · ${n(r.counts.factor, "factoring entry")}` : ""}
                   </td>
                   <td className="space-x-1">
                     {r.format === "iif" ? (
@@ -117,7 +124,7 @@ export function Exports({ runs, defaults, role }: { runs: Run[]; defaults: { fro
                         .iif
                       </a>
                     ) : (
-                      ["invoices", "bills", "payments"].map((k) => (
+                      ["invoices", "payments", "credits", "bills", "journal"].map((k) => (
                         <a key={k} className="btn btn-sm" href={`/api/accounting/${r.id}?file=${k}`}>
                           {k}.csv
                         </a>

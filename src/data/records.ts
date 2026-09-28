@@ -151,10 +151,29 @@ async function assertGuarded(ctx: Ctx, kind: RecordKind, values: Record<string, 
   }
 }
 
+/**
+ * Rules a record must meet whatever screen saved it. A billing entity with a factoring company needs the
+ * factor's remit-to address: factored invoices print it as where to pay, and there is no safe fallback.
+ */
+export function recordProblem(kind: RecordKind, merged: Record<string, unknown>): { field: string; message: string } | null {
+  if (kind === "billingEntity") {
+    const name = String(merged.factorName ?? "").trim();
+    const a = (merged.factorRemitTo ?? null) as { line1?: string; city?: string } | null;
+    if (name && !(a?.line1?.trim() && a?.city?.trim())) return { field: "factorRemitTo", message: `${name} needs a remit-to address (street and city): factored invoices tell your customers to pay there` };
+  }
+  return null;
+}
+
+function assertRecord(kind: RecordKind, merged: Record<string, unknown>) {
+  const p = recordProblem(kind, merged);
+  if (p) throw Object.assign(new Error(p.message), { name: "ValidationError", field: p.field });
+}
+
 export async function create(ctx: Ctx, kind: RecordKind, values: Record<string, unknown>): Promise<Row> {
   assertCtx(ctx);
   requirePermission(ctx, "records.create");
   await assertGuarded(ctx, kind, values);
+  assertRecord(kind, values);
   const { table } = REGISTRY[kind];
   const id = (values.id as string) ?? newId();
   const row = { ...values, id, tenantId: ctx.tenantId, createdBy: ctx.userId, updatedBy: ctx.userId };
@@ -177,6 +196,7 @@ export async function update(ctx: Ctx, kind: RecordKind, id: string, values: Rec
     if (expectedUpdatedAt && b.updatedAt.getTime() !== expectedUpdatedAt.getTime()) throw new ConflictError();
     if (b.archivedAt) throw new Error("archived records are read-only; restore first");
     await assertGuarded(ctx, kind, values, b as Record<string, unknown>);
+    assertRecord(kind, { ...b, ...values });
     const { id: _id, tenantId: _t, createdAt: _c, createdBy: _cb, ...safe } = values as Record<string, unknown>;
     void _id; void _t; void _c; void _cb;
     const [after] = await tx

@@ -12,6 +12,9 @@ import * as R from "./reports";
 import { zonedDate } from "@/lib/time";
 import { updateCompany } from "./company";
 
+/** statements for this week can only be approved once it has ended */
+const afterWeek = new Date(Date.now() + 8 * 86400_000);
+
 const future = new Date(Date.now() + 365 * 86400_000);
 let a: Awaited<ReturnType<typeof makeTenant>>;
 let f: { rxo: string; magna: string; garza: string; t2104: string; t2117: string; reyes: string; cruz: string; entity: string };
@@ -65,7 +68,7 @@ describe("reports", () => {
     const { start, end } = B.weekOf(new Date());
     let st = await B.buildSettlement(a, f.reyes, start, end);
     st = await B.settlementTransition(a, st.id, "reviewed");
-    await B.settlementTransition(a, st.id, "approved");
+    await B.settlementTransition(a, st.id, "approved", { now: afterWeek });
     // an issued, overdue invoice and a red flag
     const inv = await B.issueInvoice(a, (await B.createInvoice(a, [o1.order.id])).id, { issuedAt: new Date(Date.now() - 45 * 86400_000) });
     await B.recordReceipt(a, inv.id, { amountCents: 50000, method: "ach", receivedAt: new Date() });

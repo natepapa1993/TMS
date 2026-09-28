@@ -99,6 +99,9 @@ export function ReportsView({ dash, rows, by, preset, period, entityId, entities
           </Link>
         ))}
       </div>
+      <div className="text-footnote text-muted mb-3" data-testid="reports-fx">
+        All figures in US dollars{dash.fxNote ? ` — converted: ${dash.fxNote}` : ""}. Revenue is net of credit memos{dash.creditedCents ? ` (${formatCents(dash.creditedCents)} credited)` : ""}.
+      </div>
       {dash.arOpenCents > 0 && (
         <div className="text-callout text-muted mb-4">
           Receivables open {formatCents(dash.arOpenCents)}

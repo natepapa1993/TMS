@@ -12,6 +12,9 @@ import { crossingBoard } from "./crossing";
 import { saveIncident, overrideDispatch, evaluateSubject, snooze, unsnooze, setMissingDatesBlock, statusFor } from "./compliance";
 import { update } from "@/data/records";
 
+/** statements for this week can only be approved once it has ended */
+const afterWeek = new Date(Date.now() + 8 * 86400_000);
+
 const future = new Date(Date.now() + 365 * 86400_000);
 let a: Awaited<ReturnType<typeof makeTenant>>;
 let f: { cust: string; t1: string; t2: string; jose: string; ana: string };
@@ -99,12 +102,12 @@ describe("pay items land on the next statement built", () => {
     const st = await B.buildSettlement(a, f.jose, start, new Date());
     expect(st.lines.map((l) => [l.description, l.amountCents])).toEqual(expect.arrayContaining([["Cash advance", -20000], ["ELD fee", -2500], ["Lumper", 12000]]));
     expect(st.netCents).toBe(30000 - 20000 - 2500 + 12000);
-    for (const to of ["reviewed", "approved"] as const) await B.settlementTransition(a, st.id, to);
-    await B.settlementTransition(a, st.id, "paid", { method: "ach", reference: "ACH-9" });
+    for (const to of ["reviewed", "approved"] as const) await B.settlementTransition(a, st.id, to, { now: afterWeek });
+    await B.settlementTransition(a, st.id, "paid", { method: "ach", reference: "ACH-9", now: afterWeek });
     const items = await db.select().from(payItems).where(eq(payItems.driverId, f.jose));
     expect(Object.fromEntries(items.map((i) => [i.description, i.active]))).toEqual({ "Cash advance": false, "ELD fee": true, Lumper: false });
-    const next = await B.buildSettlement(a, f.jose, new Date(), new Date(Date.now() + 7 * 86400_000));
-    expect(next.lines.map((l) => l.description)).toEqual(["ELD fee"]);
+    // a week with only the ELD fee and no pay makes no statement: the fee waits for one with pay
+    await expect(B.buildSettlement(a, f.jose, new Date(), new Date(Date.now() + 7 * 86400_000))).rejects.toThrow(/no pay for the week/);
     expect((await getOrder(a, o.order.id)).order.state).toBe("delivered");
   });
 });

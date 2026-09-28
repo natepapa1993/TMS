@@ -159,8 +159,8 @@ export async function buildSettlementAction(driverId: string, weekStart: string)
   if (r.ok) touch();
   return r;
 }
-export async function settlementTransitionAction(id: string, to: "reviewed" | "approved" | "paid" | "open", method?: string, reference?: string) {
-  const r = await act((ctx) => B.settlementTransition(ctx, id, to, { method, reference }));
+export async function settlementTransitionAction(id: string, to: "reviewed" | "approved" | "paid" | "open", method?: string, reference?: string, earlyReason?: string) {
+  const r = await act((ctx) => B.settlementTransition(ctx, id, to, { method, reference, earlyReason: earlyReason || null }));
   if (r.ok) touch();
   return r;
 }
@@ -170,7 +170,10 @@ export async function addSettlementLineAction(id: string, kind: "accessorial" | 
   return r;
 }
 export async function addPayItemAction(driverId: string, v: { kind: "deduction" | "reimbursement" | "advance" | "escrow"; description: string; amount: string; recurring: boolean; remaining: string; target?: string }) {
-  const r = await act((ctx) => B.addPayItem(ctx, driverId, { kind: v.kind, description: v.description, amountCents: Math.round(Number(v.amount) * 100), recurring: v.recurring, remainingCents: v.remaining ? Math.round(Number(v.remaining) * 100) : null, targetCents: v.target ? Math.round(Number(v.target) * 100) : null }));
+  const c = (x: string) => Math.round(Number(String(x).replace(/[$,\s]/g, "")) * 100);
+  // an advance: the amount advanced, taken back all at once unless a per-statement amount is given
+  const amount = v.kind === "advance" && v.remaining?.trim() && !v.amount?.trim() ? c(v.remaining) : c(v.amount);
+  const r = await act((ctx) => B.addPayItem(ctx, driverId, { kind: v.kind, description: v.description, amountCents: amount, recurring: v.recurring, remainingCents: v.remaining?.trim() ? c(v.remaining) : null, targetCents: v.target ? c(v.target) : null }));
   if (r.ok) touch();
   return r;
 }

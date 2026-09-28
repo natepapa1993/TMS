@@ -76,12 +76,12 @@ export default async function KindListPage({ params, searchParams }: PageProps<"
                       <td key={c.name} className={i === 0 ? "font-bold" : ""}>
                         {i === 0 ? (
                           <Link href={`/settings/${path}/${r.id}`} className="hover:text-teal">
-                            {fieldDisplay(c, r[c.name], names) || "—"}
+                            {fieldDisplay(c, r[c.name], names, r) || "—"}
                           </Link>
                         ) : c.type === "boolean" ? (
                           r[c.name] ? <Pill tone={c.name === "doNotUse" ? "red" : "teal"}>{c.label}</Pill> : <span className="text-faint">—</span>
                         ) : (
-                          fieldDisplay(c, r[c.name], names) || <span className="text-faint">—</span>
+                          fieldDisplay(c, r[c.name], names, r) || <span className="text-faint">—</span>
                         )}
                       </td>
                     ))}

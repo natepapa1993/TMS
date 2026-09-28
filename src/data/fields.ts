@@ -293,7 +293,7 @@ export const FIELDS: Record<RecordKind, Field[]> = {
     { name: "originZone", label: "From", type: "text", required: true, quick: true, column: true, group: "Lane", placeholder: "Toluca, MEX" },
     { name: "destinationZone", label: "To", type: "text", required: true, quick: true, column: true, group: "Lane", placeholder: "city, state or yard" },
     { name: "equipment", label: "Equipment", type: "select", options: EQUIPMENT, group: "Lane" },
-    { name: "rateCents", label: "Rate", type: "cents", required: true, quick: true, column: true, group: "Rate" },
+    { name: "rateCents", label: "Rate", type: "cents", required: true, quick: true, column: true, group: "Rate", help: "in the currency below — what the carrier is paid (pesos for a Mexican carrier)" },
     {
       name: "currency",
       label: "Currency",
@@ -302,6 +302,7 @@ export const FIELDS: Record<RecordKind, Field[]> = {
       options: [
         { value: "USD", label: "USD" },
         { value: "MXN", label: "MXN" },
+        { value: "CAD", label: "CAD" },
       ],
     },
     {
@@ -777,11 +778,12 @@ export function formatDate(d: Date | string | null | undefined) {
   return dt.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: "UTC" });
 }
 
-export function fieldDisplay(f: Field, value: unknown, refs?: Map<string, string>): string {
+export function fieldDisplay(f: Field, value: unknown, refs?: Map<string, string>, row?: Record<string, unknown>): string {
   if (value == null || value === "") return "";
   switch (f.type) {
     case "cents":
-      return formatCents(value as number);
+      // a record with a currency (a lane rate in pesos) shows its money in that currency
+      return formatCents(value as number, typeof row?.currency === "string" && ["USD", "MXN", "CAD"].includes(row.currency) ? row.currency : "USD");
     case "date":
       return formatDate(value as Date);
     case "boolean":

@@ -54,6 +54,11 @@ export default async function DispatchPage({ searchParams }: PageProps<"/dispatc
     pings,
     lastCalls: Object.fromEntries([...calls].map(([k, c]) => [k, { at: c.at.toISOString(), status: c.status, location: c.location, note: c.note }])),
     trailers: trailers.map((t) => ({ id: t.id, unitNumber: String(t.unitNumber), status: String(t.status ?? "active") })).sort((p, q) => p.unitNumber.localeCompare(q.unitNumber, undefined, { numeric: true })),
+    fx: await (async () => {
+      const [{ getCompany }, { pickRate }] = await Promise.all([import("@/domain/company"), import("@/domain/fx-rules")]);
+      const fx = (await getCompany(ctx)).settings.fx;
+      return { MXN: pickRate("MXN", null, fx).rateE4, CAD: pickRate("CAD", null, fx).rateE4 };
+    })(),
   };
   return <DispatchBoard data={data} initialOrder={initialOrder} />;
 }
@@ -65,7 +70,7 @@ function slim(r: BoardRow): Omit<Row, "customerName" | "tenders"> {
   return {
     order: { id: o.id, orderNumber: o.orderNumber, state: o.state, kind: o.kind, rateCents: o.rateCents, rateTbd: o.rateTbd, currency: o.currency, equipment: o.equipment, refs: o.refs ?? {}, holdReason: o.holdReason, legTemplate: o.legTemplate, customerId: o.customerId, brokerId: o.brokerId },
     stops: r.stops.map((st) => ({ id: st.id, seq: st.seq, type: st.type, name: st.name, country: st.country, windowStart: iso(st.windowStart), windowEnd: iso(st.windowEnd), arrivedAt: iso(st.arrivedAt), departedAt: iso(st.departedAt), address: st.address ? { city: st.address.city, state: st.address.state } : null })),
-    legs: r.legs.map((l) => ({ id: l.id, seq: l.seq, type: l.type, state: l.state, assigneeKind: l.assigneeKind, truckId: l.truckId, trailerId: l.trailerId, trailerUnit: l.trailerUnit, driverId: l.driverId, coDriverId: l.coDriverId, carrierId: l.carrierId, carrierRateCents: l.carrierRateCents, plannedMiles: l.plannedMiles, fromStopId: l.fromStopId, toStopId: l.toStopId, truckUnit: l.truckUnit, driverName: l.driverName, carrierName: l.carrierName, declineReason: l.declineReason, dispatchedAt: iso(l.dispatchedAt), completedAt: iso(l.completedAt) })),
+    legs: r.legs.map((l) => ({ id: l.id, seq: l.seq, type: l.type, state: l.state, assigneeKind: l.assigneeKind, truckId: l.truckId, trailerId: l.trailerId, trailerUnit: l.trailerUnit, driverId: l.driverId, coDriverId: l.coDriverId, carrierId: l.carrierId, carrierRateCents: l.carrierRateCents, carrierRateCurrency: l.carrierRateCurrency ?? "USD", plannedMiles: l.plannedMiles, fromStopId: l.fromStopId, toStopId: l.toStopId, truckUnit: l.truckUnit, driverName: l.driverName, carrierName: l.carrierName, declineReason: l.declineReason, dispatchedAt: iso(l.dispatchedAt), completedAt: iso(l.completedAt) })),
     openFlags: r.openFlags.map((f) => ({ id: f.id, code: f.code, level: f.level, title: f.title, detail: f.detail, legId: f.legId })),
     stage: r.stage,
     shipments: r.shipments,

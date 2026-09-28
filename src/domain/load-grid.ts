@@ -48,6 +48,8 @@ export type LoadRow = {
   carrier: string | null;
   rateCents: number | null;
   currency: string;
+  /** the rate in USD (MXN / CAD converted at the company rate); cost, margin and RPM are USD too */
+  rateUsdCents: number | null;
   carrierCostCents: number;
   marginCents: number | null;
   miles: number | null;
@@ -91,6 +93,11 @@ export async function loadGrid(ctx: Ctx, opts: { days?: number } = {}): Promise<
   const { crossingStateLabel } = await import("./crossing");
   const [ten] = await db.select({ settings: s.tenants.settings }).from(s.tenants).where(eq(s.tenants.id, ctx.tenantId)).limit(1);
   const fuelCpm = Number((ten?.settings as Record<string, unknown> | null)?.fuelCostCentsPerMile ?? 65);
+  // money in USD: a peso rate or a carrier paid in pesos is converted before anything is added or divided
+  const { pickRate, toHome } = await import("./fx-rules");
+  const { getCompany } = await import("./company");
+  const fx = (await getCompany(ctx)).settings.fx;
+  const usd = (cents: number, cur: string | null | undefined) => toHome(cents, cur || "USD", pickRate(cur || "USD", null, fx).rateE4);
   const name = <T extends { id: string }>(rows: T[], key: keyof T) => new Map(rows.map((r) => [r.id, String(r[key])]));
   const cName = name(customers, "name");
   const carName = name(carriers, "name");
@@ -116,7 +123,7 @@ export async function loadGrid(ctx: Ctx, opts: { days?: number } = {}): Promise<
     const pu = onTrip ? tripStops.find((y) => y.id === o.pickupStopId) : (st.find((x) => x.type === "pickup") ?? st[0]);
     const de = onTrip ? tripStops.find((y) => y.id === o.deliveryStopId) : ([...st].reverse().find((x) => x.type === "delivery") ?? st[st.length - 1]);
     // the trip carries the carrier cost; its shipments carry the revenue — never both
-    const carrierCostCents = onTrip ? 0 : lg.reduce((sum, l) => sum + (l.carrierRateCents ?? 0), 0) + (o.tollsFeesCents ?? 0);
+    const carrierCostCents = onTrip ? 0 : lg.filter((l) => l.state !== "cancelled").reduce((sum, l) => sum + usd(l.carrierRateCents ?? 0, l.carrierRateCurrency), 0) + usd(o.tollsFeesCents ?? 0, o.currency);
     // our own trucks cost driver pay and fuel too: estimated from the driver's pay rule and the company's fuel cost per mile (the load's Money tab has the exact figures)
     const ownCost = onTrip
       ? 0
@@ -128,13 +135,14 @@ export async function loadGrid(ctx: Ctx, opts: { days?: number } = {}): Promise<
               const d = drivers.find((x) => x.id === did);
               if (!d?.payRateCents) return a;
               const share = l.coDriverId ? 0.5 : 1;
-              return a + Math.round((d.payType === "per_mile" ? mi * d.payRateCents : d.payType === "pct" ? ((o.rateCents ?? 0) * d.payRateCents) / 10000 : d.payRateCents) * share);
+              return a + Math.round((d.payType === "per_mile" ? mi * d.payRateCents : d.payType === "pct" ? (usd(o.rateCents ?? 0, o.currency) * d.payRateCents) / 10000 : d.payRateCents) * share);
             }, 0);
             return sum + pay + mi * fuelCpm;
           }, 0);
     const milesKnown = lg.some((l) => l.plannedMiles != null);
     const miles = milesKnown ? lg.reduce((sum, l) => sum + (l.plannedMiles ?? 0), 0) : null;
     const rate = o.rateTbd ? null : o.rateCents;
+    const rateUsd = rate == null ? null : usd(rate, o.currency);
     const fl = flagsBy.get(o.id) ?? [];
     const x = (xBy.get(o.id) ?? [])[0];
     return {
@@ -174,11 +182,12 @@ export async function loadGrid(ctx: Ctx, opts: { days?: number } = {}): Promise<
       carrier: uniq(lg.map((l) => (l.carrierId ? carName.get(l.carrierId) : null))).join(", ") || null,
       rateCents: rate,
       currency: o.currency,
+      rateUsdCents: rateUsd,
       carrierCostCents,
       // margin once every leg has someone on it; before that the cost is not known
-      marginCents: rate != null && !lg.some((l) => l.state === "unassigned" || l.state === "declined") ? rate - carrierCostCents - ownCost : null,
+      marginCents: rateUsd != null && !lg.some((l) => l.state === "unassigned" || l.state === "declined") ? rateUsd - carrierCostCents - ownCost : null,
       miles: onTrip ? null : miles,
-      rpmCents: rate != null && miles && !onTrip ? Math.round(rate / miles) : null,
+      rpmCents: rateUsd != null && miles && !onTrip ? Math.round(rateUsd / miles) : null,
       flags: fl.length,
       redFlags: fl.filter((f) => f.level === "red").length,
       crossing: x ? crossingStateLabel(x.state, x) : null,

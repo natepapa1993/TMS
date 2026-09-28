@@ -14,6 +14,9 @@ import { getOrder, planLeg, dispatchLeg, acceptLeg, advanceLeg, stampStop, pendi
 import { updateCompany } from "./company";
 import { zonedDate } from "@/lib/time";
 
+/** statements for this week can only be approved once it has ended */
+const afterWeek = new Date(Date.now() + 8 * 86400_000);
+
 const future = new Date(Date.now() + 365 * 86400_000);
 let a: Awaited<ReturnType<typeof makeTenant>>;
 let f: { rxo: string; magna: string; toyota: string; t2117: string; trailer: string; benjamin: string; martin: string; garza: string };
@@ -204,10 +207,10 @@ describe("tailgate trip (acceptance)", () => {
     let st = await B.buildSettlement(a, f.benjamin, start, end);
     expect(st.lines.filter((l) => l.kind === "leg")).toHaveLength(1); // the crossing; the MX leg is the carrier's
     st = await B.settlementTransition(a, st.id, "reviewed");
-    await B.settlementTransition(a, st.id, "approved");
+    await B.settlementTransition(a, st.id, "approved", { now: afterWeek });
     let st2 = await B.buildSettlement(a, f.martin, start, end);
     st2 = await B.settlementTransition(a, st2.id, "reviewed");
-    await B.settlementTransition(a, st2.id, "approved");
+    await B.settlementTransition(a, st2.id, "approved", { now: afterWeek });
     const pnl1 = await B.orderPnl(a, s1.id);
     expect(pnl1.share).toBeCloseTo(12000 / 42000, 5);
     const tripMiles = 1500 + 20; // our trucks' legs; the carrier's leg is its bill
@@ -235,7 +238,7 @@ describe("tailgate trip (acceptance)", () => {
     expect(byTruck[0].revenueCents).toBe(360000);
     expect(Math.abs(byTruck[0].costCents - (tripFuel + tripPay + carrier))).toBeLessThanOrEqual(3);
     expect((await T.listTrips(a))[0]).toMatchObject({ shipments: 5, revenueCents: 360000, weightLbs: 42000, from: "Canton dock", to: "Saltillo plant" });
-  });
+  }, 20_000); // a whole trip, end to end: well past the default 5 s on a busy machine
 
   it("remove a shipment before it is on the truck; hold rules; a shipment can only be held while it can move", async () => {
     const trip = await T.createTrip(a, { stops: [{ type: "pickup", name: "A", country: "US" }, { type: "delivery", name: "B", country: "US" }] });

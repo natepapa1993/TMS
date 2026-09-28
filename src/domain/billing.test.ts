@@ -12,6 +12,9 @@ import { sendTender, respondToTender } from "./tenders";
 import * as B from "./billing";
 import { TransitionError } from "./states";
 
+/** statements for this week can only be approved once it has ended */
+const afterWeek = new Date(Date.now() + 8 * 86400_000);
+
 const future = new Date(Date.now() + 365 * 86400_000);
 const pdf = Buffer.from("%PDF-1.4 fixture");
 let a: Awaited<ReturnType<typeof makeTenant>>;
@@ -338,7 +341,7 @@ describe("driver settlements (7.7) and P&L (7.8)", () => {
     // the driver sees nothing while it is still open
     expect(await B.driverSettlements(a.tenantId, f.reyes)).toHaveLength(0);
     st = await B.settlementTransition(a, st.id, "reviewed");
-    st = await B.settlementTransition(a, st.id, "approved");
+    st = await B.settlementTransition(a, st.id, "approved", { now: afterWeek });
     expect((await B.driverSettlements(a.tenantId, f.reyes)).map((x) => x.state)).toEqual(["approved"]);
     // another driver's token never sees it
     await expect(B.disputeSettlementLine(a.tenantId, "someone-else", st.id, legLine.id, "not mine")).rejects.toThrow(/not found/i);
@@ -347,9 +350,9 @@ describe("driver settlements (7.7) and P&L (7.8)", () => {
     st = (await B.listSettlements(a))[0].st;
     expect(st.state).toBe("reviewed");
     expect(st.lines.find((l) => l.id === legLine.id)!.disputed).toContain("480");
-    st = await B.settlementTransition(a, st.id, "approved");
-    await expect(B.settlementTransition(a, st.id, "paid")).rejects.toBeInstanceOf(ValidationError);
-    st = await B.settlementTransition(a, st.id, "paid", { method: "ach", reference: "PAY-1" });
+    st = await B.settlementTransition(a, st.id, "approved", { now: afterWeek });
+    await expect(B.settlementTransition(a, st.id, "paid", { now: afterWeek })).rejects.toBeInstanceOf(ValidationError);
+    st = await B.settlementTransition(a, st.id, "paid", { method: "ach", reference: "PAY-1", now: afterWeek });
     expect(st.state).toBe("paid");
     await expect(B.buildSettlement(a, f.reyes, start, end)).rejects.toThrow(/is paid/);
     // the advance has 10,000 left

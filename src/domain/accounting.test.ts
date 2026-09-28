@@ -8,6 +8,9 @@ import * as A from "./accounting";
 import { updateCompany } from "./company";
 import { zonedDate } from "@/lib/time";
 
+/** statements for this week can only be approved once it has ended */
+const afterWeek = new Date(Date.now() + 8 * 86400_000);
+
 const future = new Date(Date.now() + 365 * 86400_000);
 const pdf = Buffer.from("%PDF-1.4 fixture");
 let a: Awaited<ReturnType<typeof makeTenant>>;
@@ -56,7 +59,7 @@ describe("QuickBooks export", () => {
     await B.addPayItem(a, f.reyes, { kind: "deduction", description: "Occupational insurance", amountCents: 4500, recurring: true });
     let st = await B.buildSettlement(a, f.reyes, start, end);
     st = await B.settlementTransition(a, st.id, "reviewed");
-    await B.settlementTransition(a, st.id, "approved");
+    await B.settlementTransition(a, st.id, "approved", { now: afterWeek });
     void o2;
 
     const preview = await A.previewExport(a, { ...period(), onlyNew: true });
@@ -68,7 +71,10 @@ describe("QuickBooks export", () => {
     expect(files[0].name).toMatch(/\.iif$/);
     const iif = files[0].body;
     const lines = iif.split("\r\n");
-    expect(lines[0]).toBe("!CUST\tNAME");
+    expect(lines[0]).toBe("!ACCNT\tNAME\tACCNTTYPE"); // the accounts it posts to come first, so a fresh company file takes it
+    expect(lines).toContain("ACCNT\tAccounts Receivable\tAR");
+    expect(lines).toContain("ACCNT\tUndeposited Funds\tOCASSET");
+    expect(lines).toContain("!CUST\tNAME");
     expect(lines).toContain("CUST\tRXO Logistics LLC");
     expect(lines).toContain("VEND\tLone Star Freight");
     expect(lines).toContain("VEND\tReyes, Daniel");
@@ -76,7 +82,7 @@ describe("QuickBooks export", () => {
     expect(d).toMatch(/^TRNS\t\tINVOICE\t\d{2}\/\d{2}\/\d{4}\tAccounts Receivable\tRXO Logistics LLC\t\t2160\.00\t247-000001\t26-00001\tN\tNet 30\t\d{2}\/\d{2}\/\d{4}$/);
     expect(lines.some((l) => /^SPL\t\tINVOICE\t.*\tFreight Income\tRXO Logistics LLC\t\t-1800\.00\t247-000001\tLine haul\t-1\t1800\.00\tLine haul$/.test(l))).toBe(true);
     expect(lines.some((l) => /^SPL\t\tINVOICE\t.*\tFuel Surcharge Income\t.*\t-360\.00\t247-000001\tFuel surcharge 20%\t-1\t360\.00\tFuel surcharge$/.test(l))).toBe(true);
-    expect(lines.some((l) => /^TRNS\t\tPAYMENT\t.*\tChase Operating\tRXO Logistics LLC\t\t1000\.00\tACH-1\tach for 247-000001/.test(l))).toBe(true);
+    expect(lines.some((l) => /^TRNS\t\tPAYMENT\t.*\tUndeposited Funds\tRXO Logistics LLC\t\t1000\.00\tACH-1\tach for 247-000001/.test(l))).toBe(true);
     expect(lines.some((l) => /^SPL\t\tPAYMENT\t.*\tAccounts Receivable\t.*\t-1000\.00\t247-000001/.test(l))).toBe(true);
     expect(lines.some((l) => /^TRNS\t\tBILL\t.*\tAccounts Payable\tLone Star Freight\t\t-450\.00\tLS-1001\t26-00002/.test(l))).toBe(true);
     expect(lines.some((l) => /^SPL\t\tBILL\t.*\tPurchased Transportation\tLone Star Freight\t\t450\.00\tLS-1001/.test(l))).toBe(true);
@@ -111,12 +117,12 @@ describe("QuickBooks export", () => {
     await B.recordReceipt(a, inv.id, { amountCents: 100000, method: "check", reference: "1234", receivedAt: new Date() });
     const run = await A.createExport(a, { format: "qbo", ...period(), onlyNew: true });
     const { files } = await A.exportFiles(a, run.id);
-    expect(files.map((x) => x.name.replace(/^.*-/, ""))).toEqual(["invoices.csv", "bills.csv", "payments.csv", "credits.csv"]);
+    expect(files.map((x) => x.name.replace(/^.*-/, ""))).toEqual(["invoices.csv", "bills.csv", "payments.csv", "credits.csv", "journal.csv"]);
     const invCsv = files[0].body.split("\r\n");
     expect(invCsv[0]).toBe("InvoiceNo,Customer,InvoiceDate,DueDate,Terms,Memo,Item(Product/Service),ItemDescription,ItemQuantity,ItemRate,ItemAmount,Currency");
     expect(invCsv[1]).toMatch(/^247-000001,RXO,\d{2}\/\d{2}\/\d{4},\d{2}\/\d{2}\/\d{4},Net 30,26-00001,Line haul,Line haul,1,1000\.00,1000\.00,USD$/);
     const pay = files[2].body.split("\r\n");
-    expect(pay[1]).toMatch(/^\d{2}\/\d{2}\/\d{4},RXO,247-000001,1000\.00,check,1234,Checking$/);
+    expect(pay[1]).toMatch(/^\d{2}\/\d{2}\/\d{4},RXO,247-000001,1000\.00,check,1234,Undeposited Funds,1000\.00$/);
     expect(files[1].body.split("\r\n").filter(Boolean)).toHaveLength(1); // header only: no bills
     await expect(A.createExport(a, { format: "qbo", from: "2026-13-01", to: today(), onlyNew: true })).rejects.toBeInstanceOf(ValidationError);
     await expect(A.createExport(a, { format: "qbo", from: today(), to: "2020-01-01", onlyNew: true })).rejects.toThrow(/after/);

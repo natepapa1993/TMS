@@ -66,11 +66,11 @@ const COLUMNS: ColumnDef<LoadRow, unknown>[] = [
   col({ id: "driver", accessorFn: (r) => r.driver ?? "", size: 150, meta: { label: "Driver" }, header: "Driver" }),
   col({ id: "carrier", accessorFn: (r) => r.carrier ?? "", size: 160, filterFn: "select" as never, meta: { label: "Carrier", filter: "select" }, header: "Carrier" }),
   col({ id: "rate", accessorFn: (r) => r.rateCents ?? -1, size: 104, meta: { label: "Rate", align: "right", filter: "none", csv: (r) => (r.rateCents == null ? "" : (r.rateCents / 100).toFixed(2)) }, header: "Rate", cell: ({ row }) => (row.original.rateCents == null ? <span className="text-faint">TBD</span> : money(row.original.rateCents, row.original.currency)) }),
-  col({ id: "cost", accessorFn: (r) => r.carrierCostCents, size: 104, meta: { label: "Carrier cost", align: "right", filter: "none", csv: (r) => (r.carrierCostCents / 100).toFixed(2) }, header: "Cost", cell: ({ row }) => (row.original.carrierCostCents ? money(row.original.carrierCostCents, row.original.currency) : <span className="text-faint">—</span>) }),
-  col({ id: "margin", accessorFn: (r) => r.marginCents ?? -Infinity, size: 104, meta: { label: "Margin", align: "right", filter: "none", csv: (r) => (r.marginCents == null ? "" : (r.marginCents / 100).toFixed(2)) }, header: "Margin", cell: ({ row }) => (row.original.marginCents == null ? "" : <span className={row.original.marginCents < 0 ? "text-red font-semibold" : ""}>{money(row.original.marginCents, row.original.currency)}</span>) }),
-  col({ id: "marginPct", accessorFn: (r) => (r.rateCents ? (r.marginCents ?? 0) / r.rateCents : -Infinity), size: 84, meta: { label: "Margin %", align: "right", filter: "none", csv: (r) => (r.rateCents ? (((r.marginCents ?? 0) / r.rateCents) * 100).toFixed(1) : "") }, header: "Margin %", cell: ({ row }) => (row.original.rateCents ? `${(((row.original.marginCents ?? 0) / row.original.rateCents) * 100).toFixed(0)}%` : "") }),
+  col({ id: "cost", accessorFn: (r) => r.carrierCostCents, size: 104, meta: { label: "Carrier cost (USD)", align: "right", filter: "none", csv: (r) => (r.carrierCostCents / 100).toFixed(2) }, header: "Cost", cell: ({ row }) => (row.original.carrierCostCents ? money(row.original.carrierCostCents, "USD") : <span className="text-faint">—</span>) }),
+  col({ id: "margin", accessorFn: (r) => r.marginCents ?? -Infinity, size: 104, meta: { label: "Margin (USD)", align: "right", filter: "none", csv: (r) => (r.marginCents == null ? "" : (r.marginCents / 100).toFixed(2)) }, header: "Margin", cell: ({ row }) => (row.original.marginCents == null ? "" : <span className={row.original.marginCents < 0 ? "text-red font-semibold" : ""}>{money(row.original.marginCents, "USD")}</span>) }),
+  col({ id: "marginPct", accessorFn: (r) => (r.rateUsdCents ? (r.marginCents ?? 0) / r.rateUsdCents : -Infinity), size: 84, meta: { label: "Margin %", align: "right", filter: "none", csv: (r) => (r.rateUsdCents ? (((r.marginCents ?? 0) / r.rateUsdCents) * 100).toFixed(1) : "") }, header: "Margin %", cell: ({ row }) => (row.original.rateUsdCents ? `${(((row.original.marginCents ?? 0) / row.original.rateUsdCents) * 100).toFixed(0)}%` : "") }),
   col({ id: "miles", accessorFn: (r) => r.miles ?? -1, size: 84, meta: { label: "Miles", align: "right", filter: "none", csv: (r) => r.miles ?? "" }, header: "Miles", cell: ({ row }) => (row.original.miles == null ? <span className="text-faint">—</span> : row.original.miles.toLocaleString("en-US")) }),
-  col({ id: "rpm", accessorFn: (r) => r.rpmCents ?? -1, size: 80, meta: { label: "Rate / mile", align: "right", filter: "none", csv: (r) => (r.rpmCents == null ? "" : (r.rpmCents / 100).toFixed(2)) }, header: "RPM", cell: ({ row }) => (row.original.rpmCents == null ? "" : `$${(row.original.rpmCents / 100).toFixed(2)}`) }),
+  col({ id: "rpm", accessorFn: (r) => r.rpmCents ?? -1, size: 80, meta: { label: "Rate / mile (USD)", align: "right", filter: "none", csv: (r) => (r.rpmCents == null ? "" : (r.rpmCents / 100).toFixed(2)) }, header: "RPM", cell: ({ row }) => (row.original.rpmCents == null ? "" : `$${(row.original.rpmCents / 100).toFixed(2)}`) }),
   col({ id: "refs", accessorFn: (r) => r.refs, size: 200, meta: { label: "References" }, header: "References", cell: ({ row }) => <span className="text-muted">{row.original.refs}</span> }),
   col({ id: "po", accessorFn: (r) => r.po ?? "", size: 120, meta: { label: "PO", mono: true }, header: "PO" }),
   col({ id: "reference", accessorFn: (r) => r.reference ?? "", size: 130, meta: { label: "Customer load #", mono: true }, header: "Cust. load #" }),
@@ -93,36 +93,42 @@ const DEFAULT: ViewConfig = {
 };
 
 function Totals({ rows }: { rows: LoadRow[] }) {
-  const byCur = new Map<string, { rev: number; cost: number; margin: number; marginRev: number; miles: number; revMiles: number }>();
+  // revenue kept per currency; cost, margin and rate per mile are USD (MXN / CAD rates converted first)
+  const revBy = new Map<string, number>();
+  let usdRev = 0;
+  let cost = 0;
+  let margin = 0;
+  let marginRev = 0;
+  let revMiles = 0;
+  let milesRated = 0;
   let miles = 0;
   for (const r of rows) {
-    const t = byCur.get(r.currency) ?? { rev: 0, cost: 0, margin: 0, marginRev: 0, miles: 0, revMiles: 0 };
-    if (r.rateCents != null) {
-      t.rev += r.rateCents;
+    if (r.rateCents != null) revBy.set(r.currency, (revBy.get(r.currency) ?? 0) + r.rateCents);
+    if (r.rateUsdCents != null) {
+      usdRev += r.rateUsdCents;
       if (r.marginCents != null) {
-        t.margin += r.marginCents;
-        t.marginRev += r.rateCents;
+        margin += r.marginCents;
+        marginRev += r.rateUsdCents;
       }
       if (r.miles) {
-        t.revMiles += r.rateCents;
-        t.miles += r.miles;
+        revMiles += r.rateUsdCents;
+        milesRated += r.miles;
       }
     }
-    t.cost += r.carrierCostCents;
-    byCur.set(r.currency, t);
+    cost += r.carrierCostCents;
     miles += r.miles ?? 0;
   }
-  const main = byCur.get("USD") ?? { rev: 0, cost: 0, margin: 0, marginRev: 0, miles: 0, revMiles: 0 };
-  const others = [...byCur.entries()].filter(([c]) => c !== "USD");
+  const others = [...revBy.entries()].filter(([c]) => c !== "USD");
   const cells: [string, string][] = [
     ["Loads", rows.length.toLocaleString("en-US")],
     ["Loaded miles", miles.toLocaleString("en-US")],
-    ["Revenue", money0(main.rev)],
-    ["Carrier cost", money0(main.cost)],
-    ["Margin (covered)", main.marginRev ? money0(main.margin) : "—"],
-    ["Margin %", main.marginRev ? `${((main.margin / main.marginRev) * 100).toFixed(1)}%` : "—"],
-    ["Avg rate / mile", main.miles ? `$${(main.revMiles / main.miles / 100).toFixed(2)}` : "—"],
-    ...others.map(([c, t]) => [`Revenue ${c}`, money0(t.rev, c)] as [string, string]),
+    ["Revenue", money0(revBy.get("USD") ?? 0)],
+    ...others.map(([c, v]) => [`Revenue ${c}`, money0(v, c)] as [string, string]),
+    ...(others.length ? [["All revenue in USD", money0(usdRev)] as [string, string]] : []),
+    ["Carrier cost", money0(cost)],
+    ["Margin (covered)", marginRev ? money0(margin) : "—"],
+    ["Margin %", marginRev ? `${((margin / marginRev) * 100).toFixed(1)}%` : "—"],
+    ["Avg rate / mile", milesRated ? `$${(revMiles / milesRated / 100).toFixed(2)}` : "—"],
   ];
   return (
     <>

@@ -5,13 +5,14 @@ import { useRouter } from "next/navigation";
 import { Modal, Pill, Toast, useToast } from "@/components/ui";
 import { formatCents } from "@/data/fields";
 import type { SettlementLine } from "@/db/schema";
+import type { PayItemLedgerRow } from "@/domain/billing";
 import { buildSettlementAction, settlementTransitionAction, addSettlementLineAction, addPayItemAction, settlementRunAction, approveSettlementsAction, paySettlementsAction } from "../actions";
 
 type Row = { st: { id: string; driverId: string; periodStart: string; periodEnd: string; state: string; lines: SettlementLine[]; grossCents: number; deductionsCents: number; netCents: number; method: string | null; reference: string | null }; driverName: string };
 type Driver = { id: string; name: string; payType: string; payRateCents: number | null };
 const TONE: Record<string, "slate" | "teal" | "amber" | "green"> = { open: "slate", reviewed: "amber", approved: "teal", paid: "green" };
 
-export function Settlements({ rows, drivers, defaultWeek, role }: { rows: Row[]; drivers: Driver[]; defaultWeek: string; role: string }) {
+export function Settlements({ rows, drivers, defaultWeek, role, ledger = [], now }: { rows: Row[]; drivers: Driver[]; defaultWeek: string; role: string; ledger?: PayItemLedgerRow[]; now?: string }) {
   const router = useRouter();
   const t = useToast();
   const [pending, start] = useTransition();
@@ -23,6 +24,10 @@ export function Settlements({ rows, drivers, defaultWeek, role }: { rows: Row[];
   const [pay, setPay] = useState({ method: "ach", reference: "" });
   const [sel, setSel] = useState<string[]>([]);
   const [batchPay, setBatchPay] = useState<{ method: string; reference: string } | null>(null);
+  const [early, setEarly] = useState("");
+  const [nowMs] = useState(() => (now ? new Date(now).getTime() : Date.now()));
+  const unfinished = (r: Row) => new Date(r.st.periodEnd).getTime() > nowMs;
+  const blockers = (r: Row) => r.st.lines.filter((l) => l.blocker).map((l) => l.blocker!);
   const toggle = (id: string, on: boolean) => setSel((x) => (on ? [...x, id] : x.filter((y) => y !== id)));
   const selRows = rows.filter((r) => sel.includes(r.st.id));
   const can = ["owner", "billing"].includes(role);
@@ -70,7 +75,9 @@ export function Settlements({ rows, drivers, defaultWeek, role }: { rows: Row[];
                 if (!r.ok) return t.err(r.error);
                 const built = r.data.filter((x) => x.state === "open").length;
                 const errs = r.data.filter((x) => x.state === "error");
-                t.ok(r.data.length ? `${built} statement${built === 1 ? "" : "s"} built${r.data.length > built ? `, ${r.data.length - built - errs.length} already approved or paid` : ""}${errs.length ? ` · ${errs.length} failed: ${errs.map((x) => `${x.driver} (${x.note})`).join("; ")}` : ""}` : "Nobody ran a leg that week");
+                const skipped = r.data.filter((x) => x.state === "skipped");
+                const done = r.data.length - built - errs.length - skipped.length;
+                t.ok(r.data.length ? `${built} statement${built === 1 ? "" : "s"} built${done ? `, ${done} already approved or paid` : ""}${skipped.length ? ` · no pay this week (deductions wait): ${skipped.map((x) => x.driver).join(", ")}` : ""}${errs.length ? ` · ${errs.length} failed: ${errs.map((x) => `${x.driver} (${x.note})`).join("; ")}` : ""}` : "Nobody ran a leg that week");
                 router.refresh();
               })
             }
@@ -102,7 +109,11 @@ export function Settlements({ rows, drivers, defaultWeek, role }: { rows: Row[];
           <table className="table">
             <thead>
               <tr>
-                {can && <th className="w-8"></th>}
+                {can && (
+                  <th className="w-8">
+                    <input type="checkbox" className="accent-teal" aria-label="Select all not paid" checked={sel.length > 0 && sel.length === rows.filter((r) => r.st.state !== "paid").length} onChange={(e) => setSel(e.target.checked ? rows.filter((r) => r.st.state !== "paid").map((r) => r.st.id) : [])} />
+                  </th>
+                )}
                 <th>Driver</th>
                 <th>Week</th>
                 <th>Lines</th>
@@ -121,10 +132,23 @@ export function Settlements({ rows, drivers, defaultWeek, role }: { rows: Row[];
                     </td>
                   )}
                   <td className="font-bold">{r.driverName}</td>
-                  <td className="text-callout">{r.st.periodStart.slice(0, 10)}</td>
+                  <td className="text-callout">
+                    {r.st.periodStart.slice(0, 10)}
+                    {r.st.state !== "paid" && r.st.state !== "approved" && unfinished(r) && <div className="text-footnote text-muted">week in progress</div>}
+                  </td>
                   <td className="text-muted">
                     {r.st.lines.length}
                     {r.st.lines.some((l) => l.disputed) && <Pill tone="red">dispute</Pill>}
+                    {blockers(r).length > 0 && r.st.state !== "paid" && (
+                      <span title={blockers(r).join("\n")}>
+                        <Pill tone="red">no miles</Pill>
+                      </span>
+                    )}
+                    {r.st.lines.some((l) => l.shortCents) && (
+                      <span title="Some deductions didn't fit: net pay stays at $0 or more and the rest carries to next week">
+                        <Pill tone="amber">carries over</Pill>
+                      </span>
+                    )}
                   </td>
                   <td className="mono">{formatCents(r.st.grossCents)}</td>
                   <td className="mono text-muted">{r.st.deductionsCents ? `-${formatCents(r.st.deductionsCents)}` : "—"}</td>
@@ -153,7 +177,19 @@ export function Settlements({ rows, drivers, defaultWeek, role }: { rows: Row[];
                 </a>
                 {cur.st.state === "open" && <button className="btn btn-primary" onClick={() => run("Reviewed", () => settlementTransitionAction(cur.st.id, "reviewed"))}>Mark reviewed</button>}
                 {cur.st.state === "reviewed" && <button className="btn" onClick={() => run("Back to open", () => settlementTransitionAction(cur.st.id, "open"))}>Back to open</button>}
-                {cur.st.state === "reviewed" && <button className="btn btn-primary" onClick={() => run("Approved — the driver can see it", () => settlementTransitionAction(cur.st.id, "approved"))}>Approve</button>}
+                {cur.st.state === "reviewed" && !unfinished(cur) && (
+                  <button className="btn btn-primary" disabled={blockers(cur).length > 0} title={blockers(cur).join("\n") || undefined} onClick={() => run("Approved — the driver can see it", () => settlementTransitionAction(cur.st.id, "approved"))}>
+                    Approve
+                  </button>
+                )}
+                {cur.st.state === "reviewed" && unfinished(cur) && role === "owner" && (
+                  <>
+                    <input className="input w-56" placeholder="why pay before the week ends" aria-label="Reason to approve early" value={early} onChange={(e) => setEarly(e.target.value)} />
+                    <button className="btn btn-primary" disabled={!early.trim() || blockers(cur).length > 0} onClick={() => run("Approved early — the driver can see it", async () => { const r = await settlementTransitionAction(cur.st.id, "approved", undefined, undefined, early); if (r.ok) setEarly(""); return r; })}>
+                      Approve early
+                    </button>
+                  </>
+                )}
                 {cur.st.state === "approved" && (
                   <>
                     <button className="btn" onClick={() => run("Back to reviewed", () => settlementTransitionAction(cur.st.id, "reviewed"))}>Back to reviewed</button>
@@ -170,6 +206,13 @@ export function Settlements({ rows, drivers, defaultWeek, role }: { rows: Row[];
             ) : undefined
           }
         >
+          {cur.st.state !== "paid" && cur.st.state !== "approved" && (unfinished(cur) || blockers(cur).length > 0) && (
+            <div className="rounded-lg bg-amber-soft text-amber px-3 py-2 text-callout font-semibold mb-3" data-testid="settlement-blockers">
+              {[...(unfinished(cur) ? [`The week isn't over (it ends ${new Date(new Date(cur.st.periodEnd).getTime() - 1).toISOString().slice(0, 10)}): approve it after, so a late leg still makes it on.${role === "owner" ? " To pay early (a final check), approve early with a reason." : ""}`] : []), ...blockers(cur)].map((b) => (
+                <div key={b}>{b}</div>
+              ))}
+            </div>
+          )}
           <div className="-mx-5 overflow-x-auto">
             <table className="table">
               <thead>
@@ -185,6 +228,8 @@ export function Settlements({ rows, drivers, defaultWeek, role }: { rows: Row[];
                     <td>
                       <span className="font-semibold">{l.description}</span>
                       {l.disputed && <div className="text-footnote text-red">Driver disputes: {l.disputed}</div>}
+                      {l.blocker && <div className="text-footnote text-red">{l.blocker}</div>}
+                      {!!l.shortCents && <div className="text-footnote text-amber">{formatCents(l.shortCents)} didn&rsquo;t fit this week: net pay never goes below $0</div>}
                     </td>
                     <td className="text-muted text-callout">{l.source}</td>
                     <td className={`mono text-right font-semibold ${l.amountCents < 0 ? "text-red" : ""}`}>{formatCents(l.amountCents)}</td>
@@ -225,13 +270,13 @@ export function Settlements({ rows, drivers, defaultWeek, role }: { rows: Row[];
           )}
         </Modal>
       )}
-      <Modal open={item.open} onClose={() => setItem({ ...item, open: false })} title={`Pay item · ${drivers.find((d) => d.id === driverId)?.name ?? ""}`} footer={<><button className="btn" onClick={() => setItem({ ...item, open: false })}>Cancel</button><button className="btn btn-primary" disabled={!item.description || !item.amount} onClick={() => run("Pay item added — it lands on the next statement", async () => { const r = await addPayItemAction(driverId, item); if (r.ok) setItem({ ...item, open: false, description: "", amount: "", remaining: "", target: "" }); return r; })}>Add</button></>}>
+      <Modal open={item.open} onClose={() => setItem({ ...item, open: false })} title={`Pay item · ${drivers.find((d) => d.id === driverId)?.name ?? ""}`} footer={<><button className="btn" onClick={() => setItem({ ...item, open: false })}>Cancel</button><button className="btn btn-primary" disabled={!item.description || !(item.amount || (item.kind === "advance" && item.remaining))} onClick={() => run("Pay item added — it lands on the next statement", async () => { const r = await addPayItemAction(driverId, item); if (r.ok) setItem({ ...item, open: false, description: "", amount: "", remaining: "", target: "" }); return r; })}>Add</button></>}>
         <div className="grid grid-cols-2 gap-2">
           <div>
             <label className="label">Kind</label>
             <select className="select" value={item.kind} onChange={(e) => setItem({ ...item, kind: e.target.value as typeof item.kind })} aria-label="Pay item kind">
               <option value="deduction">Deduction (fuel card, insurance, trailer rent)</option>
-              <option value="advance">Advance (taken back in full next statement)</option>
+              <option value="advance">Advance (taken back from the next statements)</option>
               <option value="escrow">Escrow (held each statement up to a target)</option>
               <option value="reimbursement">Reimbursement (tolls, scale, repairs)</option>
             </select>
@@ -240,11 +285,19 @@ export function Settlements({ rows, drivers, defaultWeek, role }: { rows: Row[];
             <label className="label">Description</label>
             <input className="input" value={item.description} onChange={(e) => setItem({ ...item, description: e.target.value })} />
           </div>
+          {item.kind === "advance" && (
+            <div>
+              <label className="label">Amount advanced</label>
+              <input className="input" inputMode="decimal" value={item.remaining} onChange={(e) => setItem({ ...item, remaining: e.target.value })} aria-label="Amount advanced" placeholder="e.g. 400.00" />
+            </div>
+          )}
           <div>
-            <label className="label">{item.kind === "advance" ? "Amount advanced" : "Amount per statement"}</label>
-            <input className="input" inputMode="decimal" value={item.amount} onChange={(e) => setItem({ ...item, amount: e.target.value })} aria-label="Pay item amount" />
+            <label className="label">{item.kind === "advance" ? "Take back per statement" : "Amount per statement"}</label>
+            <input className="input" inputMode="decimal" value={item.amount} onChange={(e) => setItem({ ...item, amount: e.target.value })} aria-label="Pay item amount" placeholder={item.kind === "advance" ? "blank = all of it next statement" : undefined} />
           </div>
-          {item.kind === "escrow" ? (
+          {item.kind === "advance" ? (
+            <div />
+          ) : item.kind === "escrow" ? (
             <div>
               <label className="label">Hold up to</label>
               <input className="input" inputMode="decimal" value={item.target} onChange={(e) => setItem({ ...item, target: e.target.value })} placeholder="e.g. 2500.00" aria-label="Escrow target" />
@@ -264,6 +317,7 @@ export function Settlements({ rows, drivers, defaultWeek, role }: { rows: Row[];
           )}
         </div>
       </Modal>
+      <PayItems ledger={ledger} />
       {batchPay && (
         <Modal
           open
@@ -316,5 +370,58 @@ export function Settlements({ rows, drivers, defaultWeek, role }: { rows: Row[];
       )}
       <Toast message={t.toast?.message ?? null} tone={t.toast?.tone} onDone={t.clear} />
     </>
+  );
+}
+
+const KIND_LABEL: Record<string, string> = { advance: "Advance", deduction: "Deduction", escrow: "Escrow", reimbursement: "Reimbursement" };
+
+/** Every driver's pay items with balances: what there was, what statements took, what's left, escrow held. */
+function PayItems({ ledger }: { ledger: PayItemLedgerRow[] }) {
+  if (!ledger.length) return null;
+  return (
+    <div className="card overflow-hidden mt-5" data-testid="pay-items">
+      <div className="px-5 pt-4 pb-2">
+        <div className="text-headline font-extrabold">Pay items</div>
+        <div className="text-callout text-muted">Advances, deductions and escrow with their balances. Recovered counts paid statements only; a statement not paid yet shows as pending.</div>
+      </div>
+      <table className="table">
+        <thead>
+          <tr>
+            <th>Driver</th>
+            <th>Item</th>
+            <th>Each statement</th>
+            <th>Original</th>
+            <th>Recovered</th>
+            <th>Remaining / held</th>
+            <th>Weeks</th>
+          </tr>
+        </thead>
+        <tbody>
+          {ledger.map((r) => (
+            <tr key={r.id} data-testid="pay-item-row">
+              <td className="font-semibold">{r.driverName}</td>
+              <td>
+                {r.description}
+                <div className="text-footnote text-muted">
+                  {KIND_LABEL[r.kind] ?? r.kind}
+                  {r.recurring ? " · every statement" : ""}
+                  {r.carriedFrom ? " · carried from last week" : ""}
+                  {!r.active ? " · done" : ""}
+                </div>
+              </td>
+              <td className="mono">{formatCents(r.perStatementCents)}</td>
+              <td className="mono">{r.originalCents != null ? formatCents(r.originalCents) : r.kind === "escrow" && r.targetCents ? `up to ${formatCents(r.targetCents)}` : "—"}</td>
+              <td className="mono">{formatCents(r.recoveredCents)}</td>
+              <td className="mono font-semibold">{r.kind === "escrow" ? `${formatCents(r.heldCents ?? 0)} held` : r.remainingCents != null ? formatCents(r.remainingCents) : "ongoing"}</td>
+              <td className="text-footnote text-muted">
+                {r.history.length
+                  ? r.history.map((h) => `${h.week}: ${formatCents(h.cents)}${h.state !== "paid" ? ` (${h.state})` : ""}${h.shortCents ? `, ${formatCents(h.shortCents)} short` : ""}`).join(" · ")
+                  : "not on a statement yet"}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
   );
 }

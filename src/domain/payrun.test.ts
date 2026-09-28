@@ -11,6 +11,9 @@ import * as B from "./billing";
 import * as F from "./factoring";
 import * as R from "./settlement-run";
 
+/** statements for this week can only be approved once it has ended */
+const afterWeek = new Date(Date.now() + 8 * 86400_000);
+
 const future = new Date(Date.now() + 365 * 86400_000);
 let a: Awaited<ReturnType<typeof makeTenant>>;
 let f: { cust: string; t1: string; d1: string; d2: string; d3: string; entity: string };
@@ -44,18 +47,18 @@ describe("the weekly pay run", () => {
     const end = new Date(Date.now() + 4 * 86400_000);
     const run = await R.settlementRun(a, start, end);
     expect(run.map((r) => [r.driver, r.netCents, r.note])).toEqual([
-      ["Ana Torres", 1200, "pay items only (no legs this week)"],
-      ["Daniel Reyes", 30000, null],
+      ["Ana Torres", 1200, "the week isn't over: approve after it ends · pay items only (no legs this week)"],
+      ["Daniel Reyes", 30000, "the week isn't over: approve after it ends"],
     ]); // Luis ran nothing
     const [ana, dan] = run.map((r) => r.settlementId!);
     // Ana disputes her line: her statement waits
     const [st] = await db.select().from(settlements).where(eq(settlements.id, ana));
     await db.update(settlements).set({ lines: st.lines.map((l) => ({ ...l, disputed: "that was $15" })) }).where(eq(settlements.id, ana));
-    const ap = await R.approveSettlements(a, [ana, dan]);
+    const ap = await R.approveSettlements(a, [ana, dan], afterWeek);
     expect(ap.approved).toBe(1);
     expect(ap.skipped[0].reason).toMatch(/disputed/);
     await expect(R.paySettlements(a, [ana], { method: "ach" })).rejects.toThrow(/nothing approved/);
-    const paid = await R.paySettlements(a, [ana, dan], { method: "ach", reference: "ACH 0926" });
+    const paid = await R.paySettlements(a, [ana, dan], { method: "ach", reference: "ACH 0926", now: afterWeek });
     expect(paid).toEqual({ paid: 1, totalCents: 30000 });
     // running the week again leaves the paid one alone
     expect((await R.settlementRun(a, start, end)).find((r) => r.settlementId === dan)!.note).toBe("already paid");

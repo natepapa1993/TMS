@@ -8,8 +8,8 @@ export const RULE_LABEL: Record<PayRuleKind, string> = {
   per_loaded_mile: "Per loaded mile",
   per_empty_mile: "Per empty mile",
   per_total_mile: "Per mile (loaded + empty)",
-  pct_linehaul: "% of line haul",
-  pct_total: "% of everything billed",
+  pct_linehaul: "% of line haul (in USD)",
+  pct_total: "% of everything billed (in USD; approved charges only, no lumpers, border fees or tax)",
   flat_per_load: "Flat per load",
   flat_per_leg: "Flat per leg",
   per_stop: "Per stop",
@@ -115,3 +115,35 @@ export function statementExtras(plan: { perDiemCents: number | null; minimumCent
   return out;
 }
 
+
+// ---------- deductions never take net pay below $0 ----------
+
+export type DeductionWant = { key: string; wantCents: number };
+
+/**
+ * Pure: take deductions in the order given, never more than the pay left. What doesn't fit is "short":
+ * it carries to the next statement (an advance or a limited deduction simply stays owed; escrow waits).
+ * The order is the rule the statement states: carried-over amounts first, then one-off deductions,
+ * recurring deductions, advance recovery, and escrow last.
+ */
+export function applyDeductions(availableCents: number, wants: DeductionWant[]): { key: string; takenCents: number; shortCents: number }[] {
+  let left = Math.max(0, availableCents);
+  return wants.map((w) => {
+    const want = Math.max(0, w.wantCents);
+    const taken = Math.min(want, left);
+    left -= taken;
+    return { key: w.key, takenCents: taken, shortCents: want - taken };
+  });
+}
+
+/** Order in which pay items come off a statement (lower first). */
+export function deductionRank(it: { kind: string; recurring: boolean; carriedFrom?: string | null }) {
+  if (it.carriedFrom) return 0;
+  if (it.kind === "deduction" && !it.recurring) return 1;
+  if (it.kind === "deduction") return 2;
+  if (it.kind === "advance") return 3;
+  return 4; // escrow
+}
+
+/** Charges a percent-of-billed pay rule never counts: money collected for someone else (a lumper paid out, a border fee, tax). */
+export const PASS_THROUGH_KINDS = ["lumper", "border_fee", "tax"];

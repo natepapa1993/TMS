@@ -4,7 +4,7 @@ import { db } from "@/db/client";
 import * as s from "@/db/schema";
 import type { ChargeKind, InvoiceSnapshot, InvoiceLine, SettlementLine } from "@/db/schema";
 import { newId } from "@/lib/ids";
-import { assertCtx, requirePermission, type Ctx } from "@/lib/context";
+import { assertCtx, can, requirePermission, type Ctx } from "@/lib/context";
 import { writeAudit, diff } from "@/lib/audit";
 import { newToken, publicUrl } from "@/lib/tokens";
 import { enqueue } from "@/lib/outbox";
@@ -878,6 +878,12 @@ export const OPEN_INVOICE_STATES = ["issued", "sent", "partially_paid", "dispute
 export async function aging(ctx: Ctx, now = new Date()) {
   assertCtx(ctx);
   requirePermission(ctx, "billing.view");
+  return receivables(ctx, now);
+}
+
+/** The receivables themselves (no permission check: Reports shows the same total to whoever sees Reports). */
+export async function receivables(ctx: Ctx, now = new Date()) {
+  assertCtx(ctx);
   const open = await db.select().from(s.invoices).where(and(eq(s.invoices.tenantId, ctx.tenantId), inArray(s.invoices.state, [...OPEN_INVOICE_STATES])));
   const customers = await db.select({ id: s.customers.id, name: s.customers.name, payWhenPaid: s.customers.payWhenPaid }).from(s.customers).where(eq(s.customers.tenantId, ctx.tenantId));
   const company = await getCompany(ctx);
@@ -1073,66 +1079,124 @@ export async function carrier1099(ctx: Ctx, year: number) {
 
 // ---------- driver settlements (7.7) ----------
 
+/** A statement's gross, deductions and net from its lines. */
+function totalsOf(lines: SettlementLine[]) {
+  const gross = lines.filter((l) => l.amountCents > 0).reduce((a, l) => a + l.amountCents, 0);
+  const ded = -lines.filter((l) => l.amountCents < 0).reduce((a, l) => a + l.amountCents, 0);
+  return { grossCents: gross, deductionsCents: ded, netCents: gross - ded };
+}
+
+/** A load line that pays $0 because the leg has no miles: it must be fixed before the statement is approved. */
+const noMiles = (l: SettlementLine) => l.kind === "leg" && l.amountCents === 0 && (l.source === "missing miles" || l.source === "no miles on the leg");
+
+/**
+ * Build (or rebuild, while open) a driver's statement for a week. The rules, in plain words:
+ * - it pays the legs the driver completed that week, plus any leg completed in an earlier week whose
+ *   statement was already approved or paid (a late leg is never lost; it says it's late);
+ * - reimbursements and per diem are pay; deductions come off in a fixed order — carried-over amounts,
+ *   one-off deductions, recurring deductions, advance recovery, escrow last — and never take the net below
+ *   $0. What doesn't fit carries to the next statement (an advance or limited deduction just stays owed);
+ * - a week with no pay at all gets no statement: deductions wait for one with pay;
+ * - a pay item already on another statement not yet paid is not taken twice.
+ */
 export async function buildSettlement(ctx: Ctx, driverId: string, periodStart: Date, periodEnd: Date) {
   assertCtx(ctx);
   requirePermission(ctx, "billing.issue");
   const [driver] = await db.select().from(s.drivers).where(and(eq(s.drivers.tenantId, ctx.tenantId), eq(s.drivers.id, driverId))).limit(1);
   if (!driver) throw new NotFoundError("driver", driverId);
-  const [existing] = await db.select().from(s.settlements).where(and(eq(s.settlements.tenantId, ctx.tenantId), eq(s.settlements.driverId, driverId), eq(s.settlements.periodStart, periodStart))).limit(1);
+  const mine = await db.select().from(s.settlements).where(and(eq(s.settlements.tenantId, ctx.tenantId), eq(s.settlements.driverId, driverId)));
+  const existing = mine.find((x) => x.periodStart.getTime() === periodStart.getTime());
   if (existing && existing.state !== "open") throw new ValidationError(`the ${periodStart.toISOString().slice(0, 10)} settlement is ${existing.state}`);
-  const legs = await db
-    .select({ leg: s.legs, orderNumber: s.orders.orderNumber, rateCents: s.orders.rateCents })
+  const others = mine.filter((x) => x.id !== existing?.id);
+  const onStatement = new Set(others.flatMap((x) => x.lines.map((l) => l.legId).filter((v): v is string => !!v)));
+  // weeks already approved or paid for this driver: a leg completed in one of them after the fact is "late"
+  const closed = others.filter((x) => x.state === "approved" || x.state === "paid");
+  const lateFrom = closed.length ? new Date(Math.min(...closed.map((x) => x.periodStart.getTime()))) : periodStart;
+  const found = await db
+    .select({ leg: s.legs, orderNumber: s.orders.orderNumber, rateCents: s.orders.rateCents, currency: s.orders.currency, orderId: s.orders.id })
     .from(s.legs)
     .innerJoin(s.orders, eq(s.orders.id, s.legs.orderId))
-    .where(and(eq(s.legs.tenantId, ctx.tenantId), eq(s.legs.state, "completed"), sql`(${s.legs.driverId} = ${driverId} or ${s.legs.coDriverId} = ${driverId})`, gte(s.legs.completedAt, periodStart), lt(s.legs.completedAt, periodEnd)));
-  const lines: SettlementLine[] = [];
+    .where(and(eq(s.legs.tenantId, ctx.tenantId), eq(s.legs.state, "completed"), sql`(${s.legs.driverId} = ${driverId} or ${s.legs.coDriverId} = ${driverId})`, gte(s.legs.completedAt, lateFrom < periodStart ? lateFrom : periodStart), lt(s.legs.completedAt, periodEnd)));
+  const inClosedWeek = (d: Date) => closed.some((x) => d >= x.periodStart && d < x.periodEnd);
+  const legs = found.filter((l) => !onStatement.has(l.leg.id) && (l.leg.completedAt! >= periodStart || inClosedWeek(l.leg.completedAt!)));
+  const late = new Set(legs.filter((l) => l.leg.completedAt! < periodStart).map((l) => l.leg.id));
+  const company = await getCompany(ctx);
+  const lateNote = (legId: string | null | undefined) => (legId && late.has(legId) ? ` (late: completed ${zonedDate(legs.find((l) => l.leg.id === legId)!.leg.completedAt!, company.timeZone)}, after that week's statement)` : "");
+  let lines: SettlementLine[] = [];
   const plan = driver.payPlanId ? (await db.select().from(s.payPlans).where(and(eq(s.payPlans.tenantId, ctx.tenantId), eq(s.payPlans.id, driver.payPlanId))).limit(1))[0] : null;
   if (plan && !plan.archivedAt) {
     const { payInputs } = await import("./pay-inputs");
     const { legPayLines, statementExtras } = await import("./pay-plans");
     const inputs = await payInputs(ctx, driverId, legs.map((l) => l.leg));
     for (const inp of inputs) lines.push(...legPayLines(plan, inp));
-    const days = new Set(legs.map((l) => l.leg.completedAt!.toISOString().slice(0, 10))).size;
+    const days = new Set(legs.map((l) => zonedDate(l.leg.completedAt!, company.timeZone))).size;
     const earned = lines.reduce((a, l) => a + l.amountCents, 0);
     lines.push(...statementExtras(plan, days, earned));
   } else {
-  const rate = driver.payRateCents ?? 0;
-  for (const { leg, orderNumber, rateCents } of legs) {
-    const team = !!leg.coDriverId;
-    const share = team ? 0.5 : 1;
-    let line: SettlementLine;
-    if (driver.payType === "per_mile") {
-      const miles = leg.plannedMiles ?? 0;
-      line = { id: newId(), kind: "leg", legId: leg.id, orderNumber, description: `${orderNumber} leg ${leg.seq} · ${miles} mi × ${(rate / 100).toFixed(2)}${team ? " (team ½)" : ""}`, qty: miles, unit: "mi", rateCents: rate, amountCents: Math.round(miles * rate * share), source: leg.plannedMiles ? "planned miles" : "no miles on the leg" };
-    } else if (driver.payType === "pct") {
-      line = { id: newId(), kind: "leg", legId: leg.id, orderNumber, description: `${orderNumber} leg ${leg.seq} · ${rate / 100}% of ${((rateCents ?? 0) / 100).toFixed(2)}${team ? " (team ½)" : ""}`, qty: rate, unit: "pct", rateCents: rateCents ?? 0, amountCents: Math.round(((rateCents ?? 0) * rate) / 10000 * share), source: "order rate" };
-    } else {
-      line = { id: newId(), kind: "leg", legId: leg.id, orderNumber, description: `${orderNumber} leg ${leg.seq} · flat${team ? " (team ½)" : ""}`, qty: 1, unit: "flat", rateCents: rate, amountCents: Math.round(rate * share), source: "flat per leg" };
-    }
-    lines.push(line);
-    if (leg.type === "crossing") {
-      if (driver.crossingPayCents) lines.push({ id: newId(), kind: "accessorial", legId: leg.id, orderNumber, description: `${orderNumber} border crossing pay`, qty: 1, unit: "flat", rateCents: driver.crossingPayCents, amountCents: driver.crossingPayCents, source: "driver record" });
+    const rate = driver.payRateCents ?? 0;
+    const invs = legs.length ? await db.select({ orderIds: s.invoices.orderIds, state: s.invoices.state, kind: s.invoices.kind, currency: s.invoices.currency, exchangeRate: s.invoices.exchangeRate, issuedAt: s.invoices.issuedAt }).from(s.invoices).where(and(eq(s.invoices.tenantId, ctx.tenantId), arrayOverlaps(s.invoices.orderIds, [...new Set(legs.map((l) => l.orderId))]))) : [];
+    for (const { leg, orderNumber, rateCents, currency, orderId } of legs) {
+      const team = !!leg.coDriverId;
+      const share = team ? 0.5 : 1;
+      let line: SettlementLine;
+      if (driver.payType === "per_mile") {
+        const miles = leg.plannedMiles ?? 0;
+        line = { id: newId(), kind: "leg", legId: leg.id, orderNumber, description: `${orderNumber} leg ${leg.seq} · ${miles} mi × ${(rate / 100).toFixed(2)}${team ? " (team ½)" : ""}`, qty: miles, unit: "mi", rateCents: rate, amountCents: Math.round(miles * rate * share), source: leg.plannedMiles ? "planned miles" : "no miles on the leg" };
+      } else if (driver.payType === "pct") {
+        // a percent of the line haul's dollar value: a peso load is converted first
+        const usdRate = toHome(rateCents ?? 0, currency, loadRate({ id: orderId, currency }, invs, company.settings.fx).rateE4);
+        line = { id: newId(), kind: "leg", legId: leg.id, orderNumber, description: `${orderNumber} leg ${leg.seq} · ${rate / 100}% of ${money(usdRate, "USD")}${currency !== "USD" ? ` (${money(rateCents ?? 0, currency)})` : ""}${team ? " (team ½)" : ""}`, qty: rate, unit: "pct", rateCents: usdRate, amountCents: Math.round(((usdRate * rate) / 10000) * share), source: "order rate" };
+      } else {
+        line = { id: newId(), kind: "leg", legId: leg.id, orderNumber, description: `${orderNumber} leg ${leg.seq} · flat${team ? " (team ½)" : ""}`, qty: 1, unit: "flat", rateCents: rate, amountCents: Math.round(rate * share), source: "flat per leg" };
+      }
+      lines.push(line);
+      if (leg.type === "crossing" && driver.crossingPayCents) lines.push({ id: newId(), kind: "accessorial", legId: leg.id, orderNumber, description: `${orderNumber} border crossing pay`, qty: 1, unit: "flat", rateCents: driver.crossingPayCents, amountCents: driver.crossingPayCents, source: "driver record" });
     }
   }
-  }
-  // A pay item lands on the next statement built: a one-off (or an advance) until a paid statement carries
-  // it, a recurring one on every statement from the week it was added (the Monday run for last week
-  // included). A statement from before that week doesn't pick it up.
+  lines = lines.map((l) => ({ ...l, description: `${l.description}${l.kind === "leg" ? lateNote(l.legId) : ""}`, blocker: noMiles(l) ? `${l.orderNumber ?? "a load"}: the leg has no miles, so it pays $0 — enter the miles on the load, then rebuild the statement` : null }));
+
+  // pay items: reimbursements are pay; deductions come off in order and never below $0
   const items = await db.select().from(s.payItems).where(and(eq(s.payItems.tenantId, ctx.tenantId), eq(s.payItems.driverId, driverId), eq(s.payItems.active, true)));
-  for (const it of items) {
-    if (it.endsAt && it.endsAt.getTime() < periodStart.getTime()) continue;
-    if (it.recurring && it.startsAt.getTime() > periodEnd.getTime() + 7 * 86400_000) continue;
-    let amt = it.amountCents;
-    if (it.remainingCents != null) amt = Math.min(amt, it.remainingCents);
-    // escrow: collect until the balance reaches the target
-    if (it.kind === "escrow" && it.targetCents != null) amt = Math.min(amt, Math.max(0, it.targetCents - (it.balanceCents ?? 0)));
-    if (amt <= 0) continue;
-    const out = it.kind !== "reimbursement";
-    lines.push({ id: newId(), kind: out ? "deduction" : "reimbursement", description: it.description, qty: 1, unit: "flat", rateCents: amt, amountCents: out ? -amt : amt, source: it.kind === "escrow" ? "escrow" : it.kind === "advance" ? "advance" : it.recurring ? "recurring" : "one-off", payItemId: it.id });
+  // what other statements not yet paid already hold of each item: never take the same money twice
+  const held = new Map<string, number>();
+  for (const x of others.filter((o) => o.state !== "paid")) for (const l of x.lines) if (l.payItemId) held.set(l.payItemId, (held.get(l.payItemId) ?? 0) + Math.abs(l.amountCents));
+  const due = items.filter((it) => !(it.endsAt && it.endsAt.getTime() < periodStart.getTime()) && !(it.recurring && it.startsAt.getTime() > periodEnd.getTime() + 7 * 86400_000));
+  for (const it of due.filter((x) => x.kind === "reimbursement")) {
+    if (!it.recurring && held.has(it.id)) continue;
+    lines.push({ id: newId(), kind: "reimbursement", description: it.description, qty: 1, unit: "flat", rateCents: it.amountCents, amountCents: it.amountCents, source: it.recurring ? "recurring" : "one-off", payItemId: it.id });
   }
-  const gross = lines.filter((l) => l.amountCents > 0).reduce((a, l) => a + l.amountCents, 0);
-  const ded = -lines.filter((l) => l.amountCents < 0).reduce((a, l) => a + l.amountCents, 0);
-  const row = { lines, grossCents: gross, deductionsCents: ded, netCents: gross - ded, updatedAt: new Date(), updatedBy: ctx.userId };
+  const earned = lines.filter((l) => l.amountCents > 0).reduce((a, l) => a + l.amountCents, 0);
+  if (earned <= 0) {
+    // nothing to pay: no statement. An open one from an earlier build goes away; its deductions wait.
+    if (existing) {
+      await db.delete(s.settlements).where(eq(s.settlements.id, existing.id));
+      await writeAudit(db, ctx, "settlement", existing.id, "archive", undefined, `${driver.name} ${periodStart.toISOString().slice(0, 10)}: no pay this week — deductions wait for a statement with pay`);
+    }
+    throw new ValidationError(`${driver.name} has no pay for the week of ${zonedDate(periodStart, company.timeZone)}: no statement is made — deductions and advances wait for the next statement with pay`);
+  }
+  const { applyDeductions, deductionRank } = await import("./pay-plans-pure");
+  const wants = due
+    .filter((x) => x.kind !== "reimbursement")
+    .sort((p, q) => deductionRank(p) - deductionRank(q) || p.createdAt.getTime() - q.createdAt.getTime())
+    .flatMap((it) => {
+      if (!it.recurring && it.remainingCents == null && held.has(it.id)) return []; // a one-off already on another open statement
+      let amt = it.amountCents;
+      if (it.remainingCents != null) amt = Math.min(amt, Math.max(0, it.remainingCents - (held.get(it.id) ?? 0)));
+      // escrow: collect until the balance reaches the target
+      if (it.kind === "escrow" && it.targetCents != null) amt = Math.min(amt, Math.max(0, it.targetCents - (it.balanceCents ?? 0) - (held.get(it.id) ?? 0)));
+      return amt > 0 ? [{ it, amt }] : [];
+    });
+  const applied = applyDeductions(earned, wants.map((w) => ({ key: w.it.id, wantCents: w.amt })));
+  for (const [i, w] of wants.entries()) {
+    const { takenCents, shortCents } = applied[i];
+    const it = w.it;
+    if (!takenCents && it.kind === "escrow") continue; // escrow waits for a week with pay left
+    const owed = it.remainingCents != null ? it.remainingCents - (held.get(it.id) ?? 0) - takenCents : null;
+    const what = shortCents ? (it.kind === "advance" || it.remainingCents != null ? ` — ${money(takenCents)} of ${money(w.amt)} this week, the rest stays owed` : ` — ${money(takenCents)} of ${money(w.amt)} this week, ${money(shortCents)} carries to next week`) : "";
+    const left = owed != null && owed > 0 ? ` (${money(owed)} left to recover after this)` : "";
+    lines.push({ id: newId(), kind: "deduction", description: `${it.description}${what}${left}`, qty: 1, unit: "flat", rateCents: w.amt, amountCents: -takenCents, source: it.carriedFrom ? "carried from last week" : it.kind === "escrow" ? "escrow" : it.kind === "advance" ? "advance" : it.recurring ? "recurring" : "one-off", payItemId: it.id, shortCents: shortCents || null });
+  }
+  const row = { lines, ...totalsOf(lines), updatedAt: new Date(), updatedBy: ctx.userId };
   if (existing) {
     const [after] = await db.update(s.settlements).set(row).where(eq(s.settlements.id, existing.id)).returning();
     return after;
@@ -1142,30 +1206,65 @@ export async function buildSettlement(ctx: Ctx, driverId: string, periodStart: D
   return after;
 }
 
-export async function settlementTransition(ctx: Ctx, id: string, to: "reviewed" | "approved" | "paid" | "open", p: { method?: string; reference?: string } = {}) {
+/** Why a statement can't be approved yet, in plain words (empty = it can). */
+export function approvalBlockers(st: Pick<typeof s.settlements.$inferSelect, "lines" | "periodEnd" | "netCents" | "grossCents">, now = new Date()): string[] {
+  const out: string[] = [];
+  if (st.periodEnd.getTime() > now.getTime()) out.push(`the week isn't over yet (it ends ${st.periodEnd.toISOString().slice(0, 10)}): approve it once it has, so late legs make it on`);
+  for (const l of st.lines) if (l.blocker) out.push(l.blocker);
+  for (const l of st.lines) if (!l.blocker && noMiles(l)) out.push(`${l.orderNumber ?? "a load"}: the leg has no miles, so it pays $0 — enter the miles, then rebuild`);
+  if (st.grossCents <= 0) out.push("there is no pay on it");
+  if (st.netCents < 0) out.push("the net is below $0: deductions can't be more than the pay");
+  return out;
+}
+
+/**
+ * Move a statement along: open → reviewed → approved → paid. Approving (and paying) waits until the week
+ * has ended and every load line has its miles. The one exception is paying a driver early (a final check, a
+ * driver going home): the owner approves an unfinished week with a reason, and it is kept in the history.
+ */
+export async function settlementTransition(ctx: Ctx, id: string, to: "reviewed" | "approved" | "paid" | "open", p: { method?: string; reference?: string; now?: Date; earlyReason?: string | null } = {}) {
   assertCtx(ctx);
   requirePermission(ctx, "billing.issue");
   const [st] = await db.select().from(s.settlements).where(and(eq(s.settlements.tenantId, ctx.tenantId), eq(s.settlements.id, id))).limit(1);
   if (!st) throw new NotFoundError("settlement", id);
   const allowed: Record<string, string[]> = { open: ["reviewed"], reviewed: ["approved", "open"], approved: ["paid", "reviewed"], paid: [] };
   if (!allowed[st.state].includes(to)) throw new TransitionError("order", st.state, to);
+  const now = p.now ?? new Date();
+  if (to === "approved" || to === "paid") {
+    let why = approvalBlockers(st, now);
+    const early = st.periodEnd.getTime() > now.getTime();
+    // paying early: only the owner, only with a reason, and only the unfinished week can be waived
+    if (early && (p.earlyReason?.trim() || (to === "paid" && st.approvedAt))) {
+      if (to === "approved" && !can(ctx, "billing.void")) throw new ValidationError("only the owner can approve a week before it ends");
+      why = why.filter((w) => !w.startsWith("the week isn't over"));
+    }
+    if (why.length) throw new ValidationError(`can't ${to === "paid" ? "pay" : "approve"} this statement: ${why.join("; ")}`, early && why.length === 1 && why[0].startsWith("the week isn't over") ? "early" : undefined);
+  }
   if (to === "paid" && !p.method) throw new ValidationError("how was it paid?", "method");
-  const [after] = await db.update(s.settlements).set({ state: to, reviewedAt: to === "reviewed" ? new Date() : st.reviewedAt, approvedAt: to === "approved" ? new Date() : st.approvedAt, paidAt: to === "paid" ? new Date() : null, method: p.method ?? st.method, reference: p.reference ?? st.reference, updatedAt: new Date(), updatedBy: ctx.userId }).where(eq(s.settlements.id, id)).returning();
+  if (to === "paid") await assertOpenPeriod(ctx, now);
+  const [after] = await db.update(s.settlements).set({ state: to, reviewedAt: to === "reviewed" ? new Date() : st.reviewedAt, approvedAt: to === "approved" ? new Date() : st.approvedAt, paidAt: to === "paid" ? now : null, method: p.method ?? st.method, reference: p.reference ?? st.reference, updatedAt: new Date(), updatedBy: ctx.userId }).where(eq(s.settlements.id, id)).returning();
   if (to === "paid") {
-    // advances paid back: reduce remaining on the pay items that produced deduction lines
+    // what the statement actually took comes off each pay item; what it couldn't take carries to the next one
     const items = await db.select().from(s.payItems).where(and(eq(s.payItems.tenantId, ctx.tenantId), eq(s.payItems.driverId, st.driverId)));
+    const company = await getCompany(ctx);
     for (const it of items) {
-      const line = st.lines.find((l) => l.kind === "deduction" && (l.payItemId ? l.payItemId === it.id : l.description === it.description));
+      const line = st.lines.find((l) => l.kind === "deduction" && l.payItemId === it.id);
       const credit = st.lines.find((l) => l.kind === "reimbursement" && l.payItemId === it.id);
-      // a one-off (not an advance) is done once a paid statement carries it
-      if (!it.recurring && it.remainingCents == null && (line || credit)) await db.update(s.payItems).set({ active: false }).where(eq(s.payItems.id, it.id));
+      // a one-off (not an advance, no total to recover) is done once a paid statement carries it
+      if (!it.recurring && it.remainingCents == null && (line || credit)) await db.update(s.payItems).set({ active: false, updatedAt: new Date() }).where(eq(s.payItems.id, it.id));
       if (!line) continue;
-      if (it.remainingCents != null) await db.update(s.payItems).set({ remainingCents: Math.max(0, (it.remainingCents ?? 0) + line.amountCents), active: (it.remainingCents ?? 0) + line.amountCents > 0 }).where(eq(s.payItems.id, it.id));
+      const taken = -line.amountCents;
+      if (it.remainingCents != null) await db.update(s.payItems).set({ remainingCents: Math.max(0, it.remainingCents - taken), active: it.remainingCents - taken > 0, updatedAt: new Date() }).where(eq(s.payItems.id, it.id));
       // escrow: what was held this week is now in the driver's escrow balance
-      if (it.kind === "escrow") await db.update(s.payItems).set({ balanceCents: (it.balanceCents ?? 0) - line.amountCents }).where(eq(s.payItems.id, it.id));
+      if (it.kind === "escrow" && taken) await db.update(s.payItems).set({ balanceCents: (it.balanceCents ?? 0) + taken, updatedAt: new Date() }).where(eq(s.payItems.id, it.id));
+      // a deduction that didn't fit (and has no running total of its own) carries to the next statement
+      if (line.shortCents && it.kind === "deduction" && it.remainingCents == null) {
+        const base = it.description.replace(/^Carried from week of \d{4}-\d{2}-\d{2}: /, "");
+        await db.insert(s.payItems).values({ id: newId(), tenantId: ctx.tenantId, driverId: st.driverId, kind: "deduction", description: `Carried from week of ${zonedDate(st.periodStart, company.timeZone)}: ${base}`, amountCents: line.shortCents, recurring: false, originalCents: line.shortCents, carriedFrom: st.id, createdBy: ctx.userId, updatedBy: ctx.userId });
+      }
     }
   }
-  await writeAudit(db, ctx, "settlement", id, "transition", { state: { from: st.state, to } }, p.reference);
+  await writeAudit(db, ctx, "settlement", id, "transition", { state: { from: st.state, to } }, to === "approved" && p.earlyReason?.trim() ? `approved before the week ended: ${p.earlyReason.trim()}` : p.reference);
   return after;
 }
 
@@ -1177,10 +1276,10 @@ export async function addSettlementLine(ctx: Ctx, id: string, line: { kind: Sett
   if (st.state === "paid" || st.state === "approved") throw new ValidationError("send it back to reviewed to change lines");
   if (!line.description?.trim() || !Number.isFinite(line.amountCents)) throw new ValidationError("description and amount");
   const amount = line.kind === "deduction" ? -Math.abs(line.amountCents) : line.amountCents;
+  // net pay never goes below $0: a deduction bigger than what's left goes on next week as a pay item
+  if (amount < 0 && st.netCents + amount < 0) throw new ValidationError(`only ${money(Math.max(0, st.netCents))} of pay is left on this statement: add the rest as a deduction pay item and it comes off next week`, "amount");
   const lines = [...st.lines, { id: newId(), kind: line.kind, description: line.description.trim(), qty: 1, unit: "flat", rateCents: Math.abs(amount), amountCents: amount, source: "manual" }];
-  const gross = lines.filter((l) => l.amountCents > 0).reduce((a, l) => a + l.amountCents, 0);
-  const ded = -lines.filter((l) => l.amountCents < 0).reduce((a, l) => a + l.amountCents, 0);
-  const [after] = await db.update(s.settlements).set({ lines, grossCents: gross, deductionsCents: ded, netCents: gross - ded, updatedAt: new Date(), updatedBy: ctx.userId }).where(eq(s.settlements.id, id)).returning();
+  const [after] = await db.update(s.settlements).set({ lines, ...totalsOf(lines), updatedAt: new Date(), updatedBy: ctx.userId }).where(eq(s.settlements.id, id)).returning();
   return after;
 }
 
@@ -1213,8 +1312,35 @@ export async function addPayItem(ctx: Ctx, driverId: string, it: { kind: "deduct
   assertCtx(ctx);
   requirePermission(ctx, "billing.issue");
   if (!it.description?.trim() || !Number.isFinite(it.amountCents) || it.amountCents <= 0) throw new ValidationError("description and a positive amount");
-  const [row] = await db.insert(s.payItems).values({ id: newId(), tenantId: ctx.tenantId, driverId, kind: it.kind, description: it.description.trim(), amountCents: it.amountCents, recurring: it.kind === "escrow" ? true : !!it.recurring, remainingCents: it.kind === "advance" ? (it.remainingCents ?? it.amountCents) : (it.remainingCents ?? null), targetCents: it.kind === "escrow" ? (it.targetCents ?? null) : null, balanceCents: it.kind === "escrow" ? 0 : null, endsAt: it.endsAt ?? null, createdBy: ctx.userId, updatedBy: ctx.userId }).returning();
+  const [row] = await db.insert(s.payItems).values({ id: newId(), tenantId: ctx.tenantId, driverId, kind: it.kind, description: it.description.trim(), amountCents: it.amountCents, recurring: it.kind === "escrow" ? true : !!it.recurring, remainingCents: it.kind === "advance" ? (it.remainingCents ?? it.amountCents) : (it.remainingCents ?? null), originalCents: it.kind === "advance" ? (it.remainingCents ?? it.amountCents) : (it.remainingCents ?? null), targetCents: it.kind === "escrow" ? (it.targetCents ?? null) : null, balanceCents: it.kind === "escrow" ? 0 : null, endsAt: it.endsAt ?? null, createdBy: ctx.userId, updatedBy: ctx.userId }).returning();
   return row;
+}
+
+export type PayItemLedgerRow = { id: string; driverId: string; driverName: string; kind: string; description: string; recurring: boolean; active: boolean; perStatementCents: number; originalCents: number | null; recoveredCents: number; remainingCents: number | null; heldCents: number | null; targetCents: number | null; carriedFrom: string | null; history: { week: string; state: string; cents: number; shortCents: number }[] };
+
+/**
+ * Every pay item with its balance, per driver: what there was to recover, what statements took (paid ones
+ * count as recovered), what's left, escrow held — and the week-by-week history, so a second $200 "Fuel
+ * advance" line reads as the second installment of $400, not a double deduction.
+ */
+export async function payItemLedger(ctx: Ctx, opts: { driverId?: string; includeDone?: boolean } = {}): Promise<PayItemLedgerRow[]> {
+  assertCtx(ctx);
+  requirePermission(ctx, "billing.view");
+  const where = [eq(s.payItems.tenantId, ctx.tenantId)];
+  if (opts.driverId) where.push(eq(s.payItems.driverId, opts.driverId));
+  const [items, sts, drivers] = await Promise.all([
+    db.select().from(s.payItems).where(and(...where)).orderBy(desc(s.payItems.createdAt)),
+    db.select().from(s.settlements).where(and(eq(s.settlements.tenantId, ctx.tenantId), ...(opts.driverId ? [eq(s.settlements.driverId, opts.driverId)] : []))).orderBy(s.settlements.periodStart),
+    db.select({ id: s.drivers.id, name: s.drivers.name }).from(s.drivers).where(eq(s.drivers.tenantId, ctx.tenantId)),
+  ]);
+  return items
+    .map((it) => {
+      const history = sts.flatMap((st) => st.lines.filter((l) => l.payItemId === it.id).map((l) => ({ week: st.periodStart.toISOString().slice(0, 10), state: st.state, cents: Math.abs(l.amountCents), shortCents: l.shortCents ?? 0 })));
+      const recovered = history.filter((h) => h.state === "paid").reduce((a, h) => a + h.cents, 0);
+      const original = it.originalCents ?? (it.remainingCents != null ? it.remainingCents + recovered : !it.recurring ? it.amountCents : null);
+      return { id: it.id, driverId: it.driverId, driverName: drivers.find((d) => d.id === it.driverId)?.name ?? "?", kind: it.kind, description: it.description, recurring: it.recurring, active: it.active, perStatementCents: it.amountCents, originalCents: original, recoveredCents: recovered, remainingCents: it.remainingCents != null ? it.remainingCents : !it.recurring ? (it.active ? it.amountCents : 0) : null, heldCents: it.kind === "escrow" ? (it.balanceCents ?? 0) : null, targetCents: it.targetCents, carriedFrom: it.carriedFrom, history };
+    })
+    .filter((r) => opts.includeDone || r.active || (r.heldCents ?? 0) > 0);
 }
 
 /** Sunday-to-Saturday week containing `d`, in UTC. */

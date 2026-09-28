@@ -147,6 +147,7 @@ export const payments = pgTable(
     remittance: text("remittance"), // the remittance advice as pasted
     note: text("note"),
     appliedCents: integer("applied_cents").notNull().default(0),
+    exportedAt: timestamp("exported_at", { withTimezone: true }), // last accounting export that carried it (one deposit with its applications)
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     createdBy: text("created_by"),
   },
@@ -271,7 +272,7 @@ export const accountingExports = pgTable(
     toDate: text("to_date").notNull(),
     onlyNew: boolean("only_new").notNull().default(true),
     counts: jsonb("counts").$type<Record<string, number>>().notNull().default(sql`'{}'::jsonb`),
-    recordIds: jsonb("record_ids").$type<{ invoices: string[]; receipts: string[]; bills: string[]; settlements: string[]; credits?: string[] }>().notNull().default(sql`'{"invoices":[],"receipts":[],"bills":[],"settlements":[]}'::jsonb`),
+    recordIds: jsonb("record_ids").$type<{ invoices: string[]; receipts: string[]; bills: string[]; settlements: string[]; credits?: string[]; payments?: string[]; factor?: string[] }>().notNull().default(sql`'{"invoices":[],"receipts":[],"bills":[],"settlements":[]}'::jsonb`),
     reopenedAt: timestamp("reopened_at", { withTimezone: true }),
     fileName: text("file_name").notNull(),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
@@ -395,6 +396,7 @@ export const factorEntries = pgTable(
     at: timestamp("at", { withTimezone: true }).notNull(),
     reference: text("reference"), // the factor's schedule / wire #
     note: text("note"),
+    exportedAt: timestamp("exported_at", { withTimezone: true }), // last accounting export that carried it (as a journal entry)
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     createdBy: text("created_by"),
   },

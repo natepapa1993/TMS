@@ -9,6 +9,9 @@ import { createOrder, planLeg, dispatchLeg, acceptLeg, advanceLeg } from "./orde
 import * as B from "./billing";
 import { legPayLines, statementExtras, savePlan, assignPlan, deletePlan, listPlans, type LegPayInput } from "./pay-plans";
 
+/** statements for this week can only be approved once it has ended */
+const afterWeek = new Date(Date.now() + 8 * 86400_000);
+
 const future = new Date(Date.now() + 365 * 86400_000);
 let a: Awaited<ReturnType<typeof makeTenant>>;
 let f: { cust: string; t1: string; dan: string; ana: string };
@@ -104,7 +107,7 @@ describe("statements on a pay plan", () => {
     expect(d).toContainEqual(["escrow", -10000]);
     expect(d).toContainEqual(["advance", -20000]);
     // paid: the escrow holds 100; the next statement only collects 50 more; the advance is gone
-    for (const to of ["reviewed", "approved", "paid"] as const) await B.settlementTransition(a, st.id, to, { method: "ach" });
+    for (const to of ["reviewed", "approved", "paid"] as const) await B.settlementTransition(a, st.id, to, { method: "ach", now: afterWeek });
     const [esc] = await db.select().from(payItems).where(and(eq(payItems.driverId, f.dan), eq(payItems.kind, "escrow")));
     expect(esc.balanceCents).toBe(10000);
     const next = B.weekOf(new Date(Date.now() + 7 * 86400_000));
