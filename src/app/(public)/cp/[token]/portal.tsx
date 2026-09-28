@@ -10,7 +10,7 @@ import { portalRequestLoadAction } from "../../actions";
 /** The customer's page: their loads with live tracking, delivered loads with the POD, invoices and balance, and a load request form. */
 
 type Stop = { id: string; seq: number; type: string; name: string; city: string | null; state: string | null; country: string; windowStart: string | null; windowEnd: string | null; arrivedAt: string | null; departedAt: string | null };
-type Load = { eta: { at: string; stopName: string; late: boolean } | null; id: string; orderNumber: string; state: string; stateLabel: string; step: string | null; equipment: string; refs: { po: string | null; shipment: string | null; reference: string | null; rate_con: string | null }; cargoNote: string | null; stops: Stop[]; deliveredAt: string | null; createdAt: string; source: string; trackingUrl: string | null; docs: { id: string; code: string; fileName: string; createdAt: string }[]; invoice: { id: string; number: string | null; state: string; totalCents: number; url: string | null } | null };
+type Load = { eta: { at: string; stopName: string; late: boolean } | null; id: string; orderNumber: string; state: string; stateKey?: string; stateLabel: string; step: string | null; stepKey?: string | null; equipment: string; refs: { po: string | null; shipment: string | null; reference: string | null; rate_con: string | null }; cargoNote: string | null; stops: Stop[]; deliveredAt: string | null; createdAt: string; source: string; trackingUrl: string | null; docs: { id: string; code: string; fileName: string; createdAt: string }[]; invoice: { id: string; number: string | null; state: string; totalCents: number; url: string | null } | null };
 type Invoice = { id: string; number: string | null; state: string; issuedAt: string | null; dueAt: string | null; totalCents: number; openCents: number; pastDueDays: number; currency: string; orders: string[]; url: string | null };
 type Data = { company: string; customer: { id: string; name: string; kind: string; termsDays: number | null; country?: string }; active: Load[]; requested: Load[]; delivered: Load[]; cancelled: Load[]; invoices: Invoice[]; balance: { openCents: number; pastDueCents: number; currency: string } };
 
@@ -33,6 +33,9 @@ const STR = {
     reqReceived: "Request received", reqIs: (n: string, c: string) => `It is ${n} with ${c}. Dispatch will price it and confirm with you before it moves.`, seeLoads: "See your loads", reqTitle: "Request a load", reqIntro: (c: string) => `Two ends and what it is. ${c} prices it and confirms with you; nothing moves until then.`,
     pickup: "Pickup", shipper: "Shipper / location", city: "City", state: "State", country: "Country", readyWhen: "Ready when", delivery: "Delivery", consignee: "Consignee / location", deliverBy: "Deliver by", theLoad: "The load", equipment: "Equipment", po: "PO #", yourRef: "Your reference", whoToCall: "Who to call", whatIsIt: "What is it", sending: "Sending…", send: "Send the request",
     doc: { POD: "Proof of delivery", BOL: "Bill of lading", RATE_CON: "Rate confirmation", carta_porte: "Carta porte", invoice: "Commercial invoice", packing_list: "Packing list" } as Record<string, string>,
+    orderState: { draft: "Requested", booked: "Booked", assigning: "Assigning a truck", dispatched: "Driver assigned", in_transit: "In transit", exception: "On hold", delivered: "Delivered", ready_to_bill: "Delivered", invoiced: "Delivered", paid: "Delivered", cancelled: "Cancelled" } as Record<string, string>,
+    legStep: { unassigned: "Pending", planned: "Planned", dispatched: "Sent", accepted: "Accepted", en_route_to_pickup: "To pickup", at_pickup: "At pickup", loaded: "Loaded", en_route: "En route", at_delivery: "At delivery", completed: "Delivered", declined: "Finding another truck", cancelled: "Cancelled" } as Record<string, string>,
+    invState: { issued: "Issued", sent: "Sent", partially_paid: "Partly paid", paid: "Paid", closed: "Paid", void: "Void", disputed: "Disputed" } as Record<string, string>,
   },
   es: {
     lang: "es" as Lang,
@@ -43,6 +46,9 @@ const STR = {
     reqReceived: "Solicitud recibida", reqIs: (n: string, c: string) => `Es la ${n} con ${c}. Despacho la cotiza y te confirma antes de moverla.`, seeLoads: "Ver tus embarques", reqTitle: "Solicitar un embarque", reqIntro: (c: string) => `Origen, destino y qué es. ${c} lo cotiza y te confirma; nada se mueve hasta entonces.`,
     pickup: "Recolección", shipper: "Remitente / lugar", city: "Ciudad", state: "Estado", country: "País", readyWhen: "Listo cuándo", delivery: "Entrega", consignee: "Destinatario / lugar", deliverBy: "Entregar antes de", theLoad: "La carga", equipment: "Equipo", po: "No. de PO", yourRef: "Tu referencia", whoToCall: "A quién llamar", whatIsIt: "Qué es", sending: "Enviando…", send: "Enviar la solicitud",
     doc: { POD: "Comprobante de entrega", BOL: "Bill of lading", RATE_CON: "Confirmación de tarifa", carta_porte: "Carta porte", invoice: "Factura comercial", packing_list: "Lista de empaque" } as Record<string, string>,
+    orderState: { draft: "Solicitado", booked: "Reservado", assigning: "Asignando unidad", dispatched: "Operador asignado", in_transit: "En tránsito", exception: "En espera", delivered: "Entregado", ready_to_bill: "Entregado", invoiced: "Entregado", paid: "Entregado", cancelled: "Cancelado" } as Record<string, string>,
+    legStep: { unassigned: "Pendiente", planned: "Planeado", dispatched: "Enviado", accepted: "Aceptado", en_route_to_pickup: "Hacia la carga", at_pickup: "En la carga", loaded: "Cargado", en_route: "En ruta", at_delivery: "En la entrega", completed: "Entregado", declined: "Buscando otra unidad", cancelled: "Cancelado" } as Record<string, string>,
+    invState: { issued: "Emitida", sent: "Enviada", partially_paid: "Pago parcial", paid: "Pagada", closed: "Pagada", void: "Anulada", disputed: "En disputa" } as Record<string, string>,
   },
 };
 
@@ -153,7 +159,7 @@ function CustomerPortalBody({ token, data }: { token: string; data: Data }) {
                     <tr key={i.id}>
                       <td>
                         <div className="font-bold mono">{i.number ?? "—"}</div>
-                        <Pill tone={INV_TONE[i.state] ?? "slate"}>{i.state === "partially_paid" ? s.partlyPaid : i.state}</Pill>
+                        <Pill tone={INV_TONE[i.state] ?? "slate"}>{s.invState[i.state] ?? i.state}</Pill>
                       </td>
                       <td className="text-callout mono">{i.orders.join(", ")}</td>
                       <td className="text-callout">{day(i.issuedAt)}</td>
@@ -201,8 +207,8 @@ function LoadCard({ l, token, s }: { l: Load; token: string; s: Strings }) {
         <div className="min-w-0">
           <div className="flex items-center gap-2 flex-wrap">
             <span className="font-extrabold mono">{l.orderNumber}</span>
-            <Pill tone={TONE[l.state] ?? "slate"}>{l.stateLabel}</Pill>
-            {l.step && ["dispatched", "in_transit", "exception"].includes(l.state) && <span className="text-footnote text-muted">{l.step}</span>}
+            <Pill tone={l.stateKey === "assigning" ? "blue" : (TONE[l.state] ?? "slate")}>{s.orderState[l.stateKey ?? l.state] ?? l.stateLabel}</Pill>
+            {l.step && ["dispatched", "in_transit", "exception"].includes(l.state) && l.stateKey !== "assigning" && <span className="text-footnote text-muted">{(l.stepKey && s.legStep[l.stepKey]) || l.step}</span>}
           </div>
           <div className="font-bold text-body mt-1 truncate">
             {first ? placeOf(first) : "—"} → {last ? placeOf(last) : "—"}

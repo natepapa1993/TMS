@@ -406,7 +406,9 @@ export async function uploadDocument(ctx: Ctx, crossingId: string, input: Upload
       .insert(s.documents)
       .values({ id: newId(), tenantId: ctx.tenantId, code: input.code, subjectKind: "crossing", subjectId: crossingId, fileName: input.fileName, mimeType: input.mimeType, sizeBytes: input.bytes.length, storageKey: `blob:${blob.id}`, sha256: sha, source: input.source ?? "upload", status: "present", version, extracted, notes: input.notes ?? null, createdBy: ctx.userId, updatedBy: ctx.userId })
       .returning();
-    await event(tx, ctx, crossingId, { kind: "document", note: `${input.code} v${version} ${input.source ?? "uploaded"}: ${input.fileName}`, data: { documentId: row.id, code: input.code } });
+    const { docLabel } = await import("./load-docs-rules");
+    const how = !input.source || input.source === "upload" ? "uploaded" : `from the ${input.source.replace(/_/g, " ")}`;
+    await event(tx, ctx, crossingId, { kind: "document", note: `${input.code.startsWith("shipment:") ? "Shipment docs" : docLabel(input.code)}${version > 1 ? ` v${version}` : ""} ${how}: ${input.fileName}`, data: { documentId: row.id, code: input.code } });
     await writeAudit(tx, ctx, "document", row.id, "create", undefined, `${input.code} on crossing ${crossingId}`);
     return row;
   });
@@ -1078,7 +1080,7 @@ export async function generateCartaRetiro(ctx: Ctx, crossingId: string, input: {
     // a partner transfer carrier picks up the caja: the letter names the carrier, its driver, unit and plates
     if (!partner.tender?.driverName) throw new ValidationError(`${partner.carrier.name} has not named the driver yet`);
     const plates = partner.tender.unitPlate ?? "";
-    data = { companyName: tenant.name, legalName: tenant.name, date: new Date(), yardName: input.yardName || fromStop?.name || "patio", trailerNumber: caja, transfer: partner.carrier.name, drivers: [partner.tender.driverName], unitNumber: partner.tender.unitNumber ?? "", usPlate: plates, mxPlate: "", orderNumber: order.orderNumber, authorizedBy: input.authorizedBy || "", place: yardPlace, zone: yardZone };
+    data = { companyName: tenant.name, legalName: tenant.name, date: new Date(), yardName: input.yardName || fromStop?.name || "patio", trailerNumber: caja, transfer: partner.carrier.name, drivers: [partner.tender.driverName], unitNumber: partner.tender.unitNumber ?? "", usPlate: plates, mxPlate: "", orderNumber: order.orderNumber, authorizedBy: input.authorizedBy || "", place: yardPlace, zone: yardZone, partnerTransfer: true };
   } else {
     if (!truck) throw new ValidationError("assign the crossing truck first");
     if (!drivers.length) throw new ValidationError("assign the crossing driver first");
@@ -1228,6 +1230,8 @@ export async function crossingPage(ctx: Ctx, crossingId: string) {
   const coDriver = leg?.coDriverId ? (await db.select().from(s.drivers).where(eq(s.drivers.id, leg.coDriverId)).limit(1))[0] : null;
   const customer = order?.customerId ? (await db.select().from(s.customers).where(eq(s.customers.id, order.customerId)).limit(1))[0] : null;
   const broker = customer?.mxBrokerId ? (await db.select().from(s.customsBrokers).where(eq(s.customsBrokers.id, customer.mxBrokerId)).limit(1))[0] : null;
+  // owner N10: a load into Canada waits on the customer's Canadian broker for the PARS
+  const caBroker = customer?.caBrokerId ? ((await db.select({ name: s.customsBrokers.name }).from(s.customsBrokers).where(eq(s.customsBrokers.id, customer.caBrokerId)).limit(1))[0] ?? null) : null;
   const waitingOn = c.requirements.find((r) => r.status === "missing") ?? null;
   // the border yard's clock (Nuevo Laredo keeps US daylight time; a Canadian crossing starts in Detroit)
   const yard = leg?.fromStopId ? (await db.select().from(s.stops).where(eq(s.stops.id, leg.fromStopId)).limit(1))[0] : null;
@@ -1236,7 +1240,7 @@ export async function crossingPage(ctx: Ctx, crossingId: string) {
   const companyZone = await tenantZone(ctx.tenantId);
   const yardZone = yard ? stopZone(yard, companyZone) : companyZone;
   const partner = await partnerOnLeg(leg);
-  return { crossing: c, leg, order, checks, events, docs, port, truck, driver, coDriver, customer, broker, waitingOn, yardZone, partner: partner ? { carrier: partner.carrier.name, driverName: partner.tender?.driverName ?? null, driverPhone: partner.tender?.driverPhone ?? null, unitNumber: partner.tender?.unitNumber ?? null, unitPlate: partner.tender?.unitPlate ?? null } : null };
+  return { crossing: c, leg, order, checks, events, docs, port, truck, driver, coDriver, customer, broker, caBroker, waitingOn, yardZone, partner: partner ? { carrier: partner.carrier.name, driverName: partner.tender?.driverName ?? null, driverPhone: partner.tender?.driverPhone ?? null, unitNumber: partner.tender?.unitNumber ?? null, unitPlate: partner.tender?.unitPlate ?? null } : null };
 }
 
 /** Job: dwell watch (spec 3.5). Yellow at the threshold, red at 2×; once each. */

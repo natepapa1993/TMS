@@ -1181,6 +1181,18 @@
       "tests": [
         "src/domain/ifta-matrix.test.ts"
       ]
+    },
+    {
+      "id": "F-32.25",
+      "name": "Owner minors: equipment mismatch warning and flag (reefer load on a dry van, Sprinter for a 53' load, over weight); record history shows names, addresses and labels; customs broker pickers per country and a Canadian broker on the customer; honest, translated customer-portal status",
+      "milestone": "M32",
+      "status": "done",
+      "tests": [
+        "src/domain/equipment.test.ts",
+        "src/data/history.test.ts",
+        "src/data/refs.test.ts",
+        "src/domain/owner-minors.test.ts"
+      ]
     }
   ]
 }

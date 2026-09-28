@@ -366,14 +366,14 @@ function PayCard({ token, stub, onChanged }: { token: string; stub: PayStub; onC
   return (
     <div className="rounded-lg border border-line p-3">
       <button type="button" className="w-full flex items-center justify-between text-left" onClick={() => setOpen((o) => !o)} aria-expanded={open}>
-        <div>
+        <div className="min-w-0">
           <div className="font-extrabold text-body">
             Week of {d(stub.periodStart)} – {d(new Date(new Date(stub.periodEnd).getTime() - 1).toISOString())}
           </div>
           <div className={`text-footnote font-semibold ${stub.state === "paid" ? "text-teal" : "text-muted"}`}>{PAY_STATE[stub.state] ?? stub.state}</div>
         </div>
-        <div className="text-right">
-          <div className="font-extrabold text-headline">{money(stub.netCents, stub.currency)}</div>
+        <div className="text-right flex-none pl-2">
+          <div className="font-extrabold text-headline whitespace-nowrap">{money(stub.netCents, stub.currency)}</div>
           <div className="text-caption text-faint">net · neto</div>
         </div>
       </button>
@@ -607,7 +607,7 @@ function Chat({ token, legId, thread, dispatchPhone, onDone }: { token: string; 
 export function DispatchLinks({ phone }: { phone: string }) {
   const digits = phone.replace(/\D/g, "");
   return (
-    <span className="flex gap-1.5" data-testid="dispatch-links">
+    <span className="flex gap-1.5 flex-none" data-testid="dispatch-links">
       <a className="btn btn-sm" href={`tel:+${digits}`}>
         ☎ Call · Llamar
       </a>

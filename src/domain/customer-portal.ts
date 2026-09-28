@@ -32,6 +32,17 @@ export const CUSTOMER_STATE: Record<s.OrderState, string> = {
   cancelled: "Cancelled",
 };
 
+/**
+ * Owner #17: "Driver assigned" only once someone has the load. A tender out to a carrier that hasn't answered,
+ * or a leg still being planned, reads "Assigning a truck".
+ */
+export function portalStateKey(state: s.OrderState, current: Pick<typeof s.legs.$inferSelect, "state" | "assigneeKind"> | null): string {
+  if (state !== "dispatched" || !current) return state;
+  if (["unassigned", "planned", "declined"].includes(current.state)) return "assigning";
+  if (current.state === "dispatched" && current.assigneeKind === "carrier") return "assigning";
+  return state;
+}
+
 export async function customerPortalLink(ctx: Ctx, customerId: string) {
   assertCtx(ctx);
   const [c] = await db.select().from(s.customers).where(and(eq(s.customers.tenantId, ctx.tenantId), eq(s.customers.id, customerId))).limit(1);
@@ -99,12 +110,15 @@ export async function customerPortalView(tenantId: string, customerId: string, n
     const ls = legs.filter((l) => l.orderId === o.id && l.state !== "cancelled");
     const current = ls.find((l) => l.state !== "completed") ?? ls[ls.length - 1] ?? null;
     const inv = invoices.find((i) => i.orderIds.includes(o.id)) ?? null;
+    const stateKey = portalStateKey(o.state, current);
     return {
       eta: etaByOrder.get(o.id) ?? null,
       id: o.id,
       orderNumber: o.orderNumber,
       state: o.state,
-      stateLabel: CUSTOMER_STATE[o.state],
+      stateKey,
+      stateLabel: stateKey === "assigning" ? "Assigning a truck" : CUSTOMER_STATE[o.state],
+      stepKey: current?.state ?? null,
       step: current ? LEG_LABEL[current.state] : null,
       equipment: o.equipment,
       refs: { po: o.refs.po ?? null, shipment: o.refs.shipment ?? null, reference: o.refs.reference ?? null, rate_con: o.refs.rate_con ?? null },

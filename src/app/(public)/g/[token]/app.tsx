@@ -143,8 +143,9 @@ export function CarrierDriverApp({ token, data }: { token: string; data: Data })
         </div>
       </div>
       {data.dispatchPhone && (
-        <div className="card mt-4 p-4 flex items-center justify-between gap-2">
-          <div>
+        <div className="card mt-4 p-4 flex flex-wrap items-center justify-between gap-3">
+          {/* owner N13: at 390 px the buttons go under the text instead of squeezing it into a column */}
+          <div className="min-w-[14rem] flex-1">
             <div className="eyebrow">{data.company} dispatch · Despacho</div>
             <div className="text-callout text-muted">Problem at the dock, a hold, anything: one tap. · Cualquier problema, un toque.</div>
           </div>

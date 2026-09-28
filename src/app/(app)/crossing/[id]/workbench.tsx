@@ -30,6 +30,7 @@ type Data = {
   coDriver: { name: string } | null;
   customer: { name: string; knowledgeMd?: string | null } | null;
   broker: { name: string; patente: string | null } | null;
+  caBroker?: { name: string } | null;
   port: { name: string; knowledgeMd?: string | null; bridges?: string[] } | null;
   people: Record<string, string>;
   docFields: Record<string, { key: string; label: string; kind?: string }[]>;
@@ -42,6 +43,8 @@ type Data = {
   yardZone: string;
 };
 
+/** Who did it, when no person is named (owner #35: "· dispatcher · Nate Owner" said the same thing twice). */
+const SOURCE_LABEL: Record<string, string> = { gps: "GPS", driver_app: "driver app", dispatcher: "office", mx_office: "MX office", carrier: "carrier", broker: "broker", system: "system", portal: "portal" };
 const STEP: Partial<Record<CrossingState, string>> = { departed_yard: "Departed the yard", at_mx_customs: "At Mexican customs", in_us_customs: "At US customs", cleared: "Cleared — US side" };
 const NEXT: Partial<Record<CrossingState, CrossingState>> = { packet_sent: "departed_yard", departed_yard: "at_mx_customs", at_mx_customs: "in_us_customs", in_us_customs: "cleared" };
 
@@ -120,6 +123,7 @@ export function CrossingWorkbench({ data }: { data: Data }) {
         </div>
         <div className="text-callout text-muted">
           {c.departedYardAt ? `Left the yard ${fmt(c.departedYardAt)}${c.arrivedYardAt ? ` (there since ${fmt(c.arrivedYardAt)})` : ""}` : c.arrivedYardAt ? `At the yard since ${fmt(c.arrivedYardAt)}` : canada || c.toCountry === "MX" ? "Not picked up yet" : "Not at the border yard yet"}
+          {canada ? (data.caBroker ? ` · CA broker ${data.caBroker.name}` : " · customer has no Canadian broker on file") : ""}
           {c.fromCountry !== "MX" && c.toCountry !== "MX" ? "" : data.broker ? ` · MX broker ${data.broker.name}${data.broker.patente ? ` (patente ${data.broker.patente})` : ""}` : " · customer has no MX broker on file"}
         </div>
         <div className="flex gap-2">
@@ -424,9 +428,10 @@ export function CrossingWorkbench({ data }: { data: Data }) {
         <div className="h2 mb-2">Timeline</div>
         <ul className="space-y-1 max-h-[420px] overflow-y-auto">
           {data.events.map((e) => (
-            <li key={e.id} className="text-callout flex gap-2">
-              <span className="text-faint whitespace-nowrap w-28">{fmt(e.at)}</span>
-              <span>
+            <li key={e.id} className="text-callout flex gap-3">
+              {/* owner N11: the time has its own column, wide enough for "Sep 28, 12:40 PM CDT" */}
+              <span className="text-faint whitespace-nowrap w-44 flex-none tabular-nums">{fmt(e.at)}</span>
+              <span className="min-w-0 break-words">
                 {e.kind === "transition" ? (
                   <>
                     <span className="font-semibold">{data.stateLabel[e.toState ?? ""] ?? e.toState}</span>
@@ -437,9 +442,8 @@ export function CrossingWorkbench({ data }: { data: Data }) {
                 )}
                 <span className="text-faint">
                   {" "}
-                  · {e.source.replace("_", " ")}
+                  · {e.userId && data.people[e.userId] ? data.people[e.userId] : (SOURCE_LABEL[e.source] ?? e.source.replace(/_/g, " "))}
                   {e.verified ? " · GPS" : ""}
-                  {e.userId ? ` · ${data.people[e.userId] ?? ""}` : ""}
                 </span>
                 {e.kind === "transition" && e.note ? <span className="text-muted"> — {e.note}</span> : null}
               </span>
@@ -454,6 +458,7 @@ export function CrossingWorkbench({ data }: { data: Data }) {
         <RetiroModal
           crossingId={c.id}
           trailer={details.trailerNumber || c.trailerNumber || ""}
+          partner={data.partner?.carrier ?? null}
           onClose={() => setRetiroOpen(false)}
           onDone={() => {
             setRetiroOpen(false);
@@ -596,7 +601,7 @@ function UploadModal({ crossingId, code, label, fields, onClose, onDone, canada 
   );
 }
 
-function RetiroModal({ crossingId, trailer, onClose, onDone }: { crossingId: string; trailer: string; onClose: () => void; onDone: () => void }) {
+function RetiroModal({ crossingId, trailer, partner, onClose, onDone }: { crossingId: string; trailer: string; partner?: string | null; onClose: () => void; onDone: () => void }) {
   const [yard, setYard] = useState("");
   const [by, setBy] = useState("");
   const [err, setErr] = useState<string | null>(null);
@@ -628,7 +633,15 @@ function RetiroModal({ crossingId, trailer, onClose, onDone }: { crossingId: str
       }
     >
       <div className="text-callout text-muted mb-3">
-        We are the transfer: the letter asks the yard to release caja <b className="text-ink mono">{trailer || "—"}</b> to our unit and operadores, on our letterhead. Trailer, unit, plates and drivers come from the assignment.
+        {partner ? (
+          <>
+            On our letterhead, the letter asks the yard to release caja <b className="text-ink mono">{trailer || "—"}</b> to the transfer <b className="text-ink">{partner}</b>: its driver, unit and plates come from what they gave when they accepted.
+          </>
+        ) : (
+          <>
+            We are the transfer: the letter asks the yard to release caja <b className="text-ink mono">{trailer || "—"}</b> to our unit and operadores, on our letterhead. Trailer, unit, plates and drivers come from the assignment.
+          </>
+        )}
       </div>
       <div className="grid grid-cols-2 gap-2">
         <div>

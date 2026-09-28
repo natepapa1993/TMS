@@ -1,0 +1,1 @@
+ALTER TABLE "customers" ADD COLUMN "ca_broker_id" text;
