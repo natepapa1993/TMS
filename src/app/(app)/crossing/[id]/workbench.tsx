@@ -449,7 +449,7 @@ export function CrossingWorkbench({ data }: { data: Data }) {
       </div>
 
       {/* popups */}
-      {uploadFor && <UploadModal crossingId={c.id} code={uploadFor} label={c.requirements.find((r) => r.code === uploadFor)?.label ?? uploadFor} fields={data.docFields[uploadFor] ?? []} onClose={() => setUploadFor(null)} onDone={() => { setUploadFor(null); setSelCode(uploadFor); t.ok("Uploaded — checks re-run"); router.refresh(); }} />}
+      {uploadFor && <UploadModal crossingId={c.id} code={uploadFor} label={c.requirements.find((r) => r.code === uploadFor)?.label ?? uploadFor} fields={data.docFields[uploadFor] ?? []} canada={canada} onClose={() => setUploadFor(null)} onDone={() => { setUploadFor(null); setSelCode(uploadFor); t.ok("Uploaded — checks re-run"); router.refresh(); }} />}
       {retiroOpen && (
         <RetiroModal
           crossingId={c.id}
@@ -530,7 +530,7 @@ function FieldsPanel({ doc, fields, canEdit, onSave, onExtract }: { doc: Doc; fi
   );
 }
 
-function UploadModal({ crossingId, code, label, fields, onClose, onDone }: { crossingId: string; code: string; label: string; fields: { key: string; label: string; kind?: string }[]; onClose: () => void; onDone: () => void }) {
+function UploadModal({ crossingId, code, label, fields, onClose, onDone, canada = false }: { crossingId: string; code: string; label: string; fields: { key: string; label: string; kind?: string }[]; onClose: () => void; onDone: () => void; canada?: boolean }) {
   const ref = useRef<HTMLFormElement>(null);
   const [err, setErr] = useState<string | null>(null);
   const [pending, start] = useTransition();
@@ -574,7 +574,7 @@ function UploadModal({ crossingId, code, label, fields, onClose, onDone }: { cro
         <label className="block border-2 border-dashed border-line rounded-lg p-5 text-center cursor-pointer hover:border-teal">
           <input type="file" name="file" accept="application/pdf,image/jpeg,image/png" className="hidden" onChange={(e) => setName(e.target.files?.[0]?.name ?? null)} />
           <div className="font-semibold">{name ?? "Choose a PDF or photo"}</div>
-          <div className="text-footnote text-muted">From NAD, Viatpro, email or the yard. Up to 15 MB.</div>
+          <div className="text-footnote text-muted">{canada ? "From the customs broker, email or the shipper." : "From NAD, Viatpro, email or the yard."} Up to 15 MB.</div>
         </label>
         <input type="hidden" name="source" value="upload" />
         {fields.length > 0 && (

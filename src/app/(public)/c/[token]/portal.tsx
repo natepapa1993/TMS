@@ -130,14 +130,14 @@ function OfferCard({ token, o, onDone }: { token: string; o: Offer; onDone: (t: 
   const clock = useClock();
   const at = (p: Place, end = false) => (p ? clock.stop(end ? p.windowEnd : p.windowStart, { country: p.country, name: p.name, address: { city: p.city, state: p.state } }) : null);
   const [mode, setMode] = useState<"idle" | "accept" | "decline">("idle");
-  const [f, setF] = useState({ name: "", driverName: "", driverPhone: "", unitNumber: "", trailerNumber: "", note: "" });
+  const [f, setF] = useState({ name: "", driverName: "", driverPhone: "", unitNumber: "", unitPlate: "", trailerNumber: "", note: "" });
   const [err, setErr] = useState<string | null>(null);
   const [pending, start] = useTransition();
   const [mins] = useState(() => Math.round((new Date(o.expiresAt).getTime() - Date.now()) / 60000)); // read once; the page refreshes on every action
   const go = (accept: boolean) =>
     start(async () => {
       setErr(null);
-      const r = await portalRespondAction(token, o.id, { accept, name: f.name, note: f.note || null, driverName: f.driverName || null, driverPhone: f.driverPhone || null, unitNumber: f.unitNumber || null, trailerNumber: f.trailerNumber || null });
+      const r = await portalRespondAction(token, o.id, { accept, name: f.name, note: f.note || null, driverName: f.driverName || null, driverPhone: f.driverPhone || null, unitNumber: f.unitNumber || null, unitPlate: f.unitPlate || null, trailerNumber: f.trailerNumber || null });
       if (r.ok) onDone(accept ? `Accepted ${o.orderNumber} — it is on your Loads tab. · Aceptada.` : `Declined ${o.orderNumber}. · Rechazada.`);
       else setErr(r.error);
     });
@@ -181,10 +181,11 @@ function OfferCard({ token, o, onDone }: { token: string; o: Offer; onDone: (t: 
           {mode === "accept" && (
             <>
               <input className="input" placeholder="Driver name · Nombre del operador" value={f.driverName} onChange={(e) => setF({ ...f, driverName: e.target.value })} />
-              <div className="grid grid-cols-3 gap-2">
+              <div className="grid grid-cols-2 gap-2">
                 <input className="input" placeholder="Driver phone" value={f.driverPhone} onChange={(e) => setF({ ...f, driverPhone: e.target.value })} />
                 <input className="input" placeholder="Unit · Unidad" value={f.unitNumber} onChange={(e) => setF({ ...f, unitNumber: e.target.value })} />
-                <input className="input" placeholder="Trailer · Caja" value={f.trailerNumber} onChange={(e) => setF({ ...f, trailerNumber: e.target.value })} />
+                <input className="input mono" placeholder="Plates · Placas" value={f.unitPlate} onChange={(e) => setF({ ...f, unitPlate: e.target.value })} />
+                <input className="input mono" placeholder="Trailer · Caja" value={f.trailerNumber} onChange={(e) => setF({ ...f, trailerNumber: e.target.value })} />
               </div>
             </>
           )}
