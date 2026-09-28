@@ -1172,6 +1172,15 @@
       "tests": [
         "src/domain/invites.test.ts"
       ]
+    },
+    {
+      "id": "F-32.24",
+      "name": "IFTA tax rate matrix import: the quarterly CSV IFTA, Inc. publishes (Special Diesel, US $/gal lines, surcharges, footnote marks, names or codes) with a preview against the rates on file before saving",
+      "milestone": "M32",
+      "status": "done",
+      "tests": [
+        "src/domain/ifta-matrix.test.ts"
+      ]
     }
   ]
 }

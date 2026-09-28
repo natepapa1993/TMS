@@ -4,6 +4,7 @@ import { useRef, useState, useTransition } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Modal, Pill, Toast, useToast } from "@/components/ui";
+import { RateMatrixImport } from "./rate-matrix";
 import { formatCents } from "@/data/fields";
 import type { IftaRow } from "@/domain/ifta";
 import { computeMilesAction, addFuelPurchaseAction, deleteFuelPurchaseAction, importFuelAction, addTripMilesAction, deleteTripMilesAction, setIftaRatesAction, copyIftaRatesAction } from "../actions";
@@ -27,6 +28,13 @@ export function IftaScreen({ quarter, quarters, report, fuel, trips, rates, memb
   const [pending, start] = useTransition();
   const [tab, setTab] = useState<(typeof TABS)[number][0]>("return");
   const [rateDraft, setRateDraft] = useState(rates);
+  // rates saved elsewhere (the matrix import) replace the draft, so Save never writes old numbers back
+  const ratesKey = JSON.stringify(rates);
+  const [ratesSeen, setRatesSeen] = useState(ratesKey);
+  if (ratesSeen !== ratesKey) {
+    setRatesSeen(ratesKey);
+    setRateDraft(rates);
+  }
   const [fuelOpen, setFuelOpen] = useState(false);
   const [tripOpen, setTripOpen] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -106,8 +114,9 @@ export function IftaScreen({ quarter, quarters, report, fuel, trips, rates, memb
         <div className="card overflow-hidden">
           {canEdit && (
             <div className="flex items-center justify-between gap-3 px-4 py-3 border-b border-line">
-              <div className="text-callout text-muted">Rates in $ per gallon for {quarter.replace("Q", " Q")} from the IFTA rate matrix. They change every quarter.</div>
-              <div className="flex gap-2">
+              <div className="text-callout text-muted">Rates in $ per gallon for {quarter.replace("Q", " Q")} from the IFTA rate matrix. They change every quarter: download the matrix CSV from iftach.org and import it.</div>
+              <div className="flex gap-2 flex-wrap justify-end">
+                <RateMatrixImport quarter={quarter} onDone={(m) => t.ok(m)} />
                 <button className="btn btn-sm" disabled={pending} onClick={() => run(() => copyIftaRatesAction(quarter), (d) => `${d.copied} rate(s) copied from last quarter — check them`)}>
                   Copy last quarter&apos;s rates
                 </button>

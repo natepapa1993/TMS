@@ -828,6 +828,30 @@ body {
     text-transform: none;
     color: var(--color-faint);
   }
+  /* the rail on a short screen (owner #32): tighter rows, and a "More: Safety, Company" hint over a fade */
+  .rail-more {
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    padding: 1.75rem 0.75rem 0.5rem;
+    font-size: 0.8125rem;
+    font-weight: 600;
+    color: var(--color-accent);
+    background: linear-gradient(to bottom, transparent, var(--color-sidebar) 55%);
+  }
+  @media (min-width: 1024px) and (max-height: 960px) {
+    .rail-link {
+      height: 2.125rem; /* 34 */
+    }
+    .rail-section {
+      padding: 0.75rem 0.75rem 0.25rem;
+    }
+  }
 
   .kbd {
     font-family: var(--font-mono);
