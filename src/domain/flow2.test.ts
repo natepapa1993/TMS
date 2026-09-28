@@ -1,4 +1,4 @@
-// Features: F-34.1 F-34.2 F-34.3 F-34.4
+// Features: F-34.1 F-34.2 F-34.3 F-34.4 F-34.5
 import { describe, it, expect, beforeEach } from "vitest";
 import { and, eq } from "drizzle-orm";
 import { truncateAll, makeTenant } from "@/test/helpers";
@@ -12,6 +12,7 @@ import { trackingView, recordPosition, mergedOrderEtas } from "./tracking";
 import { addCheckCall } from "./check-calls";
 import { customerPortalView } from "./customer-portal";
 import { draftStatusReply } from "./mail";
+import { carrierFitsLeg, carriersForLeg } from "./carrier-fit";
 import { availability, gapFor, type Booking } from "./planner-rules";
 import * as X from "./crossing";
 import { clearedCompletesLeg, crossingDriverNext } from "./crossing";
@@ -308,5 +309,30 @@ describe("one ETA everywhere (F-34.4, dispatch N4)", () => {
     await recordPosition(a, { source: "eld", lat: 30.27, lng: -97.74, truckId: f.t211, legId: leg, at: new Date() });
     e = Object.values(await mergedOrderEtas(a.tenantId, o.order.id))[0];
     expect(e.source).toBe("gps");
+  });
+});
+
+describe("the carrier picker fits the leg (F-34.5, dispatch M2)", () => {
+  const norte = { name: "Transportes del Norte", country: "MX", kind: "mx" };
+  const puente = { name: "Puente Drayage", country: "MX", kind: "crossing" };
+  const lts = { name: "Laredo Transfer Services", country: "US", kind: "crossing" };
+  const prairie = { name: "Prairie Wind", country: "US", kind: "us" };
+  const maple = { name: "Maple Leaf", country: "CA", kind: "ca" };
+  const anyUs = { name: "Any US", country: "US", kind: "any" };
+  const legacy = { name: "No kind", country: "MX", kind: null };
+  const all = [norte, puente, lts, prairie, maple, anyUs, legacy];
+  const names = (xs: { name: string }[]) => xs.map((x) => x.name);
+
+  it("MX leg → Mexican carriers; Mexican crossing → transfer carriers; US / Canada legs → US and Canadian carriers", () => {
+    expect(names(carriersForLeg(all, { type: "mx" }).fits)).toEqual(["Transportes del Norte", "No kind"]);
+    expect(names(carriersForLeg(all, { type: "crossing", countries: ["MX", "US"] }).fits)).toEqual(["Puente Drayage", "Laredo Transfer Services", "Any US", "No kind"]);
+    expect(names(carriersForLeg(all, { type: "us" }).fits)).toEqual(["Prairie Wind", "Maple Leaf", "Any US"]);
+    expect(names(carriersForLeg(all, { type: "domestic" }).fits)).toEqual(["Prairie Wind", "Maple Leaf", "Any US"]);
+    // Detroit → Ontario: the long-haul carriers cross themselves
+    expect(names(carriersForLeg(all, { type: "crossing", countries: ["US", "CA"] }).fits)).toEqual(["Puente Drayage", "Laredo Transfer Services", "Prairie Wind", "Maple Leaf", "Any US"]);
+    expect(carrierFitsLeg(prairie, { type: "mx" })).toBe(false);
+    // nobody is lost: the rest are behind Show all
+    const us = carriersForLeg(all, { type: "us" });
+    expect(us.fits.length + us.others.length).toBe(all.length);
   });
 });

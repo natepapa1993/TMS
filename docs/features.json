@@ -1180,6 +1180,15 @@
       "tests": [
         "src/domain/flow2.test.ts"
       ]
+    },
+    {
+      "id": "F-34.5",
+      "name": "The partner carrier picker lists the carriers that fit the leg (MX leg: Mexican carriers; crossing: transfer carriers; US/CA legs: US and Canadian carriers), the rest behind Show all",
+      "milestone": "M34",
+      "status": "done",
+      "tests": [
+        "src/domain/flow2.test.ts"
+      ]
     }
   ]
 }

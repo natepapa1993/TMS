@@ -56,7 +56,7 @@ export default async function DispatchPage({ searchParams }: PageProps<"/dispatc
         .map((t) => ({ id: t.id, legId: t.legId, carrierId: t.carrierId, carrierName: carrierName.get(t.carrierId) ?? "carrier", state: t.state === "sent" && t.expiresAt.getTime() < Date.now() ? "expired" : t.state, channel: t.channel, sentTo: t.sentTo, expiresAt: t.expiresAt.toISOString(), respondedAt: t.respondedAt?.toISOString() ?? null, respondedBy: t.respondedBy, responseNote: t.responseNote, driverName: t.driverName, driverPhone: t.driverPhone, unitNumber: t.unitNumber, rateCents: t.rateCents, link: publicUrl(`/t/${t.token}`), delivery: t.delivery })),
     })),
     customers: customers.map((c) => ({ id: c.id, name: String(c.name), kind: String(c.kind), note: (c.knowledgeMd as string | null) ?? null })).sort((p, q) => p.name.localeCompare(q.name)),
-    carriers: carriers.map((c) => ({ id: c.id, name: String(c.name), country: String(c.country), doNotUse: !!c.doNotUse })).sort((p, q) => p.name.localeCompare(q.name)),
+    carriers: carriers.map((c) => ({ id: c.id, name: String(c.name), country: String(c.country), kind: (c.kind as string | null) ?? null, whatsapp: (c.whatsapp as string | null) ?? null, dispatchEmail: (c.dispatchEmail as string | null) ?? null, doNotUse: !!c.doNotUse })).sort((p, q) => p.name.localeCompare(q.name)),
     drivers: drivers.map((d) => ({ id: d.id, name: String(d.name), driverType: String(d.driverType), currentTruckId: (d.currentTruckId as string | null) ?? null })).sort((p, q) => p.name.localeCompare(q.name)),
     trucks: trucks.map((t) => ({ id: t.id, unitNumber: String(t.unitNumber), status: String(t.status) })).sort((p, q) => p.unitNumber.localeCompare(q.unitNumber, undefined, { numeric: true })),
     role: ctx.role,

@@ -8,6 +8,7 @@ import { Modal, Pill, Confirm, Toast, useToast, KV, Spinner } from "@/components
 import { LEG_LABEL } from "@/domain/states";
 import type { LegState } from "@/db/schema";
 import type { RankedCandidate as Candidate } from "@/domain/planner";
+import { carriersForLeg } from "@/domain/carrier-fit";
 import * as A from "./actions";
 import { BUCKETS, ALERTS, bucketsOf, alertsOf, urgency, currentLeg, nextStop, type BucketKey, type AlertKey } from "@/domain/board-buckets";
 import { fmtIn, fmtWhen, shortDate, stopZone, zonedDate, toZoneInput, fromZoneInput, zoneAbbrev } from "@/lib/time";
@@ -57,7 +58,7 @@ export type BoardData = {
   rows: Row[];
   etas?: Record<string, { at: string; stopId?: string; stopName: string; miles: number | null; late: boolean; positionAt: string; source?: "gps" | "check_call" }>;
   customers: { id: string; name: string; kind: string; note: string | null }[];
-  carriers: { id: string; name: string; country: string; doNotUse: boolean }[];
+  carriers: { id: string; name: string; country: string; kind: string | null; whatsapp?: string | null; dispatchEmail?: string | null; doNotUse: boolean }[];
   drivers: { id: string; name: string; driverType: string; currentTruckId: string | null }[];
   trucks: { id: string; unitNumber: string; status: string }[];
   role: string;
@@ -889,6 +890,15 @@ function AssignModal({ leg, order, data, onClose, onDone }: { leg: Leg; order: O
   const [trailerId, setTrailerId] = useState(leg.trailerId ?? "");
   const [openedAt] = useState(() => Date.now());
   const [carrierId, setCarrierId] = useState(leg.carrierId ?? "");
+  // carriers that fit the leg first (MX leg → Mexican carriers, crossing → transfer carriers, US/CA → US/CA); the rest behind Show all (M2)
+  const legCountries = useMemo(() => {
+    const st = data.rows.find((x) => x.order.id === order.id)?.stops ?? [];
+    const a = st.find((x) => x.id === leg.fromStopId);
+    const b = st.find((x) => x.id === leg.toStopId);
+    return [...new Set(st.filter((x) => a && b && x.seq >= a.seq && x.seq <= b.seq).map((x) => (x.country ?? "US").toUpperCase()))];
+  }, [data.rows, order.id, leg.fromStopId, leg.toStopId]);
+  const carrierLists = useMemo(() => carriersForLeg(data.carriers, { type: leg.type, countries: legCountries }), [data.carriers, leg.type, legCountries]);
+  const [allCarriers, setAllCarriers] = useState(() => !!leg.carrierId && !carriersForLeg(data.carriers, { type: leg.type }).fits.some((c) => c.id === leg.carrierId));
   const [celig, setCelig] = useState<{ ok: boolean; hardBlocked: boolean; findings: { level: string; message: string }[] } | null>(null);
   const [cscore, setCscore] = useState<{ score: { days: number; loads: number; running?: number; answered: number; acceptancePct: number | null; onTimePct: number | null; trackedPct: number | null; billed: number; billedOver: number; overCents: number }; dispatchable: boolean; problems: string[] } | null>(null);
   const [carrierRate, setCarrierRate] = useState(leg.carrierRateCents != null ? (leg.carrierRateCents / 100).toFixed(2) : "");
@@ -1132,12 +1142,21 @@ function AssignModal({ leg, order, data, onClose, onDone }: { leg: Leg; order: O
               }}
             >
               <option value="">—</option>
-              {data.carriers.map((c) => (
+              {(allCarriers ? [...carrierLists.fits, ...carrierLists.others] : carrierLists.fits).map((c) => (
                 <option key={c.id} value={c.id} disabled={c.doNotUse}>
                   {c.name} ({c.country}){c.doNotUse ? " — do not use" : ""}
+                  {allCarriers && carrierLists.others.includes(c) ? " — not their usual leg" : ""}
                 </option>
               ))}
             </select>
+            <div className="help flex items-center gap-2" data-testid="carrier-filter">
+              {allCarriers ? `All ${data.carriers.length} carriers` : `${carrierLists.fits.length} carrier${carrierLists.fits.length === 1 ? "" : "s"} for a ${LEG_TYPE_LABEL[leg.type]} leg`}
+              {carrierLists.others.length > 0 && (
+                <button type="button" className="text-teal font-semibold" onClick={() => setAllCarriers(!allCarriers)}>
+                  {allCarriers ? "Only the ones for this leg" : `Show all (${carrierLists.others.length} more)`}
+                </button>
+              )}
+            </div>
             {celig && celig.findings.some((f) => f.level === "red") && (
               <div className={`mt-1.5 text-callout rounded-lg px-3 py-2 font-semibold ${celig.hardBlocked ? "bg-red-soft text-red" : "bg-amber-soft text-amber"}`} data-testid="carrier-elig">
                 {celig.hardBlocked ? "Can't run this leg: " : "Needs Safety's sign-off: "}
