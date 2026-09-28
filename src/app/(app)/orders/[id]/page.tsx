@@ -12,7 +12,7 @@ import { OrderEditor, StopEditor, OrderActions, LegMiles, AddStop } from "./edit
 import { Charges } from "./charges";
 import { LoadTabs, MoneyBox, PeopleCard, NotesPanel, DocumentsPanel, NOTE_LABEL } from "./load-page";
 import { CheckCallBox } from "../../dispatch/check-call";
-import { fmtIn, stopZone } from "@/lib/time";
+import { fmtWhen, stopZone } from "@/lib/time";
 import type { Loc } from "@/components/stop-fields";
 import { chargesFor, orderPnl, requiredRefsFor } from "@/domain/billing";
 import { db } from "@/db/client";
@@ -23,7 +23,6 @@ export const dynamic = "force-dynamic";
 const LEG_TYPE_LABEL: Record<string, string> = { mx: "MX", ca: "CA", crossing: "Crossing", us: "US", domestic: "Domestic", equipment_move: "Equipment" };
 const STATE_LABEL: Record<string, string> = { draft: "Draft", booked: "Booked", dispatched: "Dispatched", in_transit: "In transit", exception: "On hold", delivered: "Delivered", ready_to_bill: "Ready to bill", invoiced: "Invoiced", paid: "Paid", cancelled: "Cancelled" };
 const EQUIPMENT: Record<string, string> = { "53_dry": "53' dry van", "53_reefer": "53' reefer", "48_dry": "48' dry van", flatbed: "Flatbed", sprinter: "Sprinter", straight: "Straight truck", power_only: "Power only" };
-const when = (d: Date | string | null | undefined) => (d ? new Date(d).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) : "—");
 /** Server rows → plain JSON for client components (dates become strings). */
 const J = (v: unknown) => JSON.parse(JSON.stringify(v));
 
@@ -31,9 +30,14 @@ export default async function OrderPage({ params }: PageProps<"/orders/[id]">) {
   const { id } = await params;
   const ctx = await requireCtx();
   const { timeZone: companyZone } = await (await import("@/domain/company")).getCompany(ctx);
+  await (await import("@/domain/tenders")).expireTenders(new Date(), { tenantId: ctx.tenantId });
   const data = await getOrder(ctx, id).catch(() => null);
   if (!data) notFound();
   const { order, stops, legs } = data;
+  // one clock rule: a stop's time on the stop's clock, anything else (sent, history) on the company's, always labelled
+  const zoneOf = (st: (typeof stops)[number] | undefined | null) => (st ? stopZone(st, companyZone) : companyZone);
+  const when = (d: Date | string | null | undefined, zone = companyZone) => fmtWhen(d, zone, { style: "short" }) ?? "—";
+  const atStop = (d: Date | string | null | undefined, st: (typeof stops)[number] | undefined | null) => fmtWhen(d, zoneOf(st)) ?? "—";
   const [tl, customers, entities, trucks, drivers, carriers, people, locations, notes, docRows] = await Promise.all([
     orderTimeline(ctx, id),
     list(ctx, "customer", { limit: 2000 }),
@@ -80,8 +84,8 @@ export default async function OrderPage({ params }: PageProps<"/orders/[id]">) {
   const margin = headPnl ? headPnl.margin : rate != null && covered ? rate - carrierCost : null;
   const weightLb = (order.freight ?? []).reduce((a, f) => a + (f.weightLb ?? 0), 0) || order.weightLbs || null;
   const facts: [string, string, string?][] = [
-    ["Pickup", when(pickup?.windowStart), place(pickup)],
-    ["Delivery", when(delivery?.windowStart), place(delivery)],
+    ["Pickup", atStop(pickup?.windowStart ?? pickup?.windowEnd, pickup), place(pickup)],
+    ["Delivery", atStop(delivery?.windowStart ?? delivery?.windowEnd, delivery), place(delivery)],
     ["Rate", rate == null ? "TBD" : formatCents(rate, order.currency), order.rateType !== "flat" && order.rateUnitCents != null ? `${formatCents(order.rateUnitCents, order.currency)} × ${order.rateQty ?? "?"}` : undefined],
     ["Carrier cost", carrierCost ? formatCents(carrierCost, order.currency) : "—"],
     ["Margin", margin == null ? "—" : formatCents(margin, order.currency), margin != null && headPnl ? `${headPnl.marginPct}% after carriers, driver pay${headPnl.driverPayEstimated ? " (est.)" : ""}, fuel` : margin != null && rate ? `${((margin / rate) * 100).toFixed(1)}%` : covered ? undefined : "legs not covered yet"],
@@ -96,8 +100,18 @@ export default async function OrderPage({ params }: PageProps<"/orders/[id]">) {
         return { seen, seenMin: seen?.ageMin ?? null, eta: etas[liveLeg.id] ?? null };
       })()
     : null;
-  const destZone = delivery ? stopZone({ country: delivery.country, address: delivery.address }, companyZone) : companyZone;
+  const etaStop = tracking?.eta ? (stops.find((x) => x.name === tracking.eta!.stopName) ?? delivery) : delivery;
+  const destZone = zoneOf(etaStop);
+  /** A leg event happens at a stop: pickup-side steps on the leg's first stop's clock, delivery-side on its last. */
+  const eventZone = (e: { legId: string; stopId: string | null; toState: string | null }) => {
+    if (e.stopId) return zoneOf(stopById.get(e.stopId));
+    const leg = legs.find((l) => l.id === e.legId);
+    if (!leg) return companyZone;
+    const end = ["at_delivery", "completed", "en_route"].includes(e.toState ?? "") ? leg.toStopId : leg.fromStopId;
+    return zoneOf(stopById.get(end ?? ""));
+  };
   const pinned = notes.filter((n) => n.pinned);
+  const locList: Loc[] = locations.map((l) => ({ id: l.id, name: String(l.name), country: String(l.country), kind: String(l.kind), address: (l.address ?? null) as Loc["address"] }));
   const flagsOpen = tl.flags.filter((f) => !f.clearedAt);
 
   const legsTable = (
@@ -138,7 +152,7 @@ export default async function OrderPage({ params }: PageProps<"/orders/[id]">) {
                   <LegMiles legId={l.id} miles={l.plannedMiles} locked={closed || ["invoiced", "paid"].includes(order.state)} />
                 </td>
                 <td className="text-muted text-callout">{l.dispatchedAt ? when(l.dispatchedAt) : "—"}</td>
-                <td className="text-muted text-callout">{l.completedAt ? when(l.completedAt) : "—"}</td>
+                <td className="text-muted text-callout">{l.completedAt ? when(l.completedAt, zoneOf(stopById.get(l.toStopId ?? ""))) : "—"}</td>
               </tr>
             ))}
           </tbody>
@@ -161,11 +175,11 @@ export default async function OrderPage({ params }: PageProps<"/orders/[id]">) {
                 <span className={`timeline-dot mt-1.5 ${e.verified ? "done" : ""}`} title={e.verified ? "Verified (GPS/app)" : "Reported"} />
                 <div>
                   <div>
-                    <span className="font-bold">{leg ? `${LEG_TYPE_LABEL[leg.type]} leg` : "Leg"}</span> → {e.toState ? LEG_LABEL[e.toState as keyof typeof LEG_LABEL] : e.kind}
+                    <span className="font-bold">{leg ? `${LEG_TYPE_LABEL[leg.type]} leg` : "Leg"}</span> → {e.toState ? LEG_LABEL[e.toState as keyof typeof LEG_LABEL] : e.kind === "tender" ? <span className={(e.data as { state?: string } | null)?.state === "expired" || (e.data as { state?: string } | null)?.state === "declined" ? "text-red font-semibold" : ""}>Tender {(e.data as { state?: string } | null)?.state ?? ""}</span> : e.kind}
                     <span className="text-faint"> · {e.source.replace("_", " ")}</span>
                   </div>
                   <div className="text-muted">
-                    {when(e.at)}
+                    {when(e.at, eventZone(e))}
                     {e.userId ? ` · ${who.get(e.userId) ?? ""}` : ""}
                     {e.note ? ` · ${e.note}` : ""}
                   </div>
@@ -292,7 +306,7 @@ export default async function OrderPage({ params }: PageProps<"/orders/[id]">) {
                         </div>
                         {tracking.eta && (
                           <div className={tracking.eta.late ? "text-red font-semibold" : "text-teal font-semibold"}>
-                            ETA {fmtIn(tracking.eta.at, destZone)} at {tracking.eta.stopName} · {tracking.eta.miles} mi{tracking.eta.late ? " — past the window" : ""}
+                            ETA {fmtWhen(tracking.eta.at, destZone)} at {tracking.eta.stopName} · {tracking.eta.miles} mi{tracking.eta.late ? " — past the window" : ""}
                           </div>
                         )}
                       </div>
@@ -338,11 +352,11 @@ export default async function OrderPage({ params }: PageProps<"/orders/[id]">) {
               <div className="max-w-5xl">
                 <div className="flex items-center justify-between mb-4">
                   <div className="text-muted text-body">{restructure ? "Add, move or remove stops; the legs are re-cut from them." : order.lockedAt ? "Unlock the load to change its stops." : "The stops of a delivered or closed load are final."}</div>
-                  {restructure && <AddStop orderId={order.id} stops={stops.map((s) => ({ id: s.id, name: s.name }))} firstOpen={lastReached + 1} zone={companyZone} locations={locations.map((l) => ({ id: l.id, name: String(l.name), country: String(l.country), kind: String(l.kind), address: (l.address ?? null) as Loc["address"] }))} />}
+                  {restructure && <AddStop orderId={order.id} stops={stops.map((s) => ({ id: s.id, name: s.name }))} firstOpen={lastReached + 1} zone={companyZone} locations={locList} />}
                 </div>
                 <div className="space-y-2 card p-4" data-testid="stops-card">
                   {stops.map((s, i) => (
-                    <StopEditor key={s.id} orderId={order.id} index={i} count={stops.length} stop={J(s)} readOnly={readOnly} restructure={restructure} zone={companyZone} />
+                    <StopEditor key={s.id} orderId={order.id} index={i} count={stops.length} stop={J(s)} readOnly={readOnly} restructure={restructure} zone={companyZone} locations={locList} />
                   ))}
                 </div>
               </div>

@@ -5,7 +5,6 @@ import { redirect } from "next/navigation";
 import { act } from "@/lib/action";
 import * as O from "@/domain/orders";
 import type { StopType } from "@/db/schema";
-import { parseDate, parseAddress } from "@/data/fields";
 import { stopTimeProblems } from "@/domain/zones";
 import type { StopPayload } from "@/components/stop-fields";
 
@@ -15,7 +14,6 @@ const touch = (id?: string) => {
   if (id) revalidatePath(`/orders/${id}`);
 };
 
-export type StopForm = { type: StopType; name: string; address: string; country: string; windowStart: string; windowEnd: string; appointment: boolean; contact: string; notes: string; sealIn?: string; sealOut?: string };
 
 
 /** A stop from the builder: a saved location or typed in; "save as a location" creates the location first. */
@@ -211,24 +209,31 @@ export async function updateOrderAction(orderId: string, values: { customerId?: 
   return r;
 }
 
-export async function updateStopAction(orderId: string, stopId: string, st: Partial<StopForm>) {
+/**
+ * Save only what was edited on a stop (the builder's editor on the load page): the structured address merges into
+ * what the stop has, so a new window never loses the city, the state, the coordinates or the stop's time zone.
+ */
+export async function editStopAction(orderId: string, stopId: string, st: Partial<StopPayload> & { sealIn?: string; sealOut?: string }) {
   const r = await act(async (ctx) => {
-    const patch: Record<string, unknown> = {};
+    const patch: Partial<O.StopInput> = {};
     if (st.name !== undefined) patch.name = st.name;
-    if (st.type !== undefined) patch.type = st.type;
-    if (st.country !== undefined) patch.country = st.country;
-    if (st.address !== undefined) patch.address = st.address.trim() ? parseAddress(st.address) : null;
-    // an ISO instant from the form keeps its time; a bare date means noon UTC (a day with no appointment time)
-    const instant = (v: string) => (/\dT\d/.test(v) ? new Date(v) : parseDate(v));
+    if (st.type !== undefined) patch.type = st.type as StopType;
+    if (st.country !== undefined) patch.country = st.country || "US";
+    if (st.locationId !== undefined) patch.locationId = st.locationId || null;
+    const addr: Record<string, string> = {};
+    for (const k of ["line1", "city", "state", "postalCode"] as const) if (st[k] !== undefined) addr[k] = st[k] ?? "";
+    if (st.country !== undefined) addr.country = st.country || "US";
+    if (Object.keys(addr).length) patch.address = addr as O.StopInput["address"];
     for (const k of ["windowStart", "windowEnd"] as const)
       if (st[k] !== undefined) {
-        const d = st[k] ? instant(st[k]!) : null;
-        if (st[k] && (!d || Number.isNaN(d.getTime()))) throw Object.assign(new Error("That time could not be read"), { name: "ValidationError", field: k });
+        const d = st[k] ? new Date(st[k]!) : null;
+        if (d && Number.isNaN(d.getTime())) throw Object.assign(new Error("That time could not be read"), { name: "ValidationError", field: k });
         patch[k] = d;
       }
-    if (st.appointment !== undefined) patch.appointment = st.appointment;
+    if (st.appointment !== undefined) patch.appointment = !!st.appointment;
     if (st.contact !== undefined) patch.contact = st.contact || null;
     if (st.notes !== undefined) patch.notes = st.notes || null;
+    if (st.ref !== undefined) patch.refs = { reference: st.ref };
     if (st.sealIn !== undefined) patch.sealIn = st.sealIn || null;
     if (st.sealOut !== undefined) patch.sealOut = st.sealOut || null;
     return O.updateStop(ctx, stopId, patch);

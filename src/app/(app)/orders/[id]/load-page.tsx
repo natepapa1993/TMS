@@ -5,6 +5,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { Toast, useToast } from "@/components/ui";
 import { updateOrderAction, addNoteAction, pinNoteAction, deleteNoteAction } from "../actions";
 import { UploadDoc } from "@/app/(app)/billing/queue";
+import { useClock } from "@/components/zone";
 
 /* ---------- tabs ---------- */
 
@@ -250,6 +251,7 @@ export const NOTE_LABEL: Record<string, string> = { general: "General", dispatch
 const NOTE_TONE: Record<string, string> = { general: "slate", dispatch: "blue", billing: "green", safety: "red", customer: "teal" };
 
 export function NotesPanel({ orderId, notes, me, isOwner }: { orderId: string; notes: Note[]; me: string | null; isOwner: boolean }) {
+  const clock = useClock();
   const router = useRouter();
   const t = useToast();
   const [kind, setKind] = useState("general");
@@ -287,7 +289,7 @@ export function NotesPanel({ orderId, notes, me, isOwner }: { orderId: string; n
                 <span className={`pill pill-${NOTE_TONE[n.kind] ?? "slate"}`}>{NOTE_LABEL[n.kind] ?? n.kind}</span>
                 {n.pinned && <span className="text-footnote font-bold text-teal">Pinned</span>}
                 <span className="text-footnote text-muted ml-auto">
-                  {n.author ?? "someone"} · {new Date(n.createdAt).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}
+                  {n.author ?? "someone"} · {clock.at(n.createdAt, { style: "short" })}
                 </span>
               </div>
               <div className="text-body whitespace-pre-wrap">{n.body}</div>
@@ -347,6 +349,7 @@ const DOC_CODES: [string, string][] = [
 ];
 
 export function DocumentsPanel({ orderId, docs, required, canUpload }: { orderId: string; docs: Doc[]; required: string[]; canUpload: boolean }) {
+  const clock = useClock();
   const router = useRouter();
   const [uploadFor, setUploadFor] = useState<string | null>(null);
   const [code, setCode] = useState("RATE_CON");
@@ -377,7 +380,7 @@ export function DocumentsPanel({ orderId, docs, required, canUpload }: { orderId
                     </a>
                   </td>
                   <td className="text-muted text-callout">{d.author ?? d.source.replace(/_/g, " ")}</td>
-                  <td className="text-muted text-callout">{new Date(d.createdAt).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}</td>
+                  <td className="text-muted text-callout">{clock.at(d.createdAt, { style: "short" })}</td>
                   <td>
                     <span className={`pill ${d.status === "verified" ? "pill-green" : d.status === "pending" ? "pill-amber" : "pill-slate"}`}>{d.status}</span>
                   </td>

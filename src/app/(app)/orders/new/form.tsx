@@ -413,7 +413,7 @@ export function OrderForm({ customers, entities, locations, templates = [], zone
               {stops.map((st, i) => {
                 const isOpen = open.has(st.key);
                 const place = placeLine(st);
-                const when = timeLine(st);
+                const when = timeLine(st, zone);
                 const missing = err?.field === "stops" && !st.name.trim();
                 return (
                   <li key={st.key} className="relative pl-12 md:pl-14">

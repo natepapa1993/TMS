@@ -7,7 +7,7 @@
  */
 
 import type { ReactNode } from "react";
-import { stopZone, fromZoneInput, zoneAbbrev } from "@/lib/time";
+import { stopZone, fromZoneInput, toZoneInput, zoneAbbrev, fmtWhen, fmtWindow } from "@/lib/time";
 
 export type Loc = { id: string; name: string; country: string; kind: string; address: { line1?: string; city?: string; state?: string; postalCode?: string; country?: string } | null };
 
@@ -61,17 +61,16 @@ export function fromLocation(st: StopDraft, l: Loc): StopDraft {
 /** "Canton, MI · US" */
 export const placeLine = (st: Pick<StopDraft, "city" | "state" | "country">) => [[st.city, st.state].filter(Boolean).join(", "), st.country].filter(Boolean).join(" · ");
 
-/** "Oct 2, 8:00 AM – 2:00 PM" / "Appt Oct 2, 9:30 AM" / "" */
-export function timeLine(st: Pick<StopDraft, "appointment" | "windowStart" | "windowEnd">) {
+/** "Oct 2, 8:00 AM – 2:00 PM CST" / "Appt Oct 2, 9:30 AM CST" / "": the typed wall clock, on the stop's own clock. */
+export function timeLine(st: Pick<StopDraft, "appointment" | "windowStart" | "windowEnd" | "country" | "state" | "city" | "name">, companyZone = "America/Chicago") {
   if (!st.windowStart) return "";
-  const a = new Date(st.windowStart);
-  const day = a.toLocaleDateString("en-US", { month: "short", day: "numeric" });
-  const t = (d: Date) => d.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
-  if (st.appointment) return `Appt ${day}, ${t(a)}`;
-  if (!st.windowEnd) return `${day}, from ${t(a)}`;
-  const b = new Date(st.windowEnd);
-  const sameDay = b.toDateString() === a.toDateString();
-  return `${day}, ${t(a)} – ${sameDay ? "" : `${b.toLocaleDateString("en-US", { month: "short", day: "numeric" })}, `}${t(b)}`;
+  const z = draftZone(st, companyZone);
+  const a = fromZoneInput(st.windowStart, z);
+  if (!a) return "";
+  const b = st.windowEnd ? fromZoneInput(st.windowEnd, z) : null;
+  if (st.appointment) return `Appt ${fmtWhen(a, z, { style: "short" })}`;
+  if (!b) return `${fmtWhen(a, z, { style: "short" })} onward`;
+  return fmtWindow(a, b, z, { short: true }) ?? "";
 }
 
 function Group({ title, children }: { title: string; children: ReactNode }) {
@@ -230,10 +229,34 @@ export function StopFields({ stop, onChange, locations, index, invalid, companyZ
   );
 }
 
-/** What the server needs from a draft stop. */
-/** The zone a stop's times are typed in: the stop's own (its state or province, else its country), else the company's. */
-export function draftZone(st: Pick<StopDraft, "country" | "state">, companyZone = "America/Chicago") {
-  return stopZone({ country: st.country, address: { state: st.state } }, companyZone);
+/** The zone a stop's times are typed in: a border city's own clock, else its state or province, else its country, else the company's. */
+export function draftZone(st: Pick<StopDraft, "country" | "state"> & Partial<Pick<StopDraft, "city" | "name">>, companyZone = "America/Chicago") {
+  return stopZone({ country: st.country, name: st.name ?? null, address: { state: st.state, city: st.city ?? null } }, companyZone);
+}
+
+type SavedStop = { id?: string; type: string; locationId?: string | null; name: string; country: string; address: { line1?: string; city?: string; state?: string; postalCode?: string } | null; windowStart: string | Date | null; windowEnd: string | Date | null; appointment: boolean; contact: string | null; notes: string | null; refs?: Record<string, string> | null };
+
+/** A saved stop as the editor's draft: its structured address as is, its times on its own clock. */
+export function draftFromStop(st: SavedStop, companyZone = "America/Chicago"): StopDraft {
+  const a = st.address ?? {};
+  const d: StopDraft = { key: st.id ?? `s${n++}`, type: st.type, locationId: st.locationId ?? null, name: st.name, line1: a.line1 ?? "", city: a.city ?? "", state: a.state ?? "", postalCode: a.postalCode ?? "", country: st.country || "US", appointment: st.appointment, windowStart: "", windowEnd: "", ref: st.refs?.reference ?? st.refs?.pickup ?? st.refs?.delivery ?? "", contact: st.contact ?? "", notes: st.notes ?? "", saveLocation: false };
+  const z = draftZone(d, companyZone);
+  return { ...d, windowStart: toZoneInput(st.windowStart, z), windowEnd: toZoneInput(st.windowEnd, z) };
+}
+
+/**
+ * Only what the dispatcher changed, as the server wants it (B4: saving a new window must not touch the city, the
+ * state or the coordinates). Times are sent when they were edited or when the stop moved to another clock.
+ */
+export function stopPatch(before: StopDraft, after: StopDraft, companyZone = "America/Chicago"): Partial<StopPayload> {
+  const out: Record<string, unknown> = {};
+  const trim = (v: string) => v.trim();
+  for (const k of ["type", "locationId", "country", "appointment"] as const) if (before[k] !== after[k]) out[k] = after[k];
+  for (const k of ["name", "line1", "city", "state", "postalCode", "ref", "contact", "notes"] as const) if (trim(before[k]) !== trim(after[k])) out[k] = trim(after[k]);
+  const zb = draftZone(before, companyZone);
+  const za = draftZone(after, companyZone);
+  for (const k of ["windowStart", "windowEnd"] as const) if (before[k] !== after[k] || zb !== za) out[k] = after[k] ? (fromZoneInput(after[k], za)?.toISOString() ?? "") : "";
+  return out as Partial<StopPayload>;
 }
 
 /** What the server gets for a stop: times typed on the stop's own clock become instants. */
