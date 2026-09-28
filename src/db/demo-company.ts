@@ -56,7 +56,7 @@ export async function ensureDemoCompany(opts: { force?: boolean; now?: Date } = 
 }
 
 /** Bump when the builder changes: every deployment then rebuilds the demo once with the new data. */
-const DEMO_VERSION = 3;
+const DEMO_VERSION = 4;
 const BASE = { demo: true, dispatchPhone: "+1 956 555 0142" };
 
 async function ensure(opts: { force?: boolean; now?: Date }): Promise<string> {
@@ -233,7 +233,7 @@ async function build(a: Ctx, nowDate: Date) {
   const fut = (d: number) => new Date(now + d * DAY);
   const truck = async (unit: string, extra: Record<string, unknown> = {}) => (await create(a, "truck", { unitNumber: unit, usPlate: `TX${unit}F`, usPlateExpires: fut(240), mxPlate: `${unit}-FF-${unit.slice(-1)}`, mxPlateExpires: fut(240), dotInspectionExpires: fut(150), year: 2023, make: "Freightliner", model: "Cascadia", ...extra })).id;
   const T: Record<string, string> = {};
-  for (const u of ["201", "202", "203", "204", "205", "206", "207", "208", "209", "210", "211", "212", "213", "214", "215"]) T[u] = await truck(u, u === "204" ? { usPlateExpires: fut(9) } : u === "209" ? { dotInspectionExpires: fut(-2) } : u === "210" ? { make: "Kenworth", model: "T680" } : {});
+  for (const u of ["201", "202", "203", "204", "205", "206", "207", "208", "209", "210", "211", "212", "213", "214", "215"]) T[u] = await truck(u, u === "204" ? { usPlateExpires: fut(9) } : u === "209" ? { dotInspectionExpires: fut(6) } : u === "210" ? { make: "Kenworth", model: "T680", dotInspectionExpires: fut(-2) } : {});
   const R: Record<string, string> = {};
   for (const [u, kind] of [["5301", "53_dry"], ["5302", "53_dry"], ["5303", "53_dry"], ["5304", "53_dry"], ["5305", "53_dry"], ["5306", "53_reefer"], ["5307", "53_reefer"], ["5308", "53_dry"], ["5309", "53_dry"], ["5310", "53_dry"]] as const) R[u] = (await create(a, "trailer", { unitNumber: u, kind, lengthFt: 53, usPlate: `TR${u}`, inspectionExpires: fut(u === "5305" ? 12 : 200) })).id;
   const driver = async (name: string, truckId: string | null, extra: Record<string, unknown> = {}) => (await create(a, "driver", { name, driverType: "CDL", phone: `+1 956 555 01${String(Math.floor(Math.random() * 90) + 10)}`, whatsapp: null, licenseState: "TX", licenseNumber: `TX${Math.floor(10000000 + Math.random() * 8999999)}`, licenseClass: "A", licenseExpires: fut(600), medicalExpires: fut(300), fastExpires: fut(500), currentTruckId: truckId, hireDate: fut(-400), payType: "per_mile", payRateCents: 62, ...extra })).id;
@@ -258,6 +258,25 @@ async function build(a: Ctx, nowDate: Date) {
   };
   const truckOf: Record<string, string> = { [D.rafael]: T["201"], [D.marisol]: T["202"], [D.jorge]: T["203"], [D.kevin]: T["204"], [D.luz]: T["205"], [D.arturo]: T["206"], [D.hector]: T["207"], [D.priya]: T["208"], [D.tomas]: T["209"], [D.denise]: T["210"], [D.ramiro]: T["211"], [D.sofia]: T["211"], [D.oscar]: T["212"], [D.mateo]: T["213"], [D.carlos]: T["214"], [D.beto]: T["215"] };
   const on = (d: string, trailer?: string) => ({ kind: "truck" as const, truckId: truckOf[d], driverId: d, trailerId: trailer ?? null });
+
+  // ---------------- the qualification files (before any load: a driver without them can't be dispatched) ----------------
+  // n = how much of the file is on record; Tomás (hired 12 days ago) still owes the road test certificate — the owner vouches for it on his loads
+  for (const [d, n] of [[D.rafael, 9], [D.marisol, 9], [D.jorge, 9], [D.kevin, 7], [D.luz, 9], [D.arturo, 8], [D.hector, 9], [D.priya, 6], [D.denise, 9], [D.ramiro, 9], [D.sofia, 9], [D.oscar, 8], [D.mateo, 9], [D.carlos, 9], [D.beto, 9]] as const)
+    await step("dq file", async () => {
+      const items = ["application", "mvr_hire", "road_test", "clearinghouse_full", "prior_employers", "mvr_annual", "annual_review", "clearinghouse_annual"].slice(0, n);
+      for (const k of items) await S.recordDq(a, d, k, { completedAt: new Date(now - (k.includes("annual") ? 120 : 380) * DAY), note: k === "annual_review" ? "Reviewed by S. Guerra" : null });
+      await S.addTest(a, { driverId: d, reason: "pre_employment", substance: "drug", collectedAt: new Date(now - 395 * DAY), result: "negative", specimenId: `CCF-${Math.floor(1000000 + Math.random() * 8999999)}`, collector: "Laredo Occupational Health (demo)" });
+    });
+  await step("dq file: Tomás (new hire, road test certificate outstanding)", async () => {
+    for (const k of ["application", "mvr_hire", "clearinghouse_full"]) await S.recordDq(a, D.tomas, k, { completedAt: new Date(now - 14 * DAY) });
+    await S.addTest(a, { driverId: D.tomas, reason: "pre_employment", substance: "drug", collectedAt: new Date(now - 16 * DAY), result: "negative", specimenId: "CCF-7730112", collector: "Laredo Occupational Health (demo)" });
+  });
+  // a hire in progress: the pre-employment result isn't back, so he can't be dispatched and nobody can override it
+  await step("new hire: Diego, pre-employment result pending", async () => {
+    const diego = (await create(a, "driver", { name: "Diego Ramírez", driverType: "CDL", phone: "+1 956 555 0177", licenseState: "TX", licenseNumber: "TX40551287", licenseClass: "A", licenseExpires: fut(1400), medicalExpires: fut(700), hireDate: fut(-1), payType: "per_mile", payRateCents: 60 })).id;
+    for (const k of ["application", "road_test", "clearinghouse_full"]) await S.recordDq(a, diego, k, { completedAt: new Date(now - 1 * DAY) });
+    await S.addTest(a, { driverId: diego, reason: "pre_employment", substance: "drug", collectedAt: new Date(now - 1 * DAY), result: "pending", specimenId: "CCF-7730187", collector: "Laredo Occupational Health (demo)" });
+  });
 
   // ---------------- helpers for the day ----------------
   /** Walk a leg to a state with realistic stamps; t0 = when the truck started rolling to pickup. */
@@ -424,7 +443,7 @@ async function build(a: Ctx, nowDate: Date) {
   await step("portal request (draft)", () => portalRequestLoad(a.tenantId, C.sierra, { pickup: { name: "Sierra Madre Components — Apodaca", city: "Apodaca", state: "NL", country: "MX", windowStart: appt(2, 8) }, delivery: { name: "Alamo Auto Plant — San Antonio", city: "San Antonio", state: "TX", country: "US" }, equipment: "53_dry", po: "SMC-REQ-9921", cargoNote: "22 pallets harnesses", contact: "Lucía, logística" }));
   await step("truck 210 OOS", () => O.setTruckOos(a, T["210"], "Annual inspection failed — brake chamber", fut(2)));
   await step("vacation: Beto", () => addEvent(a, { subjectKind: "driver", subjectId: D.beto, kind: "vacation", startsAt: appt(-2, 0), endsAt: appt(4, 0), hard: true, note: "Family trip to Monterrey" }));
-  await step("time off: Denise", () => addEvent(a, { subjectKind: "driver", subjectId: D.denise, kind: "other", startsAt: appt(0, 0), endsAt: appt(3, 0), hard: true, note: "Off until the licence renewal clears at DPS" }));
+  await step("time off: Denise", () => addEvent(a, { subjectKind: "driver", subjectId: D.denise, kind: "credentials", startsAt: appt(0, 0), endsAt: appt(3, 0), hard: true, note: "Off until the licence renewal clears at DPS" }));
 
   // ---------------- delivered this week → the billing queue ----------------
   const delivered: { id: string; num: string }[] = [];
@@ -517,12 +536,11 @@ async function build(a: Ctx, nowDate: Date) {
 
   // ---------------- safety ----------------
   await step("document type: medical card", () => create(a, "documentType", { name: "Drug & alcohol policy receipt", appliesTo: "driver", tracksExpiry: false, required: false, blocksDispatch: false }));
-  for (const [d, n] of [[D.rafael, 9], [D.marisol, 9], [D.jorge, 9], [D.kevin, 7], [D.luz, 9], [D.arturo, 8], [D.hector, 9], [D.priya, 6], [D.tomas, 3], [D.denise, 9], [D.ramiro, 9], [D.sofia, 9], [D.oscar, 8], [D.mateo, 9], [D.carlos, 9], [D.beto, 9]] as const)
-    await step("dq file", async () => {
-      const items = ["application", "mvr_hire", "road_test", "clearinghouse_full", "prior_employers", "mvr_annual", "annual_review", "clearinghouse_annual"].slice(0, n);
-      for (const k of items) await S.recordDq(a, d, k, { completedAt: new Date(now - (k.includes("annual") ? 120 : 380) * DAY), note: k === "annual_review" ? "Reviewed by S. Guerra" : null });
-      if (n >= 6) await S.addTest(a, { driverId: d, reason: "pre_employment", substance: "drug", collectedAt: new Date(now - 395 * DAY), result: "negative", specimenId: `CCF-${Math.floor(1000000 + Math.random() * 8999999)}`, collector: "Laredo Occupational Health (demo)" });
-    });
+  // Jorge's medical card runs out in 11 days: he photographed the new one in the driver app; Safety confirms it
+  await step("renewal from the driver app: Jorge's medical card", async () => {
+    const { driverUploadRenewal } = await import("@/domain/compliance");
+    await driverUploadRenewal(a.tenantId, D.jorge, { uploadKey: "field:medicalExpires", fileName: "medical-card.pdf", mimeType: "application/pdf", bytes: await pdf("Medical Examiner's Certificate — Jorge Villarreal", ["Expires in 24 months"]), expiresAt: fut(720) });
+  });
   await step("D&A random draw", async () => {
     const q = Math.floor(new Date(now).getUTCMonth() / 3) + 1;
     await S.drawRandom(a, { period: `${new Date(now).getUTCFullYear()}-Q${q}`, drugRate: 50, alcoholRate: 10, drawsPerYear: 4 });
@@ -530,7 +548,12 @@ async function build(a: Ctx, nowDate: Date) {
   await step("inspections", async () => {
     await S.saveInspection(a, null, { inspectedAt: new Date(now - 9 * DAY), country: "US", jurisdiction: "TX", level: 2, driverId: D.hector, truckId: T["207"], reportNumber: "TXDEMO0001", location: "Laredo, World Trade Bridge", violations: [{ code: "393.9", description: "Inoperable required lamp", severity: 6, oos: false }] });
     await S.saveInspection(a, null, { inspectedAt: new Date(now - 30 * DAY), country: "US", jurisdiction: "TX", level: 1, driverId: D.jorge, truckId: T["203"], reportNumber: "TXDEMO0002", violations: [] });
-    await S.saveInspection(a, null, { inspectedAt: new Date(now - 64 * DAY), country: "US", jurisdiction: "OK", level: 1, driverId: D.rafael, truckId: T["201"], reportNumber: "OKDEMO0003", violations: [{ code: "395.8(e)", description: "False report of driver's record of duty status", severity: 7, oos: true }, { code: "396.3(a)(1)", description: "Brakes out of adjustment", severity: 4, oos: false }] });
+    await S.saveInspection(a, null, { inspectedAt: new Date(now - 64 * DAY), country: "US", jurisdiction: "OK", level: 1, driverId: D.rafael, truckId: T["201"], reportNumber: "OKDEMO0003", driverOosUntil: new Date(now - 64 * DAY + 10 * H), violations: [{ code: "395.8(e)", description: "False report of driver's record of duty status", severity: 7, oos: true }, { code: "396.3(a)(1)", description: "Brakes out of adjustment", severity: 4, oos: false }] });
+    // Monday's brake OOS on 205's trailer: fixed at the shop and signed off
+    const brake = await S.saveInspection(a, null, { inspectedAt: new Date(now - 3 * DAY), country: "US", jurisdiction: "TX", level: 1, driverId: D.luz, truckId: T["205"], trailerId: R["5305"], reportNumber: "TXDEMO0006", location: "I-35 N scale, Laredo", violations: [{ code: "393.47(e)", oos: true, on: "trailer" }] });
+    await S.signOffRepair(a, brake.id, { note: "Slack adjusters replaced, brakes adjusted — Laredo Truck Repair, RO 5521", at: new Date(now - 3 * DAY + 5 * H) });
+    // a Canadian inspection is kept as written (no BASIC, no SMS weight)
+    await S.saveInspection(a, null, { inspectedAt: new Date(now - 18 * DAY), country: "CA", jurisdiction: "ON", level: 2, driverId: D.priya, truckId: T["208"], reportNumber: "ONDEMO0007", violations: [{ code: "NSC 13 s.6", description: "Daily trip inspection report not carried", unit: "vehicle" }] });
     await S.saveInspection(a, null, { inspectedAt: new Date(now - 40 * DAY), country: "CA", jurisdiction: "ON", level: 2, driverId: D.priya, truckId: T["208"], reportNumber: "ONDEMO0004", violations: [] });
     await S.saveInspection(a, null, { inspectedAt: new Date(now - 120 * DAY), country: "US", jurisdiction: "TX", level: 3, driverId: D.arturo, reportNumber: "TXDEMO0005", violations: [{ code: "391.11(b)(2)", description: "Non-English-speaking driver", severity: 4, oos: false, removed: true }] });
   });
