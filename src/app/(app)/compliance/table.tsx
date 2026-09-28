@@ -59,10 +59,10 @@ export function ComplianceTable({ kind, path, columns, rows, role }: { kind: Sub
                     )
                   ) : (
                     <div>
-                      <span className="pill pill-red" title={blockSentence(r.st)}>
+                      <span className="pill pill-red" title={blockSentence(rollup(r.st.items))}>
                         blocked
                       </span>
-                      <div className="text-caption text-red mt-0.5 max-w-[220px]">{blockSentence(r.st)}</div>
+                      <div className="text-caption text-red mt-0.5 max-w-[220px]">{blockSentence(rollup(r.st.items))}</div>
                       {canEdit && !rollup(r.st.items).hard && (
                         <button className="btn btn-ghost btn-sm ml-1 text-footnote" onClick={() => setOverrideFor(r)}>
                           24h override
@@ -149,7 +149,7 @@ export function ComplianceTable({ kind, path, columns, rows, role }: { kind: Sub
         </div>
         <div className="help mt-2">The reminder goes quiet until then — it does not make anyone dispatchable: an expired or missing item that blocks still blocks. To let a blocked driver or unit run, use a 24-hour override. Up to 90 days.</div>
       </Modal>
-      <Confirm open={!!overrideFor} onClose={() => setOverrideFor(null)} title={`Dispatch override · ${overrideFor?.label ?? ""}`} body={<span>Blocked by: {overrideFor?.st ? blockSentence(overrideFor.st) : ""}. The override lasts 24 hours and is logged with your name. What the law requires (licence, medical card, plates, the drug test, a safety hold…) can never be overridden.</span>} needReason="Reason" confirmLabel="Override for 24 h" danger onConfirm={async (reason) => { const row = overrideFor!; setOverrideFor(null); const r = await overrideDispatchAction(kind, row.id, reason); if (r.ok) { t.ok("Override active for 24 h"); router.refresh(); } else t.err(r.error); }} />
+      <Confirm open={!!overrideFor} onClose={() => setOverrideFor(null)} title={`Dispatch override · ${overrideFor?.label ?? ""}`} body={<span>Blocked by: {overrideFor?.st ? blockSentence(rollup(overrideFor.st.items)) : ""}. The override lasts 24 hours and is logged with your name. What the law requires (licence, medical card, plates, the drug test, a safety hold…) can never be overridden.</span>} needReason="Reason" confirmLabel="Override for 24 h" danger onConfirm={async (reason) => { const row = overrideFor!; setOverrideFor(null); const r = await overrideDispatchAction(kind, row.id, reason); if (r.ok) { t.ok("Override active for 24 h"); router.refresh(); } else t.err(r.error); }} />
       <Toast message={t.toast?.message ?? null} tone={t.toast?.tone} onDone={t.clear} />
     </div>
   );

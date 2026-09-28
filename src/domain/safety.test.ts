@@ -265,6 +265,9 @@ describe("hire prerequisites block by default (blocker 1)", () => {
     const c = (await candidatesForLeg(co, o.legs[0].id)).find((x) => x.truckId === t.id)!;
     expect(c.hardBlocked).toBe(true);
     expect(c.reason).toBe("Diego Ramírez: Pre-employment drug test result not in");
+    // …and the planner never shows the truck as available
+    const { plannerData } = await import("./planner");
+    expect((await plannerData(co)).trucks.find((x) => x.truckId === t.id)).toMatchObject({ status: "unavailable", why: "Diego: Pre-employment drug test result not in" });
     // the result comes back negative: dispatchable
     const test = (await S.driverTests(co, diego.id)).tests[0];
     await S.recordResult(co, test.id, { result: "negative" });

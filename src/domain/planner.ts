@@ -7,6 +7,7 @@ import { coords, roadMiles } from "@/lib/geo";
 import { assertCtx, requirePermission, type Ctx } from "@/lib/context";
 import { writeAudit } from "@/lib/audit";
 import type { Finding } from "./eligibility";
+import { rollup } from "./compliance-rules";
 import { NotFoundError, ValidationError } from "./orders";
 
 /**
@@ -254,11 +255,8 @@ export async function plannerData(ctx: Ctx, now = new Date()) {
 
   // ---- by truck ----
   const blockOf = (kind: string, id: string) => blocked.find((b) => b.subjectKind === kind && b.subjectId === id);
-  const blockWhy = (b: (typeof blocked)[number]) => {
-    const i = b.items.find((x) => x.blocksDispatch && ["expired", "missing"].includes(x.status === "snoozed" ? (x.underlying ?? "") : x.status));
-    const label = (i?.label ?? b.expired[0] ?? b.missing[0] ?? "").replace(/ (expiry|expires)$/i, "");
-    return label ? `${label} ${i && (i.status === "missing" || i.underlying === "missing") ? "missing" : "expired"}` : "paperwork blocks dispatch";
-  };
+  // the plain reason that actually blocks (the hard one first): "Pre-employment drug test result not in", "Licence expired"
+  const blockWhy = (b: (typeof blocked)[number]) => rollup(b.items).blockers[0] ?? "paperwork blocks dispatch";
   const byOrder = new Map<string, typeof allLegCounts>();
   for (const l of allLegCounts) byOrder.set(l.orderId, [...(byOrder.get(l.orderId) ?? []), l]);
   const fmtUntil = (d: Date) => d.toLocaleString("en-US", { month: "short", day: "numeric", timeZone: "America/Chicago" });
