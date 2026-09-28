@@ -263,6 +263,7 @@ export async function createOrder(ctx: Ctx, input: CreateOrderInput) {
     }));
     const stops = await tx.insert(s.stops).values(stopRows).returning();
 
+    const { estimateMiles } = await import("./miles");
     const legRows = template.legs.map((lg, i) => ({
       id: newId(),
       tenantId: ctx.tenantId,
@@ -272,14 +273,11 @@ export async function createOrder(ctx: Ctx, input: CreateOrderInput) {
       fromStopId: stops[lg.from].id,
       toStopId: stops[lg.to].id,
       state: "unassigned" as LegState,
+      estMiles: estimateMiles(stops[lg.from], stops[lg.to]), // "est." until someone types the miles (M15)
       createdBy: ctx.userId,
       updatedBy: ctx.userId,
     }));
-    let legs = legRows.length ? await tx.insert(s.legs).values(legRows).returning() : []; // a tailgate shipment has none: its trip moves it
-    if (legs.length) {
-      await refreshEstMiles(tx, ctx.tenantId, orderId);
-      legs = await loadLegs(tx, ctx, orderId);
-    }
+    const legs = legRows.length ? await tx.insert(s.legs).values(legRows).returning() : []; // a tailgate shipment has none: its trip moves it
 
     let finalOrder = order;
     if (input.book) finalOrder = await bookIn(tx, ctx, order, stops);
