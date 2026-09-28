@@ -109,7 +109,7 @@ async function collect(ctx: Ctx, opts: { from: string; to: string; onlyNew: bool
   const payRows = await pick(opts.ids?.payments, () => db.select().from(s.payments).where(and(eq(s.payments.tenantId, ctx.tenantId), inWindow(s.payments.receivedAt), ...(opts.onlyNew ? [isNull(s.payments.exportedAt)] : []))), (ids) => db.select().from(s.payments).where(and(eq(s.payments.tenantId, ctx.tenantId), inArray(s.payments.id, ids))));
   const payRcptsAll = payRows.length ? await db.select().from(s.receipts).where(inArray(s.receipts.paymentId, payRows.map((p) => p.id))) : [];
   // a payment whose receipts all went out before payments were exported as deposits (older runs) is not sent again
-  const oldStyle = new Set(opts.ids ? [] : payRows.filter((p) => payRcptsAll.some((r) => r.paymentId === p.id) && payRcptsAll.filter((r) => r.paymentId === p.id).every((r) => r.exportedAt)).map((p) => p.id));
+  const oldStyle = new Set(opts.ids || !opts.onlyNew ? [] : payRows.filter((p) => !p.exportedAt && payRcptsAll.some((r) => r.paymentId === p.id) && payRcptsAll.filter((r) => r.paymentId === p.id).every((r) => r.exportedAt)).map((p) => p.id));
   payRows.splice(0, payRows.length, ...payRows.filter((p) => !oldStyle.has(p.id)));
   const payRcpts = payRcptsAll.filter((r) => !oldStyle.has(r.paymentId ?? ""));
   // single receipts recorded on an invoice (not through a payment), and never the factor's collection of a funded invoice

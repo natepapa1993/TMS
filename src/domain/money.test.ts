@@ -22,7 +22,6 @@ import { zonedDate } from "@/lib/time";
 
 const future = new Date(Date.now() + 365 * 86400_000);
 const afterWeek = new Date(Date.now() + 8 * 86400_000);
-const pdf = Buffer.from("%PDF-1.4 fixture");
 let a: Awaited<ReturnType<typeof makeTenant>>;
 let f: { entity: string; usCust: string; mxCust: string; caCust: string; garza: string; lone: string; t1: string; reyes: string };
 
@@ -382,6 +381,16 @@ describe("QuickBooks export", () => {
     const files = (await A.exportFiles(a, q.id)).files;
     expect(files.find((x) => x.name.endsWith("journal.csv"))!.body).toContain("Factor Reserve");
     expect(files.find((x) => x.name.endsWith("payments.csv"))!.body.split("\r\n").filter((l) => l.includes(",90417,"))).toHaveLength(3);
+  });
+
+  it("a payment an older export already sent receipt by receipt is not sent again as a deposit", async () => {
+    const i1 = await invoice((await delivered({ customerId: f.usCust, rateCents: 74000 })).order.id);
+    await C.applyPayment(a, { customerId: f.usCust, amountCents: 74000, currency: "USD", method: "check", reference: "88", applications: [{ invoiceId: i1.id, amountCents: 74000 }] });
+    const { receipts } = await import("@/db/schema");
+    await db.update(receipts).set({ exportedAt: new Date() }).where(eq(receipts.invoiceId, i1.id)); // what an older run stamped
+    const period = { from: zonedDate(new Date(Date.now() - 5 * 86400_000), "America/Detroit"), to: zonedDate(new Date(), "America/Detroit") };
+    expect((await A.previewExport(a, { ...period, onlyNew: true })).receipts).toBe(0);
+    expect((await A.previewExport(a, { ...period, onlyNew: false })).receipts).toBe(1);
   });
 
   it("a peso invoice goes out in dollars at its own rate, with the original in the memo", async () => {
