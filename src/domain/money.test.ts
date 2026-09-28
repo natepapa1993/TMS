@@ -288,6 +288,9 @@ describe("driver pay is safe to approve", () => {
     await B.settlementTransition(a, st.id, "paid", { method: "ach" });
     // a leg from last week recorded after last week was paid, with no miles
     const late = await delivered({ customerId: f.usCust, rateCents: 90000, miles: null, at: mid });
+    // stops the city list doesn't know: no estimate either, so the line really has no miles
+    const S = await import("@/db/schema");
+    await db.update(S.legs).set({ estMiles: null }).where(eq(S.legs.id, late.legs[0].id));
     const now = B.weekOf(new Date());
     let cur = await B.buildSettlement(a, f.reyes, now.start, now.end);
     const line = cur.lines.find((l) => l.legId === late.legs[0].id)!;
