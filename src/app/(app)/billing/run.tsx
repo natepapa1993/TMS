@@ -13,17 +13,23 @@ const METHOD: Record<string, string> = { email: "Email + docs", factor: "Factor 
 export function BillingRun({ orderIds, onClose, onDone }: { orderIds: string[]; onClose: () => void; onDone: () => void }) {
   const [plan, setPlan] = useState<BatchPlan | null>(null);
   const [err, setErr] = useState<string | null>(null);
-  const [opts, setOpts] = useState({ issue: true, send: true, exchangeRate: "" });
+  const [opts, setOpts] = useState<{ issue: boolean; send: boolean; rates: Record<string, string> }>({ issue: true, send: true, rates: {} });
   const [result, setResult] = useState<BatchResult | null>(null);
   const [pending, start] = useTransition();
   useEffect(() => {
     let live = true;
-    planBatchAction(orderIds).then((r) => live && (r.ok ? setPlan(r.data) : setErr(r.error)));
+    planBatchAction(orderIds).then((r) => {
+      if (!live) return;
+      if (!r.ok) return setErr(r.error);
+      setPlan(r.data);
+      // start each foreign currency's rate box with the company's latest rate: check it, then run
+      setOpts((o) => ({ ...o, rates: { ...r.data.rates, ...o.rates } }));
+    });
     return () => {
       live = false;
     };
   }, [orderIds]);
-  const mxn = plan?.invoices.some((i) => i.currency === "MXN");
+  const foreign = [...new Set((plan?.invoices ?? []).map((i) => i.currency).filter((c) => c !== "USD"))];
   const totals = new Map<string, number>();
   for (const i of plan?.invoices ?? []) totals.set(i.currency, (totals.get(i.currency) ?? 0) + i.totalCents);
   const go = () =>
@@ -109,11 +115,13 @@ export function BillingRun({ orderIds, onClose, onDone }: { orderIds: string[]; 
             <label className="flex items-center gap-2">
               <input type="checkbox" className="accent-teal w-4 h-4" checked={opts.send} disabled={!opts.issue} onChange={(e) => setOpts({ ...opts, send: e.target.checked })} /> Send now
             </label>
-            {mxn && opts.issue && (
-              <label className="flex items-center gap-2">
-                MXN per USD <input className="input w-28" inputMode="decimal" value={opts.exchangeRate} onChange={(e) => setOpts({ ...opts, exchangeRate: e.target.value })} aria-label="Exchange rate" />
-              </label>
-            )}
+            {opts.issue &&
+              foreign.map((c) => (
+                <label key={c} className="flex items-center gap-2">
+                  {c} per USD <input className="input w-28" inputMode="decimal" value={opts.rates[c] ?? ""} onChange={(e) => setOpts({ ...opts, rates: { ...opts.rates, [c]: e.target.value } })} aria-label={c === "MXN" ? "Exchange rate" : `Exchange rate ${c}`} placeholder={c === "CAD" ? "1.3700" : "18.4500"} />
+                </label>
+              ))}
+            {opts.issue && foreign.length > 0 && <div className="help w-full -mt-3">Each {foreign.join(" / ")} invoice stores this rate; reports and QuickBooks convert it to USD with it.</div>}
           </div>
         </div>
       )}

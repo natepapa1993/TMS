@@ -5,6 +5,7 @@ import { listPayments, openItems } from "@/domain/cash";
 import { list } from "@/data/records";
 import { PageHeader } from "@/components/page-header";
 import { formatCents } from "@/data/fields";
+import { formatTotals, sumByCurrency } from "@/domain/fx-rules";
 import { BillingNav } from "../nav";
 import { ApplyPaymentButton, UseOnAccount } from "./apply";
 
@@ -20,11 +21,12 @@ export default async function PaymentsPage({ searchParams }: PageProps<"/billing
   // for money still on account: the customer's open invoices to use it on
   const withMoney = [...new Set(pays.filter((p) => p.unappliedCents > 0).map((p) => p.customerId))];
   const open = new Map(await Promise.all(withMoney.map(async (c) => [c, (await openItems(ctx, c)).invoices] as const)));
-  const onAccount = pays.reduce((a, p) => a + p.unappliedCents, 0);
+  const onAccount = sumByCurrency(pays, (p) => p.currency, (p) => p.unappliedCents);
+  const anyOnAccount = Object.values(onAccount).some((v) => v);
   return (
     <div>
       <PageHeader eyebrow="Billing" title="Payments" actions={canBill ? <ApplyPaymentButton customers={customers.map((c) => ({ id: c.id, name: String(c.name) }))} customerId={customerId} role={ctx.role} /> : undefined}>
-        Each check or ACH as it came in, the invoices it paid, and what&rsquo;s left on account. {onAccount ? <b>{formatCents(onAccount)} on account.</b> : null}
+        Each check or ACH as it came in, the invoices it paid, and what&rsquo;s left on account. {anyOnAccount ? <b>{formatTotals(onAccount)} on account.</b> : null} A payment is in one currency and only pays invoices in that currency.
       </PageHeader>
       <BillingNav />
       <div className="px-gutter pb-10">

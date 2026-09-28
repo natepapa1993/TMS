@@ -10,7 +10,7 @@ import { receiveBillAction, approveBillAction, payBillAction } from "../actions"
 type Row = { bill: { id: string; state: string; currency: string; expectedCents: number; accessorialCents: number; invoicedCents: number | null; approvedCents: number | null; paidCents: number | null; carrierInvoiceNumber: string | null; payDate: string | null; paidAt: string | null; shortPayNote: string | null; approvalNote: string | null; orderId: string }; carrierName: string; orderNumber: string; legSeq: number; legType: string; check: { expected: number; invoiced: number | null; podPresent: boolean; rateMatch: boolean; difference: number | null } };
 const TONE: Record<string, "slate" | "teal" | "amber" | "red" | "green" | "blue"> = { expected: "slate", received: "blue", approved: "teal", scheduled: "amber", paid: "green", disputed: "red" };
 
-export function CarrierBills({ rows, role, totals1099 }: { rows: Row[]; role: string; totals1099: { name: string; country: string; total: number }[] }) {
+export function CarrierBills({ rows, role, totals1099 }: { rows: Row[]; role: string; totals1099: { name: string; country: string; total: number; currency?: string }[] }) {
   const router = useRouter();
   const t = useToast();
   const [pending, start] = useTransition();
@@ -100,11 +100,11 @@ export function CarrierBills({ rows, role, totals1099 }: { rows: Row[]; role: st
           <div className="eyebrow mb-2">Paid this year (1099 / CFDI totals)</div>
           <ul className="grid grid-cols-3 gap-2 text-callout">
             {totals1099.map((c) => (
-              <li key={c.name} className="flex justify-between">
+              <li key={`${c.name}|${c.currency ?? "USD"}`} className="flex justify-between">
                 <span>
                   {c.name} <span className="text-faint">{c.country}</span>
                 </span>
-                <span className="mono font-semibold">{formatCents(c.total)}</span>
+                <span className="mono font-semibold">{formatCents(c.total, c.currency ?? "USD")}</span>
               </li>
             ))}
           </ul>

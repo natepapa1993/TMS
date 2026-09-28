@@ -157,6 +157,7 @@ export const legs = pgTable(
     coDriverId: text("co_driver_id"),
     carrierId: text("carrier_id"),
     carrierRateCents: integer("carrier_rate_cents"),
+    carrierRateCurrency: text("carrier_rate_currency"), // USD | MXN | CAD — blank = USD
     plannedStart: timestamp("planned_start", { withTimezone: true }),
     plannedEnd: timestamp("planned_end", { withTimezone: true }),
     plannedMiles: integer("planned_miles"),

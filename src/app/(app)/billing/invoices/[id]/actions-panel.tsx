@@ -5,16 +5,43 @@ import { localDay } from "@/lib/time";
 import { useRouter } from "next/navigation";
 import { Confirm, Modal, Toast, useToast } from "@/components/ui";
 import { formatCents } from "@/data/fields";
-import { issueInvoiceAction, deliverInvoiceAction, receiptAction, voidInvoiceAction, creditMemoAction, disputeInvoiceAction, promiseToPayAction, rebillAction } from "../../actions";
+import { issueInvoiceAction, deliverInvoiceAction, receiptAction, voidInvoiceAction, creditMemoAction, disputeInvoiceAction, promiseToPayAction, rebillAction, resolveDisputeAction, sendCreditMemoAction, sendCorrectedInvoiceAction } from "../../actions";
 
-type Inv = { id: string; state: string; currency: string; openCents: number; paidCents: number; creditedCents: number; billingEmail: string | null; promiseToPayAt: string | null; payWhenPaid: boolean; number: string | null; method: string; portalUrl: string | null; factorName: string | null; factorEmail: string | null };
+type Inv = { id: string; state: string; currency: string; openCents: number; paidCents: number; creditedCents: number; billingEmail: string | null; promiseToPayAt: string | null; payWhenPaid: boolean; number: string | null; method: string; portalUrl: string | null; factorName: string | null; factorEmail: string | null; suggestedRate: string; needsCorrected: boolean; hasCreditMemo: boolean };
+
+/** Email a credit memo to the customer (their billing email), like an invoice. */
+export function SendCreditMemo({ id, sent }: { id: string; sent: boolean }) {
+  const router = useRouter();
+  const t = useToast();
+  const [pending, start] = useTransition();
+  return (
+    <>
+      <button
+        className="btn btn-sm"
+        disabled={pending}
+        data-testid="send-credit-memo"
+        onClick={() =>
+          start(async () => {
+            const r = await sendCreditMemoAction(id);
+            if (!r.ok) return t.err(r.error);
+            t.ok(`Credit memo sent to ${r.data.sentTo}`);
+            router.refresh();
+          })
+        }
+      >
+        {sent ? "Send again" : "Send"}
+      </button>
+      <Toast message={t.toast?.message ?? null} tone={t.toast?.tone} onDone={t.clear} />
+    </>
+  );
+}
 
 export function InvoiceActions({ inv, role }: { inv: Inv; role: string }) {
   const router = useRouter();
   const t = useToast();
   const [pending, start] = useTransition();
-  const [popup, setPopup] = useState<null | "receipt" | "credit" | "void" | "dispute" | "send" | "issue" | "rebill">(null);
-  const fresh = () => ({ amount: "", receivedAt: localDay(), method: "ach", reference: "", note: "", to: inv.billingEmail ?? "", rate: "", dmethod: inv.method, ptp: inv.promiseToPayAt?.slice(0, 10) ?? "" });
+  const [popup, setPopup] = useState<null | "receipt" | "credit" | "void" | "dispute" | "send" | "issue" | "rebill" | "resolve">(null);
+  const fresh = () => ({ amount: "", receivedAt: localDay(), method: "ach", reference: "", note: "", to: inv.billingEmail ?? "", rate: inv.suggestedRate, dmethod: inv.method, ptp: inv.promiseToPayAt?.slice(0, 10) ?? "", outcome: "customer_pays" });
   const [f, setF] = useState(fresh);
   // every dialog starts clean: nothing typed in one carries into another
   const openPopup = (p: NonNullable<typeof popup>) => {
@@ -40,12 +67,22 @@ export function InvoiceActions({ inv, role }: { inv: Inv; role: string }) {
       {s === "paid" && <div className="text-callout text-muted">Paid in full. Nothing left to do here.</div>}
       {s === "void" && <div className="text-callout text-muted">Voided. It stays for the record; nothing can be done to it.</div>}
       {s === "draft" && (
-        <button className="btn btn-primary w-full justify-center" disabled={pending} onClick={() => (inv.currency === "MXN" ? openPopup("issue") : run("Issued", () => issueInvoiceAction(inv.id)))}>
+        <button className="btn btn-primary w-full justify-center" disabled={pending} onClick={() => (inv.currency !== "USD" ? openPopup("issue") : run("Issued", () => issueInvoiceAction(inv.id)))}>
           Issue invoice
         </button>
       )}
+      {inv.needsCorrected && (
+        <button className="btn btn-primary w-full justify-center" data-testid="send-corrected" disabled={pending} title="Charged back: the customer's copy still says to pay the factor" onClick={() => run("Corrected invoice sent — remit to you", () => sendCorrectedInvoiceAction(inv.id))}>
+          Send corrected invoice (remit to us)
+        </button>
+      )}
+      {s === "disputed" && (
+        <button className="btn btn-primary w-full justify-center" data-testid="resolve-dispute" onClick={() => openPopup("resolve")}>
+          Resolve dispute
+        </button>
+      )}
       {["issued", "sent", "partially_paid"].includes(s) && (
-        <button className="btn btn-primary w-full justify-center" onClick={() => openPopup("send")}>
+        <button className={`btn ${inv.needsCorrected ? "" : "btn-primary"} w-full justify-center`} onClick={() => openPopup("send")}>
           {s === "issued" ? "Send invoice" : "Send again"}
         </button>
       )}
@@ -184,14 +221,49 @@ export function InvoiceActions({ inv, role }: { inv: Inv; role: string }) {
           )}
         </div>
       </Modal>
-      <Modal open={popup === "issue"} onClose={() => setPopup(null)} title="Issue MXN invoice" footer={<><button className="btn" onClick={() => setPopup(null)}>Cancel</button><button className="btn btn-primary" disabled={pending || !f.rate} onClick={() => run("Issued", () => issueInvoiceAction(inv.id, f.rate))}>Issue</button></>}>
-        <label className="label">Exchange rate (MXN per USD) at issue</label>
-        <input className="input" inputMode="decimal" value={f.rate} onChange={(e) => setF({ ...f, rate: e.target.value })} placeholder="18.4321" />
+      <Modal open={popup === "issue"} onClose={() => setPopup(null)} title={`Issue ${inv.currency} invoice`} footer={<><button className="btn" onClick={() => setPopup(null)}>Cancel</button><button className="btn btn-primary" disabled={pending || !f.rate} onClick={() => run("Issued", () => issueInvoiceAction(inv.id, f.rate))}>Issue</button></>}>
+        <label className="label" htmlFor="i-rate">
+          Exchange rate at issue: {inv.currency} per 1 USD
+        </label>
+        <input id="i-rate" className="input" inputMode="decimal" value={f.rate} onChange={(e) => setF({ ...f, rate: e.target.value })} placeholder={inv.currency === "CAD" ? "1.3700" : "18.4500"} />
+        <div className="help mt-2">Stored on the invoice. Reports and the QuickBooks export convert this invoice to USD with it, and it becomes the company&rsquo;s latest {inv.currency} rate for loads not invoiced yet.{inv.suggestedRate ? " Filled in with the last rate used — check it against today’s." : ""}</div>
+      </Modal>
+      <Modal
+        open={popup === "resolve"}
+        onClose={() => setPopup(null)}
+        title={`Resolve the dispute on ${inv.number ?? ""}`}
+        footer={
+          <>
+            <button className="btn" onClick={() => setPopup(null)}>
+              Cancel
+            </button>
+            <button className="btn btn-primary" disabled={pending || !f.note.trim()} onClick={() => run("Dispute resolved", () => resolveDisputeAction(inv.id, f.outcome, f.note))}>
+              Resolve
+            </button>
+          </>
+        }
+      >
+        <label className="label" htmlFor="r-outcome">
+          How it ended
+        </label>
+        <select id="r-outcome" className="select" value={f.outcome} onChange={(e) => setF({ ...f, outcome: e.target.value })}>
+          <option value="customer_pays">In our favor — the customer will pay</option>
+          <option value="credited" disabled={!inv.hasCreditMemo}>
+            With a credit memo{inv.hasCreditMemo ? "" : " (issue it first)"}
+          </option>
+          <option value="paid">The customer paid</option>
+          <option value="other">Other</option>
+        </select>
+        <label className="label mt-3" htmlFor="r-note">
+          Note
+        </label>
+        <input id="r-note" className="input" value={f.note} onChange={(e) => setF({ ...f, note: e.target.value })} placeholder="what was agreed, with whom" />
+        <div className="help mt-2">{inv.openCents > 0 ? `${formatCents(inv.openCents, inv.currency)} is still open: it goes back to ${inv.paidCents ? "partly paid" : "sent"} and reminders pick it up again.` : "Nothing is open: it closes as paid."}</div>
       </Modal>
       <Modal open={popup === "credit"} onClose={() => setPopup(null)} title="Credit memo" footer={<><button className="btn" onClick={() => setPopup(null)}>Cancel</button><button className="btn btn-primary" disabled={pending || !f.amount || !f.note} onClick={() => run("Credit memo issued", () => creditMemoAction(inv.id, f.amount, f.note))}>Issue credit</button></>}>
         <div className="grid grid-cols-2 gap-2">
           <div>
-            <label className="label">Amount</label>
+            <label className="label">Amount ({inv.currency})</label>
             <input className="input" inputMode="decimal" value={f.amount} onChange={(e) => setF({ ...f, amount: e.target.value })} />
           </div>
           <div>
@@ -199,7 +271,7 @@ export function InvoiceActions({ inv, role }: { inv: Inv; role: string }) {
             <input className="input" value={f.note} onChange={(e) => setF({ ...f, note: e.target.value })} />
           </div>
         </div>
-        <div className="help mt-2">Gets its own number in the entity&apos;s sequence. The invoice keeps its number.</div>
+        <div className="help mt-2">Gets its own credit memo number (PREFIX-CM-…), apart from invoice numbers, and its own PDF you can send the customer. The invoice PDF then shows the credit.</div>
       </Modal>
       <Confirm open={popup === "void"} onClose={() => setPopup(null)} title={`Void ${inv.number ?? "this draft"}`} body="Only possible with no receipts. The number is never reused; the orders go back to Ready to bill." needReason="Reason" confirmLabel="Void" danger onConfirm={(reason) => run("Voided", () => voidInvoiceAction(inv.id, reason))} />
       <Confirm

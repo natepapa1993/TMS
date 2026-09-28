@@ -98,6 +98,7 @@ export const billingEntities = pgTable(
     remitTo: jsonb("remit_to").$type<Address>(),
     invoicePrefix: text("invoice_prefix").notNull(),
     nextInvoiceNumber: integer("next_invoice_number").notNull().default(1),
+    nextCreditNumber: integer("next_credit_number").notNull().default(1), // credit memos: PREFIX-CM-000001, their own sequence
     isDefault: boolean("is_default").notNull().default(false),
     terms: text("terms"),
     // factoring: invoices assigned to a factor carry its remit-to and the notice of assignment, and go to it

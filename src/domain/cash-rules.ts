@@ -1,12 +1,14 @@
 /** Pure cash-application helpers (the payment dialog runs them in the browser too). */
 
-export type OpenInvoice = { id: string; number: string; openCents: number; loads: { orderNumber: string; refs: string[] }[] };
+export type OpenInvoice = { id: string; number: string; openCents: number; currency?: string; loads: { orderNumber: string; refs: string[] }[] };
 
 /**
  * Spread an amount over open invoices. When the remittance names invoices (invoice number, load number or a load
  * reference found in the text) the money goes to those only; otherwise oldest due first. What doesn't fit stays on account.
+ * Given the payment's currency, only invoices in that currency get money: pesos never pay a dollar invoice.
  */
-export function suggest(invoices: OpenInvoice[], amountCents: number, remittance = "") {
+export function suggest(all: OpenInvoice[], amountCents: number, remittance = "", currency?: string) {
+  const invoices = currency ? all.filter((i) => (i.currency ?? "USD") === currency) : all;
   const text = remittance.toLowerCase();
   const named = (i: (typeof invoices)[number]) => !!text && ((i.number && text.includes(i.number.toLowerCase())) || i.loads.some((l) => text.includes(l.orderNumber.toLowerCase()) || l.refs.some((r) => r.length >= 4 && text.includes(r.toLowerCase()))));
   const anyNamed = invoices.some(named);

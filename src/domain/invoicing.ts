@@ -51,7 +51,7 @@ export async function deliveryForInvoice(ctx: Ctx, customerId: string, entityId:
 // ---------- batch ----------
 
 export type PlannedInvoice = { key: string; customerId: string; customerName: string; entityId: string | null; currency: string; orderIds: string[]; orderNumbers: string[]; totalCents: number; mode: "per_load" | "summary"; method: DeliveryMethod; sendTo: string | null };
-export type BatchPlan = { invoices: PlannedInvoice[]; skipped: { orderId: string; orderNumber: string; reason: string }[] };
+export type BatchPlan = { invoices: PlannedInvoice[]; skipped: { orderId: string; orderNumber: string; reason: string }[]; /** the company's latest rate per foreign currency, to start the exchange-rate boxes with */ rates: Record<string, string> };
 
 function whyNot(q: QueueRow) {
   if (q.invoiceId) return "already on a draft invoice";
@@ -93,7 +93,10 @@ export async function planBatch(ctx: Ctx, orderIds: string[]): Promise<BatchPlan
     g.totalCents += q.chargesCents;
     groups.set(key, g);
   }
-  return { invoices: [...groups.values()].sort((p, q) => p.customerName.localeCompare(q.customerName)), skipped };
+  const { getCompany } = await import("./company");
+  const fx = (await getCompany(ctx)).settings.fx;
+  const rates = Object.fromEntries(Object.entries(fx).map(([c, r]) => [c, ((r?.rateE4 ?? 0) / 10000).toFixed(4)]));
+  return { invoices: [...groups.values()].sort((p, q) => p.customerName.localeCompare(q.customerName)), skipped, rates };
 }
 
 export type BatchResult = { batchId: string; number: number; results: { customerName: string; orderNumbers: string[]; invoiceId: string | null; number: string | null; state: string; method: DeliveryMethod; ok: boolean; note: string | null }[]; skipped: BatchPlan["skipped"]; schedule: { id: string; number: number; count: number } | null };
@@ -108,7 +111,7 @@ async function nextBatchNumber(tenantId: string, kind: string) {
  * each by its customer's method — factored invoices go to the factor together on one schedule of accounts.
  * One invoice failing never stops the others.
  */
-export async function runBatch(ctx: Ctx, orderIds: string[], opts: { issue?: boolean; send?: boolean; exchangeRate?: number | null } = {}): Promise<BatchResult> {
+export async function runBatch(ctx: Ctx, orderIds: string[], opts: { issue?: boolean; send?: boolean; /** MXN per USD (older callers) */ exchangeRate?: number | string | null; /** per currency, units per 1 USD: { MXN: 18.45, CAD: 1.37 } */ exchangeRates?: Record<string, number | string | null | undefined> } = {}): Promise<BatchResult> {
   assertCtx(ctx);
   requirePermission(ctx, "billing.issue");
   const plan = await planBatch(ctx, orderIds);
@@ -126,11 +129,13 @@ export async function runBatch(ctx: Ctx, orderIds: string[], opts: { issue?: boo
       r.invoiceId = inv.id;
       await db.update(s.invoices).set({ batchId }).where(eq(s.invoices.id, inv.id));
       if (!opts.issue) continue;
-      if (g.currency === "MXN" && !opts.exchangeRate) {
-        r.note = "left as a draft: a MXN invoice needs the exchange rate";
+      // a MXN or CAD invoice is issued at the rate typed for its currency
+      const rate = g.currency === "USD" ? null : (opts.exchangeRates?.[g.currency] ?? (g.currency === "MXN" ? opts.exchangeRate : null));
+      if (g.currency !== "USD" && (rate == null || rate === "")) {
+        r.note = `left as a draft: a ${g.currency} invoice needs the exchange rate (${g.currency} per USD)`;
         continue;
       }
-      const issued = await issueInvoice(ctx, inv.id, { exchangeRate: g.currency === "MXN" ? opts.exchangeRate : null });
+      const issued = await issueInvoice(ctx, inv.id, { exchangeRate: rate });
       r.number = issued.number;
       r.state = issued.state;
       if (!opts.send) continue;

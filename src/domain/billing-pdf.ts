@@ -2,7 +2,16 @@ import { PDFDocument, StandardFonts, rgb } from "pdf-lib";
 import { pdfText } from "@/lib/pdf-text";
 import type { InvoiceSnapshot } from "@/db/schema";
 
-const money = (c: number, cur: string) => `${c < 0 ? "-" : ""}${cur === "MXN" ? "MX$" : "$"}${(Math.abs(c) / 100).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+import { money as fmt } from "./fx-rules";
+
+/** "$1,234.00", "MX$53,100.00", "CA$2,590.00": the currency's own symbol on every line (never a bare "$" on pesos). */
+const money = (c: number, cur: string) => fmt(c, cur);
+/** Totals carry the ISO code too on non-USD documents: "CA$2,590.00 CAD". */
+const moneyCode = (c: number, cur: string) => fmt(c, cur, { code: true });
+const REF_LABEL: Record<string, string> = { po: "PO #", rate_con: "Rate con #", asn: "ASN #", shipment: "Shipment #", reference: "Ref #", bol: "BOL #", pro: "PRO #", pickup: "Pickup #", delivery: "Delivery #", sylectus_load: "Load #" };
+const refLabel = (k: string) => REF_LABEL[k] ?? `${k.replace(/_/g, " ").replace(/^./, (c) => c.toUpperCase())} #`;
+const day = (d: Date, tz?: string) => (tz ? new Intl.DateTimeFormat("en-CA", { timeZone: tz, year: "numeric", month: "2-digit", day: "2-digit" }).format(d) : d.toISOString().slice(0, 10));
+const addrLines = (a: Record<string, string | undefined> | null | undefined) => (a ? ([a.line1, a.line2, [a.city, a.state, a.postalCode].filter(Boolean).join(", "), a.country].filter(Boolean) as string[]) : []);
 
 /** Invoice PDF from the locked snapshot only (spec 7.4 "never from current master data"). */
 export async function buildInvoicePdf(inv: { number: string; issuedAt: Date; dueAt: Date; snapshot: InvoiceSnapshot; subtotalCents: number; totalCents: number; creditedCents?: number; notes?: string | null }): Promise<Uint8Array> {
@@ -19,7 +28,7 @@ export async function buildInvoicePdf(inv: { number: string; issuedAt: Date; due
   // header
   page.drawRectangle({ x: 0, y: 742, width: 612, height: 50, color: rgb(0.06, 0.09, 0.16) });
   draw(s.entity.dba || s.entity.legalName, 54, 760, 18, bold, rgb(1, 1, 1));
-  draw("INVOICE", 470, 760, 18, bold, rgb(0.6, 0.96, 0.89));
+  draw(s.supplementOf ? "SUPPLEMENTAL" : "INVOICE", s.supplementOf ? 430 : 470, 760, s.supplementOf ? 15 : 18, bold, rgb(0.6, 0.96, 0.89));
   draw(`# ${inv.number}`, 470, 748, 9, font, rgb(0.8, 0.85, 0.9));
   if (s.loadNumbers?.length) draw(`${s.loadNumbers.length === 1 ? "Load" : "Loads"} ${s.loadNumbers.length > 3 ? `${s.loadNumbers.slice(0, 3).join(", ")} +${s.loadNumbers.length - 3}` : s.loadNumbers.join(", ")}`, 54, 748, 9, font, rgb(0.8, 0.85, 0.9));
 
@@ -38,17 +47,24 @@ export async function buildInvoicePdf(inv: { number: string; issuedAt: Date; due
   const billLines = [ba.line1, ba.line2, [ba.city, ba.state, ba.postalCode].filter(Boolean).join(", "), ba.country && ba.country !== "US" ? ba.country : "", s.billTo.email].filter(Boolean) as string[];
   billLines.slice(0, 5).forEach((l, i) => draw(l.length > 30 ? `${l.slice(0, 28)}...` : l, 330, y - 26 - 12 * i, 9, font, muted)); // stays clear of the date column
   draw("DATE", 470, y, 8, bold, muted);
-  draw(inv.issuedAt.toISOString().slice(0, 10), 470, y - 13, 9);
+  draw(day(inv.issuedAt, s.timeZone), 470, y - 13, 9);
   draw("DUE", 470, y - 30, 8, bold, muted);
-  draw(inv.dueAt.toISOString().slice(0, 10), 470, y - 43, 9);
+  draw(day(inv.dueAt, s.timeZone), 470, y - 43, 9);
   draw("TERMS", 470, y - 60, 8, bold, muted);
   draw(s.terms, 470, y - 73, 9);
 
+  // what this invoice points back to: a supplemental adds to an invoice, a rebill replaces a voided one
+  y = 624;
+  const back = [s.supplementOf && `Supplemental to invoice ${s.supplementOf} — additional charges for the same load${s.loadNumbers && s.loadNumbers.length > 1 ? "s" : ""}, not a duplicate`, s.replaces && `Replaces invoice ${s.replaces} (voided)`].filter(Boolean) as string[];
+  for (const b of back) {
+    draw(b, 54, y, 9.5, bold);
+    y -= 14;
+  }
   // refs & route
-  y = 610;
+  y = Math.min(y, 610);
   const refs = Object.entries(s.refs)
     .filter(([, v]) => v)
-    .map(([k, v]) => `${k.replace(/_/g, " ")}: ${v}`)
+    .map(([k, v]) => `${refLabel(k)} ${v}`)
     .join("   ");
   if (refs) {
     draw(refs, 54, y, 9, font, muted);
@@ -59,7 +75,7 @@ export async function buildInvoicePdf(inv: { number: string; issuedAt: Date; due
     const last = s.stops[s.stops.length - 1];
     const p = (st: typeof first) => `${st.name}${st.city ? `, ${st.city}` : ""}${st.state ? ` ${st.state}` : ""}`;
     draw(`${p(first)}  to  ${p(last)}`, 54, y, 10, bold);
-    const when = [first.departedAt && `picked up ${first.departedAt.slice(0, 10)}`, last.arrivedAt && `delivered ${last.arrivedAt.slice(0, 10)}`].filter(Boolean).join(" · ");
+    const when = [first.departedAt && `picked up ${first.departedDate ?? first.departedAt.slice(0, 10)}`, last.arrivedAt && `delivered ${last.arrivedDate ?? last.arrivedAt.slice(0, 10)}`].filter(Boolean).join(" · ");
     if (when) draw(when, 54, y - 13, 9, font, muted);
     y -= 34;
   }
@@ -124,10 +140,11 @@ export async function buildInvoicePdf(inv: { number: string; issuedAt: Date; due
   }
   y -= 18;
   draw("TOTAL DUE", 380, y, 10, bold);
-  draw(money(inv.totalCents - (inv.creditedCents ?? 0), s.currency), 500, y, 12, bold);
-  if (s.currency === "MXN" && s.exchangeRate) {
+  const due = moneyCode(inv.totalCents - (inv.creditedCents ?? 0), s.currency);
+  draw(due, Math.min(500, 558 - bold.widthOfTextAtSize(pdfText(due), 12)), y, 12, bold);
+  if (s.currency !== "USD") {
     y -= 14;
-    draw(`Exchange rate at issue: ${s.exchangeRate.toFixed(4)} MXN / USD`, 380, y, 8, font, muted);
+    draw(`Amounts in ${s.currency === "MXN" ? "Mexican pesos (MXN)" : s.currency === "CAD" ? "Canadian dollars (CAD)" : s.currency}${s.exchangeRate ? ` · rate at issue ${s.exchangeRate.toFixed(4)} ${s.currency} per USD` : ""}`, 300, y, 8, font, muted);
   }
   y -= 40;
   if (y < 150) {
@@ -153,40 +170,114 @@ export async function buildInvoicePdf(inv: { number: string; issuedAt: Date; due
   }
   draw("Remit to", 54, y, 8, bold, muted);
   draw(s.factor ? s.factor.name : s.entity.legalName, 54, y - 13, 9);
-  const fr = s.factor?.remitTo ?? null;
-  const payLines = fr ? ([fr.line1, [fr.city, fr.state, fr.postalCode].filter(Boolean).join(", "), fr.country].filter(Boolean) as string[]) : remitLines;
+  // a factored invoice prints the factor's own address, never ours under the factor's name
+  const payLines = s.factor ? (s.factor.remitTo ? addrLines(s.factor.remitTo) : ["(the factor's payment address is missing — ask us before paying)"]) : remitLines;
   payLines.forEach((l, i) => draw(l, 54, y - 13 * (i + 2), 9, font, muted));
   if (inv.notes) draw(inv.notes.slice(0, 200), 54, y - 13 * (payLines.length + 3), 9, font, muted);
   draw(`Invoice ${inv.number} · generated by Crossline`, 54, 40, 8, font, muted);
   return doc.save();
 }
 
-/** Simple customer statement: open invoices with aging. */
-export async function buildStatementPdf(input: { entityName: string; customerName: string; asOf: Date; rows: { number: string; issuedAt: string; dueAt: string; totalCents: number; openCents: number; daysPastDue: number }[]; currency: string }): Promise<Uint8Array> {
+/** Customer statement: open invoices with aging, subtotalled per currency (pesos are never added to dollars). */
+export async function buildStatementPdf(input: { entityName: string; remitTo?: Record<string, string | undefined> | null; customerName: string; asOf: Date; timeZone?: string; rows: { number: string; currency: string; issuedAt: Date | null; dueAt: Date | null; totalCents: number; openCents: number; daysPastDue: number; disputed?: boolean }[] }): Promise<Uint8Array> {
   const doc = await PDFDocument.create();
   const bold = await doc.embedFont(StandardFonts.HelveticaBold);
   const font = await doc.embedFont(StandardFonts.Helvetica);
-  const page = doc.addPage([612, 792]);
+  let page = doc.addPage([612, 792]);
   const ink = rgb(0.06, 0.09, 0.16);
   const muted = rgb(0.4, 0.45, 0.55);
-  page.drawText(pdfText(input.entityName), { x: 54, y: 740, size: 16, font: bold, color: ink });
-  page.drawText(`Statement for ${input.customerName} · as of ${input.asOf.toISOString().slice(0, 10)}`, { x: 54, y: 720, size: 10, font, color: muted });
-  let y = 680;
-  for (const [x, h] of [[54, "INVOICE"], [150, "ISSUED"], [230, "DUE"], [320, "TOTAL"], [410, "OPEN"], [500, "DAYS LATE"]] as const) page.drawText(pdfText(h), { x, y, size: 8, font: bold, color: muted });
-  y -= 16;
-  let open = 0;
-  for (const r of input.rows) {
-    page.drawText(pdfText(r.number), { x: 54, y, size: 9, font: bold, color: ink });
-    page.drawText(r.issuedAt.slice(0, 10), { x: 150, y, size: 9, font, color: ink });
-    page.drawText(r.dueAt.slice(0, 10), { x: 230, y, size: 9, font, color: ink });
-    page.drawText(money(r.totalCents, input.currency), { x: 320, y, size: 9, font, color: ink });
-    page.drawText(money(r.openCents, input.currency), { x: 410, y, size: 9, font: bold, color: ink });
-    page.drawText(pdfText(r.daysPastDue > 0 ? String(r.daysPastDue) : "—"), { x: 500, y, size: 9, font, color: r.daysPastDue > 0 ? rgb(0.7, 0.1, 0.1) : muted });
-    open += r.openCents;
+  const draw = (t: string, x: number, y: number, size = 9, f = font, color = ink) => page.drawText(pdfText(t), { x, y, size, font: f, color });
+  draw(input.entityName, 54, 740, 16, bold);
+  draw(`Statement for ${input.customerName} · as of ${day(input.asOf, input.timeZone)}`, 54, 720, 10, font, muted);
+  const remit = addrLines(input.remitTo);
+  if (remit.length) draw(`Remit to: ${input.entityName}, ${remit.join(", ")}`, 54, 706, 8.5, font, muted);
+  let y = 676;
+  const currencies = [...new Set(input.rows.map((r) => r.currency))].sort((a, b) => ["USD", "MXN", "CAD"].indexOf(a) - ["USD", "MXN", "CAD"].indexOf(b));
+  if (!input.rows.length) draw("Nothing open. Thank you.", 54, y, 11, bold);
+  for (const cur of currencies) {
+    const rows = input.rows.filter((r) => r.currency === cur);
+    if (y < 140) {
+      page = doc.addPage([612, 792]);
+      y = 740;
+    }
+    draw(cur === "USD" ? "US DOLLARS (USD)" : cur === "MXN" ? "MEXICAN PESOS (MXN)" : cur === "CAD" ? "CANADIAN DOLLARS (CAD)" : cur, 54, y, 9, bold);
     y -= 16;
+    for (const [x, h] of [[54, "INVOICE"], [150, "ISSUED"], [230, "DUE"], [310, "TOTAL"], [400, "OPEN"], [490, "DAYS LATE"]] as const) draw(h, x, y, 8, bold, muted);
+    y -= 16;
+    let open = 0;
+    for (const r of rows) {
+      if (y < 90) {
+        page = doc.addPage([612, 792]);
+        y = 740;
+      }
+      draw(r.number + (r.disputed ? " (disputed)" : ""), 54, y, 9, bold);
+      draw(r.issuedAt ? day(r.issuedAt, input.timeZone) : "", 150, y);
+      draw(r.dueAt ? day(r.dueAt, input.timeZone) : "", 230, y);
+      draw(money(r.totalCents, cur), 310, y);
+      draw(money(r.openCents, cur), 400, y, 9, bold);
+      draw(r.daysPastDue > 0 ? String(r.daysPastDue) : "—", 490, y, 9, font, r.daysPastDue > 0 ? rgb(0.7, 0.1, 0.1) : muted);
+      open += r.openCents;
+      y -= 16;
+    }
+    y -= 4;
+    draw(`TOTAL OPEN ${moneyCode(open, cur)}`, 360, y, 11, bold);
+    y -= 30;
   }
-  y -= 10;
-  page.drawText(`TOTAL OPEN ${money(open, input.currency)}`, { x: 410, y, size: 11, font: bold, color: ink });
+  if (currencies.length > 1) draw("Each currency is totalled on its own: pay each in the currency of its invoices.", 54, Math.max(y, 60), 8.5, font, muted);
+  return doc.save();
+}
+
+/** A credit memo: what is credited on which invoice, why, and what the invoice has open after it. */
+export async function buildCreditMemoPdf(m: { number: string; issuedAt: Date; invoiceNumber: string; reason: string; lines: { description: string; amountCents: number }[]; amountCents: number; currency: string; entity: InvoiceSnapshot["entity"]; billTo: InvoiceSnapshot["billTo"]; invoiceTotalCents: number; openAfterCents: number | null; timeZone?: string }): Promise<Uint8Array> {
+  const doc = await PDFDocument.create();
+  const bold = await doc.embedFont(StandardFonts.HelveticaBold);
+  const font = await doc.embedFont(StandardFonts.Helvetica);
+  const ink = rgb(0.06, 0.09, 0.16);
+  const muted = rgb(0.4, 0.45, 0.55);
+  const rule = rgb(0.89, 0.91, 0.94);
+  const page = doc.addPage([612, 792]);
+  const draw = (t: string, x: number, y: number, size = 10, f = font, color = ink) => page.drawText(pdfText(t), { x, y, size, font: f, color });
+  page.drawRectangle({ x: 0, y: 742, width: 612, height: 50, color: ink });
+  draw(m.entity.dba || m.entity.legalName, 54, 760, 18, bold, rgb(1, 1, 1));
+  draw("CREDIT MEMO", 430, 760, 16, bold, rgb(0.6, 0.96, 0.89));
+  draw(`# ${m.number}`, 430, 748, 9, font, rgb(0.8, 0.85, 0.9));
+  let y = 712;
+  draw(m.entity.legalName, 54, y, 10, bold);
+  addrLines(m.entity.remitTo).forEach((l, i) => draw(l, 54, y - 13 * (i + 1), 9, font, muted));
+  draw("CREDIT TO", 330, y, 8, bold, muted);
+  draw(m.billTo.name, 330, y - 13, 10, bold);
+  addrLines(m.billTo.address ?? null).slice(0, 4).forEach((l, i) => draw(l.length > 30 ? `${l.slice(0, 28)}...` : l, 330, y - 26 - 12 * i, 9, font, muted));
+  draw("DATE", 480, y, 8, bold, muted);
+  draw(day(m.issuedAt, m.timeZone), 480, y - 13, 9);
+  draw("INVOICE", 480, y - 30, 8, bold, muted);
+  draw(m.invoiceNumber, 480, y - 43, 9);
+  y = 610;
+  draw(`Credit on invoice ${m.invoiceNumber} (${money(m.invoiceTotalCents, m.currency)})`, 54, y, 11, bold);
+  draw(`Reason: ${m.reason}`.slice(0, 100), 54, y - 15, 9.5, font, muted);
+  y -= 44;
+  page.drawLine({ start: { x: 54, y }, end: { x: 558, y }, thickness: 0.8, color: ink });
+  y -= 14;
+  draw("DESCRIPTION", 54, y, 8, bold, muted);
+  draw("CREDIT", 480, y, 8, bold, muted);
+  y -= 8;
+  page.drawLine({ start: { x: 54, y }, end: { x: 558, y }, thickness: 0.4, color: rule });
+  y -= 16;
+  for (const l of m.lines) {
+    draw(l.description.slice(0, 80), 54, y, 10);
+    draw(`-${money(l.amountCents, m.currency)}`, 480, y, 10, bold);
+    y -= 18;
+  }
+  y -= 6;
+  page.drawLine({ start: { x: 330, y }, end: { x: 558, y }, thickness: 0.4, color: rule });
+  y -= 18;
+  draw("TOTAL CREDIT", 330, y, 10, bold);
+  draw(`-${moneyCode(m.amountCents, m.currency)}`, 450, y, 12, bold);
+  if (m.openAfterCents != null) {
+    y -= 18;
+    draw(`Invoice ${m.invoiceNumber} open after this credit`, 250, y, 9, font, muted);
+    draw(moneyCode(m.openAfterCents, m.currency), 450, y, 9, bold);
+  }
+  draw(`Credit memo ${m.number} · not an invoice · generated by Crossline`, 54, 40, 8, font, muted);
   return doc.save();
 }
 

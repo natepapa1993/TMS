@@ -5,7 +5,7 @@ import { newId } from "@/lib/ids";
 import { assertCtx, requirePermission, type Ctx } from "@/lib/context";
 import { writeAudit } from "@/lib/audit";
 import { NotFoundError, ValidationError } from "./orders";
-import { recordReceipt } from "./billing";
+import { recordReceipt, assertOpenPeriod } from "./billing";
 
 /**
  * The factoring ledger. A factored invoice is funded (the factor advances most of it and keeps a fee and a
@@ -54,6 +54,7 @@ export async function recordFunding(ctx: Ctx, invoiceIds: string[], input: { at?
   }
   const entities = await db.select().from(s.billingEntities).where(and(eq(s.billingEntities.tenantId, ctx.tenantId), inArray(s.billingEntities.id, [...new Set(invs.map((i) => i.entityId))])));
   const at = input.at ?? new Date();
+  await assertOpenPeriod(ctx, at);
   let advanced = 0;
   await db.transaction(async (tx) => {
     for (const i of invs) {
@@ -89,6 +90,7 @@ export async function recordCollection(ctx: Ctx, invoiceId: string, input: { at?
   const fees = -entries.filter((e) => e.kind === "fee").reduce((a, e) => a + e.amountCents, 0);
   const reserve = Math.max(0, open - advanced - fees);
   const at = input.at ?? new Date();
+  await assertOpenPeriod(ctx, at);
   const [e] = await db.select().from(s.billingEntities).where(eq(s.billingEntities.id, inv.entityId)).limit(1);
   if (open > 0) await recordReceipt(ctx, inv.id, { amountCents: open, receivedAt: at, method: "factoring", reference: input.reference ?? null, note: `collected by ${e?.factorName ?? "the factor"}` });
   const rows: (typeof s.factorEntries.$inferInsert)[] = [{ id: newId(), tenantId: ctx.tenantId, entityId: inv.entityId, invoiceId, kind: "collected", amountCents: open, at, reference: input.reference?.trim() || null, note: "the customer paid the factor", createdBy: ctx.userId }];
@@ -97,7 +99,12 @@ export async function recordCollection(ctx: Ctx, invoiceId: string, input: { at?
   return { reserveCents: reserve };
 }
 
-/** Unpaid past recourse: the factor takes the advance back; the customer owes us again (back in Receivables). */
+/**
+ * Unpaid past recourse: the invoice comes back to us. We repay the advance, and the factor keeps its fee
+ * (so the chargeback is advance + fee). The reserve was never paid to us — it was the part of the invoice
+ * the factor held back until the customer paid — so it goes back to Receivables with the rest of the
+ * invoice: the customer owes us the full amount again. The ledger row shows all three.
+ */
 export async function recordChargeback(ctx: Ctx, invoiceId: string, input: { at?: Date; reference?: string | null; note?: string | null } = {}) {
   assertCtx(ctx);
   requirePermission(ctx, "billing.issue");
@@ -106,16 +113,21 @@ export async function recordChargeback(ctx: Ctx, invoiceId: string, input: { at?
   const entries = await db.select().from(s.factorEntries).where(and(eq(s.factorEntries.tenantId, ctx.tenantId), eq(s.factorEntries.invoiceId, invoiceId)));
   if (entries.some((e) => e.kind === "collected")) throw new ValidationError(`${inv.number} was collected; nothing to charge back`);
   const advanced = entries.filter((e) => e.kind === "advance").reduce((a, e) => a + e.amountCents, 0);
+  const fees = -entries.filter((e) => e.kind === "fee").reduce((a, e) => a + e.amountCents, 0);
+  const open = inv.totalCents - inv.creditedCents - inv.paidCents;
+  const reserve = Math.max(0, open - advanced - fees);
   const at = input.at ?? new Date();
+  await assertOpenPeriod(ctx, at);
+  const note = `${input.note?.trim() ? `${input.note.trim()} — ` : ""}repay the ${(advanced / 100).toFixed(2)} advance + the ${(fees / 100).toFixed(2)} fee the factor keeps; the ${(reserve / 100).toFixed(2)} reserve goes back to Receivables with the invoice`;
   await db.transaction(async (tx) => {
-    await tx.insert(s.factorEntries).values({ id: newId(), tenantId: ctx.tenantId, entityId: inv.entityId, invoiceId, kind: "chargeback", amountCents: -advanced, at, reference: input.reference?.trim() || null, note: input.note?.trim() || "charged back: unpaid past recourse", createdBy: ctx.userId });
+    await tx.insert(s.factorEntries).values({ id: newId(), tenantId: ctx.tenantId, entityId: inv.entityId, invoiceId, kind: "chargeback", amountCents: -(advanced + fees), at, reference: input.reference?.trim() || null, note, createdBy: ctx.userId });
     await tx.update(s.invoices).set({ factorFundedAt: null, factored: false, updatedAt: new Date(), updatedBy: ctx.userId }).where(eq(s.invoices.id, invoiceId));
-    await writeAudit(tx, ctx, "invoice", invoiceId, "update", { factorFunded: { from: inv.factorFundedAt!.toISOString().slice(0, 10), to: "charged back" } }, input.note ?? undefined);
+    await writeAudit(tx, ctx, "invoice", invoiceId, "update", { factorFunded: { from: inv.factorFundedAt!.toISOString().slice(0, 10), to: "charged back" } }, note);
   });
-  return { repaidCents: advanced };
+  return { repaidCents: advanced + fees, advanceCents: advanced, feeCents: fees, reserveBackToArCents: reserve };
 }
 
-export type LedgerRow = { invoiceId: string; number: string; customer: string; entity: string; totalCents: number; currency: string; fundedAt: string | null; advancedCents: number; feeCents: number; reserveCents: number; status: "to_fund" | "funded" | "collected" | "charged_back"; ageDays: number | null; recourseDays: number; atRisk: boolean };
+export type LedgerRow = { invoiceId: string; number: string; customer: string; entity: string; totalCents: number; currency: string; fundedAt: string | null; advancedCents: number; feeCents: number; reserveCents: number; /** charged back: what we repaid (advance + fee), and the reserve that went back to Receivables */ repaidCents: number; reserveBackToArCents: number; status: "to_fund" | "funded" | "collected" | "charged_back"; ageDays: number | null; recourseDays: number; atRisk: boolean; /** charged back and the invoice still tells the customer to pay the factor */ needsCorrectedInvoice: boolean };
 
 /** Every factored invoice: waiting to be funded, funded (reserve held, exposure), collected, charged back. */
 export async function factorLedger(ctx: Ctx, now = new Date()) {
@@ -142,20 +154,35 @@ export async function factorLedger(ctx: Ctx, now = new Date()) {
     const released = mine.filter((x) => x.kind === "reserve_release").reduce((a, x) => a + x.amountCents, 0);
     const open = inv.totalCents - inv.creditedCents - (status === "funded" ? inv.paidCents : 0);
     const reserve = status === "funded" ? Math.max(0, open - advanced - fee) : 0;
+    const repaid = -mine.filter((x) => x.kind === "chargeback").reduce((a, x) => a + x.amountCents, 0);
+    const backToAr = status === "charged_back" ? Math.max(0, inv.totalCents - inv.creditedCents - advanced - fee) : 0;
     const ageDays = inv.factorFundedAt ? Math.floor((now.getTime() - inv.factorFundedAt.getTime()) / DAY) : null;
-    rows.push({ invoiceId: inv.id, number: inv.number ?? "", customer: customers.find((c) => c.id === inv.customerId)?.name ?? "?", entity: e?.factorName ?? "", totalCents: inv.totalCents - inv.creditedCents, currency: inv.currency, fundedAt: inv.factorFundedAt?.toISOString() ?? null, advancedCents: advanced, feeCents: fee, reserveCents: status === "collected" ? released : reserve, status, ageDays, recourseDays: t.recourseDays, atRisk: status === "funded" && t.recourseDays > 0 && ageDays != null && ageDays >= t.recourseDays - 15 });
+    rows.push({ invoiceId: inv.id, number: inv.number ?? "", customer: customers.find((c) => c.id === inv.customerId)?.name ?? "?", entity: e?.factorName ?? "", totalCents: inv.totalCents - inv.creditedCents, currency: inv.currency, fundedAt: inv.factorFundedAt?.toISOString() ?? null, advancedCents: advanced, feeCents: fee, reserveCents: status === "collected" ? released : reserve, repaidCents: repaid, reserveBackToArCents: backToAr, status, ageDays, recourseDays: t.recourseDays, atRisk: status === "funded" && t.recourseDays > 0 && ageDays != null && ageDays >= t.recourseDays - 15, needsCorrectedInvoice: status === "charged_back" && !!inv.snapshot?.factor && ["issued", "sent", "partially_paid", "disputed"].includes(inv.state) });
   }
   rows.sort((p, q) => ["to_fund", "funded", "charged_back", "collected"].indexOf(p.status) - ["to_fund", "funded", "charged_back", "collected"].indexOf(q.status) || (q.ageDays ?? 0) - (p.ageDays ?? 0));
-  const funded = rows.filter((r) => r.status === "funded");
-  return {
-    rows,
-    totals: {
-      toFund: rows.filter((r) => r.status === "to_fund").reduce((a, r) => a + r.totalCents, 0),
+  // totals per currency: a peso invoice's advance is never added to a dollar one
+  const inv = new Map([...all.values()].map((i) => [i.id, i]));
+  const totalsFor = (cur: string) => {
+    const mine = rows.filter((r) => r.currency === cur);
+    const funded = mine.filter((r) => r.status === "funded");
+    return {
+      toFund: mine.filter((r) => r.status === "to_fund").reduce((a, r) => a + r.totalCents, 0),
       exposure: funded.reduce((a, r) => a + r.advancedCents, 0), // could come back as chargebacks
       reserveHeld: funded.reduce((a, r) => a + r.reserveCents, 0),
-      feesYtd: -entries.filter((x) => x.kind === "fee" && x.at.getUTCFullYear() === now.getUTCFullYear()).reduce((a, x) => a + x.amountCents, 0),
+      // charged back: the reserve the factor held on those went back to Receivables (the customer owes it to us)
+      reserveBackToAr: mine.filter((r) => r.status === "charged_back").reduce((a, r) => a + r.reserveBackToArCents, 0),
+      chargedBack: mine.filter((r) => r.status === "charged_back").reduce((a, r) => a + r.repaidCents, 0),
+      feesYtd: -entries.filter((x) => x.kind === "fee" && x.at.getUTCFullYear() === now.getUTCFullYear() && (inv.get(x.invoiceId)?.currency ?? "USD") === cur).reduce((a, x) => a + x.amountCents, 0),
       atRisk: funded.filter((r) => r.atRisk).length,
-    },
+    };
+  };
+  const currencies = [...new Set(["USD", ...rows.map((r) => r.currency)])];
+  const byCurrency = Object.fromEntries(currencies.map((c) => [c, totalsFor(c)]));
+  return {
+    rows,
+    /** the USD totals (see byCurrency for MXN / CAD factored invoices) */
+    totals: byCurrency.USD,
+    byCurrency,
     entities: entities.map((e) => ({ id: e.id, name: e.factorName!, ...termsOf(e) })),
   };
 }

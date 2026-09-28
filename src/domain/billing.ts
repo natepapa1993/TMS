@@ -10,7 +10,10 @@ import { newToken, publicUrl } from "@/lib/tokens";
 import { enqueue } from "@/lib/outbox";
 import { NotFoundError, ValidationError } from "./orders";
 import { assertOrderTransition, TransitionError } from "./states";
-import { buildInvoicePdf, buildStatementPdf } from "./billing-pdf";
+import { getCompany, setFxRate } from "./company";
+import { zonedDate, stopZone } from "@/lib/time";
+import { buildInvoicePdf, buildStatementPdf, buildCreditMemoPdf } from "./billing-pdf";
+import { money, parseRate, pickRate, toHome, HOME_CURRENCY, type FxRates } from "./fx-rules";
 
 /**
  * Billing & settlements (spec §7). Our own ledger: charges on orders → invoices with locked
@@ -30,14 +33,10 @@ async function loadOrder(ctx: Ctx, orderId: string): Promise<Order> {
   return o;
 }
 
-/** Make sure the order has its line haul (and fuel) charge from the rate confirmation. Idempotent. */
-export async function ensureCharges(ctx: Ctx, orderId: string) {
-  assertCtx(ctx);
-  const order = await loadOrder(ctx, orderId);
-  const existing = await db.select().from(s.charges).where(and(eq(s.charges.tenantId, ctx.tenantId), eq(s.charges.orderId, orderId)));
-  // a TONU is billed its fee instead of the line haul
-  if (existing.some((c) => c.kind === "linehaul" || c.kind === "tonu")) return existing;
-  if (order.rateCents == null) return existing;
+/** The line haul and fuel charges the order's rate con gives (source rate_con), in the order's currency. */
+async function rateConRows(ctx: Ctx, order: Order): Promise<(typeof s.charges.$inferInsert)[]> {
+  if (order.rateCents == null) return [];
+  const orderId = order.id;
   const rows: (typeof s.charges.$inferInsert)[] = [{ id: newId(), tenantId: ctx.tenantId, orderId, kind: "linehaul", description: "Line haul", qty: 1, unit: "flat", rateCents: order.rateCents, amountCents: order.rateCents, currency: order.currency, source: "rate_con", createdBy: ctx.userId, updatedBy: ctx.userId }];
   if (order.fuelRule === "pct" && order.fuelPct) {
     const pct = order.fuelPct;
@@ -51,11 +50,55 @@ export async function ensureCharges(ctx: Ctx, orderId: string) {
     }
     if (miles > 0) rows.push({ id: newId(), tenantId: ctx.tenantId, orderId, kind: "fuel", description: `Fuel surcharge ${order.fuelCentsPerMile}¢/mi × ${miles} mi`, qty: miles, unit: "mi", rateCents: order.fuelCentsPerMile, amountCents: order.fuelCentsPerMile * miles, currency: order.currency, source: "rate_con", createdBy: ctx.userId, updatedBy: ctx.userId });
   }
+  return rows;
+}
+
+/** Make sure the order has its line haul (and fuel) charge from the rate confirmation. Idempotent. */
+export async function ensureCharges(ctx: Ctx, orderId: string) {
+  assertCtx(ctx);
+  const order = await loadOrder(ctx, orderId);
+  const existing = await db.select().from(s.charges).where(and(eq(s.charges.tenantId, ctx.tenantId), eq(s.charges.orderId, orderId)));
+  // a TONU is billed its fee instead of the line haul
+  if (existing.some((c) => c.kind === "linehaul" || c.kind === "tonu")) return existing;
+  const rows = await rateConRows(ctx, order);
+  if (!rows.length) return existing;
   await db.insert(s.charges).values(rows);
   return db.select().from(s.charges).where(and(eq(s.charges.tenantId, ctx.tenantId), eq(s.charges.orderId, orderId)));
 }
 
-export type ChargeInput = { kind: ChargeKind; description?: string; qty?: number; unit?: string; rateCents: number; currency?: string; billable?: boolean; legId?: string | null; data?: Record<string, unknown>; approvalState?: "none" | "pending" | "approved" };
+/**
+ * The rate, currency or fuel rule on the load changed: the rate-con charges (line haul and fuel, source
+ * rate_con) are rebuilt from the load, in its currency. Charges already on an invoice are never touched
+ * (a change after invoicing is a credit or a supplemental). With `reset`, a typed line haul or fuel
+ * (source manual) is replaced too — "Reset charges to the rate con". A mismatch accepted earlier no longer
+ * stands once the rate con itself changed.
+ */
+export async function syncRateConCharges(ctx: Ctx, orderId: string, opts: { reset?: boolean } = {}) {
+  assertCtx(ctx);
+  const order = await loadOrder(ctx, orderId);
+  if (order.tonu || order.kind === "trip") return { changed: false as const, reason: order.tonu ? "a TONU bills its fee" : "a trip doesn't bill" };
+  const existing = await db.select().from(s.charges).where(and(eq(s.charges.tenantId, ctx.tenantId), eq(s.charges.orderId, orderId)));
+  const base = existing.filter((c) => c.kind === "linehaul" || c.kind === "fuel");
+  if (base.some((c) => c.invoiceId)) return { changed: false as const, reason: "the line haul is already on an invoice: credit it or bill a supplemental" };
+  const drop = base.filter((c) => c.source === "rate_con" || opts.reset);
+  // nothing built yet and not a reset: ensureCharges builds them from the load when billing needs them
+  if (!drop.length && !opts.reset && !existing.length) return { changed: false as const, reason: null };
+  const rows = await rateConRows(ctx, order);
+  const custom = { ...((order.custom ?? {}) as Record<string, unknown>) };
+  const hadAccepted = "rateConMismatchAccepted" in custom;
+  delete custom.rateConMismatchAccepted;
+  await db.transaction(async (tx) => {
+    if (drop.length) await tx.delete(s.charges).where(inArray(s.charges.id, drop.map((c) => c.id)));
+    if (rows.length) await tx.insert(s.charges).values(rows);
+    if (hadAccepted) await tx.update(s.orders).set({ custom, updatedAt: new Date(), updatedBy: ctx.userId }).where(eq(s.orders.id, orderId));
+    const was = drop.map((c) => `${c.description} ${money(c.amountCents, c.currency)}`).join(", ") || "none";
+    const now = rows.map((c) => `${c.description} ${money(c.amountCents!, c.currency!)}`).join(", ") || "none";
+    if (was !== now) await writeAudit(tx, ctx, "order", orderId, "update", { rateConCharges: { from: was, to: now } }, opts.reset ? "charges reset to the rate con" : "rate con changed: line haul and fuel follow it");
+  });
+  return { changed: true as const, reason: null };
+}
+
+export type ChargeInput = { kind: ChargeKind; description?: string; qty?: number; unit?: string; rateCents: number; currency?: string; billable?: boolean; legId?: string | null; data?: Record<string, unknown>; approvalState?: "none" | "pending" | "approved"; /** the exact amount when qty × rate would round (detention by the minute) */ amountCents?: number };
 
 /** Extras beyond the rate con that the customer has to OK before they bill (when the customer asks for approvals, the default). */
 export const NEEDS_APPROVAL: ChargeKind[] = ["detention", "layover", "lumper", "storage", "extra_stop", "accessorial", "other", "border_fee", "crossing_fee"];
@@ -102,7 +145,7 @@ export async function addCharge(ctx: Ctx, orderId: string, input: ChargeInput) {
   const qty = input.qty ?? 1;
   const unit = input.unit ?? "flat";
   // qty is in hundredths for hours (150 = 1.50 h) and hundredths of a percent for pct (2000 = 20.00 % of the rate)
-  const amount = unit === "h" ? Math.round((input.rateCents * qty) / 100) : unit === "pct" ? Math.round((input.rateCents * qty) / 10000) : Math.round(input.rateCents * qty);
+  const amount = input.amountCents != null && Number.isInteger(input.amountCents) ? input.amountCents : unit === "h" ? Math.round((input.rateCents * qty) / 100) : unit === "pct" ? Math.round((input.rateCents * qty) / 10000) : Math.round(input.rateCents * qty);
   const [row] = await db
     .insert(s.charges)
     .values({ id: newId(), tenantId: ctx.tenantId, orderId, legId: input.legId ?? null, kind: input.kind, description: input.description?.trim() || CHARGE_LABEL[input.kind], qty, unit, rateCents: input.rateCents, amountCents: amount, currency: input.currency ?? order.currency, billable: input.billable ?? true, source: input.data ? "computed" : "manual", data: input.data, approvalState, createdBy: ctx.userId, updatedBy: ctx.userId })
@@ -137,9 +180,11 @@ export async function computeDetention(ctx: Ctx, orderId: string, opts: { freeMi
     const billableMin = minutes - free;
     if (billableMin <= 0) continue;
     const hours100 = Math.round((billableMin / 60) * 100);
+    // billed by the minute: 2 h 28 min at $75/h is $185.00 (not 2.47 h × $75 = $185.25)
+    const exact = Math.round((rate * billableMin) / 60);
     const [dupe] = await db.select({ id: s.charges.id }).from(s.charges).where(and(eq(s.charges.orderId, orderId), eq(s.charges.kind, "detention"), sql`${s.charges.data}->>'stopId' = ${st.id}`)).limit(1);
     if (dupe) continue;
-    out.push(await addCharge(ctx, orderId, { kind: "detention", description: `Detention at ${st.name} (${st.country}) — ${Math.floor(billableMin / 60)}h ${billableMin % 60}m over ${free} min free`, qty: hours100, unit: "h", rateCents: rate, data: { stopId: st.id, arrivedAt: st.arrivedAt, departedAt: st.departedAt, freeMinutes: free, rateCents: rate, rule: "customer" } }));
+    out.push(await addCharge(ctx, orderId, { kind: "detention", description: `Detention at ${st.name} (${st.country}) — ${Math.floor(billableMin / 60)}h ${billableMin % 60}m over ${free} min free`, qty: hours100, unit: "h", rateCents: rate, amountCents: exact, data: { stopId: st.id, arrivedAt: st.arrivedAt, departedAt: st.departedAt, freeMinutes: free, rateCents: rate, billableMinutes: billableMin, rule: "customer · by the minute" } }));
   }
   return out;
 }
@@ -152,7 +197,7 @@ export async function chargesFor(ctx: Ctx, orderId: string) {
 
 // ---------- billing queue (7.2) ----------
 
-export type QueueRow = { order: Order; customerName: string | null; entityName: string | null; chargesCents: number; rateConCents: number | null; mismatch: boolean; requiredDocs: { code: string; present: boolean }[]; requiredRefs: { key: string; present: boolean }[]; docsComplete: boolean; ageDays: number; invoiceId: string | null; paperSays: string | null; pending: { count: number; cents: number; charges: { id: string; description: string; amountCents: number }[] }; supplemental: boolean };
+export type QueueRow = { order: Order; customerName: string | null; entityName: string | null; chargesCents: number; rateConCents: number | null; mismatch: boolean; mismatchReason: string | null; bigDifference: boolean; requiredDocs: { code: string; present: boolean }[]; requiredRefs: { key: string; present: boolean }[]; docsComplete: boolean; ageDays: number; invoiceId: string | null; paperSays: string | null; pending: { count: number; cents: number; charges: { id: string; description: string; amountCents: number }[] }; supplemental: boolean };
 
 /** The reference keys a customer may require on the order before it invoices, as the customer record spells them. */
 export const REF_KEYS: Record<string, string> = { PO: "po", ASN: "asn", SHIPMENT: "shipment", REFERENCE: "reference", RATE_CON: "rate_con" };
@@ -168,15 +213,33 @@ export function requiredRefsFor(cust: { requiredRefs?: string[] | null } | undef
 const billsNow = (c: typeof s.charges.$inferSelect) => c.billable && !c.invoiceId && (c.approvalState === "none" || c.approvalState === "approved");
 
 /**
- * Differs from the rate con: the agreed line haul (or TONU) isn't what the rate con says, or someone typed
- * their own line haul or fuel. Approved extras don't count: their approval is on the charge.
+ * Why the charges differ from the rate con, or null when they don't: the agreed line haul (or TONU) isn't
+ * what the rate con says, someone typed their own line haul or fuel, or a charge is in another currency
+ * than the load. Approved extras don't count: their approval is on the charge.
  */
-export function rateConMismatch(o: Pick<Order, "rateCents" | "custom">, cs: (typeof s.charges.$inferSelect)[]) {
-  if (o.rateCents == null || (o.custom as Record<string, unknown> | null)?.rateConMismatchAccepted) return false;
+export function mismatchReason(o: Pick<Order, "rateCents" | "custom" | "currency">, cs: (typeof s.charges.$inferSelect)[]): string | null {
+  if (o.rateCents == null) return null;
   const live = cs.filter((c) => c.billable && c.approvalState !== "rejected");
+  const other = live.filter((c) => !c.invoiceId && c.currency !== o.currency);
+  // a charge in another currency is never accepted as is: it would bill dollars as pesos
+  if (other.length) return `${other.length} charge${other.length === 1 ? " is" : "s are"} in ${[...new Set(other.map((c) => c.currency))].join(", ")} but the load is in ${o.currency}`;
+  if ((o.custom as Record<string, unknown> | null)?.rateConMismatchAccepted) return null;
   const base = live.filter((c) => c.kind === "linehaul" || c.kind === "tonu").reduce((a, c) => a + c.amountCents, 0);
-  const typed = live.some((c) => (c.kind === "linehaul" || c.kind === "fuel") && c.source !== "rate_con");
-  return base !== o.rateCents || typed;
+  if (base !== o.rateCents) return `line haul ${money(base, o.currency)} vs ${money(o.rateCents, o.currency)} on the rate con`;
+  if (live.some((c) => (c.kind === "linehaul" || c.kind === "fuel") && c.source !== "rate_con")) return "a typed line haul or fuel charge";
+  return null;
+}
+
+export function rateConMismatch(o: Pick<Order, "rateCents" | "custom" | "currency">, cs: (typeof s.charges.$inferSelect)[]) {
+  return mismatchReason(o, cs) != null;
+}
+
+/** A difference this big is not something to wave through: more than 10% of the rate con, or another currency. */
+export function bigDifference(rateConCents: number | null, chargesCents: number, reason: string | null) {
+  if (!reason) return false;
+  if (/currency|but the load is in/.test(reason)) return true;
+  if (!rateConCents) return true;
+  return Math.abs(chargesCents - rateConCents) > rateConCents * 0.1;
 }
 
 export async function billingQueue(ctx: Ctx): Promise<QueueRow[]> {
@@ -218,6 +281,8 @@ export async function billingQueue(ctx: Ctx): Promise<QueueRow[]> {
       chargesCents,
       rateConCents: o.rateCents,
       mismatch: !supplemental && rateConMismatch(o, cs),
+      mismatchReason: supplemental ? null : mismatchReason(o, cs),
+      bigDifference: !supplemental && bigDifference(o.rateCents, chargesCents, mismatchReason(o, cs)),
       requiredDocs: required,
       requiredRefs,
       docsComplete: required.every((r) => r.present) && requiredRefs.every((r) => r.present),
@@ -237,10 +302,22 @@ export async function acceptRateConMismatch(ctx: Ctx, orderId: string, note: str
   requirePermission(ctx, "billing.issue");
   if (!note?.trim()) throw new ValidationError("say why the charges differ from the rate con (e.g. accessorial approved by email)", "note");
   const o = await loadOrder(ctx, orderId);
+  const cs = await db.select().from(s.charges).where(and(eq(s.charges.tenantId, ctx.tenantId), eq(s.charges.orderId, orderId)));
+  const wrong = cs.filter((c) => c.billable && c.approvalState !== "rejected" && !c.invoiceId && c.currency !== o.currency);
+  if (wrong.length) throw new ValidationError(`${wrong.map((c) => c.description).join(", ")} ${wrong.length === 1 ? "is" : "are"} in ${wrong[0].currency} but the load is in ${o.currency} — reset the charges to the rate con, or remove and re-add ${wrong.length === 1 ? "it" : "them"} in ${o.currency}`);
   await db.update(s.orders).set({ custom: { ...(o.custom ?? {}), rateConMismatchAccepted: note.trim() }, updatedAt: new Date(), updatedBy: ctx.userId }).where(eq(s.orders.id, orderId));
   // accepting our charges with a note also approves any extras still waiting, on the strength of that note
   await db.update(s.charges).set({ approvalState: "approved", approvedBy: "accepted with a note", approvalRef: note.trim(), approvedAt: new Date(), updatedAt: new Date(), updatedBy: ctx.userId }).where(and(eq(s.charges.tenantId, ctx.tenantId), eq(s.charges.orderId, orderId), eq(s.charges.approvalState, "pending"), isNull(s.charges.invoiceId)));
   await writeAudit(db, ctx, "order", orderId, "override", { rateCon: { from: "mismatch", to: "accepted" } }, note.trim());
+}
+
+/** "Reset charges to the rate con": the line haul and fuel go back to what the load's rate con says (a typed one is removed). */
+export async function resetChargesToRateCon(ctx: Ctx, orderId: string) {
+  assertCtx(ctx);
+  requirePermission(ctx, "orders.edit");
+  const r = await syncRateConCharges(ctx, orderId, { reset: true });
+  if (!r.changed && r.reason) throw new ValidationError(r.reason);
+  return r;
 }
 
 /** Upload a POD / BOL / rate con on the order (billing docs). */
@@ -327,9 +404,10 @@ export async function closePeriod(ctx: Ctx, through: Date) {
   await writeAudit(db, ctx, "tenant", ctx.tenantId, "update", { closedThrough: { from: prev?.toISOString() ?? null, to: through.toISOString() } }, "period closed");
 }
 
-async function assertOpenPeriod(ctx: Ctx, date: Date) {
+/** Nothing dated on or before the close can be recorded: receipts, payments, factor entries, bill and settlement payments. */
+export async function assertOpenPeriod(ctx: Ctx, date: Date) {
   const c = await closedThrough(ctx);
-  if (c && date.getTime() <= c.getTime()) throw new ValidationError(`the period through ${c.toISOString().slice(0, 10)} is closed`);
+  if (c && date.getTime() <= c.getTime()) throw new ValidationError(`the books are closed through ${c.toISOString().slice(0, 10)}: date it after that (the owner closes periods; they can't be reopened)`);
 }
 
 export async function createInvoice(ctx: Ctx, orderIds: string[], opts: { entityId?: string | null; consolidate?: boolean; withoutPending?: boolean; rebillOf?: string | null } = {}) {
@@ -359,11 +437,16 @@ export async function createInvoice(ctx: Ctx, orderIds: string[], opts: { entity
   }
   const chargeRows = (await db.select().from(s.charges).where(and(eq(s.charges.tenantId, ctx.tenantId), inArray(s.charges.orderId, orderIds)))).filter(billsNow);
   if (!chargeRows.length) throw new ValidationError("nothing to bill yet: every charge is waiting for approval");
-  const subtotal = chargeRows.reduce((a, c) => a + c.amountCents, 0);
   const currency = queue[0].order.currency;
+  if (queue.some((q) => q.order.currency !== currency)) throw new ValidationError("one invoice is in one currency: these loads are in " + [...new Set(queue.map((q) => q.order.currency))].join(" and "));
+  const wrongCur = chargeRows.filter((c) => c.currency !== currency);
+  if (wrongCur.length) throw new ValidationError(`${wrongCur.map((c) => `${queue.find((q) => q.order.id === c.orderId)?.order.orderNumber ?? ""} ${c.description} (${c.currency})`).join(", ")}: the invoice is in ${currency} — fix the charge on the load first`);
+  const subtotal = chargeRows.reduce((a, c) => a + c.amountCents, 0);
   const kind = opts.rebillOf ? "rebill" : supplemental ? "supplemental" : "standard";
+  // a supplemental invoice adds to the load's invoice: it says which one, so the customer's AP doesn't reject it as a duplicate
+  const [orig] = supplemental ? await db.select({ id: s.invoices.id }).from(s.invoices).where(and(eq(s.invoices.tenantId, ctx.tenantId), eq(s.invoices.kind, "standard"), arrayOverlaps(s.invoices.orderIds, orderIds), sql`${s.invoices.state} not in ('void','draft')`)).orderBy(desc(s.invoices.issuedAt)).limit(1) : [];
   return db.transaction(async (tx) => {
-    const [inv] = await tx.insert(s.invoices).values({ id: newId(), tenantId: ctx.tenantId, entityId: entity.id, customerId, orderIds, currency, termsDays: cust.termsDays, subtotalCents: subtotal, totalCents: subtotal, payWhenPaid: cust.payWhenPaid, token: newToken(), kind, rebillOf: opts.rebillOf ?? null, createdBy: ctx.userId, updatedBy: ctx.userId }).returning();
+    const [inv] = await tx.insert(s.invoices).values({ id: newId(), tenantId: ctx.tenantId, entityId: entity.id, customerId, orderIds, currency, termsDays: cust.termsDays, subtotalCents: subtotal, totalCents: subtotal, payWhenPaid: cust.payWhenPaid, token: newToken(), kind, rebillOf: opts.rebillOf ?? null, supplementOf: orig?.id ?? null, createdBy: ctx.userId, updatedBy: ctx.userId }).returning();
     await tx.update(s.charges).set({ invoiceId: inv.id }).where(inArray(s.charges.id, chargeRows.map((c) => c.id)));
     for (const o of queue) if (o.order.state === "delivered") await tx.update(s.orders).set({ state: "ready_to_bill", previousState: "delivered", updatedAt: new Date(), updatedBy: ctx.userId }).where(eq(s.orders.id, o.order.id));
     await writeAudit(tx, ctx, "invoice", inv.id, "create", undefined, `${kind === "standard" ? "draft" : `${kind} draft`} for ${queue.map((q) => q.order.orderNumber).join(", ")}${waiting.length ? " (extras waiting for approval left off)" : ""}`);
@@ -411,7 +494,13 @@ export async function invoiceById(ctx: Ctx, invoiceId: string) {
   return { invoice: inv, lines, receipts: rcpts, creditMemos: memos, entity, customer, orders };
 }
 
-export async function issueInvoice(ctx: Ctx, invoiceId: string, opts: { issuedAt?: Date; exchangeRate?: number | null } = {}) {
+const hasAddress = (a: Record<string, string | undefined> | null | undefined) => !!(a && a.line1?.trim() && a.city?.trim());
+
+/** Reference keys as a customer reads them on the invoice: "PO #", "Rate con #", not "po:". */
+export const REF_LABEL: Record<string, string> = { po: "PO #", rate_con: "Rate con #", asn: "ASN #", shipment: "Shipment #", reference: "Ref #", bol: "BOL #", pro: "PRO #", pickup: "Pickup #", delivery: "Delivery #", sylectus_load: "Load #" };
+export const refLabel = (k: string) => REF_LABEL[k] ?? `${k.replace(/_/g, " ").replace(/^./, (c) => c.toUpperCase())} #`;
+
+export async function issueInvoice(ctx: Ctx, invoiceId: string, opts: { issuedAt?: Date; exchangeRate?: number | string | null } = {}) {
   assertCtx(ctx);
   requirePermission(ctx, "billing.issue");
   const { invoice: inv, lines, entity, customer, orders } = await invoiceById(ctx, invoiceId);
@@ -423,15 +512,29 @@ export async function issueInvoice(ctx: Ctx, invoiceId: string, opts: { issuedAt
   // rate-con hard stop and required docs re-checked at issue (persona: head of billing)
   const queue = (await billingQueue(ctx)).filter((q) => inv.orderIds.includes(q.order.id));
   const bad = queue.filter((q) => !q.docsComplete || q.mismatch);
-  if (bad.length) throw new ValidationError(bad.map((q) => `${q.order.orderNumber}: ${!q.docsComplete ? `missing ${[...q.requiredDocs.filter((d) => !d.present).map((d) => d.code), ...q.requiredRefs.filter((r) => !r.present).map((r) => `${r.key.toUpperCase()} reference`)].join(", ")}` : "charges differ from the rate con"}`).join("; "));
-  if (inv.currency === "MXN" && !opts.exchangeRate) throw new ValidationError("an exchange rate is required for a MXN invoice", "exchangeRate");
-  const stops = inv.orderIds.length === 1 ? await db.select().from(s.stops).where(eq(s.stops.orderId, inv.orderIds[0])).orderBy(s.stops.seq) : [];
+  if (bad.length) throw new ValidationError(bad.map((q) => `${q.order.orderNumber}: ${!q.docsComplete ? `missing ${[...q.requiredDocs.filter((d) => !d.present).map((d) => d.code), ...q.requiredRefs.filter((r) => !r.present).map((r) => `${r.key.toUpperCase()} reference`)].join(", ")}` : `charges differ from the rate con (${q.mismatchReason})`}`).join("; "));
+  if (lines.some((l) => l.currency !== inv.currency)) throw new ValidationError(`every line must be in ${inv.currency}: fix the charges on the load`);
+  // a MXN or CAD invoice carries the rate it was issued at: reports and QuickBooks convert with it
+  let rateE4: number | null = null;
+  if (inv.currency !== HOME_CURRENCY) {
+    if (opts.exchangeRate == null || opts.exchangeRate === "") throw new ValidationError(`an exchange rate is required for a ${inv.currency} invoice (${inv.currency} per 1 USD)`, "exchangeRate");
+    try {
+      rateE4 = parseRate(opts.exchangeRate, inv.currency);
+    } catch (e) {
+      throw new ValidationError((e as Error).message, "exchangeRate");
+    }
+  }
+  const company = await getCompany(ctx);
+  const tz = company.timeZone;
+  const allStops = orders.length ? await db.select().from(s.stops).where(inArray(s.stops.orderId, orders.map((o) => o.id))).orderBy(s.stops.seq) : [];
+  const stops = inv.orderIds.length === 1 ? allStops.filter((x) => x.orderId === inv.orderIds[0]) : [];
+  // dates the customer reads are the stop's own calendar day (a 9 PM pickup in Laredo is that day, not tomorrow in UTC)
+  const localDay = (d: Date | null | undefined, st?: { country: string; address: { state?: string } | null }) => (d ? zonedDate(d, st ? stopZone(st, tz) : tz) : null);
   const refs: Record<string, string> = {};
   if (orders.length === 1) for (const [k, v] of Object.entries(orders[0].refs)) if (v) refs[k] = v;
   // a summary invoice: one row per load with its references, lane and dates
   let loads: InvoiceSnapshot["loads"];
   if (orders.length > 1) {
-    const allStops = await db.select().from(s.stops).where(inArray(s.stops.orderId, orders.map((o) => o.id))).orderBy(s.stops.seq);
     const place = (st?: typeof allStops[number]) => (st ? [st.address?.city || st.name, st.address?.state].filter(Boolean).join(", ") : "");
     loads = [...orders]
       .sort((p, q) => p.orderNumber.localeCompare(q.orderNumber))
@@ -439,25 +542,32 @@ export async function issueInvoice(ctx: Ctx, invoiceId: string, opts: { issuedAt
         const st = allStops.filter((x) => x.orderId === o.id);
         const first = st.find((x) => x.type === "pickup") ?? st[0];
         const last = [...st].reverse().find((x) => x.type === "delivery") ?? st[st.length - 1];
-        return { orderNumber: o.orderNumber, refs: Object.values(o.refs).filter(Boolean).join(" / "), from: place(first), to: place(last), pickedUp: first?.departedAt?.toISOString().slice(0, 10) ?? null, delivered: (last?.arrivedAt ?? o.deliveredAt)?.toISOString().slice(0, 10) ?? null, amountCents: lines.filter((l) => l.orderId === o.id).reduce((a, l) => a + l.amountCents, 0) };
+        return { orderNumber: o.orderNumber, refs: Object.values(o.refs).filter(Boolean).join(" / "), from: place(first), to: place(last), pickedUp: localDay(first?.departedAt, first), delivered: localDay(last?.arrivedAt ?? o.deliveredAt, last), amountCents: lines.filter((l) => l.orderId === o.id).reduce((a, l) => a + l.amountCents, 0) };
       });
   }
-  // factored: the factor's remit-to and the notice of assignment go on the invoice
+  // factored: the factor's remit-to and the notice of assignment go on the invoice — never our address under the factor's name
   const { deliveryForInvoice } = await import("./invoicing");
   const factored = entity.factorName ? (await deliveryForInvoice(ctx, inv.customerId, entity.id)).method === "factor" : false;
+  if (factored && !hasAddress(entity.factorRemitTo as Record<string, string | undefined> | null)) throw new ValidationError(`${customer.name}'s invoices go to ${entity.factorName}, but ${entity.legalName} has no remit-to address for the factor. Add the factor's payment address under Settings → Billing entities → Factor's remit-to, then issue.`, "factorRemitTo");
   const remitTo = (entity.remitTo as Record<string, string | undefined>) ?? null;
+  // what this invoice points back to: the invoice a supplemental adds to, the voided one a rebill replaces
+  const refIds = [inv.supplementOf, inv.rebillOf].filter((x): x is string => !!x);
+  const refInvs = refIds.length ? await db.select({ id: s.invoices.id, number: s.invoices.number }).from(s.invoices).where(inArray(s.invoices.id, refIds)) : [];
   const snapshot: InvoiceSnapshot = {
     entity: { legalName: entity.legalName, dba: entity.dba, taxId: entity.taxId, remitTo, mc: entity.mcNumber, dot: entity.dotNumber },
     billTo: { name: customer.name, email: customer.billingEmail, kind: customer.kind, address: customer.billingAddress ?? null },
     loadNumbers: orders.map((o) => o.orderNumber).sort(),
     refs,
-    stops: stops.map((st) => ({ seq: st.seq, type: st.type, name: st.name, city: st.address?.city ?? null, state: st.address?.state ?? null, country: st.country, departedAt: st.departedAt?.toISOString() ?? null, arrivedAt: st.arrivedAt?.toISOString() ?? null })),
+    stops: stops.map((st) => ({ seq: st.seq, type: st.type, name: st.name, city: st.address?.city ?? null, state: st.address?.state ?? null, country: st.country, departedAt: st.departedAt?.toISOString() ?? null, arrivedAt: st.arrivedAt?.toISOString() ?? null, departedDate: localDay(st.departedAt, st), arrivedDate: localDay(st.arrivedAt, st) })),
     lines: lines.map<InvoiceLine>((l) => ({ chargeId: l.id, orderId: l.orderId, orderNumber: orders.find((o) => o.id === l.orderId)?.orderNumber ?? "", kind: l.kind, description: l.description, qty: l.qty, unit: l.unit, rateCents: l.rateCents, amountCents: l.amountCents })),
     terms: `Net ${inv.termsDays}`,
     currency: inv.currency,
-    exchangeRate: opts.exchangeRate ?? null,
+    exchangeRate: rateE4 ? rateE4 / 10000 : null,
     ...(loads ? { loads } : {}),
     factor: factored ? { name: entity.factorName!, remitTo: (entity.factorRemitTo as Record<string, string | undefined>) ?? null, notice: entity.factorNotice?.trim() || `This invoice has been assigned to and must be paid only to ${entity.factorName}. Payment to anyone else does not discharge the debt.` } : null,
+    supplementOf: inv.supplementOf ? (refInvs.find((r) => r.id === inv.supplementOf)?.number ?? null) : null,
+    replaces: inv.rebillOf ? (refInvs.find((r) => r.id === inv.rebillOf)?.number ?? null) : null,
+    timeZone: tz,
   };
   const subtotal = lines.reduce((a, l) => a + l.amountCents, 0);
   const dueAt = new Date(issuedAt.getTime() + inv.termsDays * 86400_000);
@@ -468,7 +578,7 @@ export async function issueInvoice(ctx: Ctx, invoiceId: string, opts: { issuedAt
     await tx.update(s.billingEntities).set({ nextInvoiceNumber: ent.n + 1 }).where(eq(s.billingEntities.id, entity.id));
     const pdf = await buildInvoicePdf({ number, issuedAt, dueAt, snapshot, subtotalCents: subtotal, totalCents: subtotal });
     const [blob] = await tx.insert(s.documentBlobs).values({ id: newId(), tenantId: ctx.tenantId, sha256: createHash("sha256").update(pdf).digest("hex"), mimeType: "application/pdf", sizeBytes: pdf.length, bytes: Buffer.from(pdf) }).returning({ id: s.documentBlobs.id });
-    const [after] = await tx.update(s.invoices).set({ state: "issued", number, issuedAt, dueAt, subtotalCents: subtotal, totalCents: subtotal, snapshot, factored, exchangeRate: opts.exchangeRate ? Math.round(opts.exchangeRate * 10000) : null, pdfStorageKey: `blob:${blob.id}`, updatedAt: new Date(), updatedBy: ctx.userId }).where(eq(s.invoices.id, inv.id)).returning();
+    const [after] = await tx.update(s.invoices).set({ state: "issued", number, issuedAt, dueAt, subtotalCents: subtotal, totalCents: subtotal, snapshot, factored, exchangeRate: rateE4, pdfStorageKey: `blob:${blob.id}`, updatedAt: new Date(), updatedBy: ctx.userId }).where(eq(s.invoices.id, inv.id)).returning();
     for (const oid of inv.orderIds) {
       const [o] = await tx.select().from(s.orders).where(eq(s.orders.id, oid)).limit(1);
       // a supplemental invoice leaves an invoiced or paid load where it is
@@ -477,9 +587,11 @@ export async function issueInvoice(ctx: Ctx, invoiceId: string, opts: { issuedAt
         await tx.update(s.orders).set({ state: "invoiced", previousState: o.state, updatedAt: new Date(), updatedBy: ctx.userId }).where(eq(s.orders.id, oid));
       }
     }
-    await writeAudit(tx, ctx, "invoice", inv.id, "transition", { state: { from: "draft", to: "issued" }, number: { from: null, to: number } });
+    await writeAudit(tx, ctx, "invoice", inv.id, "transition", { state: { from: "draft", to: "issued" }, number: { from: null, to: number } }, rateE4 ? `at ${(rateE4 / 10000).toFixed(4)} ${inv.currency} per USD` : undefined);
     return after;
   });
+  // the rate on the newest invoice is the company's latest rate for loads not invoiced yet
+  if (rateE4) await setFxRate(ctx, inv.currency, rateE4, { silent: true });
   // EDI 210 for partners that take invoices electronically (after the commit; a failure here never un-issues)
   try {
     const { emit210 } = await import("./edi");
@@ -488,6 +600,34 @@ export async function issueInvoice(ctx: Ctx, invoiceId: string, opts: { issuedAt
     console.error(`[edi] 210 for ${invoiceId} failed: ${String(e)}`);
   }
   return issued;
+}
+
+/** Re-draw an issued invoice's PDF from its locked snapshot (after a credit memo, or a corrected remit-to). */
+async function redrawInvoicePdf(ctx: Ctx, inv: typeof s.invoices.$inferSelect, snapshot: InvoiceSnapshot, creditedCents: number) {
+  if (!inv.number || !inv.issuedAt || !inv.dueAt) return inv.pdfStorageKey;
+  const pdf = await buildInvoicePdf({ number: inv.number, issuedAt: inv.issuedAt, dueAt: inv.dueAt, snapshot, subtotalCents: inv.subtotalCents, totalCents: inv.totalCents, creditedCents });
+  const [blob] = await db.insert(s.documentBlobs).values({ id: newId(), tenantId: ctx.tenantId, sha256: createHash("sha256").update(pdf).digest("hex"), mimeType: "application/pdf", sizeBytes: pdf.length, bytes: Buffer.from(pdf) }).returning({ id: s.documentBlobs.id });
+  return `blob:${blob.id}`;
+}
+
+/**
+ * After a chargeback the customer owes us again, but the invoice they hold says "pay the factor". This
+ * re-draws it with our own remit-to (the notice of assignment dropped, the snapshot remembers it was
+ * there) and emails it to the customer's billing address.
+ */
+export async function sendCorrectedInvoice(ctx: Ctx, invoiceId: string, to?: string | null) {
+  assertCtx(ctx);
+  requirePermission(ctx, "billing.issue");
+  const { invoice: inv } = await invoiceById(ctx, invoiceId);
+  if (!inv.snapshot?.factor) throw new ValidationError("this invoice already tells the customer to pay you");
+  if (inv.factored || inv.factorFundedAt) throw new ValidationError("the factor still owns this invoice: record the chargeback first (Billing → Factoring)");
+  if (!["issued", "sent", "partially_paid", "disputed"].includes(inv.state)) throw new ValidationError(`the invoice is ${inv.state}`);
+  const snapshot: InvoiceSnapshot = { ...inv.snapshot, factor: null, correctedFromFactor: inv.snapshot.factor.name };
+  const key = await redrawInvoicePdf(ctx, inv, snapshot, inv.creditedCents);
+  await db.update(s.invoices).set({ snapshot, pdfStorageKey: key, updatedAt: new Date(), updatedBy: ctx.userId }).where(eq(s.invoices.id, invoiceId));
+  await writeAudit(db, ctx, "invoice", invoiceId, "update", { remitTo: { from: inv.snapshot.factor.name, to: inv.snapshot.entity.legalName } }, "corrected invoice after the chargeback: remit to us");
+  const { deliverInvoice } = await import("./invoicing");
+  return deliverInvoice(ctx, invoiceId, { method: "email", to: to ?? null, reference: "corrected: remit to us" });
 }
 
 /** Email the invoice with its documents (the customer's billing email, or `to`). Other routes: invoicing.deliverInvoice. */
@@ -513,6 +653,7 @@ export async function recordReceipt(ctx: Ctx, invoiceId: string, r: { amountCent
   if (!["issued", "sent", "partially_paid", "disputed"].includes(inv.state)) throw new TransitionError("order", inv.state, "paid", "no receipts on a draft, void or paid invoice");
   const open = inv.totalCents - inv.creditedCents - inv.paidCents;
   if (r.amountCents > open) throw new ValidationError(`over-payment: ${(r.amountCents / 100).toFixed(2)} is more than the ${(open / 100).toFixed(2)} open. Record the remainder as unapplied credit on another invoice.`, "amountCents");
+  await assertOpenPeriod(ctx, r.receivedAt ?? new Date());
   return db.transaction(async (tx) => {
     await tx.insert(s.receipts).values({ id: newId(), tenantId: ctx.tenantId, invoiceId, amountCents: r.amountCents, receivedAt: r.receivedAt ?? new Date(), method: r.method ?? "ach", reference: r.reference ?? null, note: r.note ?? null, paymentId: r.paymentId ?? null, createdBy: ctx.userId });
     const paid = inv.paidCents + r.amountCents;
@@ -542,28 +683,122 @@ export async function voidInvoice(ctx: Ctx, invoiceId: string, reason: string) {
   });
 }
 
+/**
+ * A credit memo: reduces what the customer owes on an invoice. It has its own number (PREFIX-CM-000001, a
+ * sequence apart from invoices, so invoice numbers have no gaps), its own PDF, and it can be emailed like
+ * an invoice. The invoice's PDF is re-drawn with the credit so "Send again" shows what is really due.
+ */
 export async function creditMemo(ctx: Ctx, invoiceId: string, m: { amountCents: number; reason: string; lines?: { description: string; amountCents: number }[] }) {
   assertCtx(ctx);
   requirePermission(ctx, "billing.void");
   if (!m.reason?.trim()) throw new ValidationError("a reason is required", "reason");
   if (!Number.isFinite(m.amountCents) || m.amountCents <= 0) throw new ValidationError("amount must be positive", "amountCents");
-  const { invoice: inv, entity } = await invoiceById(ctx, invoiceId);
+  const { invoice: inv, entity, customer } = await invoiceById(ctx, invoiceId);
   if (inv.state === "draft" || inv.state === "void") throw new TransitionError("order", inv.state, "credit", "issue the invoice first");
   // a credit can only reduce what is still owed: money already received is refunded, not credited
   const open = inv.totalCents - inv.creditedCents - inv.paidCents;
-  if (m.amountCents > open) throw new ValidationError(`the credit can't be more than the ${(open / 100).toLocaleString("en-US", { style: "currency", currency: inv.currency })} still open`, "amountCents");
-  await assertOpenPeriod(ctx, new Date());
-  return db.transaction(async (tx) => {
-    const [ent] = await tx.execute(sql`select next_invoice_number as n, invoice_prefix as p from billing_entities where id = ${entity!.id} for update`) as unknown as { n: number; p: string }[];
+  if (m.amountCents > open) throw new ValidationError(`the credit can't be more than the ${money(open, inv.currency)} still open`, "amountCents");
+  const issuedAt = new Date();
+  await assertOpenPeriod(ctx, issuedAt);
+  const lines = m.lines ?? [{ description: m.reason.trim(), amountCents: m.amountCents }];
+  const memo = await db.transaction(async (tx) => {
+    const [ent] = await tx.execute(sql`select next_credit_number as n, invoice_prefix as p from billing_entities where id = ${entity!.id} for update`) as unknown as { n: number; p: string }[];
     const number = `${ent.p}-CM-${String(ent.n).padStart(6, "0")}`;
-    await tx.update(s.billingEntities).set({ nextInvoiceNumber: ent.n + 1 }).where(eq(s.billingEntities.id, entity!.id));
-    const [memo] = await tx.insert(s.creditMemos).values({ id: newId(), tenantId: ctx.tenantId, invoiceId, number, amountCents: m.amountCents, reason: m.reason.trim(), lines: m.lines ?? [{ description: m.reason.trim(), amountCents: m.amountCents }], createdBy: ctx.userId }).returning();
+    await tx.update(s.billingEntities).set({ nextCreditNumber: ent.n + 1 }).where(eq(s.billingEntities.id, entity!.id));
+    const snap = inv.snapshot;
+    const pdf = await buildCreditMemoPdf({ number, issuedAt, invoiceNumber: inv.number ?? "", reason: m.reason.trim(), lines, amountCents: m.amountCents, currency: inv.currency, entity: snap?.entity ?? { legalName: entity!.legalName, dba: entity!.dba, taxId: entity!.taxId, remitTo: (entity!.remitTo as Record<string, string | undefined>) ?? null, mc: entity!.mcNumber, dot: entity!.dotNumber }, billTo: snap?.billTo ?? { name: customer?.name ?? "", email: customer?.billingEmail ?? null, kind: customer?.kind ?? "customer", address: customer?.billingAddress ?? null }, invoiceTotalCents: inv.totalCents, openAfterCents: open - m.amountCents, timeZone: snap?.timeZone });
+    const [blob] = await tx.insert(s.documentBlobs).values({ id: newId(), tenantId: ctx.tenantId, sha256: createHash("sha256").update(pdf).digest("hex"), mimeType: "application/pdf", sizeBytes: pdf.length, bytes: Buffer.from(pdf) }).returning({ id: s.documentBlobs.id });
+    const [memo] = await tx.insert(s.creditMemos).values({ id: newId(), tenantId: ctx.tenantId, invoiceId, number, amountCents: m.amountCents, reason: m.reason.trim(), lines, issuedAt, pdfStorageKey: `blob:${blob.id}`, createdBy: ctx.userId }).returning();
     const credited = inv.creditedCents + m.amountCents;
     const full = inv.paidCents >= inv.totalCents - credited;
     await tx.update(s.invoices).set({ creditedCents: credited, state: full ? "paid" : inv.state, paidAt: full && !inv.paidAt ? new Date() : inv.paidAt, updatedAt: new Date(), updatedBy: ctx.userId }).where(eq(s.invoices.id, invoiceId));
+    if (full) for (const oid of inv.orderIds) await tx.update(s.orders).set({ state: "paid", previousState: "invoiced", updatedAt: new Date(), updatedBy: ctx.userId }).where(and(eq(s.orders.id, oid), eq(s.orders.state, "invoiced")));
     await writeAudit(tx, ctx, "invoice", invoiceId, "update", { creditedCents: { from: inv.creditedCents, to: credited } }, `${number}: ${m.reason.trim()}`);
     return memo;
   });
+  // the invoice PDF now shows the credit, so a re-send says what is really due
+  if (inv.snapshot) {
+    const key = await redrawInvoicePdf(ctx, inv, inv.snapshot, inv.creditedCents + m.amountCents);
+    if (key) await db.update(s.invoices).set({ pdfStorageKey: key }).where(eq(s.invoices.id, invoiceId));
+  }
+  return memo;
+}
+
+/** Credit memos, newest first, with their invoice and customer (the invoice list shows them as their own kind). */
+export async function listCreditMemos(ctx: Ctx, opts: { customerId?: string; q?: string } = {}) {
+  assertCtx(ctx);
+  requirePermission(ctx, "billing.view");
+  const rows = await db
+    .select({ memo: s.creditMemos, invoiceNumber: s.invoices.number, customerId: s.invoices.customerId, currency: s.invoices.currency, customer: s.customers.name })
+    .from(s.creditMemos)
+    .innerJoin(s.invoices, eq(s.invoices.id, s.creditMemos.invoiceId))
+    .innerJoin(s.customers, eq(s.customers.id, s.invoices.customerId))
+    .where(and(eq(s.creditMemos.tenantId, ctx.tenantId), ...(opts.customerId ? [eq(s.invoices.customerId, opts.customerId)] : [])))
+    .orderBy(desc(s.creditMemos.issuedAt))
+    .limit(500);
+  const q = opts.q?.trim().toLowerCase();
+  return q ? rows.filter((r) => `${r.memo.number} ${r.invoiceNumber ?? ""} ${r.customer} ${r.memo.reason}`.toLowerCase().includes(q)) : rows;
+}
+
+/** The credit memo PDF (drawn when it was issued; an older memo without one is drawn now). */
+export async function creditMemoPdf(ctx: Ctx, memoId: string) {
+  assertCtx(ctx);
+  requirePermission(ctx, "billing.view");
+  const [memo] = await db.select().from(s.creditMemos).where(and(eq(s.creditMemos.tenantId, ctx.tenantId), eq(s.creditMemos.id, memoId))).limit(1);
+  if (!memo) throw new NotFoundError("credit memo", memoId);
+  const { readBlob } = await import("./crossing");
+  if (memo.pdfStorageKey) return { memo, bytes: new Uint8Array((await readBlob(ctx, memo.pdfStorageKey)).bytes) };
+  const { invoice: inv, entity, customer } = await invoiceById(ctx, memo.invoiceId);
+  const bytes = await buildCreditMemoPdf({ number: memo.number, issuedAt: memo.issuedAt, invoiceNumber: inv.number ?? "", reason: memo.reason, lines: memo.lines, amountCents: memo.amountCents, currency: inv.currency, entity: inv.snapshot?.entity ?? { legalName: entity?.legalName ?? "", dba: entity?.dba ?? null, taxId: entity?.taxId ?? null, remitTo: null, mc: null, dot: null }, billTo: inv.snapshot?.billTo ?? { name: customer?.name ?? "", email: customer?.billingEmail ?? null, kind: "customer" }, invoiceTotalCents: inv.totalCents, openAfterCents: null, timeZone: inv.snapshot?.timeZone });
+  return { memo, bytes };
+}
+
+/** Email the credit memo PDF to the customer's billing email (or `to`), like an invoice. */
+export async function sendCreditMemo(ctx: Ctx, memoId: string, to?: string | null) {
+  assertCtx(ctx);
+  requirePermission(ctx, "billing.issue");
+  const { memo, bytes } = await creditMemoPdf(ctx, memoId);
+  const { invoice: inv, customer, entity } = await invoiceById(ctx, memo.invoiceId);
+  const dest = to?.trim() || customer?.billingEmail || null;
+  if (!dest) throw new ValidationError(`${customer?.name ?? "the customer"} has no billing email: type the address to send it to`, "to");
+  let key = memo.pdfStorageKey;
+  if (!key) {
+    const [blob] = await db.insert(s.documentBlobs).values({ id: newId(), tenantId: ctx.tenantId, sha256: createHash("sha256").update(bytes).digest("hex"), mimeType: "application/pdf", sizeBytes: bytes.length, bytes: Buffer.from(bytes) }).returning({ id: s.documentBlobs.id });
+    key = `blob:${blob.id}`;
+  }
+  const open = inv.totalCents - inv.creditedCents - inv.paidCents;
+  const body = [`${customer?.name},`, ``, `Attached is credit memo ${memo.number} from ${entity?.legalName} for ${money(memo.amountCents, inv.currency, { code: true })}, applied to invoice ${inv.number}.`, `Reason: ${memo.reason}`, ``, open > 0 ? `Invoice ${inv.number} now has ${money(open, inv.currency, { code: true })} open.` : `Invoice ${inv.number} is now settled.`, ``, `Reference: ${memo.number}`].join("\n");
+  await enqueue(ctx, { channel: "email", to: dest, subject: `Credit memo ${memo.number} · invoice ${inv.number} · ${entity?.dba || entity?.legalName}`, body, subjectKind: "credit_memo", subjectId: memo.id, meta: { kind: "invoice", attachments: [{ fileName: `Credit memo ${memo.number}.pdf`, storageKey: key }] } });
+  const { deliverQueued } = await import("@/lib/outbox");
+  await deliverQueued().catch(() => null);
+  await db.update(s.creditMemos).set({ sentAt: new Date(), sentTo: dest, pdfStorageKey: key }).where(eq(s.creditMemos.id, memo.id));
+  await writeAudit(db, ctx, "invoice", inv.id, "update", undefined, `credit memo ${memo.number} emailed to ${dest}`);
+  return { sentTo: dest };
+}
+
+export const DISPUTE_OUTCOMES = { customer_pays: "Resolved in our favor — the customer will pay", credited: "Resolved with a credit memo", paid: "The customer paid", other: "Other (see note)" } as const;
+export type DisputeOutcome = keyof typeof DISPUTE_OUTCOMES;
+
+/**
+ * Resolve a dispute: the outcome and a note are kept on the invoice and in its history, and it goes back
+ * to where the money says it is — paid when nothing is open, partly paid when some was received, else sent
+ * (or issued if it was never sent). Reminders pick it up again.
+ */
+export async function resolveDispute(ctx: Ctx, invoiceId: string, r: { outcome: DisputeOutcome; note: string }) {
+  assertCtx(ctx);
+  requirePermission(ctx, "billing.issue");
+  if (!(r.outcome in DISPUTE_OUTCOMES)) throw new ValidationError("pick how it was resolved", "outcome");
+  if (!r.note?.trim()) throw new ValidationError("add a note: what was agreed, with whom", "note");
+  const { invoice: inv, creditMemos } = await invoiceById(ctx, invoiceId);
+  if (inv.state !== "disputed") throw new TransitionError("order", inv.state, "resolved", "only a disputed invoice can be resolved");
+  if (r.outcome === "credited" && !creditMemos.length) throw new ValidationError("issue the credit memo first (owner), then resolve the dispute", "outcome");
+  const open = inv.totalCents - inv.creditedCents - inv.paidCents;
+  const to = open <= 0 ? "paid" : inv.paidCents > 0 ? "partially_paid" : inv.sentAt ? "sent" : "issued";
+  const resolution = `${DISPUTE_OUTCOMES[r.outcome]}: ${r.note.trim()}`;
+  const [after] = await db.update(s.invoices).set({ state: to, disputeResolution: resolution, disputeExpectedAt: null, paidAt: to === "paid" && !inv.paidAt ? new Date() : inv.paidAt, updatedAt: new Date(), updatedBy: ctx.userId }).where(eq(s.invoices.id, invoiceId)).returning();
+  if (to === "paid") for (const oid of inv.orderIds) await db.update(s.orders).set({ state: "paid", previousState: "invoiced", updatedAt: new Date(), updatedBy: ctx.userId }).where(and(eq(s.orders.id, oid), eq(s.orders.state, "invoiced")));
+  await writeAudit(db, ctx, "invoice", invoiceId, "transition", { state: { from: "disputed", to } }, `dispute resolved — ${resolution}`);
+  return after;
 }
 
 export async function disputeInvoice(ctx: Ctx, invoiceId: string, reason: string, expectedAt?: Date | null) {
@@ -583,7 +818,7 @@ export async function setPromiseToPay(ctx: Ctx, invoiceId: string, at: Date | nu
   await db.update(s.invoices).set({ promiseToPayAt: at, updatedAt: new Date(), updatedBy: ctx.userId }).where(and(eq(s.invoices.tenantId, ctx.tenantId), eq(s.invoices.id, invoiceId)));
 }
 
-export type InvoiceFilter = { states?: string[]; customerId?: string; q?: string; view?: "open" | "overdue" | "unsent" | "factored" | ""; from?: string; to?: string; kind?: string };
+export type InvoiceFilter = { states?: string[]; customerId?: string; q?: string; view?: "open" | "overdue" | "unsent" | "factored" | "credits" | ""; from?: string; to?: string; kind?: string };
 
 /** Invoices with the filters billing actually uses: who, what state, overdue, not sent yet, factored, dates, and a search over invoice #, load #, any load reference and the customer. */
 export async function listInvoices(ctx: Ctx, opts: InvoiceFilter = {}) {
@@ -628,40 +863,71 @@ export function bucketFor(dueAt: Date | null, now: Date): AgingBucket {
   return d <= 0 ? "current" : d <= 30 ? "1_30" : d <= 60 ? "31_60" : d <= 90 ? "61_90" : "90_plus";
 }
 
+type Buckets = Record<AgingBucket, number> & { total: number };
+const zeroBuckets = (): Buckets => ({ current: 0, "1_30": 0, "31_60": 0, "61_90": 0, "90_plus": 0, total: 0 });
+
+/** The open states: issued, sent, partly paid, disputed. */
+export const OPEN_INVOICE_STATES = ["issued", "sent", "partially_paid", "disputed"] as const;
+
+/**
+ * Receivables, one definition for the Receivables screen and Reports: invoices issued, sent, partly paid or
+ * disputed with money still open, less the ones the factor funded (the customer owes the factor, shown on
+ * Factoring). Amounts stay in their own currency — one row per customer per currency, totals per currency —
+ * and a USD figure converts each invoice at the rate stored on it when it was issued.
+ */
 export async function aging(ctx: Ctx, now = new Date()) {
   assertCtx(ctx);
   requirePermission(ctx, "billing.view");
-  const open = await db.select().from(s.invoices).where(and(eq(s.invoices.tenantId, ctx.tenantId), inArray(s.invoices.state, ["issued", "sent", "partially_paid", "disputed"])));
+  const open = await db.select().from(s.invoices).where(and(eq(s.invoices.tenantId, ctx.tenantId), inArray(s.invoices.state, [...OPEN_INVOICE_STATES])));
   const customers = await db.select({ id: s.customers.id, name: s.customers.name, payWhenPaid: s.customers.payWhenPaid }).from(s.customers).where(eq(s.customers.tenantId, ctx.tenantId));
-  const rows = new Map<string, { customerId: string; name: string; buckets: Record<AgingBucket, number>; total: number; invoices: (typeof open)[number][] }>();
-  let withFactor = 0;
+  const company = await getCompany(ctx);
+  const rows = new Map<string, { customerId: string; name: string; currency: string; buckets: Record<AgingBucket, number>; total: number; invoices: (typeof open)[number][] }>();
+  const totals: Record<string, Buckets> = {};
+  const withFactor: Record<string, number> = {};
+  const home = { openCents: 0, overdueCents: 0, rates: [] as { currency: string; rateE4: number; source: ReturnType<typeof pickRate>["source"] }[] };
   for (const inv of open) {
     const openCents = inv.totalCents - inv.creditedCents - inv.paidCents;
     if (openCents <= 0) continue;
     // funded by the factor: the customer owes the factor now (Billing → Factoring), not us
     if (inv.factorFundedAt) {
-      withFactor += openCents;
+      withFactor[inv.currency] = (withFactor[inv.currency] ?? 0) + openCents;
       continue;
     }
-    const r = rows.get(inv.customerId) ?? { customerId: inv.customerId, name: customers.find((c) => c.id === inv.customerId)?.name ?? "?", buckets: { current: 0, "1_30": 0, "31_60": 0, "61_90": 0, "90_plus": 0 }, total: 0, invoices: [] };
-    r.buckets[bucketFor(inv.dueAt, now)] += openCents;
+    const key = `${inv.customerId}|${inv.currency}`;
+    const r = rows.get(key) ?? { customerId: inv.customerId, name: customers.find((c) => c.id === inv.customerId)?.name ?? "?", currency: inv.currency, buckets: { current: 0, "1_30": 0, "31_60": 0, "61_90": 0, "90_plus": 0 }, total: 0, invoices: [] };
+    const bucket = bucketFor(inv.dueAt, now);
+    r.buckets[bucket] += openCents;
     r.total += openCents;
     r.invoices.push(inv);
-    rows.set(inv.customerId, r);
+    rows.set(key, r);
+    const tot = (totals[inv.currency] ??= zeroBuckets());
+    tot[bucket] += openCents;
+    tot.total += openCents;
+    const rate = pickRate(inv.currency, inv.exchangeRate, company.settings.fx);
+    const usd = toHome(openCents, inv.currency, rate.rateE4);
+    home.openCents += usd;
+    if (bucket !== "current") home.overdueCents += usd;
+    if (inv.currency !== HOME_CURRENCY) home.rates.push({ currency: inv.currency, ...rate });
   }
-  const list = [...rows.values()].sort((p, q) => q.total - p.total);
-  const totals = list.reduce((a, r) => ({ current: a.current + r.buckets.current, "1_30": a["1_30"] + r.buckets["1_30"], "31_60": a["31_60"] + r.buckets["31_60"], "61_90": a["61_90"] + r.buckets["61_90"], "90_plus": a["90_plus"] + r.buckets["90_plus"], total: a.total + r.total }), { current: 0, "1_30": 0, "31_60": 0, "61_90": 0, "90_plus": 0, total: 0 });
-  return { rows: list, totals, withFactor };
+  // dollars first, then pesos, then Canadian; biggest customer first within each
+  const order = ["USD", "MXN", "CAD"];
+  const list = [...rows.values()].sort((p, q) => order.indexOf(p.currency) - order.indexOf(q.currency) || q.total - p.total);
+  return { rows: list, totals, withFactor, home };
 }
 
 export async function statementPdf(ctx: Ctx, customerId: string, now = new Date()) {
   assertCtx(ctx);
   requirePermission(ctx, "billing.view");
   const { rows } = await aging(ctx, now);
-  const r = rows.find((x) => x.customerId === customerId);
-  const [entity] = await db.select().from(s.billingEntities).where(and(eq(s.billingEntities.tenantId, ctx.tenantId), eq(s.billingEntities.isDefault, true))).limit(1);
+  const mine = rows.filter((x) => x.customerId === customerId);
+  const invs = mine.flatMap((r) => r.invoices);
+  // the entity on the customer's invoices (the default one when they have none open)
+  const entityId = invs[0]?.entityId;
+  const [entity] = entityId ? await db.select().from(s.billingEntities).where(eq(s.billingEntities.id, entityId)).limit(1) : await db.select().from(s.billingEntities).where(and(eq(s.billingEntities.tenantId, ctx.tenantId), eq(s.billingEntities.isDefault, true))).limit(1);
   const [cust] = await db.select().from(s.customers).where(eq(s.customers.id, customerId)).limit(1);
-  return buildStatementPdf({ entityName: entity?.legalName ?? "", customerName: cust?.name ?? "", asOf: now, currency: "USD", rows: (r?.invoices ?? []).map((i) => ({ number: i.number ?? "", issuedAt: i.issuedAt?.toISOString() ?? "", dueAt: i.dueAt?.toISOString() ?? "", totalCents: i.totalCents, openCents: i.totalCents - i.creditedCents - i.paidCents, daysPastDue: i.dueAt ? Math.floor((now.getTime() - i.dueAt.getTime()) / 86400_000) : 0 })) });
+  const company = await getCompany(ctx);
+  const pdf = await buildStatementPdf({ entityName: entity?.legalName ?? "", remitTo: (entity?.remitTo as Record<string, string | undefined> | null) ?? null, customerName: cust?.name ?? "", asOf: now, timeZone: company.timeZone, rows: invs.map((i) => ({ number: i.number ?? "", currency: i.currency, issuedAt: i.issuedAt ?? null, dueAt: i.dueAt ?? null, totalCents: i.totalCents, openCents: i.totalCents - i.creditedCents - i.paidCents, daysPastDue: i.dueAt ? Math.floor((now.getTime() - i.dueAt.getTime()) / 86400_000) : 0, disputed: i.state === "disputed" })) });
+  return { pdf, fileName: `Statement ${(cust?.name ?? "customer").replace(/[^\w .-]+/g, "")} ${zonedDate(now, company.timeZone)}.pdf` };
 }
 
 /** Job: reminder emails at the customer's configured days after due (default +3, +10, +20), once per step. */
@@ -701,7 +967,7 @@ export async function syncCarrierBills(ctx: Ctx) {
     const [tender] = await db.select().from(s.tenders).where(and(eq(s.tenders.legId, l.id), eq(s.tenders.state, "accepted"))).orderBy(desc(s.tenders.respondedAt)).limit(1);
     const [carrier] = await db.select({ quickPayPct: s.carriers.quickPayPct }).from(s.carriers).where(eq(s.carriers.id, l.carrierId)).limit(1);
     const qp = carrier?.quickPayPct;
-    await db.insert(s.carrierBills).values({ id: newId(), tenantId: ctx.tenantId, carrierId: l.carrierId, orderId: l.orderId, legId: l.id, tenderId: tender?.id ?? null, expectedCents: tender?.rateCents ?? l.carrierRateCents ?? 0, currency: tender?.currency ?? "USD", quickPayPct: qp ? Math.round(qp * 100) : null, createdBy: ctx.userId, updatedBy: ctx.userId });
+    await db.insert(s.carrierBills).values({ id: newId(), tenantId: ctx.tenantId, carrierId: l.carrierId, orderId: l.orderId, legId: l.id, tenderId: tender?.id ?? null, expectedCents: tender?.rateCents ?? l.carrierRateCents ?? 0, currency: tender?.currency ?? l.carrierRateCurrency ?? "USD", quickPayPct: qp ? Math.round(qp * 100) : null, createdBy: ctx.userId, updatedBy: ctx.userId });
     created++;
   }
   return { created };
@@ -785,6 +1051,7 @@ export async function payCarrierBill(ctx: Ctx, id: string, p: { paidCents?: numb
   if (inv?.payWhenPaid && inv.state !== "paid") throw new ValidationError(`pay-when-paid: customer invoice ${inv.number} is not paid yet`);
   let amount = p.paidCents ?? b.approvedCents ?? 0;
   const paidAt = p.paidAt ?? new Date();
+  await assertOpenPeriod(ctx, paidAt);
   if (b.quickPayPct && b.approvedAt && paidAt.getTime() - b.approvedAt.getTime() <= 7 * 86400_000 && p.paidCents == null) amount = Math.round(amount * (1 - b.quickPayPct / 10000));
   const [after] = await db.update(s.carrierBills).set({ state: "paid", paidCents: amount, paidAt, method: p.method, reference: p.reference ?? null, updatedAt: new Date(), updatedBy: ctx.userId }).where(eq(s.carrierBills.id, id)).returning();
   await writeAudit(db, ctx, "carrier_bill", id, "transition", { state: { from: b.state, to: "paid" }, paidCents: { from: null, to: amount } }, `${p.method} ${p.reference ?? ""}`.trim());
@@ -796,11 +1063,11 @@ export async function carrier1099(ctx: Ctx, year: number) {
   assertCtx(ctx);
   requirePermission(ctx, "billing.view");
   const rows = await db
-    .select({ carrierId: s.carrierBills.carrierId, name: s.carriers.name, country: s.carriers.country, total: sql<number>`sum(${s.carrierBills.paidCents})::int` })
+    .select({ carrierId: s.carrierBills.carrierId, name: s.carriers.name, country: s.carriers.country, currency: s.carrierBills.currency, total: sql<number>`sum(${s.carrierBills.paidCents})::int` })
     .from(s.carrierBills)
     .innerJoin(s.carriers, eq(s.carriers.id, s.carrierBills.carrierId))
     .where(and(eq(s.carrierBills.tenantId, ctx.tenantId), eq(s.carrierBills.state, "paid"), gte(s.carrierBills.paidAt, new Date(Date.UTC(year, 0, 1))), lte(s.carrierBills.paidAt, new Date(Date.UTC(year, 11, 31, 23, 59, 59)))))
-    .groupBy(s.carrierBills.carrierId, s.carriers.name, s.carriers.country);
+    .groupBy(s.carrierBills.carrierId, s.carriers.name, s.carriers.country, s.carrierBills.currency);
   return rows;
 }
 
@@ -958,6 +1225,20 @@ export function weekOf(d: Date) {
 
 // ---------- order P&L (7.8) ----------
 
+/**
+ * The rate that converts one load's money to USD: the rate on its (non-void) invoice when there is one,
+ * else the company's latest rate for the currency, else the default. Pure given its inputs.
+ */
+export function loadRate(order: { id: string; currency: string }, invoices: { orderIds: string[]; state: string; kind: string; currency: string; exchangeRate: number | null; issuedAt: Date | null }[], fx: FxRates) {
+  const inv = invoices.filter((i) => i.orderIds.includes(order.id) && i.state !== "void" && i.state !== "draft" && i.currency === order.currency && i.exchangeRate).sort((p, q) => (q.issuedAt?.getTime() ?? 0) - (p.issuedAt?.getTime() ?? 0))[0];
+  return pickRate(order.currency, inv?.exchangeRate ?? null, fx);
+}
+
+/**
+ * One load's P&L in USD: revenue (its charges, converted at the load's rate), carrier cost (each bill or
+ * leg in its own currency, converted), driver pay (USD), fuel (USD per mile) and tolls. A peso load shows
+ * its margin in dollars, never pesos minus dollars.
+ */
 export async function orderPnl(ctx: Ctx, orderId: string) {
   assertCtx(ctx);
   requirePermission(ctx, "billing.view");
@@ -970,17 +1251,23 @@ export async function orderPnl(ctx: Ctx, orderId: string) {
     const { costShares } = await import("./tailgate");
     share = (await costShares(ctx, order.tripId)).get(order.id) ?? 0;
   }
-  const [cs, bills, legs, tenant, costOrder] = await Promise.all([
+  const [cs, bills, legs, company, costOrder, invs] = await Promise.all([
     db.select().from(s.charges).where(and(eq(s.charges.orderId, orderId), eq(s.charges.billable, true))),
     db.select().from(s.carrierBills).where(eq(s.carrierBills.orderId, costOrderId)),
     db.select().from(s.legs).where(eq(s.legs.orderId, costOrderId)),
-    db.select({ settings: s.tenants.settings }).from(s.tenants).where(eq(s.tenants.id, ctx.tenantId)).limit(1).then((r) => r[0]),
+    getCompany(ctx),
     costOrderId === orderId ? Promise.resolve(order) : loadOrder(ctx, costOrderId),
+    db.select({ orderIds: s.invoices.orderIds, state: s.invoices.state, kind: s.invoices.kind, currency: s.invoices.currency, exchangeRate: s.invoices.exchangeRate, issuedAt: s.invoices.issuedAt }).from(s.invoices).where(and(eq(s.invoices.tenantId, ctx.tenantId), sql`${orderId} = any(${s.invoices.orderIds})`)),
   ]);
-  const revenue = cs.reduce((a, c) => a + c.amountCents, 0);
-  // carrier cost: the bill when there is one, else what the leg was tendered at
+  const fx = company.settings.fx;
+  const rate = loadRate(order, invs, fx);
+  const usd = (cents: number, cur: string) => toHome(cents, cur, cur === order.currency ? rate.rateE4 : pickRate(cur, null, fx).rateE4);
+  const live = cs.filter((c) => c.approvalState !== "rejected" && c.approvalState !== "pending");
+  const revenueOriginal = live.filter((c) => c.currency === order.currency).reduce((a, c) => a + c.amountCents, 0);
+  const revenue = live.reduce((a, c) => a + usd(c.amountCents, c.currency), 0);
+  // carrier cost: the bill when there is one, else what the leg was tendered at — each in its own currency
   const billed = new Set(bills.map((b) => b.legId).filter(Boolean));
-  const carrierCost = Math.round((bills.reduce((a, b) => a + (b.paidCents ?? b.approvedCents ?? b.invoicedCents ?? b.expectedCents + b.accessorialCents), 0) + legs.filter((l) => l.assigneeKind === "carrier" && l.state !== "cancelled" && !billed.has(l.id)).reduce((a, l) => a + (l.carrierRateCents ?? 0), 0)) * share);
+  const carrierCost = Math.round((bills.reduce((a, b) => a + usd(b.paidCents ?? b.approvedCents ?? b.invoicedCents ?? b.expectedCents + b.accessorialCents, b.currency), 0) + legs.filter((l) => l.assigneeKind === "carrier" && l.state !== "cancelled" && !billed.has(l.id)).reduce((a, l) => a + usd(l.carrierRateCents ?? 0, l.carrierRateCurrency ?? "USD"), 0)) * share);
   // driver pay: what a statement paid for the leg, else an estimate from the driver's pay rule (plan or pay type)
   const sts = await db.select().from(s.settlements).where(eq(s.settlements.tenantId, ctx.tenantId));
   let driverPay = 0;
@@ -996,6 +1283,7 @@ export async function orderPnl(ctx: Ctx, orderId: string) {
   if (ownLegs.length) {
     const ids = [...new Set(ownLegs.flatMap((l) => [l.driverId!, l.coDriverId].filter((x): x is string => !!x)))];
     const drivers = await db.select().from(s.drivers).where(inArray(s.drivers.id, ids));
+    const costRate = costOrderId === orderId ? rate : loadRate(costOrder, [], fx);
     for (const l of ownLegs) {
       for (const did of [l.driverId, l.coDriverId].filter((x): x is string => !!x)) {
         const d = drivers.find((x) => x.id === did);
@@ -1012,9 +1300,11 @@ export async function orderPnl(ctx: Ctx, orderId: string) {
             continue;
           }
         }
-        const rate = d.payRateCents ?? 0;
+        const pr = d.payRateCents ?? 0;
         const sh = team ? 0.5 : 1;
-        driverPay += Math.round((d.payType === "per_mile" ? (l.plannedMiles ?? 0) * rate : d.payType === "pct" ? ((costOrder.rateCents ?? 0) * rate) / 10000 : rate) * sh);
+        // a percent of the line haul is a percent of its dollar value
+        const linehaulUsd = toHome(costOrder.rateCents ?? 0, costOrder.currency, costRate.rateE4);
+        driverPay += Math.round((d.payType === "per_mile" ? (l.plannedMiles ?? 0) * pr : d.payType === "pct" ? (linehaulUsd * pr) / 10000 : pr) * sh);
         driverPayEstimated = true;
       }
     }
@@ -1022,11 +1312,12 @@ export async function orderPnl(ctx: Ctx, orderId: string) {
   driverPay = Math.round(driverPay * share);
   const milesAll = legs.filter((l) => l.assigneeKind === "truck").reduce((a, l) => a + (l.plannedMiles ?? 0), 0);
   const miles = Math.round(milesAll * share);
-  const fuelCpm = Number((tenant?.settings as Record<string, unknown>)?.fuelCostCentsPerMile ?? 65);
+  const fuelCpm = company.settings.fuelCostCentsPerMile;
   const fuel = Math.round(milesAll * fuelCpm * share);
-  const extra = costOrderId === orderId ? (order.tollsFeesCents ?? 0) : Math.round((costOrder.tollsFeesCents ?? 0) * share) + (order.tollsFeesCents ?? 0); // trip tolls shared, the shipment's own on top
+  // tolls and fees are typed on the load in its currency
+  const extra = costOrderId === orderId ? usd(order.tollsFeesCents ?? 0, order.currency) : Math.round(toHome(costOrder.tollsFeesCents ?? 0, costOrder.currency, pickRate(costOrder.currency, null, fx).rateE4) * share) + usd(order.tollsFeesCents ?? 0, order.currency); // trip tolls shared, the shipment's own on top
   const cost = carrierCost + driverPay + fuel + extra;
-  return { revenue, carrierCost, driverPay, driverPayEstimated, fuel, miles, fuelCpm, extra, cost, share, margin: revenue - cost, marginPct: revenue ? Math.round(((revenue - cost) / revenue) * 1000) / 10 : 0 };
+  return { currency: HOME_CURRENCY, orderCurrency: order.currency, fx: order.currency === HOME_CURRENCY ? null : rate, revenueOriginal, revenue, carrierCost, driverPay, driverPayEstimated, fuel, miles, fuelCpm, extra, cost, share, margin: revenue - cost, marginPct: revenue ? Math.round(((revenue - cost) / revenue) * 1000) / 10 : 0 };
 }
 
 export { diff };

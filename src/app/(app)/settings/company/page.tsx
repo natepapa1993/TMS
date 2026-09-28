@@ -23,7 +23,7 @@ export default async function CompanyPage() {
         Name, time zone and the company-wide numbers the P&amp;L uses. Invoice prefixes and remit-to live on each billing entity.
       </PageHeader>
       <div className="px-gutter pb-10 max-w-2xl">
-        <CompanyForm initial={{ name: c.name, timeZone: c.timeZone, fuelCostPerMile: (c.settings.fuelCostCentsPerMile / 100).toFixed(2), closedThrough: c.settings.closedThrough, qb: c.settings.qb, dispatchPhone: c.settings.dispatchPhone ?? "" }} canEdit={ctx.role === "owner"} />
+        <CompanyForm initial={{ name: c.name, timeZone: c.timeZone, fuelCostPerMile: (c.settings.fuelCostCentsPerMile / 100).toFixed(2), closedThrough: c.settings.closedThrough, qb: c.settings.qb, dispatchPhone: c.settings.dispatchPhone ?? "", fx: Object.fromEntries(["MXN", "CAD"].map((k) => [k, c.settings.fx[k] ? (c.settings.fx[k]!.rateE4 / 10000).toFixed(4) : ""])), fxAt: Object.fromEntries(["MXN", "CAD"].map((k) => [k, c.settings.fx[k]?.at?.slice(0, 10) ?? ""])) }} canEdit={ctx.role === "owner"} />
       </div>
     </div>
   );

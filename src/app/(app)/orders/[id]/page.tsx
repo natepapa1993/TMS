@@ -15,6 +15,7 @@ import { CheckCallBox } from "../../dispatch/check-call";
 import { fmtIn, stopZone } from "@/lib/time";
 import type { Loc } from "@/components/stop-fields";
 import { chargesFor, orderPnl, requiredRefsFor } from "@/domain/billing";
+import { pickRate, toHome } from "@/domain/fx-rules";
 import { db } from "@/db/client";
 import { documents, users } from "@/db/schema";
 
@@ -30,7 +31,7 @@ const J = (v: unknown) => JSON.parse(JSON.stringify(v));
 export default async function OrderPage({ params }: PageProps<"/orders/[id]">) {
   const { id } = await params;
   const ctx = await requireCtx();
-  const { timeZone: companyZone } = await (await import("@/domain/company")).getCompany(ctx);
+  const { timeZone: companyZone, settings: companySettings } = await (await import("@/domain/company")).getCompany(ctx);
   const data = await getOrder(ctx, id).catch(() => null);
   if (!data) notFound();
   const { order, stops, legs } = data;
@@ -72,20 +73,24 @@ export default async function OrderPage({ params }: PageProps<"/orders/[id]">) {
   const place = (s: (typeof stops)[number] | undefined) => (s ? [s.address?.city, s.address?.state].filter(Boolean).join(", ") || s.name : "—");
   const milesKnown = legs.some((l) => l.plannedMiles != null);
   const miles = milesKnown ? legs.reduce((a, l) => a + (l.plannedMiles ?? 0), 0) : null;
-  const carrierCost = legs.reduce((a, l) => a + (l.carrierRateCents ?? 0), 0) + (order.tollsFeesCents ?? 0);
+  // money in USD: each carrier rate in its own currency (a Mexican carrier in pesos), converted; the load's rate at its rate
+  const fxOf = (cur: string) => pickRate(cur, null, companySettings.fx).rateE4;
+  const carrierCost = legs.filter((l) => l.state !== "cancelled").reduce((a, l) => a + toHome(l.carrierRateCents ?? 0, l.carrierRateCurrency ?? "USD", fxOf(l.carrierRateCurrency ?? "USD")), 0) + toHome(order.tollsFeesCents ?? 0, order.currency, fxOf(order.currency));
   const covered = legs.every((l) => !["unassigned", "declined"].includes(l.state));
   const rate = order.rateTbd ? null : order.rateCents;
-  // one margin everywhere: the same P&L as the Money tab (carriers, driver pay — estimated until a statement pays it — fuel, tolls)
+  const rateUsd = rate == null ? null : toHome(rate, order.currency, fxOf(order.currency));
+  // one margin everywhere: the same P&L as the Money tab (carriers, driver pay — estimated until a statement pays it — fuel, tolls), in USD
   const headPnl = rate != null && covered && ["owner", "dispatcher", "billing"].includes(ctx.role) ? await orderPnl(ctx, id).catch(() => null) : null;
-  const margin = headPnl ? headPnl.margin : rate != null && covered ? rate - carrierCost : null;
+  const margin = headPnl ? headPnl.margin : rateUsd != null && covered ? rateUsd - carrierCost : null;
+  const fxHint = order.currency !== "USD" ? ` · in USD, ${order.currency} at ${((headPnl?.fx?.rateE4 ?? fxOf(order.currency)) / 10000).toFixed(4)}` : "";
   const weightLb = (order.freight ?? []).reduce((a, f) => a + (f.weightLb ?? 0), 0) || order.weightLbs || null;
   const facts: [string, string, string?][] = [
     ["Pickup", when(pickup?.windowStart), place(pickup)],
     ["Delivery", when(delivery?.windowStart), place(delivery)],
     ["Rate", rate == null ? "TBD" : formatCents(rate, order.currency), order.rateType !== "flat" && order.rateUnitCents != null ? `${formatCents(order.rateUnitCents, order.currency)} × ${order.rateQty ?? "?"}` : undefined],
-    ["Carrier cost", carrierCost ? formatCents(carrierCost, order.currency) : "—"],
-    ["Margin", margin == null ? "—" : formatCents(margin, order.currency), margin != null && headPnl ? `${headPnl.marginPct}% after carriers, driver pay${headPnl.driverPayEstimated ? " (est.)" : ""}, fuel` : margin != null && rate ? `${((margin / rate) * 100).toFixed(1)}%` : covered ? undefined : "legs not covered yet"],
-    ["Miles", miles == null ? "—" : miles.toLocaleString("en-US"), miles && rate ? `$${(rate / miles / 100).toFixed(2)} / mile` : undefined],
+    ["Carrier cost", carrierCost ? formatCents(headPnl ? headPnl.carrierCost + headPnl.extra : carrierCost, "USD") : "—", carrierCost && legs.some((l) => (l.carrierRateCurrency ?? "USD") !== "USD") ? "carriers paid in their own currency, shown in USD" : undefined],
+    ["Margin", margin == null ? "—" : formatCents(margin, "USD"), margin != null && headPnl ? `${headPnl.marginPct}% after carriers, driver pay${headPnl.driverPayEstimated ? " (est.)" : ""}, fuel${fxHint}` : margin != null && rateUsd ? `${((margin / rateUsd) * 100).toFixed(1)}%${fxHint}` : covered ? undefined : "legs not covered yet"],
+    ["Miles", miles == null ? "—" : miles.toLocaleString("en-US"), miles && rateUsd ? `${formatCents(Math.round(rateUsd / miles), "USD")} / mile${order.currency !== "USD" ? " (USD)" : ""}` : undefined],
   ];
   // where it is: the leg on the road, its last position and ETA, and the check calls
   const liveLeg = legs.find((l) => ["dispatched", "accepted", "en_route_to_pickup", "at_pickup", "loaded", "en_route", "at_delivery"].includes(l.state)) ?? null;
@@ -130,7 +135,7 @@ export default async function OrderPage({ params }: PageProps<"/orders/[id]">) {
                 <td>
                   {stopById.get(l.fromStopId ?? "")?.name} → {stopById.get(l.toStopId ?? "")?.name}
                 </td>
-                <td>{l.assigneeKind === "truck" ? `Unit ${tName.get(l.truckId ?? "")}${l.driverId ? ` · ${dName.get(l.driverId)}` : ""}${l.coDriverId ? ` / ${dName.get(l.coDriverId)}` : ""}` : l.assigneeKind === "carrier" ? `${carName.get(l.carrierId ?? "")}${l.carrierRateCents != null ? ` · ${formatCents(l.carrierRateCents)}` : ""}` : <span className="text-faint">—</span>}</td>
+                <td>{l.assigneeKind === "truck" ? `Unit ${tName.get(l.truckId ?? "")}${l.driverId ? ` · ${dName.get(l.driverId)}` : ""}${l.coDriverId ? ` / ${dName.get(l.coDriverId)}` : ""}` : l.assigneeKind === "carrier" ? `${carName.get(l.carrierId ?? "")}${l.carrierRateCents != null ? ` · ${formatCents(l.carrierRateCents, l.carrierRateCurrency ?? "USD")}` : ""}` : <span className="text-faint">—</span>}</td>
                 <td>
                   <Pill tone={l.state === "completed" ? "green" : l.state === "declined" ? "red" : l.state === "unassigned" ? "slate" : l.state === "cancelled" ? "slate" : "teal"}>{LEG_LABEL[l.state]}</Pill>
                 </td>

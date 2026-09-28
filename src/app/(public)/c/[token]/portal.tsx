@@ -12,8 +12,8 @@ import type { LegState } from "@/db/schema";
 
 type Place = { name: string; city: string | null; state: string | null; country: string; windowStart: string | null; windowEnd: string | null; contact: string | null; notes: string | null } | null;
 type Offer = { id: string; legId: string; orderNumber: string; type: string; rateCents: number | null; currency: string; expiresAt: string; message: string | null; from: Place; to: Place; equipment: string | null; cargoNote: string | null };
-type Bill = { id: string; state: string; expectedCents: number; invoicedCents: number | null; approvedCents: number | null; paidCents: number | null; paidAt: string | null; payDate: string | null; shortPayNote: string | null; carrierInvoiceNumber: string | null } | null;
-type Leg = { id: string; seq: number; type: string; state: string; stateLabel: string; next: { to: LegState; en: string; es: string } | null; orderNumber: string; equipment: string | null; cargoNote: string | null; refs: Record<string, string>; rateCents: number | null; from: Place; to: Place; driverName: string | null; driverPhone: string | null; unitNumber: string | null; trailerNumber: string | null; completedAt: string | null; podOnFile: boolean; driverLink: string | null; bill: Bill };
+type Bill = { id: string; state: string; expectedCents: number; invoicedCents: number | null; approvedCents: number | null; paidCents: number | null; paidAt: string | null; payDate: string | null; shortPayNote: string | null; carrierInvoiceNumber: string | null; currency?: string } | null;
+type Leg = { id: string; seq: number; type: string; state: string; stateLabel: string; next: { to: LegState; en: string; es: string } | null; orderNumber: string; equipment: string | null; cargoNote: string | null; refs: Record<string, string>; rateCents: number | null; rateCurrency?: string; from: Place; to: Place; driverName: string | null; driverPhone: string | null; unitNumber: string | null; trailerNumber: string | null; completedAt: string | null; podOnFile: boolean; driverLink: string | null; bill: Bill };
 type Data = {
   company: string;
   carrier: { id: string; name: string; country: string; doNotUse: boolean };
@@ -234,7 +234,7 @@ function LegCard({ token, l, onDone }: { token: string; l: Leg; onDone: (t: stri
       </div>
       <div className="text-callout text-muted mt-2">
         {l.equipment?.replace("_", " ")}
-        {l.cargoNote ? ` · ${l.cargoNote}` : ""} · {money(l.rateCents)} ·{" "}
+        {l.cargoNote ? ` · ${l.cargoNote}` : ""} · {money(l.rateCents, l.rateCurrency)} ·{" "}
         <a className="text-teal font-semibold" href={`/c/${token}/ratecon/${l.id}`} target="_blank" rel="noreferrer">
           Rate confirmation PDF
         </a>
@@ -330,7 +330,7 @@ function PayCard({ token, l, onDone }: { token: string; l: Leg; onDone: (t: stri
         <div>
           <span className="font-extrabold mono">{l.orderNumber}</span> <span className="text-muted text-callout">{l.type} leg · delivered {l.completedAt ? new Date(l.completedAt).toLocaleDateString() : ""}</span>
         </div>
-        <div className="text-headline font-extrabold mono">{money(b?.paidCents ?? b?.approvedCents ?? b?.expectedCents ?? l.rateCents)}</div>
+        <div className="text-headline font-extrabold mono">{money(b?.paidCents ?? b?.approvedCents ?? b?.expectedCents ?? l.rateCents, b?.currency ?? l.rateCurrency)}</div>
       </div>
       <div className="text-callout mt-1">
         {place(l.from)} → {place(l.to)}
@@ -358,7 +358,7 @@ function PayCard({ token, l, onDone }: { token: string; l: Leg; onDone: (t: stri
       {open && (
         <Modal open onClose={() => setOpen(false)} title={`Invoice for ${l.orderNumber} · Factura`} footer={<><button className="btn" onClick={() => setOpen(false)}>Cancel</button><button className="btn btn-primary" disabled={pending} onClick={() => start(async () => { setErr(null); const r = await call(() => portalInvoiceAction(token, l.id, new FormData(ref.current!))); if (r.ok) { setOpen(false); onDone("Invoice received — we check it against the rate confirmation and the POD. · Factura recibida."); } else setErr(r.error); })}>Send · Enviar</button></>}>
           <form ref={ref} className="space-y-2" onSubmit={(e) => e.preventDefault()}>
-            <div className="text-callout text-muted">Agreed rate · Tarifa acordada: <b>{money(b?.expectedCents ?? l.rateCents)}</b>. Bill the agreed amount plus any accessorials we approved.</div>
+            <div className="text-callout text-muted">Agreed rate · Tarifa acordada: <b>{money(b?.expectedCents ?? l.rateCents, b?.currency ?? l.rateCurrency)}</b>. Bill the agreed amount plus any accessorials we approved.</div>
             <div className="grid grid-cols-2 gap-2">
               <div>
                 <label className="label">Amount (USD) · Monto</label>

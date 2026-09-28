@@ -13,7 +13,7 @@ type Charge = { id: string; kind: string; description: string; qty: number; unit
 type Doc = { code: string | null; fileName: string; id: string };
 const KINDS: [ChargeKind, string][] = [["accessorial", "Accessorial"], ["detention", "Detention"], ["layover", "Layover"], ["tonu", "TONU"], ["lumper", "Lumper"], ["border_fee", "Border fee"], ["crossing_fee", "Crossing fee"], ["storage", "Storage"], ["extra_stop", "Extra stop"], ["fuel", "Fuel"], ["other", "Other"]];
 
-export function Charges({ orderId, orderNumber, charges, docs, requiredDocs, requiredRefs = [], pnl, locked, invoiced, role, currency }: { orderId: string; orderNumber: string; invoiced?: boolean; charges: Charge[]; docs: Doc[]; requiredDocs: string[]; requiredRefs?: { key: string; present: boolean }[]; pnl: { revenue: number; carrierCost: number; driverPay: number; fuel: number; miles: number; extra: number; cost: number; margin: number; marginPct: number } | null; locked: boolean; role: string; currency: string }) {
+export function Charges({ orderId, orderNumber, charges, docs, requiredDocs, requiredRefs = [], pnl, locked, invoiced, role, currency }: { orderId: string; orderNumber: string; invoiced?: boolean; charges: Charge[]; docs: Doc[]; requiredDocs: string[]; requiredRefs?: { key: string; present: boolean }[]; pnl: { revenue: number; carrierCost: number; driverPay: number; fuel: number; miles: number; extra: number; cost: number; margin: number; marginPct: number; fx?: { rateE4: number; source: string } | null; orderCurrency?: string } | null; locked: boolean; role: string; currency: string }) {
   const router = useRouter();
   const t = useToast();
   const [pending, start] = useTransition();
@@ -136,7 +136,7 @@ export function Charges({ orderId, orderNumber, charges, docs, requiredDocs, req
             </select>
           </div>
           <div>
-            <label className="label">Rate</label>
+            <label className="label">Rate ({currency})</label>
             <input className="input" inputMode="decimal" value={f.rate} onChange={(e) => setF({ ...f, rate: e.target.value })} />
           </div>
           <button className="btn btn-primary" disabled={pending || !f.rate} onClick={() => run("Charge added", async () => { const r = await addChargeAction(orderId, f); if (r.ok) setF({ ...f, description: "", rate: "", qty: "1" }); return r; })}>
@@ -152,15 +152,20 @@ export function Charges({ orderId, orderNumber, charges, docs, requiredDocs, req
           {[["Revenue", pnl.revenue], ["Carrier cost", pnl.carrierCost], ["Driver pay", pnl.driverPay], [`Fuel est. (${pnl.miles} mi)`, pnl.fuel], ["Tolls & fees", pnl.extra]].map(([l, v]) => (
             <div key={String(l)}>
               <div className="text-muted text-footnote">{l}</div>
-              <div className="mono font-semibold">{formatCents(Number(v), currency)}</div>
+              <div className="mono font-semibold">{formatCents(Number(v), "USD")}</div>
             </div>
           ))}
           <div>
             <div className="text-muted text-footnote">Margin</div>
             <div className={`mono font-extrabold ${pnl.margin < 0 ? "text-red" : "text-green"}`}>
-              {formatCents(pnl.margin, currency)} <span className="text-caption font-semibold">{pnl.marginPct}%</span>
+              {formatCents(pnl.margin, "USD")} <span className="text-caption font-semibold">{pnl.marginPct}%</span>
             </div>
           </div>
+          {pnl.fx && (
+            <div className="col-span-6 text-footnote text-muted" data-testid="pnl-fx">
+              In US dollars: {currency} converted at {(pnl.fx.rateE4 / 10000).toFixed(4)} {currency} per USD ({pnl.fx.source === "invoice" ? "the rate on the invoice" : pnl.fx.source === "company" ? "the company rate in Settings → Company, until it is invoiced" : "a default rate — set yours in Settings → Company"}). Carriers paid in pesos or Canadian dollars are converted the same way.
+            </div>
+          )}
         </div>
       )}
       {approving && <ApprovalDialog orderId={orderId} orderNumber={orderNumber} charges={waiting.map((c) => ({ id: c.id, description: c.description, amountCents: c.amountCents }))} currency={currency} onClose={() => setApproving(false)} />}

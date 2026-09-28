@@ -139,7 +139,7 @@ describe("factoring", () => {
   });
 
   it("a billing run sends factored invoices together on one schedule; no factor email → a clear error, other invoices still go", async () => {
-    await update(a, "billingEntity", f.entity, { factorName: "Prime Factoring", factorAll: true });
+    await update(a, "billingEntity", f.entity, { factorName: "Prime Factoring", factorRemitTo: { line1: "PO Box 9", city: "Dallas", state: "TX" }, factorAll: true });
     const a1 = await deliveredLoad(f.acme, 100000);
     await update(a, "customer", f.rxo, { invoiceDelivery: "email" });
     const r1 = await deliveredLoad(f.rxo, 90000);

@@ -1,11 +1,14 @@
 import Link from "next/link";
 import { shortDate } from "@/lib/time";
 import { requireCtx } from "@/lib/auth";
-import { listInvoices, type InvoiceFilter } from "@/domain/billing";
+import { listInvoices, listCreditMemos, type InvoiceFilter } from "@/domain/billing";
 import { list } from "@/data/records";
 import { PageHeader } from "@/components/page-header";
 import { Pill } from "@/components/ui";
 import { formatCents } from "@/data/fields";
+import { formatTotals, sumByCurrency } from "@/domain/fx-rules";
+import { getCompany } from "@/domain/company";
+import { can } from "@/lib/context";
 import { BillingNav } from "../nav";
 import { CloseButton } from "./close";
 import { ToFactor } from "./factor";
@@ -27,7 +30,14 @@ export default async function InvoicesPage({ searchParams }: PageProps<"/billing
     const p = new URLSearchParams(Object.entries({ state, q: f.q, customer: f.customerId, view: f.view ?? "", from: f.from, to: f.to, ...patch }).filter(([, v]) => v));
     return p.toString() ? `?${p}` : "";
   };
-  const openSum = rows.filter((i) => !["paid", "void", "closed", "draft"].includes(i.state)).reduce((a, i) => a + i.totalCents - i.creditedCents - i.paidCents, 0);
+  // open money per currency: pesos are never added to dollars
+  const openSum = sumByCurrency(rows.filter((i) => !["paid", "void", "closed", "draft"].includes(i.state)), (i) => i.currency, (i) => i.totalCents - i.creditedCents - i.paidCents);
+  const anyOpen = Object.values(openSum).some((v) => v);
+  const company = await getCompany(ctx);
+  // credit memos are their own kind: listed with the invoices (and alone on the Credit memos tab)
+  const showMemos = !state && (!f.view || f.view === "credits");
+  const memos = showMemos ? await listCreditMemos(ctx, { customerId: f.customerId || undefined, q: f.q }) : [];
+  const onlyMemos = f.view === "credits";
   const cn = new Map(customers.map((c) => [c.id, String(c.name)]));
   const canBill = ["owner", "billing"].includes(ctx.role);
   const entities = canBill ? await list(ctx, "billingEntity", { limit: 50 }) : [];
@@ -35,7 +45,7 @@ export default async function InvoicesPage({ searchParams }: PageProps<"/billing
   const [waiting, batches] = factors.length ? await Promise.all([awaitingFactor(ctx), listBatches(ctx)]) : [[], []];
   return (
     <div>
-      <PageHeader eyebrow="Billing" title="Invoices" actions={["owner", "billing"].includes(ctx.role) ? <CloseButton /> : null}>
+      <PageHeader eyebrow="Billing" title="Invoices" actions={["owner", "billing"].includes(ctx.role) ? <CloseButton canClose={can(ctx, "billing.void")} closedThrough={company.settings.closedThrough} /> : null}>
         Numbers come from the billing entity and are never reused. An issued invoice is a locked snapshot.
       </PageHeader>
       <BillingNav />
@@ -101,6 +111,7 @@ export default async function InvoicesPage({ searchParams }: PageProps<"/billing
             ["overdue", "Overdue"],
             ["unsent", "Issued, not sent"],
             ["factored", "Factored"],
+            ["credits", "Credit memos"],
           ].map(([v, l]) => (
             <Link key={v} href={`/billing/invoices${qs({ view: v, state: "" })}`} className="stage-tab h-8 text-callout" data-active={!state && (f.view ?? "") === v}>
               {l}
@@ -114,12 +125,13 @@ export default async function InvoicesPage({ searchParams }: PageProps<"/billing
           ))}
           <span className="ml-auto text-callout text-muted" data-testid="invoice-count">
             {rows.length} invoice{rows.length === 1 ? "" : "s"}
-            {openSum ? ` · ${formatCents(openSum)} open` : ""}
+            {anyOpen ? ` · ${formatTotals(openSum)} open` : ""}
+            {memos.length ? ` · ${memos.length} credit memo${memos.length === 1 ? "" : "s"}` : ""}
           </span>
         </div>
         <div className="card overflow-hidden">
-          {rows.length === 0 ? (
-            <div className="py-14 text-center font-bold">No invoices</div>
+          {(onlyMemos ? memos.length === 0 : rows.length === 0 && memos.length === 0) ? (
+            <div className="py-14 text-center font-bold">{onlyMemos ? "No credit memos" : "No invoices"}</div>
           ) : (
             <table className="table">
               <thead>
@@ -135,7 +147,33 @@ export default async function InvoicesPage({ searchParams }: PageProps<"/billing
                 </tr>
               </thead>
               <tbody>
-                {rows.map((i) => (
+                {memos.map((m) => (
+                  <tr key={m.memo.id} data-testid="credit-memo-row">
+                    <td className="font-extrabold mono">
+                      <a href={`/api/credit-memos/${m.memo.id}`} target="_blank" rel="noreferrer" className="hover:text-teal">
+                        {m.memo.number}
+                      </a>
+                      <div className="text-caption font-semibold text-muted font-sans">credit memo</div>
+                    </td>
+                    <td>{m.customer}</td>
+                    <td className="text-muted text-callout">
+                      on{" "}
+                      <Link href={`/billing/invoices/${m.memo.invoiceId}`} className="mono hover:text-teal">
+                        {m.invoiceNumber}
+                      </Link>
+                    </td>
+                    <td className="text-callout">{shortDate(m.memo.issuedAt)}</td>
+                    <td className="text-callout text-muted">—</td>
+                    <td className="mono text-red">-{formatCents(m.memo.amountCents, m.currency)}</td>
+                    <td className="text-footnote text-muted max-w-[220px] truncate" title={m.memo.reason}>
+                      {m.memo.reason}
+                    </td>
+                    <td>
+                      <Pill tone={m.memo.sentAt ? "teal" : "slate"}>{m.memo.sentAt ? "sent" : "not sent"}</Pill>
+                    </td>
+                  </tr>
+                ))}
+                {!onlyMemos && rows.map((i) => (
                   <tr key={i.id}>
                     <td className="font-extrabold mono">
                       <Link href={`/billing/invoices/${i.id}`} className="hover:text-teal">

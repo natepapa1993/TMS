@@ -9,7 +9,8 @@ import { assertCtx, requirePermission, systemCtx, type Ctx } from "@/lib/context
 import { writeAudit } from "@/lib/audit";
 import { newToken, publicUrl } from "@/lib/tokens";
 import { enqueue, deliverQueued } from "@/lib/outbox";
-import { planLeg, dispatchLeg, acceptLeg, declineLeg, NotFoundError, ValidationError } from "./orders";
+import { planLeg, dispatchLeg, acceptLeg, declineLeg, NotFoundError, ValidationError, normCurrency } from "./orders";
+import { money as fxMoney } from "./fx-rules";
 import { TransitionError } from "./states";
 
 /**
@@ -40,8 +41,12 @@ export async function sendTender(ctx: Ctx, legId: string, input: SendTenderInput
   // 1. the leg is planned on this carrier (re-plan if it was on someone else)
   const [legBefore] = await db.select().from(s.legs).where(and(eq(s.legs.tenantId, ctx.tenantId), eq(s.legs.id, legId))).limit(1);
   if (!legBefore) throw new NotFoundError("leg", legId);
+  // the carrier is paid in its own currency (a Mexican carrier in pesos): the tender, the leg and the bill carry it
+  const currency = normCurrency(input.currency ?? legBefore.carrierRateCurrency);
   if (legBefore.state !== "planned" || legBefore.carrierId !== input.carrierId)
-    await planLeg(ctx, legId, { kind: "carrier", carrierId: input.carrierId, carrierRateCents: input.rateCents ?? null }, { override: input.override, reason: input.reason });
+    await planLeg(ctx, legId, { kind: "carrier", carrierId: input.carrierId, carrierRateCents: input.rateCents ?? null, carrierRateCurrency: currency }, { override: input.override, reason: input.reason });
+  else if (input.rateCents != null && (input.rateCents !== legBefore.carrierRateCents || currency !== (legBefore.carrierRateCurrency ?? "USD")))
+    await db.update(s.legs).set({ carrierRateCents: input.rateCents, carrierRateCurrency: currency, updatedAt: new Date(), updatedBy: ctx.userId }).where(eq(s.legs.id, legId));
 
   const [carrier] = await db.select().from(s.carriers).where(and(eq(s.carriers.tenantId, ctx.tenantId), eq(s.carriers.id, input.carrierId))).limit(1);
   if (!carrier) throw new NotFoundError("carrier", input.carrierId);
@@ -66,7 +71,7 @@ export async function sendTender(ctx: Ctx, legId: string, input: SendTenderInput
   const token = newToken();
   const expiresAt = new Date(Date.now() + expiresIn * 60_000);
   const link = publicUrl(`/t/${token}`);
-  const rate = (input.rateCents ?? leg.carrierRateCents) != null ? `${input.currency ?? "USD"} ${(((input.rateCents ?? leg.carrierRateCents) as number) / 100).toLocaleString("en-US", { minimumFractionDigits: 2 })}` : "rate to be confirmed";
+  const rate = (input.rateCents ?? leg.carrierRateCents) != null ? fxMoney((input.rateCents ?? leg.carrierRateCents) as number, currency, { code: true }) : "rate to be confirmed";
   const zone = await tenantZone(ctx.tenantId);
   const fmt = (d: Date | null | undefined) => fmtIn(d, zone);
   const place = (st?: typeof from) => (st ? `${st.name}${st.address?.city ? `, ${st.address.city}` : ""}${st.address?.state ? ` ${st.address.state}` : ""}` : "");
@@ -102,7 +107,7 @@ export async function sendTender(ctx: Ctx, legId: string, input: SendTenderInput
         orderId: leg.orderId,
         carrierId: carrier.id,
         rateCents: input.rateCents ?? leg.carrierRateCents ?? null,
-        currency: input.currency ?? "USD",
+        currency,
         channel,
         token,
         sentTo: to,

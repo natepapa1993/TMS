@@ -18,7 +18,7 @@ export function ApplyPaymentButton({ customers, customerId, role, label = "Recor
   const router = useRouter();
   const t = useToast();
   const [open, setOpen] = useState(false);
-  const [f, setF] = useState({ customerId: customerId ?? "", amount: "", receivedAt: localDay(), method: "check", reference: "", remittance: "", note: "" });
+  const [f, setF] = useState({ customerId: customerId ?? "", amount: "", currency: "USD", receivedAt: localDay(), method: "check", reference: "", remittance: "", note: "" });
   const [invs, setInvs] = useState<Inv[]>([]);
   const [lines, setLines] = useState<Record<string, Line>>({});
   const [result, setResult] = useState<{ applied: { number: string; appliedCents: number; after: string }[]; onAccountCents: number } | null>(null);
@@ -33,15 +33,20 @@ export function ApplyPaymentButton({ customers, customerId, role, label = "Recor
       const r = await openItemsAction(cid);
       if (!r.ok) return t.err(r.error);
       setInvs(r.data.invoices);
+      // the payment's currency starts as the oldest open invoice's; change it if the money came in another
+      setF((x) => ({ ...x, currency: r.data.invoices[0]?.currency ?? "USD" }));
       setLines(Object.fromEntries(r.data.invoices.map((i) => [i.id, { invoiceId: i.id, amount: "", shortPay: "leave_open", reason: "" }])));
     });
   const auto = () => {
-    const plan = suggest(invs, cents(f.amount), f.remittance);
+    const plan = suggest(invs, cents(f.amount), f.remittance, f.currency);
     setLines(Object.fromEntries(plan.map((p) => [p.invoiceId, { ...(lines[p.invoiceId] ?? { invoiceId: p.invoiceId, shortPay: "leave_open", reason: "" }), amount: p.applyCents ? dollars(p.applyCents) : "" }])));
   };
-  const applied = Object.values(lines).reduce((a, l) => a + cents(l.amount), 0);
+  // only invoices in the payment's currency can take it: pesos never pay a dollar invoice
+  const shown = invs.filter((i) => i.currency === f.currency);
+  const hidden = invs.filter((i) => i.currency !== f.currency);
+  const applied = shown.reduce((a, i) => a + cents(lines[i.id]?.amount ?? ""), 0);
   const left = cents(f.amount) - applied;
-  const cur = invs[0]?.currency ?? "USD";
+  const cur = f.currency;
   const set = (id: string, patch: Partial<Line>) => setLines({ ...lines, [id]: { ...lines[id], ...patch } });
 
   return (
@@ -51,7 +56,7 @@ export function ApplyPaymentButton({ customers, customerId, role, label = "Recor
         data-testid="record-payment"
         onClick={() => {
           setResult(null);
-          setF({ customerId: customerId ?? "", amount: "", receivedAt: localDay(), method: "check", reference: "", remittance: "", note: "" });
+          setF({ customerId: customerId ?? "", amount: "", currency: "USD", receivedAt: localDay(), method: "check", reference: "", remittance: "", note: "" });
           setOpen(true);
           if (customerId) load(customerId);
         }}
@@ -83,7 +88,7 @@ export function ApplyPaymentButton({ customers, customerId, role, label = "Recor
                   disabled={pending || !f.customerId || !cents(f.amount) || left < 0}
                   onClick={() =>
                     start(async () => {
-                      const r = await applyPaymentAction({ ...f, applications: Object.values(lines).filter((l) => cents(l.amount) > 0 || l.shortPay !== "leave_open") });
+                      const r = await applyPaymentAction({ ...f, applications: shown.map((i) => lines[i.id]).filter((l) => l && (cents(l.amount) > 0 || l.shortPay !== "leave_open")) });
                       if (!r.ok) return t.err(r.error);
                       setResult({ applied: r.data.applied, onAccountCents: r.data.onAccountCents });
                       router.refresh();
@@ -131,9 +136,16 @@ export function ApplyPaymentButton({ customers, customerId, role, label = "Recor
                 </div>
                 <div>
                   <label className="label" htmlFor="p-amount">
-                    Amount
+                    Amount ({f.currency})
                   </label>
-                  <input id="p-amount" className="input" inputMode="decimal" value={f.amount} onChange={(e) => setF({ ...f, amount: e.target.value })} placeholder="0.00" />
+                  <div className="flex gap-1">
+                    <input id="p-amount" className="input" inputMode="decimal" value={f.amount} onChange={(e) => setF({ ...f, amount: e.target.value })} placeholder="0.00" />
+                    <select className="select w-24" aria-label="Payment currency" data-testid="payment-currency" value={f.currency} onChange={(e) => setF({ ...f, currency: e.target.value })}>
+                      <option>USD</option>
+                      <option>MXN</option>
+                      <option>CAD</option>
+                    </select>
+                  </div>
                 </div>
                 <div>
                   <label className="label" htmlFor="p-date">
@@ -168,15 +180,18 @@ export function ApplyPaymentButton({ customers, customerId, role, label = "Recor
                 </div>
               </div>
               <div className="flex items-center justify-between mt-4 mb-2">
-                <div className="eyebrow">Open invoices{invs.length ? ` · ${invs.length}` : ""}</div>
-                <button className="btn btn-sm" disabled={!invs.length || !cents(f.amount)} onClick={auto} data-testid="auto-apply">
+                <div className="eyebrow">
+                  Open {f.currency} invoices{shown.length ? ` · ${shown.length}` : ""}
+                  {hidden.length > 0 && <span className="normal-case font-normal text-muted"> · {hidden.length} in {[...new Set(hidden.map((i) => i.currency))].join(", ")} not shown — record that money as its own payment in its currency</span>}
+                </div>
+                <button className="btn btn-sm" disabled={!shown.length || !cents(f.amount)} onClick={auto} data-testid="auto-apply">
                   Match {f.remittance.trim() ? "the remittance" : "oldest first"}
                 </button>
               </div>
               {!f.customerId ? (
                 <div className="text-muted text-callout">Pick who paid.</div>
-              ) : !invs.length ? (
-                <div className="text-muted text-callout">{pending ? "Loading…" : "Nothing open for this customer — the whole payment goes on account."}</div>
+              ) : !shown.length ? (
+                <div className="text-muted text-callout">{pending ? "Loading…" : `Nothing open in ${f.currency} for this customer — the whole payment goes on account (it can pay a later ${f.currency} invoice).`}</div>
               ) : (
                 <div className="max-h-[340px] overflow-auto -mx-5">
                   <table className="table" data-testid="apply-table">
@@ -191,7 +206,7 @@ export function ApplyPaymentButton({ customers, customerId, role, label = "Recor
                       </tr>
                     </thead>
                     <tbody>
-                      {invs.map((i) => {
+                      {shown.map((i) => {
                         const l = lines[i.id];
                         const short = cents(l?.amount ?? "") > 0 && cents(l.amount) < i.openCents;
                         return (

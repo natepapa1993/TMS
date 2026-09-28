@@ -10,7 +10,8 @@ import { deliveryForInvoice, DELIVERY_LABEL } from "@/domain/invoicing";
 import { PageHeader } from "@/components/page-header";
 import { Pill } from "@/components/ui";
 import { formatCents } from "@/data/fields";
-import { InvoiceActions } from "./actions-panel";
+import { InvoiceActions, SendCreditMemo } from "./actions-panel";
+import { getCompany } from "@/domain/company";
 
 export const dynamic = "force-dynamic";
 const TONE: Record<string, "slate" | "teal" | "amber" | "red" | "green" | "blue"> = { draft: "slate", issued: "blue", sent: "teal", partially_paid: "amber", paid: "green", closed: "green", void: "slate", disputed: "red" };
@@ -22,6 +23,9 @@ export default async function InvoicePage({ params }: PageProps<"/billing/invoic
   if (!d) notFound();
   const { invoice: inv, lines, receipts, creditMemos, entity, customer, orders } = d;
   const [rebilled] = inv.rebillOf ? await db.select({ number: invoices.number }).from(invoices).where(and(eq(invoices.tenantId, ctx.tenantId), eq(invoices.id, inv.rebillOf))).limit(1) : [];
+  const [supplementOf] = inv.supplementOf ? await db.select({ number: invoices.number }).from(invoices).where(and(eq(invoices.tenantId, ctx.tenantId), eq(invoices.id, inv.supplementOf))).limit(1) : [];
+  const company = await getCompany(ctx);
+  const suggestedRate = inv.currency !== "USD" ? (company.settings.fx[inv.currency]?.rateE4 ?? null) : null;
   const open = inv.totalCents - inv.creditedCents - inv.paidCents;
   const { method } = await deliveryForInvoice(ctx, inv.customerId, inv.entityId);
   const snap = inv.snapshot;
@@ -39,7 +43,12 @@ export default async function InvoicePage({ params }: PageProps<"/billing/invoic
             <Pill tone={TONE[inv.state]}>{inv.state.replace("_", " ")}</Pill>
             {inv.factored && <Pill tone="navy">Factored</Pill>}
             {orders.length > 1 && <Pill tone="blue">Summary · {orders.length} loads</Pill>}
-            {inv.kind === "supplemental" && <Pill tone="blue">Supplemental</Pill>}
+            {inv.kind === "supplemental" && (inv.supplementOf ? (
+              <Link href={`/billing/invoices/${inv.supplementOf}`} className="pill pill-blue">
+                supplemental to {supplementOf?.number ?? "the load's invoice"}
+              </Link>
+            ) : <Pill tone="blue">Supplemental</Pill>)}
+            {inv.currency !== "USD" && <Pill tone="blue">{inv.currency}{inv.exchangeRate ? ` · ${(inv.exchangeRate / 10000).toFixed(4)} per USD` : ""}</Pill>}
             {inv.rebillOf && (
               <Link href={`/billing/invoices/${inv.rebillOf}`} className="pill pill-slate">
                 rebill of {rebilled?.number ?? "a voided invoice"}
@@ -60,7 +69,15 @@ export default async function InvoicePage({ params }: PageProps<"/billing/invoic
           ) : null
         }
       >
-        {snap?.billTo.name ?? customer?.name} · from {snap?.entity.legalName ?? entity?.legalName} · {orders.map((o) => o.orderNumber).join(", ")}
+        {snap?.billTo.name ?? customer?.name} · from {snap?.entity.legalName ?? entity?.legalName} ·{" "}
+        {orders.map((o, i) => (
+          <span key={o.id}>
+            {i > 0 && ", "}
+            <Link href={`/orders/${o.id}`} className="text-teal font-semibold hover:underline">
+              {o.orderNumber}
+            </Link>
+          </span>
+        ))}
         {inv.issuedAt ? ` · issued ${shortDate(inv.issuedAt)} · due ${shortDate(inv.dueAt)}` : ""}
         {inv.sentTo ? ` · sent to ${inv.sentTo}` : ""}
       </PageHeader>
@@ -178,20 +195,35 @@ export default async function InvoicePage({ params }: PageProps<"/billing/invoic
                   </li>
                 ))}
                 {creditMemos.map((m) => (
-                  <li key={m.id} className="flex justify-between">
+                  <li key={m.id} className="flex justify-between items-center gap-2" data-testid="credit-memo">
                     <span>
-                      {shortDate(m.issuedAt)} · <span className="mono">{m.number}</span> — {m.reason}
+                      {shortDate(m.issuedAt)} ·{" "}
+                      <a className="mono text-teal font-semibold" href={`/api/credit-memos/${m.id}`} target="_blank" rel="noreferrer">
+                        {m.number}
+                      </a>{" "}
+                      — {m.reason}
+                      <span className="text-muted">{m.sentAt ? ` · sent to ${m.sentTo}` : " · not sent yet"}</span>
                     </span>
-                    <span className="mono font-semibold text-red">-{formatCents(m.amountCents, inv.currency)}</span>
+                    <span className="flex items-center gap-2">
+                      {["owner", "billing"].includes(ctx.role) && <SendCreditMemo id={m.id} sent={!!m.sentAt} />}
+                      <span className="mono font-semibold text-red">-{formatCents(m.amountCents, inv.currency)}</span>
+                    </span>
                   </li>
                 ))}
               </ul>
             </div>
           )}
           {inv.voidReason && <div className="card p-4 text-callout">Voided {shortDate(inv.voidedAt)}: {inv.voidReason}</div>}
-          {inv.disputeReason && <div className="card p-4 text-callout text-red">Disputed: {inv.disputeReason}{inv.disputeExpectedAt ? ` · expected resolution ${shortDate(inv.disputeExpectedAt)}` : ""}</div>}
+          {inv.disputeReason && inv.state === "disputed" && <div className="card p-4 text-callout text-red">Disputed: {inv.disputeReason}{inv.disputeExpectedAt ? ` · expected resolution ${shortDate(inv.disputeExpectedAt)}` : ""}</div>}
+          {inv.disputeResolution && inv.state !== "disputed" && (
+            <div className="card p-4 text-callout" data-testid="dispute-resolution">
+              <span className="font-semibold">Dispute resolved:</span> {inv.disputeResolution}
+              {inv.disputeReason ? <span className="text-muted"> (was: {inv.disputeReason})</span> : null}
+            </div>
+          )}
+          {snap?.correctedFromFactor && <div className="card p-4 text-callout">Corrected after the chargeback: the customer&rsquo;s copy now says to pay you, not {snap.correctedFromFactor}.</div>}
         </div>
-        <InvoiceActions inv={JSON.parse(JSON.stringify({ id: inv.id, state: inv.state, currency: inv.currency, openCents: open, paidCents: inv.paidCents, creditedCents: inv.creditedCents, billingEmail: customer?.billingEmail ?? null, promiseToPayAt: inv.promiseToPayAt, payWhenPaid: inv.payWhenPaid, number: inv.number, method, portalUrl: customer?.portalUrl ?? null, factorName: entity?.factorName ?? null, factorEmail: entity?.factorEmail ?? null }))} role={ctx.role} />
+        <InvoiceActions inv={JSON.parse(JSON.stringify({ id: inv.id, state: inv.state, currency: inv.currency, openCents: open, paidCents: inv.paidCents, creditedCents: inv.creditedCents, billingEmail: customer?.billingEmail ?? null, promiseToPayAt: inv.promiseToPayAt, payWhenPaid: inv.payWhenPaid, number: inv.number, method, portalUrl: customer?.portalUrl ?? null, factorName: entity?.factorName ?? null, factorEmail: entity?.factorEmail ?? null, suggestedRate: suggestedRate ? (suggestedRate / 10000).toFixed(4) : "", needsCorrected: !!snap?.factor && !inv.factored && !inv.factorFundedAt && ["issued", "sent", "partially_paid", "disputed"].includes(inv.state), hasCreditMemo: creditMemos.length > 0 }))} role={ctx.role} />
       </div>
     </div>
   );

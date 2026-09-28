@@ -157,7 +157,7 @@ describe("invoice lifecycle (7.1, 7.4)", () => {
     await expect(B.voidInvoice(a, inv2.id, "x")).rejects.toThrow(/credit memo/);
     await expect(B.creditMemo(a, inv2.id, { amountCents: 500000, reason: "too much" })).rejects.toBeInstanceOf(ValidationError);
     const memo = await B.creditMemo(a, inv2.id, { amountCents: 30000, reason: "detention waived" });
-    expect(memo.number).toBe("247-CM-001003");
+    expect(memo.number).toBe("247-CM-000001"); // its own sequence: invoice numbers keep no gaps
     let cur = (await B.invoiceById(a, inv2.id)).invoice;
     expect(cur.creditedCents).toBe(30000);
     expect(cur.state).toBe("partially_paid");
@@ -250,8 +250,8 @@ describe("AR (7.5)", () => {
     expect(ag.rows.length).toBe(1);
     expect(ag.rows[0].buckets["1_30"]).toBe(100000); // 15 days past due
     expect(ag.rows[0].buckets.current).toBe(50000);
-    expect(ag.totals.total).toBe(150000);
-    const st = await PDFDocument.load(await B.statementPdf(a, f.rxo));
+    expect(ag.totals.USD.total).toBe(150000);
+    const st = await PDFDocument.load((await B.statementPdf(a, f.rxo)).pdf);
     expect(st.getPageCount()).toBe(1);
     expect((await B.sendReminders(new Date())).sent).toBe(1); // +10 step (15 days late)
     expect((await B.sendReminders(new Date())).sent).toBe(0);

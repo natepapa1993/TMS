@@ -65,13 +65,24 @@ export async function acceptMismatchAction(orderId: string, note: string) {
   if (r.ok) touch();
   return r;
 }
+export async function resetChargesAction(orderId: string) {
+  const r = await act(async (ctx) => {
+    await B.resetChargesToRateCon(ctx, orderId);
+    return { ok: true };
+  });
+  if (r.ok) {
+    touch();
+    revalidatePath(`/orders/${orderId}`);
+  }
+  return r;
+}
 export async function createInvoiceAction(orderIds: string[], withoutPending = false) {
   const r = await act((ctx) => B.createInvoice(ctx, orderIds, { withoutPending }));
   if (r.ok) touch(r.data.id);
   return r;
 }
 export async function issueInvoiceAction(id: string, exchangeRate?: string) {
-  const r = await act((ctx) => B.issueInvoice(ctx, id, { exchangeRate: exchangeRate ? Number(exchangeRate) : null }));
+  const r = await act((ctx) => B.issueInvoice(ctx, id, { exchangeRate: exchangeRate?.trim() ? exchangeRate : null }));
   if (r.ok) touch(id);
   return r;
 }
@@ -93,6 +104,16 @@ export async function voidInvoiceAction(id: string, reason: string) {
 export async function creditMemoAction(id: string, amount: string, reason: string) {
   const r = await act((ctx) => B.creditMemo(ctx, id, { amountCents: Math.round(Number(amount.replace(/[$,]/g, "")) * 100), reason }));
   if (r.ok) touch(id);
+  return r;
+}
+export async function resolveDisputeAction(id: string, outcome: string, note: string) {
+  const r = await act((ctx) => B.resolveDispute(ctx, id, { outcome: outcome as B.DisputeOutcome, note }));
+  if (r.ok) touch(id);
+  return r;
+}
+export async function sendCreditMemoAction(memoId: string, to?: string) {
+  const r = await act((ctx) => B.sendCreditMemo(ctx, memoId, to || null));
+  if (r.ok) touch();
   return r;
 }
 export async function disputeInvoiceAction(id: string, reason: string, expectedAt?: string) {
@@ -239,12 +260,23 @@ export async function planBatchAction(orderIds: string[]) {
   const I = await import("@/domain/invoicing");
   return act((ctx) => I.planBatch(ctx, orderIds));
 }
-export async function runBatchAction(orderIds: string[], v: { issue: boolean; send: boolean; exchangeRate?: string }) {
+export async function runBatchAction(orderIds: string[], v: { issue: boolean; send: boolean; exchangeRate?: string; rates?: Record<string, string> }) {
   const I = await import("@/domain/invoicing");
+  const { parseRate } = await import("@/domain/fx-rules");
   const r = await act((ctx) => {
-    const rate = v.exchangeRate?.trim() ? Number(v.exchangeRate) : null;
-    if (rate != null && (!Number.isFinite(rate) || rate <= 0)) throw Object.assign(new Error("Exchange rate must be a number"), { name: "ValidationError", field: "exchangeRate" });
-    return I.runBatch(ctx, orderIds, { issue: v.issue, send: v.send, exchangeRate: rate });
+    const rates: Record<string, string> = { ...(v.exchangeRate?.trim() ? { MXN: v.exchangeRate } : {}), ...(v.rates ?? {}) };
+    for (const [c, x] of Object.entries(rates)) {
+      if (!x?.trim()) {
+        delete rates[c];
+        continue;
+      }
+      try {
+        parseRate(x, c);
+      } catch (e) {
+        throw Object.assign(new Error((e as Error).message), { name: "ValidationError", field: "exchangeRate" });
+      }
+    }
+    return I.runBatch(ctx, orderIds, { issue: v.issue, send: v.send, exchangeRates: rates });
   });
   if (r.ok) touch();
   return r;
@@ -366,12 +398,13 @@ export async function openItemsAction(customerId: string) {
   const { openItems } = await import("@/domain/cash");
   return act((ctx) => openItems(ctx, customerId));
 }
-export async function applyPaymentAction(v: { customerId: string; amount: string; receivedAt: string; method: string; reference: string; remittance: string; note: string; applications: { invoiceId: string; amount: string; shortPay: string; reason: string }[] }) {
+export async function applyPaymentAction(v: { customerId: string; amount: string; currency?: string; receivedAt: string; method: string; reference: string; remittance: string; note: string; applications: { invoiceId: string; amount: string; shortPay: string; reason: string }[] }) {
   const { applyPayment } = await import("@/domain/cash");
   const r = await act((ctx) =>
     applyPayment(ctx, {
       customerId: v.customerId,
       amountCents: cents(v.amount),
+      currency: v.currency,
       receivedAt: v.receivedAt ? dayOf(v.receivedAt) : undefined,
       method: v.method,
       reference: v.reference,
@@ -447,6 +480,14 @@ export async function recordCollectionAction(id: string, v: { at: string; refere
     revalidatePath("/billing/factoring");
   }
   return r;
+}
+export async function sendCorrectedInvoiceAction(id: string, to?: string) {
+  const r = await act((ctx) => B.sendCorrectedInvoice(ctx, id, to || null));
+  if (r.ok) {
+    touch(id);
+    revalidatePath("/billing/factoring");
+  }
+  return r.ok ? { ok: true as const, data: { state: r.data.state } } : r;
 }
 export async function recordChargebackAction(id: string, v: { at: string; reference: string; note: string }) {
   const F = await import("@/domain/factoring");

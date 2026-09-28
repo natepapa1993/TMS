@@ -15,14 +15,20 @@ const QB_FIELDS: [string, string, string][] = [
   ["fuelIncomeAccount", "Fuel surcharge income", ""],
   ["accessorialIncomeAccount", "Accessorial income", "detention, lumper, everything else billed"],
   ["carrierExpenseAccount", "Purchased transportation", "partner carrier bills"],
-  ["driverPayAccount", "Driver pay expense", "settlement gross lines"],
-  ["deductionAccount", "Driver deductions", "advances, insurance, escrow taken off the statement"],
+  ["depositAccount", "Deposits go to", "customer payments land here first (Undeposited Funds), then you deposit them"],
+  ["driverPayAccount", "Driver pay expense", "settlement earnings lines"],
+  ["reimbursementAccount", "Driver reimbursements", "per diem and receipts paid back to drivers"],
+  ["deductionAccount", "Driver deductions", "insurance and other deductions taken off the statement"],
+  ["advanceAccount", "Driver advances (asset)", "advances paid out; recovered from later statements"],
+  ["escrowAccount", "Driver escrow (liability)", "escrow held for drivers"],
+  ["factorReserveAccount", "Factor reserve (asset)", "the part of factored invoices the factor holds until the customer pays"],
+  ["factoringFeeAccount", "Factoring fees (expense)", "the factor's fees"],
 ];
 
-export function CompanyForm({ initial, canEdit }: { initial: { name: string; timeZone: string; fuelCostPerMile: string; closedThrough: string | null; qb: Record<string, string>; dispatchPhone: string }; canEdit: boolean }) {
+export function CompanyForm({ initial, canEdit }: { initial: { name: string; timeZone: string; fuelCostPerMile: string; closedThrough: string | null; qb: Record<string, string>; dispatchPhone: string; fx: Record<string, string>; fxAt: Record<string, string> }; canEdit: boolean }) {
   const router = useRouter();
   const t = useToast();
-  const [f, setF] = useState({ name: initial.name, timeZone: initial.timeZone, fuelCostPerMile: initial.fuelCostPerMile, qb: { ...initial.qb }, dispatchPhone: initial.dispatchPhone });
+  const [f, setF] = useState({ name: initial.name, timeZone: initial.timeZone, fuelCostPerMile: initial.fuelCostPerMile, qb: { ...initial.qb }, dispatchPhone: initial.dispatchPhone, fx: { ...initial.fx } });
   const [err, setErr] = useState<{ message: string; field?: string } | null>(null);
   const [pending, start] = useTransition();
   return (
@@ -66,6 +72,17 @@ export function CompanyForm({ initial, canEdit }: { initial: { name: string; tim
         <div className="col-span-2 text-callout text-muted">
           Books closed through: <b className="text-ink">{initial.closedThrough ?? "not closed yet"}</b> — set from Billing → Invoices → Close period.
         </div>
+        <div className="col-span-2 eyebrow mt-3">Exchange rates</div>
+        <div className="col-span-2 help -mt-1">Reports, margins and RPM are in US dollars. An invoiced load converts at the rate stored on its invoice; a load not invoiced yet (and a carrier paid in pesos or Canadian dollars) converts at these. Issuing a MXN or CAD invoice updates them to the rate you typed.</div>
+        {(["MXN", "CAD"] as const).map((c) => (
+          <div key={c}>
+            <label className="label" htmlFor={`fx-${c}`}>
+              {c} per 1 USD
+            </label>
+            <input id={`fx-${c}`} className="input" inputMode="decimal" placeholder={c === "MXN" ? "18.4500" : "1.3700"} value={f.fx[c] ?? ""} onChange={(e) => setF({ ...f, fx: { ...f.fx, [c]: e.target.value } })} aria-invalid={err?.field === `fx${c}`} />
+            <div className="help">{initial.fxAt[c] ? `last set ${initial.fxAt[c]}` : `not set — a default of ${c === "MXN" ? "18.00" : "1.37"} is used and labelled`}</div>
+          </div>
+        ))}
         <div className="col-span-2 eyebrow mt-3">QuickBooks account names</div>
         <div className="col-span-2 help -mt-1">Exactly as they read in your chart of accounts; the export files post to these. Customer and vendor names live on each customer, carrier and driver record.</div>
         {QB_FIELDS.map(([key, label, help]) => (

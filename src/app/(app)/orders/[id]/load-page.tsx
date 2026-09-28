@@ -71,7 +71,7 @@ export function MoneyBox({ order, readOnly, suggestedMiles, weightLb }: { order:
       setErr(null);
       const r = await updateOrderAction(order.id, { rateType: f.rateType, rate: f.rate, rateTbd: f.rateTbd, rateUnit: unitType ? f.rateUnit : "", rateQty: unitType ? f.rateQty : "", currency: f.currency, fuelRule: f.fuelRule, fuelPct: f.fuelPct, fuelCpm: f.fuelCpm, tollsFees: f.tollsFees }, order.updatedAt);
       if (r.ok) {
-        t.ok("Rate saved");
+        t.ok("Rate saved — the line haul and fuel charges follow it");
         router.refresh();
       } else setErr(r.error);
     });
@@ -98,7 +98,7 @@ export function MoneyBox({ order, readOnly, suggestedMiles, weightLb }: { order:
           <>
             <div>
               <label className="label" htmlFor="m-unit">
-                Rate {f.rateType === "per_mile" ? "per mile" : f.rateType === "per_cwt" ? "per 100 lb" : "per unit"}
+                Rate {f.rateType === "per_mile" ? "per mile" : f.rateType === "per_cwt" ? "per 100 lb" : "per unit"} ({f.currency})
               </label>
               <input id="m-unit" className="input" inputMode="decimal" value={f.rateUnit} onChange={(e) => setF({ ...f, rateUnit: e.target.value })} placeholder="0.00" />
             </div>
@@ -117,7 +117,7 @@ export function MoneyBox({ order, readOnly, suggestedMiles, weightLb }: { order:
         ) : (
           <div className="md:col-span-2">
             <label className="label" htmlFor="m-rate">
-              Rate
+              Rate ({f.currency})
             </label>
             <input id="m-rate" className="input" inputMode="decimal" aria-label="Rate" value={f.rate} disabled={f.rateTbd || readOnly} onChange={(e) => setF({ ...f, rate: e.target.value })} placeholder="0.00" />
             <label className="flex items-center gap-2 mt-2 text-callout cursor-pointer text-muted">
@@ -163,7 +163,7 @@ export function MoneyBox({ order, readOnly, suggestedMiles, weightLb }: { order:
         )}
         <div>
           <label className="label" htmlFor="m-tolls">
-            Tolls &amp; fees (cost)
+            Tolls &amp; fees (cost, {f.currency})
           </label>
           <input id="m-tolls" className="input" inputMode="decimal" value={f.tollsFees} onChange={(e) => setF({ ...f, tollsFees: e.target.value })} placeholder="0.00" aria-label="Tolls and fees" />
           <div className="help">Known extra cost for the P&amp;L — not billed.</div>

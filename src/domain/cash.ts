@@ -5,7 +5,8 @@ import { newId } from "@/lib/ids";
 import { assertCtx, can, requirePermission, type Ctx } from "@/lib/context";
 import { writeAudit } from "@/lib/audit";
 import { NotFoundError, ValidationError } from "./orders";
-import { recordReceipt, creditMemo, disputeInvoice } from "./billing";
+import { recordReceipt, creditMemo, disputeInvoice, assertOpenPeriod } from "./billing";
+import { money as fxMoney } from "./fx-rules";
 export { suggest } from "./cash-rules";
 
 /**
@@ -15,10 +16,10 @@ export { suggest } from "./cash-rules";
  */
 
 const OPEN = ["issued", "sent", "partially_paid", "disputed"] as const;
-const money = (c: number, cur = "USD") => (c / 100).toLocaleString("en-US", { style: "currency", currency: cur });
+const money = (c: number, cur = "USD") => fxMoney(c, cur);
 
 export type Application = { invoiceId: string; amountCents: number; shortPay?: "leave_open" | "write_off" | "dispute"; reason?: string | null };
-export type PaymentInput = { customerId: string; amountCents: number; receivedAt?: Date; method?: string; reference?: string | null; remittance?: string | null; note?: string | null; applications: Application[] };
+export type PaymentInput = { customerId: string; amountCents: number; /** USD, MXN or CAD: only invoices in this currency take it */ currency?: string; receivedAt?: Date; method?: string; reference?: string | null; remittance?: string | null; note?: string | null; applications: Application[] };
 
 /** A customer's open invoices (oldest due first) and the money they have on account. */
 export async function openItems(ctx: Ctx, customerId: string) {
@@ -47,14 +48,16 @@ export async function applyPayment(ctx: Ctx, input: PaymentInput) {
   if (!cust) throw new NotFoundError("customer", input.customerId);
   const apps = input.applications.filter((a) => a.amountCents > 0 || a.shortPay === "write_off" || a.shortPay === "dispute");
   const { invoices } = await openItems(ctx, input.customerId);
-  let currency: string | null = null;
+  // a payment has one currency: the one it arrived in (or, from older callers, the invoices it pays)
+  let currency: string | null = input.currency ? input.currency.toUpperCase() : null;
+  if (currency && !["USD", "MXN", "CAD"].includes(currency)) throw new ValidationError("the payment's currency: USD, MXN or CAD", "currency");
   let total = 0;
   for (const a of apps) {
     const inv = invoices.find((i) => i.id === a.invoiceId);
     if (!inv) throw new ValidationError(`an invoice isn't open for ${cust.name}`, "applications");
     if (!Number.isInteger(a.amountCents) || a.amountCents < 0) throw new ValidationError(`${inv.number}: the amount applied`, "applications");
     if (a.amountCents > inv.openCents) throw new ValidationError(`${inv.number}: ${money(a.amountCents, inv.currency)} is more than the ${money(inv.openCents, inv.currency)} open`, "applications");
-    if (currency && currency !== inv.currency) throw new ValidationError("one payment is in one currency: apply USD and MXN invoices separately", "applications");
+    if (currency && currency !== inv.currency) throw new ValidationError(`${inv.number} is a ${inv.currency} invoice and this payment is in ${currency}: a payment only pays invoices in its own currency — record the ${inv.currency} money as its own payment`, "applications");
     currency = inv.currency;
     total += a.amountCents;
     const short = inv.openCents - a.amountCents;
@@ -66,6 +69,7 @@ export async function applyPayment(ctx: Ctx, input: PaymentInput) {
   }
   if (total > input.amountCents) throw new ValidationError(`applied ${money(total, currency ?? "USD")} is more than the ${money(input.amountCents, currency ?? "USD")} received`, "applications");
   const receivedAt = input.receivedAt ?? new Date();
+  await assertOpenPeriod(ctx, receivedAt);
   const method = input.method ?? "ach";
   const [pay] = await db.insert(s.payments).values({ id: newId(), tenantId: ctx.tenantId, customerId: cust.id, receivedAt, amountCents: input.amountCents, currency: currency ?? "USD", method, reference: input.reference?.trim() || null, remittance: input.remittance?.trim() || null, note: input.note?.trim() || null, appliedCents: 0, createdBy: ctx.userId }).returning();
   const done: { invoiceId: string; number: string; appliedCents: number; after: string }[] = [];
@@ -104,8 +108,9 @@ export async function applyOnAccount(ctx: Ctx, paymentId: string, invoiceId: str
   const [inv] = await db.select().from(s.invoices).where(and(eq(s.invoices.tenantId, ctx.tenantId), eq(s.invoices.id, invoiceId))).limit(1);
   if (!inv) throw new NotFoundError("invoice", invoiceId);
   if (inv.customerId !== pay.customerId) throw new ValidationError("that invoice is for another customer");
-  if (inv.currency !== pay.currency) throw new ValidationError("the payment and the invoice are in different currencies");
-  await recordReceipt(ctx, inv.id, { amountCents, receivedAt: pay.receivedAt, method: pay.method, reference: pay.reference, note: `from money on account (${pay.reference ?? pay.id})`, paymentId: pay.id });
+  if (inv.currency !== pay.currency) throw new ValidationError(`this money on account is ${pay.currency} and ${inv.number} is a ${inv.currency} invoice: it only pays ${pay.currency} invoices`);
+  // applied today: money on account from a closed month can still pay a new invoice
+  await recordReceipt(ctx, inv.id, { amountCents, receivedAt: new Date(), method: pay.method, reference: pay.reference, note: `from money on account (${pay.reference ?? pay.id})`, paymentId: pay.id });
   await db.update(s.payments).set({ appliedCents: pay.appliedCents + amountCents }).where(eq(s.payments.id, pay.id));
   await writeAudit(db, ctx, "payment", pay.id, "update", { appliedCents: { from: pay.appliedCents, to: pay.appliedCents + amountCents } }, `to ${inv.number}`);
   return { unappliedCents: left - amountCents };
@@ -126,10 +131,10 @@ export async function listPayments(ctx: Ctx, opts: { customerId?: string; limit?
   return pays.map((p) => ({ ...p, customer: customers.find((c) => c.id === p.customerId)?.name ?? "?", unappliedCents: p.amountCents - p.appliedCents, applications: rcpts.filter((r) => r.paymentId === p.id).map((r) => ({ invoiceId: r.invoiceId, number: r.number ?? "", amountCents: r.amountCents })) }));
 }
 
-/** Money on account by customer (for Receivables). */
+/** Money on account by customer and currency (for Receivables): key "customerId|MXN". */
 export async function onAccountByCustomer(ctx: Ctx) {
   assertCtx(ctx);
   requirePermission(ctx, "billing.view");
-  const rows = await db.select({ customerId: s.payments.customerId, cents: sql<number>`sum(${s.payments.amountCents} - ${s.payments.appliedCents})` }).from(s.payments).where(and(eq(s.payments.tenantId, ctx.tenantId), sql`${s.payments.appliedCents} < ${s.payments.amountCents}`)).groupBy(s.payments.customerId);
-  return new Map(rows.map((r) => [r.customerId, Number(r.cents)]));
+  const rows = await db.select({ customerId: s.payments.customerId, currency: s.payments.currency, cents: sql<number>`sum(${s.payments.amountCents} - ${s.payments.appliedCents})` }).from(s.payments).where(and(eq(s.payments.tenantId, ctx.tenantId), sql`${s.payments.appliedCents} < ${s.payments.amountCents}`)).groupBy(s.payments.customerId, s.payments.currency);
+  return new Map(rows.map((r) => [`${r.customerId}|${r.currency}`, Number(r.cents)]));
 }

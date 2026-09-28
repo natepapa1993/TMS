@@ -4,13 +4,13 @@ import { useState, useTransition } from "react";
 import { call } from "@/lib/client-call";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Confirm, Modal, Pill, Toast, useToast } from "@/components/ui";
+import { Modal, Pill, Toast, useToast } from "@/components/ui";
 import { formatCents } from "@/data/fields";
-import { createInvoiceAction, acceptMismatchAction, uploadOrderDocAction } from "./actions";
+import { createInvoiceAction, acceptMismatchAction, uploadOrderDocAction, resetChargesAction } from "./actions";
 import { BillingRun } from "./run";
 import { ApprovalDialog } from "./approvals";
 
-type Row = { order: { id: string; orderNumber: string; state: string; currency: string; deliveredAt: string | null }; customerName: string | null; entityName: string | null; chargesCents: number; rateConCents: number | null; mismatch: boolean; requiredDocs: { code: string; present: boolean }[]; requiredRefs: { key: string; present: boolean }[]; docsComplete: boolean; ageDays: number; invoiceId: string | null; paperSays: string | null; pending: { count: number; cents: number; charges: { id: string; description: string; amountCents: number }[] }; supplemental: boolean };
+type Row = { order: { id: string; orderNumber: string; state: string; currency: string; deliveredAt: string | null }; customerName: string | null; entityName: string | null; chargesCents: number; rateConCents: number | null; mismatch: boolean; mismatchReason: string | null; bigDifference: boolean; requiredDocs: { code: string; present: boolean }[]; requiredRefs: { key: string; present: boolean }[]; docsComplete: boolean; ageDays: number; invoiceId: string | null; paperSays: string | null; pending: { count: number; cents: number; charges: { id: string; description: string; amountCents: number }[] }; supplemental: boolean };
 
 export function Queue({ rows, role }: { rows: Row[]; role: string }) {
   const router = useRouter();
@@ -141,7 +141,7 @@ export function Queue({ rows, role }: { rows: Row[]; role: string }) {
           </table>
         )}
       </div>
-      <Confirm open={!!mismatchFor} onClose={() => setMismatchFor(null)} title={`Charges ${formatCents(mismatchFor?.chargesCents ?? 0)} vs rate con ${formatCents(mismatchFor?.rateConCents ?? 0)}`} body="Accept ours only with the customer's approval on file (email, revised rate con). Or open the order and fix the charges." needReason="Why the difference is billable" confirmLabel="Accept our charges" onConfirm={(note) => { const r = mismatchFor!; setMismatchFor(null); run("Accepted — the note is on the order", () => acceptMismatchAction(r.order.id, note)); }} />
+      {mismatchFor && <MismatchDialog row={mismatchFor} onClose={() => setMismatchFor(null)} onDone={(label) => { setMismatchFor(null); t.ok(label); router.refresh(); }} />}
       {approveFor && <ApprovalDialog orderId={approveFor.order.id} orderNumber={approveFor.order.orderNumber} charges={approveFor.pending.charges} currency={approveFor.order.currency} onClose={() => setApproveFor(null)} />}
       {uploadFor && (
         <UploadDoc orderId={uploadFor.orderId} code={uploadFor.code} onClose={() => setUploadFor(null)} onDone={() => { setUploadFor(null); t.ok("Uploaded"); router.refresh(); }} />
@@ -159,6 +159,71 @@ export function Queue({ rows, role }: { rows: Row[]; role: string }) {
       )}
       <Toast message={t.toast?.message ?? null} tone={t.toast?.tone} onDone={t.clear} />
     </>
+  );
+}
+
+/**
+ * Charges differ from the rate con. The safe fix is first: put the charges back to what the load's rate con
+ * says. Accepting our own charges needs a reason, and when the difference is big (over 10%, or charges in
+ * another currency) it is tucked away and marked as the exception it is — never the obvious button.
+ */
+function MismatchDialog({ row, onClose, onDone }: { row: Row; onClose: () => void; onDone: (label: string) => void }) {
+  const [note, setNote] = useState("");
+  const [showAccept, setShowAccept] = useState(!row.bigDifference);
+  const [err, setErr] = useState<string | null>(null);
+  const [pending, start] = useTransition();
+  const cur = row.order.currency;
+  const currencyProblem = /but the load is in/.test(row.mismatchReason ?? "");
+  const go = (fn: () => Promise<{ ok: boolean; error?: string }>, label: string) =>
+    start(async () => {
+      setErr(null);
+      const r = await fn();
+      if (r.ok) onDone(label);
+      else setErr(r.error ?? "Could not do that");
+    });
+  return (
+    <Modal
+      open
+      onClose={onClose}
+      title={`Charges ${formatCents(row.chargesCents, cur)} vs rate con ${formatCents(row.rateConCents ?? 0, cur)}`}
+      footer={
+        <>
+          <Link href={`/orders/${row.order.id}#charges`} className="btn btn-ghost mr-auto">
+            Open the load
+          </Link>
+          <button className="btn" onClick={onClose}>
+            Cancel
+          </button>
+          <button className="btn btn-primary" data-testid="reset-to-ratecon" disabled={pending} onClick={() => go(() => resetChargesAction(row.order.id), "Charges reset to the rate con")}>
+            Reset charges to the rate con
+          </button>
+        </>
+      }
+    >
+      <p className="text-callout">
+        <b>{row.order.orderNumber}</b>: {row.mismatchReason ?? "the charges differ from the rate con"}.
+      </p>
+      <p className="text-callout text-muted mt-2">Reset puts the line haul and fuel back to the rate and currency on the load ({formatCents(row.rateConCents ?? 0, cur)}{cur !== "USD" ? ` ${cur}` : ""}). Approved extras stay.</p>
+      {currencyProblem ? (
+        <p className="help mt-3">Charges in another currency can&rsquo;t be accepted as they are: reset them, or remove and re-add them in {cur} on the load.</p>
+      ) : showAccept ? (
+        <div className={`mt-4 ${row.bigDifference ? "border border-red rounded-lg p-3" : ""}`}>
+          {row.bigDifference && <div className="text-callout text-red font-semibold mb-2">The difference is more than 10% of the rate con. Only accept it with the customer&rsquo;s written approval on file.</div>}
+          <label className="label" htmlFor="mm-note">
+            Why the difference is billable
+          </label>
+          <textarea id="mm-note" className="input" rows={2} value={note} onChange={(e) => setNote(e.target.value)} placeholder="e.g. revised rate con from the customer, 9/28 email" />
+          <button className={`btn btn-sm mt-2 ${row.bigDifference ? "btn-danger" : ""}`} disabled={pending || !note.trim()} onClick={() => go(() => acceptMismatchAction(row.order.id, note), "Accepted — the note is on the load")}>
+            Accept our charges
+          </button>
+        </div>
+      ) : (
+        <button className="btn btn-ghost btn-sm mt-3 text-muted" onClick={() => setShowAccept(true)}>
+          The customer approved a different amount…
+        </button>
+      )}
+      {err && <div className="error mt-2">{err}</div>}
+    </Modal>
   );
 }
 

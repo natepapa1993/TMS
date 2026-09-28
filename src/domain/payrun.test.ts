@@ -18,7 +18,7 @@ let f: { cust: string; t1: string; d1: string; d2: string; d3: string; entity: s
 beforeEach(async () => {
   await truncateAll();
   a = await makeTenant("Pay Carrier");
-  const entity = await create(a, "billingEntity", { legalName: "Pay Carrier LLC", country: "US", invoicePrefix: "PC", nextInvoiceNumber: 1, isDefault: true, factorName: "Triumph", factorEmail: "schedules@triumph.test", factorAll: true, factorAdvanceBp: 90, factorFeeBp: 3, factorRecourseDays: 90 });
+  const entity = await create(a, "billingEntity", { legalName: "Pay Carrier LLC", country: "US", invoicePrefix: "PC", nextInvoiceNumber: 1, isDefault: true, factorName: "Triumph", factorEmail: "schedules@triumph.test", factorRemitTo: { line1: "PO Box 610028", city: "Dallas", state: "TX", postalCode: "75261" }, factorAll: true, factorAdvanceBp: 90, factorFeeBp: 3, factorRecourseDays: 90 });
   const cust = await create(a, "customer", { name: "RXO", kind: "broker", billingEmail: "ap@rxo.test", requiredDocs: [] });
   const t1 = await create(a, "truck", { unitNumber: "101", usPlate: "TX101", usPlateExpires: future });
   const d1 = await create(a, "driver", { name: "Daniel Reyes", driverType: "CDL", licenseExpires: future, medicalExpires: future, currentTruckId: t1.id, payType: "per_mile", payRateCents: 60 });
@@ -87,8 +87,8 @@ describe("factoring ledger", () => {
     expect(l.totals).toMatchObject({ toFund: 0, exposure: 135000, reserveHeld: 10500, feesYtd: 4500 });
     // Receivables: the customer owes the factor, not us
     const ar = await B.aging(a);
-    expect(ar.totals.total).toBe(0);
-    expect(ar.withFactor).toBe(150000);
+    expect(ar.totals.USD?.total ?? 0).toBe(0);
+    expect(ar.withFactor.USD).toBe(150000);
     // collected: the invoice is paid by factoring and the 7% reserve comes back
     const c = await F.recordCollection(a, i1.id, { reference: "REM-1" });
     expect(c.reserveCents).toBe(7000);
@@ -98,8 +98,8 @@ describe("factoring ledger", () => {
     await expect(F.recordChargeback(a, i1.id)).rejects.toThrow(/collected/);
     // unpaid past recourse: charged back, back in our Receivables
     const cb = await F.recordChargeback(a, i2.id, { note: "RXO didn't pay in 90 days" });
-    expect(cb.repaidCents).toBe(45000);
-    expect((await B.aging(a)).totals.total).toBe(50000);
+    expect(cb).toMatchObject({ repaidCents: 46500, advanceCents: 45000, feeCents: 1500, reserveBackToArCents: 3500 }); // advance + the fee the factor keeps; the reserve is owed by the customer again
+    expect((await B.aging(a)).totals.USD.total).toBe(50000);
     l = await F.factorLedger(a);
     expect(Object.fromEntries(l.rows.map((r) => [r.number, r.status]))).toEqual({ [i1.number!]: "collected", [i2.number!]: "charged_back" });
     expect(l.totals.exposure).toBe(0);

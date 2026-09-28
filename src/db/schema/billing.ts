@@ -46,7 +46,7 @@ export type InvoiceSnapshot = {
   /** the load number(s), printed in the header */
   loadNumbers?: string[];
   refs: Record<string, string>;
-  stops: { seq: number; type: string; name: string; city: string | null; state: string | null; country: string; departedAt: string | null; arrivedAt: string | null }[];
+  stops: { seq: number; type: string; name: string; city: string | null; state: string | null; country: string; departedAt: string | null; arrivedAt: string | null; /** the stop's own calendar day (YYYY-MM-DD) */ departedDate?: string | null; arrivedDate?: string | null }[];
   lines: InvoiceLine[];
   terms: string;
   currency: string;
@@ -55,6 +55,14 @@ export type InvoiceSnapshot = {
   loads?: { orderNumber: string; refs: string; from: string; to: string; pickedUp: string | null; delivered: string | null; amountCents: number }[];
   /** notice of assignment when the invoice is factored */
   factor?: { name: string; notice: string; remitTo?: Record<string, string | undefined> | null } | null;
+  /** a supplemental invoice: the invoice number it adds to */
+  supplementOf?: string | null;
+  /** a rebill: the voided invoice number it replaces */
+  replaces?: string | null;
+  /** the company zone the invoice and due dates are printed in */
+  timeZone?: string;
+  /** after a chargeback: the invoice was re-sent with our own remit-to; the factor notice it carried before */
+  correctedFromFactor?: string | null;
 };
 
 export type InvoiceDelivery = { at: string; method: string; to: string | null; reference: string | null; by: string | null; batchId?: string | null };
@@ -98,6 +106,8 @@ export const invoices = pgTable(
     kind: text("kind").$type<"standard" | "supplemental" | "rebill">().notNull().default("standard"),
     factorFundedAt: timestamp("factor_funded_at", { withTimezone: true }), // the factor advanced on it: the customer now owes the factor
     rebillOf: text("rebill_of"), // the voided invoice this one replaces
+    supplementOf: text("supplement_of"), // a supplemental invoice: the invoice it adds to
+    disputeResolution: text("dispute_resolution"), // how the last dispute ended, in words
     ...audit(),
   },
   (t) => [index("invoices_tenant_state").on(t.tenantId, t.state), index("invoices_tenant_customer").on(t.tenantId, t.customerId), uniqueIndex("invoices_tenant_number").on(t.tenantId, t.number)],
@@ -155,6 +165,9 @@ export const creditMemos = pgTable(
     lines: jsonb("lines").$type<{ description: string; amountCents: number }[]>().notNull().default(sql`'[]'::jsonb`),
     issuedAt: timestamp("issued_at", { withTimezone: true }).notNull().defaultNow(),
     exportedAt: timestamp("exported_at", { withTimezone: true }), // last accounting export that carried it
+    pdfStorageKey: text("pdf_storage_key"), // the credit memo PDF
+    sentAt: timestamp("sent_at", { withTimezone: true }),
+    sentTo: text("sent_to"),
     createdBy: text("created_by"),
   },
   (t) => [index("credit_memos_invoice").on(t.invoiceId)],
@@ -196,7 +209,7 @@ export const carrierBills = pgTable(
 );
 
 export const SETTLEMENT_STATES = ["open", "reviewed", "approved", "paid"] as const;
-export type SettlementLine = { id: string; kind: "leg" | "accessorial" | "deduction" | "reimbursement" | "adjustment"; legId?: string | null; orderNumber?: string | null; description: string; qty: number; unit: string; rateCents: number; amountCents: number; source: string; disputed?: string | null; response?: string | null; payItemId?: string | null };
+export type SettlementLine = { id: string; kind: "leg" | "accessorial" | "deduction" | "reimbursement" | "adjustment"; legId?: string | null; orderNumber?: string | null; description: string; qty: number; unit: string; rateCents: number; amountCents: number; source: string; disputed?: string | null; response?: string | null; payItemId?: string | null; /** a deduction: what it wanted to take and couldn't (net never goes below $0); carries to the next statement */ shortCents?: number | null; /** the line can't be paid as is (a load with no miles) */ blocker?: string | null };
 
 export const settlements = pgTable(
   "settlements",
@@ -240,6 +253,8 @@ export const payItems = pgTable(
     startsAt: timestamp("starts_at", { withTimezone: true }).notNull().defaultNow(),
     endsAt: timestamp("ends_at", { withTimezone: true }),
     active: boolean("active").notNull().default(true),
+    originalCents: integer("original_cents"), // what there was to recover when it was added (advances, deductions with a total)
+    carriedFrom: text("carried_from"), // the statement a shortfall carried over from
     ...audit(),
   },
   (t) => [index("pay_items_driver").on(t.tenantId, t.driverId, t.active)],

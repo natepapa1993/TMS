@@ -7,7 +7,7 @@ import { Modal, Pill, Toast, useToast } from "@/components/ui";
 import { formatCents } from "@/data/fields";
 import { localDay } from "@/lib/time";
 import type { LedgerRow } from "@/domain/factoring";
-import { recordFundingAction, recordCollectionAction, recordChargebackAction } from "../actions";
+import { recordFundingAction, recordCollectionAction, recordChargebackAction, sendCorrectedInvoiceAction } from "../actions";
 
 const STATUS: Record<LedgerRow["status"], [string, "slate" | "teal" | "amber" | "red" | "green"]> = { to_fund: ["waiting for funding", "amber"], funded: ["funded", "teal"], collected: ["collected", "green"], charged_back: ["charged back", "red"] };
 
@@ -67,9 +67,20 @@ export function FactorLedger({ rows, canEdit, terms }: { rows: LedgerRow[]; canE
                   <td className="mono">{formatCents(r.totalCents, r.currency)}</td>
                   <td className="mono">{r.advancedCents ? formatCents(r.advancedCents, r.currency) : "—"}</td>
                   <td className="mono text-muted">{r.feeCents ? formatCents(r.feeCents, r.currency) : "—"}</td>
-                  <td className="mono">{r.reserveCents ? formatCents(r.reserveCents, r.currency) : "—"}</td>
+                  <td className="mono">
+                    {r.status === "charged_back" ? (
+                      <span className="text-footnote font-sans" title="The reserve was the part of the invoice the factor held back until the customer paid. On a chargeback it isn't paid out: the customer owes it to you again.">
+                        {formatCents(r.reserveBackToArCents, r.currency)} back to Receivables
+                      </span>
+                    ) : r.reserveCents ? (
+                      formatCents(r.reserveCents, r.currency)
+                    ) : (
+                      "—"
+                    )}
+                  </td>
                   <td>
                     <Pill tone={STATUS[r.status][1]}>{STATUS[r.status][0]}</Pill>
+                    {r.status === "charged_back" && r.repaidCents > 0 && <div className="text-footnote text-muted mt-0.5">repaid {formatCents(r.repaidCents, r.currency)} (advance + fee)</div>}
                     {r.status === "funded" && r.ageDays != null && (
                       <div className={`text-footnote mt-0.5 ${r.atRisk ? "text-red font-semibold" : "text-muted"}`}>
                         {r.ageDays} d{r.recourseDays ? ` of ${r.recourseDays} recourse` : " · non-recourse"}
@@ -77,6 +88,24 @@ export function FactorLedger({ rows, canEdit, terms }: { rows: LedgerRow[]; canE
                     )}
                   </td>
                   <td className="text-right whitespace-nowrap space-x-1">
+                    {canEdit && r.needsCorrectedInvoice && (
+                      <button
+                        className="btn btn-sm btn-primary"
+                        data-testid="send-corrected"
+                        disabled={pending}
+                        title="The customer's copy still says to pay the factor: send it again with your own remit-to"
+                        onClick={() =>
+                          start(async () => {
+                            const x = await sendCorrectedInvoiceAction(r.invoiceId);
+                            if (!x.ok) return t.err(x.error);
+                            t.ok("Corrected invoice sent — remit to you");
+                            router.refresh();
+                          })
+                        }
+                      >
+                        Send corrected invoice (remit to us)
+                      </button>
+                    )}
                     {canEdit && r.status === "funded" && (
                       <>
                         <button className="btn btn-sm" onClick={() => setAct({ row: r, kind: "collect", at: localDay(), reference: "", note: "" })}>
@@ -100,7 +129,7 @@ export function FactorLedger({ rows, canEdit, terms }: { rows: LedgerRow[]; canE
         <Modal
           open
           onClose={() => setFund(null)}
-          title={`The factor funded ${selected.length} invoice${selected.length === 1 ? "" : "s"} · ${formatCents(selected.reduce((a, r) => a + r.totalCents, 0))}`}
+          title={`The factor funded ${selected.length} invoice${selected.length === 1 ? "" : "s"} · ${[...new Set(selected.map((r) => r.currency))].map((c) => formatCents(selected.filter((r) => r.currency === c).reduce((a, r) => a + r.totalCents, 0), c)).join(" · ")}`}
           footer={
             <>
               <button className="btn" onClick={() => setFund(null)}>
@@ -115,7 +144,7 @@ export function FactorLedger({ rows, canEdit, terms }: { rows: LedgerRow[]; canE
                     if (!r.ok) return t.err(r.error);
                     setFund(null);
                     setSel([]);
-                    t.ok(`Funded: ${formatCents(r.data.advancedCents)} advanced`);
+                    t.ok(`Funded: ${formatCents(r.data.advancedCents, selected[0]?.currency ?? "USD")} advanced`);
                     router.refresh();
                   })
                 }
@@ -172,7 +201,7 @@ export function FactorLedger({ rows, canEdit, terms }: { rows: LedgerRow[]; canE
                     const r = act.kind === "collect" ? await recordCollectionAction(act.row.invoiceId, act) : await recordChargebackAction(act.row.invoiceId, act);
                     if (!r.ok) return t.err(r.error);
                     setAct(null);
-                    t.ok(act.kind === "collect" ? `Collected${"reserveCents" in r.data && r.data.reserveCents ? ` · ${formatCents(r.data.reserveCents)} reserve released` : ""}` : "Charged back — the invoice is back in Receivables");
+                    t.ok(act.kind === "collect" ? `Collected${"reserveCents" in r.data && r.data.reserveCents ? ` · ${formatCents(r.data.reserveCents, act.row.currency)} reserve released` : ""}` : "Charged back — the invoice is back in Receivables. Send the customer a corrected invoice.");
                     router.refresh();
                   })
                 }
@@ -196,7 +225,7 @@ export function FactorLedger({ rows, canEdit, terms }: { rows: LedgerRow[]; canE
               <input id="c-ref" className="input" value={act.reference} onChange={(e) => setAct({ ...act, reference: e.target.value })} />
             </div>
           </div>
-          <div className="help mt-2">{act.kind === "collect" ? "The invoice is marked paid (by factoring) and the reserve the factor held comes back." : "The factor takes its advance back; the customer now owes you again and the invoice returns to Receivables."}</div>
+          <div className="help mt-2">{act.kind === "collect" ? "The invoice is marked paid (by factoring) and the reserve the factor held comes back." : `You repay the ${formatCents(act.row.advancedCents, act.row.currency)} advance plus the ${formatCents(act.row.feeCents, act.row.currency)} fee the factor keeps. The ${formatCents(act.row.reserveCents, act.row.currency)} reserve was never paid to you: it goes back to Receivables with the invoice, which the customer now owes you in full. Then send them a corrected invoice with your remit-to.`}</div>
         </Modal>
       )}
       <Toast message={t.toast?.message ?? null} tone={t.toast?.tone} onDone={t.clear} />

@@ -375,8 +375,21 @@ export async function bookOrder(ctx: Ctx, orderId: string) {
 }
 
 export async function updateOrder(ctx: Ctx, orderId: string, values: Partial<CreateOrderInput> & Record<string, unknown>, expectedUpdatedAt?: Date) {
+  const after = await updateOrderRow(ctx, orderId, values, expectedUpdatedAt);
+  // the rate, currency or fuel rule changed: the rate-con charges (line haul, fuel) follow it, in the load's currency
+  if (after.changedMoney) {
+    const { syncRateConCharges } = await import("./billing");
+    await syncRateConCharges(ctx, orderId);
+  }
+  return after.row;
+}
+
+const MONEY_KEYS = ["rateCents", "currency", "fuelRule", "fuelPct", "fuelCentsPerMile", "rateType", "rateUnitCents", "rateQty", "rateTbd"] as const;
+
+async function updateOrderRow(ctx: Ctx, orderId: string, values: Partial<CreateOrderInput> & Record<string, unknown>, expectedUpdatedAt?: Date) {
   assertCtx(ctx);
   requirePermission(ctx, "orders.edit");
+  if ("currency" in values && values.currency != null) values = { ...values, currency: normCurrency(String(values.currency)) };
   return db.transaction(async (tx) => {
     const before = await loadOrder(tx, ctx, orderId);
     if (expectedUpdatedAt && before.updatedAt.getTime() !== expectedUpdatedAt.getTime()) throw new ValidationError("someone else changed this order; reload", "updatedAt");
@@ -411,7 +424,8 @@ export async function updateOrder(ctx: Ctx, orderId: string, values: Partial<Cre
       .where(and(eq(s.orders.tenantId, ctx.tenantId), eq(s.orders.id, orderId)))
       .returning();
     await writeAudit(tx, ctx, "order", orderId, "update", diff(before as unknown as Record<string, unknown>, after as unknown as Record<string, unknown>));
-    return after;
+    const changedMoney = MONEY_KEYS.some((k) => (before as Record<string, unknown>)[k] !== (after as Record<string, unknown>)[k]);
+    return { row: after, changedMoney };
   });
 }
 
@@ -805,7 +819,15 @@ export async function zoneForLeg(tx: Tx | typeof db, leg: Leg): Promise<LegZone>
 
 export type Assignment =
   | { kind: "truck"; truckId: string; driverId?: string | null; coDriverId?: string | null; trailerId?: string | null }
-  | { kind: "carrier"; carrierId: string; carrierRateCents?: number | null };
+  | { kind: "carrier"; carrierId: string; carrierRateCents?: number | null; /** USD | MXN | CAD — what the carrier is paid in; blank = USD */ carrierRateCurrency?: string | null };
+
+/** A currency code we bill and pay in (USD, MXN, CAD); anything else is refused, blank is USD. */
+export function normCurrency(c: string | null | undefined): string {
+  const v = String(c ?? "").trim().toUpperCase();
+  if (!v) return "USD";
+  if (v === "USD" || v === "MXN" || v === "CAD") return v;
+  throw new ValidationError(`${c} isn't a currency we use: USD, MXN or CAD`, "currency");
+}
 
 export type PlanOptions = { override?: boolean; reason?: string; plannedStart?: Date | null; plannedEnd?: Date | null; plannedMiles?: number | null };
 
@@ -888,8 +910,8 @@ export async function planLeg(ctx: Ctx, legId: string, a: Assignment, opts: Plan
 
     const assignment =
       a.kind === "truck"
-        ? { assigneeKind: "truck", truckId: a.truckId, driverId: a.driverId ?? null, coDriverId: a.coDriverId ?? null, trailerId: a.trailerId ?? null, carrierId: null, carrierRateCents: null }
-        : { assigneeKind: "carrier", carrierId: a.carrierId, carrierRateCents: a.carrierRateCents ?? null, truckId: null, driverId: null, coDriverId: null, trailerId: null };
+        ? { assigneeKind: "truck", truckId: a.truckId, driverId: a.driverId ?? null, coDriverId: a.coDriverId ?? null, trailerId: a.trailerId ?? null, carrierId: null, carrierRateCents: null, carrierRateCurrency: null }
+        : { assigneeKind: "carrier", carrierId: a.carrierId, carrierRateCents: a.carrierRateCents ?? null, carrierRateCurrency: a.carrierRateCents != null ? normCurrency(a.carrierRateCurrency) : null, truckId: null, driverId: null, coDriverId: null, trailerId: null };
     const extra = {
       ...assignment,
       plannedStart: opts.plannedStart ?? leg.plannedStart,
@@ -926,6 +948,13 @@ export async function setLegMiles(ctx: Ctx, legId: string, miles: number | null)
     if (["invoiced", "paid", "cancelled"].includes(order.state)) throw new ValidationError(`the order is ${order.state}; miles are locked`);
     const [after] = await tx.update(s.legs).set({ plannedMiles: miles == null ? null : Math.round(miles), updatedAt: new Date(), updatedBy: ctx.userId }).where(eq(s.legs.id, legId)).returning();
     await writeAudit(tx, ctx, "leg", legId, "update", diff(leg as unknown as Record<string, unknown>, after as unknown as Record<string, unknown>));
+    return { after, perMileFuel: order.fuelRule === "per_mile" && order.rateType !== "per_mile" };
+  }).then(async ({ after, perMileFuel }) => {
+    // a fuel surcharge per mile on the legs' miles follows the miles
+    if (perMileFuel) {
+      const { syncRateConCharges } = await import("./billing");
+      await syncRateConCharges(ctx, after.orderId);
+    }
     return after;
   });
 }
@@ -935,7 +964,7 @@ export async function unplanLeg(ctx: Ctx, legId: string, reason?: string) {
   requirePermission(ctx, "dispatch.plan");
   return db.transaction(async (tx) => {
     const leg = await loadLeg(tx, ctx, legId);
-    const cleared = { assigneeKind: null, truckId: null, driverId: null, coDriverId: null, trailerId: null, carrierId: null, carrierRateCents: null, planReason: null, dispatchedAt: null, acceptedAt: null };
+    const cleared = { assigneeKind: null, truckId: null, driverId: null, coDriverId: null, trailerId: null, carrierId: null, carrierRateCents: null, carrierRateCurrency: null, planReason: null, dispatchedAt: null, acceptedAt: null };
     let after: Leg;
     if (leg.state === "dispatched" || leg.state === "accepted") {
       // back to planned first (allowed), then unassigned
