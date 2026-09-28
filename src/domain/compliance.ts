@@ -497,20 +497,18 @@ export async function dashboard(ctx: Ctx) {
   subjects.trailer = tr.map((x) => ({ id: x.id, label: x.unitNumber, sub: x.kind, archived: false }));
   subjects.carrier = c.map((x) => ({ id: x.id, label: x.name, sub: x.country, archived: false }));
   const overrides = await db.select().from(s.complianceOverrides).where(and(eq(s.complianceOverrides.tenantId, ctx.tenantId), gt(s.complianceOverrides.expiresAt, new Date())));
-  const tiles = { expired: 0, expiring: 0, missing: 0, blocked: 0, subjects: 0, dq: 0, lastRun: null as Date | null };
-  for (const r of status) {
-    // the qualification file counts once per driver in its own tile, not item by item among the documents
-    const docs = r.items.filter((i) => !i.key.startsWith("dq:"));
-    const real = (i: ComplianceItem) => (i.status === "snoozed" ? i.underlying : i.status);
-    tiles.subjects++;
-    tiles.expired += docs.filter((i) => real(i) === "expired").length;
-    tiles.expiring += docs.filter((i) => i.status === "expiring").length;
-    tiles.missing += docs.filter((i) => real(i) === "missing").length;
-    if (r.items.some((i) => i.key.startsWith("dq:") && (real(i) === "missing" || real(i) === "expired"))) tiles.dq++;
-    if (!r.dispatchable) tiles.blocked++;
-    if (!tiles.lastRun || r.ranAt > tiles.lastRun) tiles.lastRun = r.ranAt;
-  }
-  return { types, status, subjects, overrides, tiles };
+  // tiles count subjects (drivers, units, carriers) the way the table's filters do, per kind, so a tile and its filtered table agree
+  const live = new Set(SUBJECT_KINDS.flatMap((k) => subjects[k].map((x) => `${k}:${x.id}`)));
+  const rows = status.filter((r) => live.has(`${r.subjectKind}:${r.subjectId}`));
+  const count = (kind: SubjectKind) => {
+    const mine = rows.filter((r) => r.subjectKind === kind);
+    return { blocked: mine.filter((r) => !r.dispatchable).length, expired: mine.filter((r) => r.expired.length).length, expiring: mine.filter((r) => r.expiring.length).length, missing: mine.filter((r) => r.missing.length).length, dq: mine.filter((r) => r.items.some((i) => i.key.startsWith("dq:") && ["missing", "expired"].includes(i.status === "snoozed" ? (i.underlying ?? "") : i.status))).length };
+  };
+  const byKind = Object.fromEntries(SUBJECT_KINDS.map((k) => [k, count(k)])) as Record<SubjectKind, ReturnType<typeof count>>;
+  const lastRun = rows.reduce<Date | null>((m, r) => (!m || r.ranAt > m ? r.ranAt : m), null);
+  const tiles = { ...SUBJECT_KINDS.reduce((acc, k) => ({ blocked: acc.blocked + byKind[k].blocked, expired: acc.expired + byKind[k].expired, expiring: acc.expiring + byKind[k].expiring, missing: acc.missing + byKind[k].missing, dq: acc.dq + byKind[k].dq }), { blocked: 0, expired: 0, expiring: 0, missing: 0, dq: 0 }), subjects: rows.length, lastRun, byKind };
+  const [tenant] = await db.select({ settings: s.tenants.settings }).from(s.tenants).where(eq(s.tenants.id, ctx.tenantId)).limit(1);
+  return { types, status, subjects, overrides, tiles, settings: complianceSettings(tenant?.settings as Record<string, unknown> | null) };
 }
 
 export function dashboardCsv(data: Awaited<ReturnType<typeof dashboard>>, kind: SubjectKind) {

@@ -1,7 +1,8 @@
 import Link from "next/link";
 import { requireCtx } from "@/lib/auth";
 import { dashboard, evaluateAll, pendingUploads, blankBlockingDates, FIELD_ITEMS, type SubjectKind } from "@/domain/compliance";
-import { MissingDatesToggle } from "./table";
+import { MissingDatesToggle, DqGraceButton, BlockLevels } from "./table";
+import { BUILT_IN_LEVELS, builtInLevel, documentTypeLevel } from "@/domain/compliance-rules";
 import { PageHeader } from "@/components/page-header";
 import { Pill } from "@/components/ui";
 import { ComplianceTable } from "./table";
@@ -38,18 +39,25 @@ export default async function CompliancePage({ searchParams }: PageProps<"/compl
   const fields = FIELD_ITEMS[kind];
   // a document type and a built-in expiry field can share a name ("FAST card" scan on file vs the FAST expiry date): say which is which
   const columns = [
-    ...types.map((t) => ({ key: t.id, label: t.name, blocks: t.blocksDispatch, sub: "on file" })),
-    ...fields.map((f) => ({ key: `field:${f.key}`, label: f.label, blocks: f.blocks, sub: "expiry" })),
+    ...types.map((t) => ({ key: t.id, label: t.name, blocks: documentTypeLevel(t) !== "warn", sub: "on file" })),
+    ...fields.map((f) => ({ key: `field:${f.key}`, label: f.label, blocks: builtInLevel(`field:${f.key}`, d.settings.levels) !== "warn", sub: "expiry" })),
     ...(kind === "driver" ? [{ key: "dq:*", label: "Qualification file", blocks: true, sub: "391.51" }, { key: "da:status", label: "Hold", blocks: true, sub: "Safety" }] : []),
   ];
   const rows = d.subjects[kind]
     .map((sub) => ({ ...sub, st: d.status.find((x) => x.subjectKind === kind && x.subjectId === sub.id) ?? null, override: d.overrides.find((o) => o.subjectKind === kind && o.subjectId === sub.id) ?? null }))
     .filter((r) => (filter === "blocked" ? r.st && !r.st.dispatchable : filter === "expired" ? r.st?.expired.length : filter === "expiring" ? r.st?.expiring.length : filter === "missing" ? r.st?.missing.length : true))
     .sort((p, q) => Number(p.st?.dispatchable ?? true) - Number(q.st?.dispatchable ?? true) || (q.st?.expired.length ?? 0) - (p.st?.expired.length ?? 0));
+  const kt = d.tiles.byKind[kind];
+  const noun = { driver: ["driver", "drivers"], truck: ["truck", "trucks"], trailer: ["trailer", "trailers"], carrier: ["carrier", "carriers"] }[kind];
+  const graceUntil = d.settings.dqGraceUntil && d.settings.dqGraceUntil.getTime() > now ? d.settings.dqGraceUntil : null;
+  const canSet = ["owner", "compliance"].includes(ctx.role);
+  const levelRows = Object.entries(BUILT_IN_LEVELS).map(([key, v]) => ({ key, label: v.label, kind: v.kind, level: builtInLevel(key, d.settings.levels), fixed: !!v.fixed, why: v.why }));
   const tile = (key: string, label: string, n: number, tone: string) => (
     <Link href={`/compliance?tab=${kind}${filter === key ? "" : `&f=${key}`}`} className={`card p-4 flex-1 ${filter === key ? "border-teal" : ""}`}>
       <div className="eyebrow">{label}</div>
-      <div className={`text-title1 font-extrabold ${n ? tone : "text-faint"}`}>{n}</div>
+      <div className={`text-title1 font-extrabold ${n ? tone : "text-faint"}`}>
+        {n} <span className="text-footnote font-semibold text-muted">{noun[n === 1 ? 0 : 1]}</span>
+      </div>
     </Link>
   );
   return (
@@ -93,26 +101,36 @@ export default async function CompliancePage({ searchParams }: PageProps<"/compl
             <div className="flex-1">
               {blanks.on ? (
                 <>
-                  <b>Missing dates block dispatch.</b> A blank licence, medical card, annual inspection or I-94 date — or a missing hire prerequisite in a driver&rsquo;s qualification file (application, road test, pre-employment test, Clearinghouse query) — stops a driver or unit like an expired one{blankText ? ` (blocked now: ${blankText})` : ""}.
+                  <b>Blank dates block dispatch.</b> A blank licence, medical card, annual inspection or I-94 date stops a driver or unit like an expired one{blankText ? ` (blocked now: ${blankText})` : ""}.
                 </>
               ) : (
                 <>
-                  <b>{blankText} with a required date or hire prerequisite left blank</b> (licence, medical card, annual inspection, I-94, the qualification file…) — shown as missing but still dispatchable. Enter them, then turn on blocking.
+                  <b>{blankText} with a required date left blank</b> (licence, medical card, annual inspection, I-94…) — shown as missing but still dispatchable. Enter them, then turn on blocking. (Hire prerequisites in the qualification file block regardless.)
                 </>
               )}
             </div>
             {["owner", "compliance"].includes(ctx.role) && <MissingDatesToggle on={blanks.on} />}
           </div>
         )}
-        <div className="flex gap-3 mb-4 flex-wrap">
-          {tile("blocked", "Blocked from dispatch", d.tiles.blocked, "text-red")}
-          {tile("expired", "Expired", d.tiles.expired, "text-red")}
-          {tile("expiring", "Expiring", d.tiles.expiring, "text-amber")}
-          {tile("missing", "Missing", d.tiles.missing, "text-amber")}
-          <Link href="/compliance/drivers" className="card p-4 flex-1" data-testid="tile-dq">
-            <div className="eyebrow">Driver files incomplete</div>
-            <div className={`text-title1 font-extrabold ${d.tiles.dq ? "text-amber" : "text-faint"}`}>{d.tiles.dq}</div>
-          </Link>
+        {graceUntil && (
+          <div className="rounded-lg border border-amber/50 bg-amber-soft/40 px-4 py-3 mb-4 text-callout flex items-center gap-3" data-testid="dq-grace">
+            <div className="flex-1">
+              <b>Qualification files: grace until {graceUntil.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}.</b> While you enter your drivers&rsquo; files, a blank hire prerequisite (application, road test, Clearinghouse query, pre-employment test) shows as missing without blocking. A pre-employment test waiting on its result blocks now. After the date every gap blocks dispatch.
+            </div>
+            {canSet && <DqGraceButton />}
+          </div>
+        )}
+        <div className="flex gap-3 mb-4 flex-wrap" data-testid="tiles">
+          {tile("blocked", "Blocked from dispatch", kt.blocked, "text-red")}
+          {tile("expired", "Something expired", kt.expired, "text-red")}
+          {tile("expiring", "Something expiring", kt.expiring, "text-amber")}
+          {tile("missing", "Something missing", kt.missing, "text-amber")}
+          {kind === "driver" && (
+            <Link href="/compliance/drivers" className="card p-4 flex-1" data-testid="tile-dq">
+              <div className="eyebrow">Driver files incomplete</div>
+              <div className={`text-title1 font-extrabold ${kt.dq ? "text-amber" : "text-faint"}`}>{kt.dq}</div>
+            </Link>
+          )}
         </div>
         <div className="flex items-center gap-1.5 mb-3">
           {KINDS.map((k) => (
@@ -144,6 +162,7 @@ export default async function CompliancePage({ searchParams }: PageProps<"/compl
         <div className="mt-3 text-footnote text-faint flex gap-3">
           <Pill tone="green">ok</Pill> <Pill tone="amber">expiring</Pill> <Pill tone="red">expired</Pill> <Pill tone="amber">missing</Pill> <Pill tone="slate">snoozed</Pill> <Pill tone="slate">not on file</Pill> · ● = the rule blocks dispatch: an expired (or missing) item on it makes the subject unassignable · a snooze quiets the reminder, it never lifts a block
         </div>
+        <BlockLevels rows={levelRows} canEdit={canSet} />
       </div>
     </div>
   );

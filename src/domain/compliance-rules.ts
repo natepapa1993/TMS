@@ -23,27 +23,27 @@ export const BLOCK_LEVEL_LABEL: Record<BlockLevel, string> = {
  * loosely, so it defaults to hard and can be relaxed; an application or road test that is on paper but
  * not yet recorded can be vouched for by the owner.
  */
-export const BUILT_IN_LEVELS: Record<string, { level: BlockLevel; fixed?: boolean; why: string }> = {
-  "field:licenseExpires": { level: "hard", fixed: true, why: "391.11 / 383.23: no valid licence, no driving" },
-  "field:medicalExpires": { level: "hard", fixed: true, why: "391.41: no current medical certificate, no driving" },
-  "field:mxLicenseExpires": { level: "hard", fixed: true, why: "Licencia federal is the B-1 driver's licence" },
-  "field:i94Until": { level: "hard", fixed: true, why: "Past the I-94 admit-until date the B-1 driver may not work in the US" },
-  "field:fastExpires": { level: "warn", why: "FAST is for the FAST lane; the crossing check still asks for it on FAST loads" },
-  "field:usPlateExpires": { level: "hard", fixed: true, why: "Expired registration" },
-  "field:mxPlateExpires": { level: "hard", fixed: true, why: "Expired registration" },
-  "field:caPlateExpires": { level: "hard", fixed: true, why: "Expired registration" },
-  "field:dotInspectionExpires": { level: "hard", why: "396.17: no periodic inspection in the last 12 months, the unit may not run" },
-  "field:inspectionExpires": { level: "hard", why: "396.17: no periodic inspection in the last 12 months, the trailer may not run" },
-  "field:caatExpires": { level: "hard", fixed: true, why: "No CAAT, no crossing" },
-  "field:sctPermitExpires": { level: "warn", why: "Company's call" },
-  "field:ctpatExpires": { level: "warn", why: "Company's call" },
-  "field:autoLiabilityExpires": { level: "override", why: "A stale certificate is often a renewal nobody uploaded: call the insurer, then override" },
-  "field:cargoInsuranceExpires": { level: "warn", why: "Company's call" },
-  "dq:application": { level: "override", why: "391.21: the owner can vouch for a signed application not yet recorded" },
-  "dq:road_test": { level: "override", why: "391.31: the owner can vouch for a road test or CDL in lieu not yet recorded" },
-  "dq:clearinghouse_full": { level: "hard", fixed: true, why: "382.701(a): no safety-sensitive work before the full query" },
-  "dq:pre_employment_test": { level: "hard", fixed: true, why: "382.301: no safety-sensitive work before a negative pre-employment drug test" },
-  "da:status": { level: "hard", fixed: true, why: "40.285 / 382.501: a positive or a refusal keeps the driver off until return-to-duty" },
+export const BUILT_IN_LEVELS: Record<string, { label: string; kind: "Drivers" | "Trucks" | "Trailers" | "Carriers"; level: BlockLevel; fixed?: boolean; why: string }> = {
+  "field:licenseExpires": { label: "Licence", kind: "Drivers", level: "hard", fixed: true, why: "391.11 / 383.23: no valid licence, no driving" },
+  "field:medicalExpires": { label: "Medical card", kind: "Drivers", level: "hard", fixed: true, why: "391.41: no current medical certificate, no driving" },
+  "field:mxLicenseExpires": { label: "Licencia federal", kind: "Drivers", level: "hard", fixed: true, why: "Licencia federal is the B-1 driver's licence" },
+  "field:i94Until": { label: "I-94", kind: "Drivers", level: "hard", fixed: true, why: "Past the I-94 admit-until date the B-1 driver may not work in the US" },
+  "field:fastExpires": { label: "FAST card", kind: "Drivers", level: "warn", why: "FAST is for the FAST lane; the crossing check still asks for it on FAST loads" },
+  "field:usPlateExpires": { label: "US plate", kind: "Trucks", level: "hard", fixed: true, why: "Expired registration" },
+  "field:mxPlateExpires": { label: "MX plate", kind: "Trucks", level: "hard", fixed: true, why: "Expired registration" },
+  "field:caPlateExpires": { label: "Canadian plate", kind: "Trucks", level: "hard", fixed: true, why: "Expired registration" },
+  "field:dotInspectionExpires": { label: "Annual inspection", kind: "Trucks", level: "hard", why: "396.17: no periodic inspection in the last 12 months, the unit may not run" },
+  "field:inspectionExpires": { label: "Annual inspection", kind: "Trailers", level: "hard", why: "396.17: no periodic inspection in the last 12 months, the trailer may not run" },
+  "field:caatExpires": { label: "CAAT", kind: "Carriers", level: "hard", fixed: true, why: "No CAAT, no crossing" },
+  "field:sctPermitExpires": { label: "SCT permit", kind: "Carriers", level: "warn", why: "Company's call" },
+  "field:ctpatExpires": { label: "C-TPAT", kind: "Carriers", level: "warn", why: "Company's call" },
+  "field:autoLiabilityExpires": { label: "Auto liability insurance", kind: "Carriers", level: "override", why: "A stale certificate is often a renewal nobody uploaded: call the insurer, then override" },
+  "field:cargoInsuranceExpires": { label: "Cargo insurance", kind: "Carriers", level: "warn", why: "Company's call" },
+  "dq:application": { label: "Employment application", kind: "Drivers", level: "override", why: "391.21: the owner can vouch for a signed application not yet recorded" },
+  "dq:road_test": { label: "Road test (or CDL in lieu)", kind: "Drivers", level: "override", why: "391.31: the owner can vouch for a road test or CDL in lieu not yet recorded" },
+  "dq:clearinghouse_full": { label: "Clearinghouse full query", kind: "Drivers", level: "hard", fixed: true, why: "382.701(a): no safety-sensitive work before the full query" },
+  "dq:pre_employment_test": { label: "Pre-employment drug test", kind: "Drivers", level: "hard", fixed: true, why: "382.301: no safety-sensitive work before a negative pre-employment drug test" },
+  "da:status": { label: "Drug & alcohol hold", kind: "Drivers", level: "hard", fixed: true, why: "40.285 / 382.501: a positive or a refusal keeps the driver off until return-to-duty" },
 };
 
 /** The level a built-in item runs at: the law's where it's fixed, else the company's setting, else the default. */

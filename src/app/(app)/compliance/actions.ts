@@ -54,6 +54,18 @@ export async function missingDatesBlockAction(on: boolean) {
   return r;
 }
 
+export async function dqGraceAction(until: string | null) {
+  const r = await act((ctx) => C.setDqGrace(ctx, until ? parseDate(until) : null));
+  if (r.ok) touch();
+  return r;
+}
+
+export async function blockLevelsAction(levels: Record<string, string>) {
+  const r = await act((ctx) => C.setBlockLevels(ctx, levels));
+  if (r.ok) touch();
+  return r;
+}
+
 export async function runComplianceAction() {
   const r = await act((ctx) => C.evaluateAll(ctx));
   if (r.ok) touch();

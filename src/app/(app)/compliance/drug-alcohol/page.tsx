@@ -177,12 +177,18 @@ export default async function DrugAlcoholPage({ searchParams }: PageProps<"/comp
                   <tr key={d.id}>
                     <td className="font-semibold">{d.period}</td>
                     <td>{when(d.drawnAt)}</td>
-                    <td>{d.poolSize}</td>
+                    <td>
+                      <details data-testid="draw-pool">
+                        <summary className="cursor-pointer">{d.poolSize} drivers</summary>
+                        <div className="text-footnote text-muted mt-1 max-w-[320px]">{d.pool.map((x) => x.name).join(", ") || "roster not kept for this draw"}</div>
+                      </details>
+                    </td>
                     <td>
                       {d.drugRate}% / {d.alcoholRate}% · {d.drawsPerYear}× a year
                     </td>
                     <td>
                       {d.drugCount} drug · {d.alcoholCount} alcohol
+                      {d.selected.length > 0 && <div className="text-footnote text-muted mt-0.5">{d.selected.map((x) => `${x.name} (${x.substance})`).join(", ")}</div>}
                     </td>
                   </tr>
                 ))}
