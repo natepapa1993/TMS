@@ -1,7 +1,8 @@
 import Link from "next/link";
 import { fmtWhen } from "@/lib/time";
 import { tenantZone } from "@/domain/company";
-import { notFound } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
+import { NoAccess } from "@/components/no-access";
 import { requireCtx } from "@/lib/auth";
 import { get, history, archiveBlockers } from "@/data/records";
 import { FIELDS, KIND_META, kindByPath, fieldsFor } from "@/data/fields";
@@ -33,6 +34,11 @@ export default async function RecordPage({ params }: PageProps<"/settings/[kind]
   const kind = kindByPath(path);
   if (!kind) notFound();
   const ctx = await requireCtx();
+  // a user record is the owner's to edit; anyone else edits only their own name and password, on My account
+  if (kind === "user" && !can(ctx, "users.manage")) {
+    if (id === ctx.userId) redirect("/settings/account");
+    return <NoAccess area="Managing users" role={ctx.role} />;
+  }
   const row = await get(ctx, kind, id).catch(() => null);
   if (!row) notFound();
   const meta = KIND_META[kind];

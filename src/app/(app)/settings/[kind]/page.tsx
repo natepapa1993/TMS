@@ -17,6 +17,8 @@ export default async function KindListPage({ params, searchParams }: PageProps<"
   if (!kind) notFound();
   const ctx = await requireCtx();
   const meta = KIND_META[kind];
+  // users: the owner manages them; anyone else sees who is in the company, read-only, and their own account
+  const readOnly = kind === "user" && !can(ctx, "users.manage");
   const showArchived = sp.archived === "1";
   const rows = await list(ctx, kind, { archived: showArchived ? "archived" : "active", limit: 2000 });
   const { options, names } = await loadRefs(ctx, kind);
@@ -30,12 +32,18 @@ export default async function KindListPage({ params, searchParams }: PageProps<"
         eyebrow={`Settings · ${meta.section}`}
         title={meta.plural}
         actions={
+          readOnly ? (
+            <Link href="/settings/account" className="btn">
+              My account
+            </Link>
+          ) : (
           <>
             <Link href={`/settings/${path}/import`} className="btn">
               Import CSV
             </Link>
             <QuickAdd kind={kind} fields={fieldsFor(kind, can(ctx, "compliance.edit"))} refs={options} label={`Add ${meta.singular.toLowerCase()}`} openInitially={sp.add === "1"} openAfter={["driver", "truck", "trailer", "carrier", "documentType"].includes(kind) ? `/settings/${meta.path}` : undefined} />
           </>
+          )
         }
       >
         {meta.blurb}. {rows.length} {showArchived ? "archived" : "active"}.
@@ -49,9 +57,11 @@ export default async function KindListPage({ params, searchParams }: PageProps<"
           <Link href={`/settings/${path}${showArchived ? "" : "?archived=1"}`} className="btn btn-ghost btn-sm text-muted">
             {showArchived ? "Show active" : "Show archived"}
           </Link>
-          <a href={`/api/records/${path}${showArchived ? "?archived=1" : ""}`} className="btn btn-ghost btn-sm text-muted ml-auto" title="Every column, in the layout the import reads back">
-            Export CSV
-          </a>
+          {!readOnly && (
+            <a href={`/api/records/${path}${showArchived ? "?archived=1" : ""}`} className="btn btn-ghost btn-sm text-muted ml-auto" title="Every column, in the layout the import reads back">
+              Export CSV
+            </a>
+          )}
         </div>
         <div className="card overflow-hidden">
           {filtered.length === 0 ? (
@@ -75,7 +85,9 @@ export default async function KindListPage({ params, searchParams }: PageProps<"
                   <tr key={r.id}>
                     {cols.map((c, i) => (
                       <td key={c.name} className={i === 0 ? "font-bold" : ""}>
-                        {i === 0 ? (
+                        {i === 0 && readOnly ? (
+                          fieldDisplay(c, r[c.name], names, r) || "—"
+                        ) : i === 0 ? (
                           <Link href={`/settings/${path}/${r.id}`} className="hover:text-teal">
                             {fieldDisplay(c, r[c.name], names, r) || "—"}
                           </Link>
@@ -88,9 +100,17 @@ export default async function KindListPage({ params, searchParams }: PageProps<"
                     ))}
                     {kind === "truck" && <td>{r.status === "oos" ? <Pill tone="red" title={String(r.oosReason ?? "")}>OOS</Pill> : <Pill tone="green">Active</Pill>}</td>}
                     <td className="text-right">
-                      <Link href={`/settings/${path}/${r.id}`} className="btn btn-ghost btn-sm">
-                        Open
-                      </Link>
+                      {readOnly ? (
+                        r.id === ctx.userId ? (
+                          <Link href="/settings/account" className="btn btn-ghost btn-sm">
+                            My account
+                          </Link>
+                        ) : null
+                      ) : (
+                        <Link href={`/settings/${path}/${r.id}`} className="btn btn-ghost btn-sm">
+                          Open
+                        </Link>
+                      )}
                     </td>
                   </tr>
                 ))}

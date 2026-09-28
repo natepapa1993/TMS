@@ -4,13 +4,16 @@ import { requireCtx } from "@/lib/auth";
 import { FIELDS, KIND_META, kindByPath } from "@/data/fields";
 import { csvTemplate } from "@/data/import";
 import { PageHeader } from "@/components/page-header";
+import { NoAccess } from "@/components/no-access";
+import { can } from "@/lib/context";
 import { ImportWizard } from "./wizard";
 
 export default async function ImportPage({ params }: PageProps<"/settings/[kind]/import">) {
   const { kind: path } = await params;
   const kind = kindByPath(path);
   if (!kind) notFound();
-  await requireCtx();
+  const ctx = await requireCtx();
+  if (kind === "user" && !can(ctx, "users.manage")) return <NoAccess area="Managing users" role={ctx.role} />;
   const meta = KIND_META[kind];
   return (
     <div>

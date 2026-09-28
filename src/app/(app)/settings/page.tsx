@@ -3,6 +3,7 @@ import { requireCtx } from "@/lib/auth";
 import { counts, type RecordKind } from "@/data/records";
 import { KIND_META } from "@/data/fields";
 import { PageHeader } from "@/components/page-header";
+import { can } from "@/lib/context";
 
 export const metadata = { title: "Settings" };
 
@@ -12,7 +13,8 @@ export default async function SettingsPage({ searchParams }: PageProps<"/setting
   const ctx = await requireCtx();
   const sp = await searchParams;
   const c = await counts(ctx);
-  const kinds = Object.keys(KIND_META) as RecordKind[];
+  // people and roles are the owner's: everyone else gets My account
+  const kinds = (Object.keys(KIND_META) as RecordKind[]).filter((k) => k !== "user" || can(ctx, "users.manage"));
   const setupSteps: { kind: RecordKind; why: string }[] = [
     { kind: "billingEntity", why: "so invoices carry the right name and prefix" },
     { kind: "truck", why: "unit numbers and plates" },
@@ -54,6 +56,12 @@ export default async function SettingsPage({ searchParams }: PageProps<"/setting
               <div>
                 <div className="font-extrabold">Company</div>
                 <div className="text-muted text-callout mt-0.5">Name, time zone, fuel cost per mile</div>
+              </div>
+            </Link>
+            <Link href="/settings/account" className="card p-4 hover:border-teal transition-colors flex items-start justify-between gap-3">
+              <div>
+                <div className="font-extrabold">My account</div>
+                <div className="text-muted text-callout mt-0.5">Your name, phone and password</div>
               </div>
             </Link>
             <Link href="/settings/integrations" className="card p-4 hover:border-teal transition-colors flex items-start justify-between gap-3">

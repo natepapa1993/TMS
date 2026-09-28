@@ -133,7 +133,9 @@ export function Shell({ user, children }: { user: { name: string; role: string; 
             {initials}
           </div>
           <div className="min-w-0 flex-1">
-            <div className="text-callout font-semibold truncate">{user.name}</div>
+            <Link href="/settings/account" className="text-callout font-semibold truncate block hover:text-teal" title="My account" onClick={() => setOpen(false)}>
+              {user.name}
+            </Link>
             <div className="text-caption text-muted truncate">{ROLE_LABEL[user.role] ?? user.role}</div>
           </div>
           <div className="flex flex-col items-end gap-0.5 text-footnote">

@@ -1,7 +1,8 @@
 // Features: F-1.2 F-1.3 F-1.4 F-1.5 F-15 F-16
 import { describe, it, expect, beforeAll, beforeEach } from "vitest";
 import { truncateAll, makeTenant } from "@/test/helpers";
-import { create, get, list, update, archive, restore, history, findByUniqueKey, NotFoundError, ArchiveBlockedError, ConflictError } from "./records";
+import { create, get, list, update, archive, restore, history, findByUniqueKey, NotFoundError, ArchiveBlockedError, ConflictError, sameValue } from "./records";
+import { coerce } from "./fields";
 import { PermissionError, TenantContextError } from "@/lib/context";
 import { db } from "@/db/client";
 import { orders, legs } from "@/db/schema";
@@ -116,6 +117,35 @@ describe("archive blockers (F-1.4)", () => {
     const cust = await create(a, "customer", { name: "Rivian" });
     await db.insert(orders).values({ id: newId(), tenantId: a.tenantId, orderNumber: "26-00002", state: "booked", customerId: cust.id });
     await expect(archive(a, "customer", cust.id)).rejects.toBeInstanceOf(ArchiveBlockedError);
+  });
+});
+
+describe("Safety's fields don't stop dispatch saving the rest (dispatch N2)", () => {
+  it("a dispatcher saves a driver's phone with the whole form sent back: unchanged dates are not changes", async () => {
+    // stored the way imports and the driver app store them: midnight Central, not noon UTC
+    const d = await create(a, "driver", { name: "Carlos", licenseNumber: "TX1", licenseExpires: new Date("2027-03-15T05:00:00Z"), medicalExpires: new Date("2026-11-02T00:00:00Z"), commercialZoneOnly: false });
+    const dispatcher = { ...a, role: "dispatcher" as const };
+    const row = await get(a, "driver", d.id);
+    const ymd = (v: unknown) => (v ? new Date(v as Date).toISOString().slice(0, 10) : "");
+    // what the record screen sends: every field, dates as YYYY-MM-DD, the guarded ones untouched
+    const { values, ok } = coerce("driver", { name: "Carlos", phone: "+1 956 555 0177", licenseNumber: "TX1", licenseExpires: ymd(row.licenseExpires), medicalExpires: ymd(row.medicalExpires), mxLicenseExpires: "", fastExpires: "", commercialZoneOnly: "", elpAttestedAt: "", licenseClass: "" }, { partial: true });
+    expect(ok).toBe(true);
+    const saved = await update(dispatcher, "driver", d.id, values);
+    expect(saved.phone).toBe("+1 956 555 0177");
+    // the stored instants were kept, not rewritten to noon
+    expect((saved.licenseExpires as Date).toISOString()).toBe("2027-03-15T05:00:00.000Z");
+    // an actual change of a Safety date is still refused
+    await expect(update(dispatcher, "driver", d.id, coerce("driver", { licenseExpires: "2031-03-15" }, { partial: true }).values)).rejects.toThrow(/kept by Safety/);
+    await expect(update(dispatcher, "driver", d.id, coerce("driver", { medicalExpires: "" }, { partial: true }).values)).rejects.toThrow(/kept by Safety/);
+  });
+  it("sameValue: dates by the day, blanks alike, checkboxes by truth", () => {
+    expect(sameValue("date", new Date("2027-03-15T12:00:00Z"), new Date("2027-03-15T05:00:00Z"))).toBe(true);
+    expect(sameValue("date", new Date("2027-03-16T12:00:00Z"), new Date("2027-03-15T05:00:00Z"))).toBe(false);
+    expect(sameValue("date", null, new Date("2027-03-15T05:00:00Z"))).toBe(false);
+    expect(sameValue("text", "", null)).toBe(true);
+    expect(sameValue("text", " A ", "A")).toBe(true);
+    expect(sameValue("boolean", false, null)).toBe(true);
+    expect(sameValue("boolean", true, false)).toBe(false);
   });
 });
 

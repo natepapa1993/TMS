@@ -28,7 +28,7 @@ export function toError(e: unknown): ActionResult<never> {
   if (name === "PermissionError") {
     const custom = err.message && !/^role \S+ lacks permission/.test(err.message) ? err.message : null;
     const perm = err.permission ?? /lacks permission (\S+)/.exec(err.message ?? "")?.[1];
-    const why = custom ?? (perm === "compliance.override" ? "Only Safety or the owner can override a paperwork block." : perm === "compliance.edit" ? "Only Safety or the owner can change that." : perm === "billing.void" ? "Credit memos and voids need the owner." : perm === "safety.confidential" ? "Drug & alcohol records are confidential: Safety or the owner only." : "Your role can't do that.");
+    const why = custom ?? (perm === "compliance.override" ? "Only Safety or the owner can override a paperwork block." : perm === "compliance.edit" ? "Only Safety or the owner can change that." : perm === "billing.void" ? "Credit memos and voids need the owner." : perm === "safety.confidential" ? "Drug & alcohol records are confidential: Safety or the owner only." : perm === "users.manage" ? "Only the owner adds people or changes roles, emails and passwords. Change your own name and password under My account." : "Your role can't do that.");
     return { ok: false, error: why, code: "forbidden" };
   }
   if (name === "NotFoundError") return { ok: false, error: "That record no longer exists.", code: "not_found" };

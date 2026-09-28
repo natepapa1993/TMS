@@ -45,6 +45,8 @@ export type Permission =
   | "compliance.edit"
   /** drug & alcohol records: confidential (49 CFR 40.321), owner and Safety only */
   | "safety.confidential"
+  /** add people, change anyone's role, email or password, archive them: the owner only */
+  | "users.manage"
   | "settings.edit";
 
 const ALL: Permission[] = [
@@ -67,6 +69,7 @@ const ALL: Permission[] = [
   "compliance.edit",
   "compliance.override",
   "safety.confidential",
+  "users.manage",
   "settings.edit",
 ];
 

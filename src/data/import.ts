@@ -119,7 +119,7 @@ export function parseCsv(text: string): { headers: string[]; rows: Record<string
 
 export async function previewImport(ctx: Ctx, kind: RecordKind, text: string, mapping?: Record<string, string>): Promise<ImportPreview> {
   assertCtx(ctx);
-  requirePermission(ctx, "records.create");
+  requirePermission(ctx, kind === "user" ? "users.manage" : "records.create");
   const { headers, rows } = parseCsv(text);
   const map = mapping ?? autoMap(kind, headers);
   const reg = REGISTRY[kind];
@@ -179,7 +179,7 @@ export async function previewImport(ctx: Ctx, kind: RecordKind, text: string, ma
 
 export async function commitImport(ctx: Ctx, kind: RecordKind, fileName: string, text: string, mapping?: Record<string, string>) {
   assertCtx(ctx);
-  requirePermission(ctx, "records.create");
+  requirePermission(ctx, kind === "user" ? "users.manage" : "records.create");
   const preview = await previewImport(ctx, kind, text, mapping);
   const reg = REGISTRY[kind];
   const jobId = newId();

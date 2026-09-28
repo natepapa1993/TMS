@@ -1,6 +1,7 @@
 import Papa from "papaparse";
 import { currentCtx } from "@/lib/auth";
 import { list } from "@/data/records";
+import { can } from "@/lib/context";
 import { FIELDS, KIND_META, kindByPath, csvDate } from "@/data/fields";
 
 export const dynamic = "force-dynamic";
@@ -12,6 +13,7 @@ export async function GET(req: Request, { params }: RouteContext<"/api/records/[
   const { kind: path } = await params;
   const kind = kindByPath(path);
   if (!kind) return new Response("not found", { status: 404 });
+  if (kind === "user" && !can(ctx, "users.manage")) return new Response("only the owner exports users", { status: 403 });
   const archived = new URL(req.url).searchParams.get("archived") === "1";
   const rows = await list(ctx, kind, { archived: archived ? "archived" : "active", limit: 10000 });
   const fields = FIELDS[kind].filter((f) => f.type !== "password");
