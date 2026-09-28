@@ -19,7 +19,7 @@ const tone: Record<string, "green" | "amber" | "red" | "slate"> = { ok: "green",
  * canEditCredentials: Safety or the owner — attaching a licence, medical card, plate or inspection report
  * sets the date dispatch reads, so it is theirs, like the dates on the record.
  */
-export function SubjectDocuments({ kind, subjectId, docs, types, status, canEdit, canEditCredentials = false }: { kind: SubjectKind; subjectId: string; docs: Doc[]; types: DocType[]; status: { dispatchable: boolean; items: ComplianceItem[]; override: { reason: string; expiresAt: string } | null } | null; canEdit: boolean; canEditCredentials?: boolean }) {
+export function SubjectDocuments({ kind, subjectId, docs, types, status, canEdit, canEditCredentials = false, title = "Compliance" }: { kind: SubjectKind | "company"; subjectId: string; docs: Doc[]; types: DocType[]; status: { dispatchable: boolean; items: ComplianceItem[]; override: { reason: string; expiresAt: string } | null } | null; canEdit: boolean; canEditCredentials?: boolean; title?: string }) {
   const router = useRouter();
   const t = useToast();
   const [open, setOpen] = useState<string | null>(null);
@@ -57,8 +57,8 @@ export function SubjectDocuments({ kind, subjectId, docs, types, status, canEdit
   return (
     <div className="card p-4" id="documents">
       <div className="flex items-center justify-between">
-        <div className="eyebrow">Compliance</div>
-        {status && (status.dispatchable ? status.override ? <Pill tone="amber">override until {new Date(status.override.expiresAt).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric" })}</Pill> : <Pill tone="green">Dispatchable</Pill> : <Pill tone="red">Blocked</Pill>)}
+        <div className="eyebrow">{title}</div>
+        {status && kind !== "company" && (status.dispatchable ? status.override ? <Pill tone="amber">override until {new Date(status.override.expiresAt).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric" })}</Pill> : <Pill tone="green">Dispatchable</Pill> : <Pill tone="red">Blocked</Pill>)}
       </div>
       {status && status.items.length > 0 && (
         <ul className="mt-2 space-y-1">

@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { requireCtx } from "@/lib/auth";
-import { dashboard, evaluateAll, pendingUploads, blankBlockingDates, FIELD_ITEMS, type SubjectKind } from "@/domain/compliance";
+import { dashboard, evaluateAll, pendingUploads, blankBlockingDates, companyStatus, subjectDocuments, FIELD_ITEMS, type SubjectKind } from "@/domain/compliance";
+import { SubjectDocuments } from "../settings/[kind]/[id]/documents";
 import { MissingDatesToggle, DqGraceButton, BlockLevels } from "./table";
 import { BUILT_IN_LEVELS, builtInLevel, documentTypeLevel } from "@/domain/compliance-rules";
 import { PageHeader } from "@/components/page-header";
@@ -33,7 +34,8 @@ export default async function CompliancePage({ searchParams }: PageProps<"/compl
     await evaluateAll(ctx).catch(() => null);
     d = await dashboard(ctx);
   }
-  const [pending, blanks] = await Promise.all([pendingUploads(ctx), blankBlockingDates(ctx)]);
+  const companyTab = sp.tab === "company";
+  const [pending, blanks, company, companyDocs] = await Promise.all([pendingUploads(ctx), blankBlockingDates(ctx), companyStatus(ctx), subjectDocuments(ctx, "company" as SubjectKind, ctx.tenantId)]);
   const blankText = Object.entries(blanks.counts).map(([k, n]) => `${n} ${k}${n === 1 ? "" : "s"}`).join(", ");
   const types = d.types.filter((t) => t.appliesTo === kind);
   const fields = FIELD_ITEMS[kind];
@@ -134,16 +136,19 @@ export default async function CompliancePage({ searchParams }: PageProps<"/compl
         </div>
         <div className="flex items-center gap-1.5 mb-3">
           {KINDS.map((k) => (
-            <Link key={k.key} href={`/compliance?tab=${k.key}${filter ? `&f=${filter}` : ""}`} className="stage-tab" data-active={kind === k.key}>
+            <Link key={k.key} href={`/compliance?tab=${k.key}${filter ? `&f=${filter}` : ""}`} className="stage-tab" data-active={!companyTab && kind === k.key}>
               {k.label} <span className="count">{d.subjects[k.key].length}</span>
             </Link>
           ))}
+          <Link href="/compliance?tab=company" className="stage-tab" data-active={companyTab} data-testid="tab-company">
+            Our company {company.attention > 0 && <span className="count text-amber">{company.attention}</span>}
+          </Link>
           {filter && (
             <Link href={`/compliance?tab=${kind}`} className="btn btn-ghost btn-sm ml-2 text-muted">
               Clear filter
             </Link>
           )}
-          {types.length === 0 && (
+          {!companyTab && types.length === 0 && (
             <span className="ml-auto text-callout text-muted">
               No document rules for {kind}s yet —{" "}
               <Link href="/settings/document-types?add=1" className="text-teal font-semibold">
@@ -153,8 +158,23 @@ export default async function CompliancePage({ searchParams }: PageProps<"/compl
             </span>
           )}
         </div>
-        <ComplianceTable kind={kind} path={KINDS.find((k) => k.key === kind)!.path} columns={columns} rows={JSON.parse(JSON.stringify(rows))} role={ctx.role} />
-        {rows.length === 0 && (
+        {companyTab ? (
+          <div className="grid lg:grid-cols-[1fr_380px] gap-5 items-start" data-testid="company-credentials">
+            <div className="card p-5 text-callout">
+              <div className="h2 mb-1">Our company&rsquo;s papers</div>
+              <p className="text-muted">Insurance certificate, UCR, IRP cab account, IFTA licence, MC / BOC-3, SCT permit, the Mexican póliza… Add each as a rule that applies to <b>Our company</b> under Rules; upload the current one here. They show here, in the daily digest and on this tab&rsquo;s count when they are expiring — they never block a load.</p>
+              {company.items.length === 0 && (
+                <Link href="/settings/document-types?add=1" className="btn btn-primary mt-3">
+                  Add a company rule
+                </Link>
+              )}
+            </div>
+            <SubjectDocuments kind="company" subjectId={ctx.tenantId} title="Our company" docs={JSON.parse(JSON.stringify(companyDocs))} types={d.types.filter((t) => t.appliesTo === "company").map((t) => ({ id: t.id, name: t.name, tracksExpiry: t.tracksExpiry, required: t.required, blocksDispatch: false }))} status={{ dispatchable: true, items: JSON.parse(JSON.stringify(company.items)), override: null }} canEdit={canSet} />
+          </div>
+        ) : (
+          <ComplianceTable kind={kind} path={KINDS.find((k) => k.key === kind)!.path} columns={columns} rows={JSON.parse(JSON.stringify(rows))} role={ctx.role} />
+        )}
+        {!companyTab && rows.length === 0 && (
           <div className="card py-14 text-center">
             <div className="font-bold">{filter ? "Nothing matches" : `No ${kind}s yet`}</div>
           </div>

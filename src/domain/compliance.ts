@@ -218,9 +218,10 @@ export async function statusMap(ctx: Ctx, kind: SubjectKind) {
 
 export type SubjectUpload = { documentTypeId: string; fileName: string; mimeType: string; bytes: Buffer; expiresAt?: Date | null; issuedAt?: Date | null; number?: string | null; notes?: string | null; source?: string; status?: "present" | "pending" };
 
-export async function uploadSubjectDocument(ctx: Ctx, kind: SubjectKind, subjectId: string, input: SubjectUpload) {
+export async function uploadSubjectDocument(ctx: Ctx, kind: SubjectKind | "company", subjectId: string, input: SubjectUpload) {
   assertCtx(ctx);
-  requirePermission(ctx, "records.edit");
+  // our own company's papers (insurance, UCR, IRP, IFTA licence, MC / BOC-3, SCT permit): Safety's and the owner's
+  requirePermission(ctx, kind === "company" ? "compliance.edit" : "records.edit");
   if (!input.bytes?.length) throw new ValidationError("empty file", "file");
   if (input.bytes.length > 15 * 1024 * 1024) throw new ValidationError("file is over 15 MB", "file");
   if (!/^(application\/pdf|image\/(jpeg|png))$/.test(input.mimeType)) throw new ValidationError("PDF, JPG or PNG only", "file");
@@ -229,9 +230,13 @@ export async function uploadSubjectDocument(ctx: Ctx, kind: SubjectKind, subject
   if (type.appliesTo !== kind) throw new ValidationError(`${type.name} applies to ${type.appliesTo}s, not ${kind}s`, "documentTypeId");
   if (type.tracksExpiry && !input.expiresAt) throw new ValidationError(`${type.name} needs an expiry date`, "expiresAt");
   const pending = input.status === "pending"; // from the driver's phone: counts only once safety confirms it
-  const table = TABLE[kind];
-  const [rec] = await db.select({ id: table.id }).from(table).where(and(eq(table.tenantId, ctx.tenantId), eq(table.id, subjectId))).limit(1);
-  if (!rec) throw new NotFoundError(kind, subjectId);
+  if (kind === "company") {
+    if (subjectId !== ctx.tenantId) throw new NotFoundError("company", subjectId);
+  } else {
+    const table = TABLE[kind];
+    const [rec] = await db.select({ id: table.id }).from(table).where(and(eq(table.tenantId, ctx.tenantId), eq(table.id, subjectId))).limit(1);
+    if (!rec) throw new NotFoundError(kind, subjectId);
+  }
   const sha = createHash("sha256").update(input.bytes).digest("hex");
   const doc = await db.transaction(async (tx) => {
     const [blob] = await tx.insert(s.documentBlobs).values({ id: newId(), tenantId: ctx.tenantId, sha256: sha, mimeType: input.mimeType, sizeBytes: input.bytes.length, bytes: input.bytes }).returning({ id: s.documentBlobs.id });
@@ -246,8 +251,28 @@ export async function uploadSubjectDocument(ctx: Ctx, kind: SubjectKind, subject
     await writeAudit(tx, ctx, kind, subjectId, "update", { [type.name]: { from: prior[0]?.expiresAt ?? null, to: pending ? "pending review" : (input.expiresAt ?? "present") } }, `${type.name} ${pending ? "sent from the driver app" : "uploaded"}: ${input.fileName}`);
     return row;
   });
-  if (!pending) await evaluateSubject(ctx, kind, subjectId);
+  if (!pending && kind !== "company") await evaluateSubject(ctx, kind, subjectId);
   return doc;
+}
+
+/**
+ * Our own company's credentials — the rules that apply to "Our company" (insurance certificate, UCR, IRP
+ * cab account, IFTA licence, MC / BOC-3, SCT permit, the Mexican póliza…): on file or not, expiring or
+ * expired. They alert Safety and the owner; they never block a single load (they would stop the fleet).
+ */
+export async function companyStatus(ctx: Ctx, now = new Date()) {
+  assertCtx(ctx);
+  requirePermission(ctx, "compliance.view");
+  const [types, docs] = await Promise.all([
+    db.select().from(s.documentTypes).where(and(eq(s.documentTypes.tenantId, ctx.tenantId), eq(s.documentTypes.appliesTo, "company"), sql`${s.documentTypes.archivedAt} is null`)).orderBy(s.documentTypes.name),
+    db.select().from(s.documents).where(and(eq(s.documents.tenantId, ctx.tenantId), eq(s.documents.subjectKind, "company"), eq(s.documents.subjectId, ctx.tenantId), inArray(s.documents.status, ["present", "verified"]))),
+  ]);
+  const items: ComplianceItem[] = types.map((t) => {
+    const doc = docs.filter((d) => d.documentTypeId === t.id).sort((p, q) => (q.expiresAt?.getTime() ?? 0) - (p.expiresAt?.getTime() ?? 0))[0];
+    const alertDays = Math.max(...(t.alertDays.length ? t.alertDays : [30]));
+    return { key: t.id, label: t.name, status: doc ? statusOf(doc.expiresAt, alertDays, now, t.tracksExpiry) : t.required ? "missing" : "na", underlying: null, expiresAt: doc?.expiresAt?.toISOString() ?? null, documentId: doc?.id ?? null, blocksDispatch: false, level: "warn", required: t.required, alertDays };
+  });
+  return { items, attention: items.filter((i) => i.status === "expired" || i.status === "expiring" || i.status === "missing").length };
 }
 
 /**
@@ -550,10 +575,11 @@ export async function sendDigests(now = new Date()) {
     const rows = await db.select().from(s.complianceStatus).where(and(eq(s.complianceStatus.tenantId, t.id), sql`(cardinality(${s.complianceStatus.expired}) > 0 or cardinality(${s.complianceStatus.expiring}) > 0 or cardinality(${s.complianceStatus.missing}) > 0)`));
     const recipients = await db.select({ email: s.users.email, name: s.users.name }).from(s.users).where(and(eq(s.users.tenantId, t.id), inArray(s.users.role, ["compliance", "owner"]), sql`${s.users.archivedAt} is null`));
     await db.update(s.tenants).set({ settings: { ...settings, complianceDigestAt: now.toISOString() } }).where(eq(s.tenants.id, t.id));
-    if (!rows.length || !recipients.length) continue;
+    const company = (await companyStatus(ctx, now)).items.filter((i) => ["expired", "expiring", "missing"].includes(i.status));
+    if ((!rows.length && !company.length) || !recipients.length) continue;
     const names = await labelsFor(ctx, rows.map((r) => ({ kind: r.subjectKind as SubjectKind, id: r.subjectId })));
     const line = (r: (typeof rows)[number]) => `${r.subjectKind} ${names.get(`${r.subjectKind}:${r.subjectId}`) ?? r.subjectId}: ${[...r.expired.map((x) => `${x} EXPIRED`), ...r.expiring.map((x) => `${x} expiring`), ...r.missing.map((x) => `${x} missing`)].join(", ")}`;
-    const body = [`Compliance digest for ${t.name} — ${now.toLocaleDateString("en-US", { timeZone: t.timeZone })}`, "", `${rows.filter((r) => !r.dispatchable).length} subject(s) blocked from dispatch.`, "", ...rows.sort((p, q) => Number(q.expired.length > 0) - Number(p.expired.length > 0)).map(line), "", `Open the compliance board: ${(process.env.APP_URL ?? "").replace(/\/$/, "")}/compliance`].join("\n");
+    const body = [`Compliance digest for ${t.name} — ${now.toLocaleDateString("en-US", { timeZone: t.timeZone })}`, "", `${rows.filter((r) => !r.dispatchable).length} subject(s) blocked from dispatch.`, "", ...(company.length ? [`Our company: ${company.map((i) => `${i.label} ${i.status === "expired" ? "EXPIRED" : i.status === "expiring" ? `expiring ${i.expiresAt?.slice(0, 10)}` : "not on file"}`).join(", ")}`, ""] : []), ...rows.sort((p, q) => Number(q.expired.length > 0) - Number(p.expired.length > 0)).map(line), "", `Open the compliance board: ${(process.env.APP_URL ?? "").replace(/\/$/, "")}/compliance`].join("\n");
     for (const rcp of recipients) await enqueue(ctx, { channel: "email", to: rcp.email, subject: `Compliance: ${rows.filter((r) => r.expired.length).length} expired, ${rows.filter((r) => r.expiring.length).length} expiring`, body, subjectKind: "compliance_digest", subjectId: t.id });
     sent++;
   }

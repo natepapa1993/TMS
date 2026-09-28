@@ -101,3 +101,19 @@ describe("record history", () => {
     expect(((await get(a, "driver", jorge)).hireDate as Date).toISOString()).toBe(hire.toISOString());
   });
 });
+
+describe("our company's papers (stretch: company-level credentials)", () => {
+  it("a rule for our company: missing until uploaded, expiring inside its alert days, never a dispatch block; only Safety or the owner uploads", async () => {
+    const irp = await create(a, "documentType", { name: "IRP cab account", appliesTo: "company", tracksExpiry: true, required: true, alertDays: [45], blockLevel: "hard" });
+    let st = await C.companyStatus(a);
+    expect(st.items).toMatchObject([{ label: "IRP cab account", status: "missing", blocksDispatch: false }]);
+    expect(st.attention).toBe(1);
+    await expect(C.uploadSubjectDocument({ ...a, role: "dispatcher" }, "company", a.tenantId, { documentTypeId: irp.id, fileName: "irp.pdf", mimeType: "application/pdf", bytes: jpg, expiresAt: days(30) })).rejects.toThrow(/permission/);
+    await expect(C.uploadSubjectDocument(a, "company", "someone-else", { documentTypeId: irp.id, fileName: "irp.pdf", mimeType: "application/pdf", bytes: jpg, expiresAt: days(30) })).rejects.toThrow(/not found/);
+    await C.uploadSubjectDocument(a, "company", a.tenantId, { documentTypeId: irp.id, fileName: "irp.pdf", mimeType: "application/pdf", bytes: jpg, expiresAt: days(30) });
+    st = await C.companyStatus(a);
+    expect(st.items[0]).toMatchObject({ status: "expiring" });
+    // drivers and trucks are untouched by it
+    expect((await C.statusFor(a, "truck", unit)).dispatchable).toBe(true);
+  });
+});

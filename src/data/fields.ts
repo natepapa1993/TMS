@@ -525,6 +525,7 @@ export const FIELDS: Record<RecordKind, Field[]> = {
         { value: "truck", label: "Truck" },
         { value: "trailer", label: "Trailer" },
         { value: "carrier", label: "Carrier" },
+        { value: "company", label: "Our company (insurance, UCR, IRP, IFTA…)" },
         { value: "customer", label: "Customer" },
         { value: "order", label: "Order" },
       ],
