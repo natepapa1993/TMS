@@ -24,7 +24,14 @@ const humanize = (k: string) => OTHER_LABELS[k] ?? k.replace(/([a-z])([A-Z])/g, 
 export function changeLines(changes: Record<string, { from: unknown; to: unknown }>, fields: Field[] = [], names?: Map<string, string>): string[] {
   const shown = (f: Field | undefined, k: string, v: unknown) => {
     if (v == null || v === "") return "—";
+    // a record since removed says so instead of printing its id
+    if (f?.type === "ref" && typeof v === "string" && names && !names.has(v)) return "(removed record)";
     if (f && ["ref", "select", "address", "cents", "list"].includes(f.type)) return fieldDisplay(f, v, names) || "—";
+    // an address kept in a plain field still reads as an address, never JSON
+    if (typeof v === "object" && !(v instanceof Date) && !Array.isArray(v) && ["line1", "city", "state", "postalCode", "country"].some((x) => x in (v as object))) {
+      const a = v as Record<string, unknown>;
+      return [a.line1, a.line2, a.city, [a.state, a.postalCode].filter(Boolean).join(" "), a.country].filter((x) => x != null && String(x).trim()).join(", ") || "—";
+    }
     if (!f && k === "status" && typeof v === "string") return STATUS_WORDS[v] ?? v;
     if (!f && k.endsWith("Id") && typeof v === "string") return names?.get(v) ?? v;
     return historyValue(v);
