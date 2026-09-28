@@ -57,6 +57,12 @@ export async function tick(now = new Date()) {
       const r = await pollAllMail(now).catch((e) => [{ error: String(e) }]);
       if (r.length) out.mail = r;
     }
+    if (n % 30 === 7) {
+      // the demo company rebuilds itself each morning so its board always shows today
+      const { refreshDemoIfDue } = await import("@/db/demo-company");
+      const r = await refreshDemoIfDue(now).catch((e) => String(e));
+      if (r) out.demo = { r };
+    }
     if (n % 5 === 0) {
       // VAN mailboxes: pull the partner's files, push ours — every five minutes is what VANs themselves do
       const { pollMailboxes } = await import("@/domain/edi-mailbox");

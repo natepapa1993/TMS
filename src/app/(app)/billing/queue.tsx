@@ -71,7 +71,7 @@ export function Queue({ rows, role }: { rows: Row[]; role: string }) {
                   <tr key={r.order.id}>
                     <td>{canBill && <input type="checkbox" className="accent-teal" disabled={!ok} checked={sel.includes(r.order.id)} onChange={(e) => setSel(e.target.checked ? [...sel, r.order.id] : sel.filter((x) => x !== r.order.id))} />}</td>
                     <td>
-                      <Link href={`/orders/${r.order.id}#charges`} className="font-extrabold mono hover:text-teal">
+                      <Link href={`/orders/${r.order.id}#charges`} className="font-extrabold mono whitespace-nowrap hover:text-teal">
                         {r.order.orderNumber}
                       </Link>
                       {r.supplemental && (

@@ -1,6 +1,6 @@
 import { and, eq, lt, sql } from "drizzle-orm";
 import { db, type Tx } from "@/db/client";
-import { outbox, integrations, documentBlobs, type OutboxMeta } from "@/db/schema";
+import { outbox, integrations, documentBlobs, tenants, type OutboxMeta } from "@/db/schema";
 import { sendWhatsApp, type WaConfig } from "@/integrations/whatsapp";
 import { newId } from "./ids";
 import type { Ctx } from "./context";
@@ -70,8 +70,17 @@ export async function deliverQueued(limit = 25) {
   let sent = 0;
   let logged = 0;
   let failed = 0;
+  // a company flagged demo never reaches a real inbox or phone: its mail is logged, not sent
+  const demo = new Set(
+    rows.length ? (await db.select({ id: tenants.id }).from(tenants).where(sql`(${tenants.settings} ->> 'demo') = 'true'`)).map((t) => t.id) : [],
+  );
   for (const m of rows) {
     try {
+      if (demo.has(m.tenantId) && m.channel !== "driver_app") {
+        await db.update(outbox).set({ state: "logged", sentAt: new Date(), error: "demo company: not sent", attempts: sql`${outbox.attempts} + 1` }).where(eq(outbox.id, m.id));
+        logged++;
+        continue;
+      }
       if (m.channel === "driver_app") {
         // nothing to send: the driver's app shows it on the next open
         await db.update(outbox).set({ state: "sent", sentAt: new Date(), attempts: sql`${outbox.attempts} + 1` }).where(eq(outbox.id, m.id));

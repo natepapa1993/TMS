@@ -4,7 +4,7 @@ import { createHmac } from "node:crypto";
 import { truncateAll, makeTenant } from "@/test/helpers";
 import { create } from "@/data/records";
 import { db } from "@/db/client";
-import { integrations, outbox, legEvents, inboundMessages } from "@/db/schema";
+import { integrations, outbox, legEvents, inboundMessages, tenants } from "@/db/schema";
 import { eq, and } from "drizzle-orm";
 import { newId } from "@/lib/ids";
 import { enqueue, deliverQueued } from "@/lib/outbox";
@@ -58,6 +58,22 @@ describe("WhatsApp through the outbox", () => {
     const [bad] = await db.select().from(outbox).where(eq(outbox.body, "x"));
     expect(bad.state).toBe("queued");
     expect(bad.error).toMatch(/131030/);
+  });
+
+  it("a company flagged demo never sends: with WhatsApp connected its messages are still only logged", async () => {
+    await connect({});
+    await db.update(tenants).set({ settings: { demo: true } }).where(eq(tenants.id, a.tenantId));
+    const calls: unknown[] = [];
+    vi.stubGlobal("fetch", async (...args: unknown[]) => {
+      calls.push(args);
+      return new Response(JSON.stringify({ messages: [{ id: "wamid.x" }] }), { status: 200 });
+    });
+    await enqueue(a, { channel: "whatsapp", to: "+1 956 000 0003", body: "demo" });
+    await enqueue(a, { channel: "email", to: "ap@rxo.test", subject: "Invoice", body: "demo" });
+    expect(await deliverQueued()).toMatchObject({ logged: 2, sent: 0 });
+    expect(calls).toHaveLength(0);
+    const rows = await db.select().from(outbox);
+    expect(rows.every((r) => r.state === "logged" && r.error === "demo company: not sent")).toBe(true);
   });
 
   it("webhook: verify challenge, signature, delivery + read receipts on the row, failures too; a driver's reply lands on the leg timeline once; unknown numbers stay in the inbox", async () => {

@@ -13,6 +13,11 @@ export async function register() {
     const { clearSeededDemo } = await import("./db/clear-seed");
     console.log(`startup: seed cleanup — ${await clearSeededDemo().catch((e) => `failed: ${String(e)}`)}`);
   }
+  if (process.env.DEMO_COMPANY === "1") {
+    // a separate, clearly named demo company with its own logins; the real company is never touched
+    const { ensureDemoCompany } = await import("./db/demo-company");
+    console.log(`startup: demo company — ${await ensureDemoCompany().catch((e) => `failed: ${String(e)}`)}`);
+  }
   if (process.env.JOBS_ON_START === "1") {
     const { startTicker } = await import("./jobs/tick");
     startTicker(Number(process.env.JOBS_EVERY_MS ?? 60_000));
