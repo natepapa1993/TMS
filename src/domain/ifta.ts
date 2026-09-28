@@ -441,3 +441,35 @@ export function iftaCsv(r: Awaited<ReturnType<typeof iftaReport>>) {
   lines.push(`Fleet MPG,${r.mpg ?? ""}`);
   return lines.join("\n") + "\n";
 }
+
+// ---------- the IFTA rate matrix (owner #21) ----------
+
+export type MatrixPreviewRow = { jurisdiction: string; rate: number; surcharge: number | null; currentRate: number | null; currentSurcharge: number | null; change: "new" | "changed" | "same" };
+
+/** What importing the matrix would do for this quarter: each jurisdiction's new rate next to the one on file. Saves nothing. */
+export async function previewRateMatrix(ctx: Ctx, quarter: string, csv: string) {
+  assertCtx(ctx);
+  requirePermission(ctx, "billing.issue");
+  quarterDates(quarter);
+  const { parseRateMatrix } = await import("./ifta-matrix");
+  const p = parseRateMatrix(csv);
+  if (!p.rows.length) throw new ValidationError(`no rates found — is this the IFTA tax rate matrix CSV? (looked for a "Special Diesel" or "Rate" column)`, "file");
+  const cur = await db.select().from(s.iftaRates).where(and(eq(s.iftaRates.tenantId, ctx.tenantId), eq(s.iftaRates.quarter, quarter)));
+  const rows: MatrixPreviewRow[] = p.rows.map((r) => {
+    const c = cur.find((x) => x.jurisdiction === r.jurisdiction);
+    const currentRate = c ? c.rateE4 / 10000 : null;
+    const currentSurcharge = c?.surchargeE4 != null ? c.surchargeE4 / 10000 : null;
+    const same = c && c.rateE4 === Math.round(r.rate * 10000) && (c.surchargeE4 ?? null) === (r.surcharge != null ? Math.round(r.surcharge * 10000) : null);
+    return { jurisdiction: r.jurisdiction, rate: r.rate, surcharge: r.surcharge, currentRate, currentSurcharge, change: !c ? "new" : same ? "same" : "changed" };
+  });
+  const missing = [...IFTA_MEMBERS].filter((j) => !p.rows.some((r) => r.jurisdiction === j)).sort();
+  return { quarter, column: p.column, rows, skipped: p.skipped, warnings: p.warnings, missing };
+}
+
+/** Save the matrix's rates for the quarter (jurisdictions not in the file keep what they have). */
+export async function importRateMatrix(ctx: Ctx, quarter: string, csv: string) {
+  const prev = await previewRateMatrix(ctx, quarter, csv);
+  const r = await setRates(ctx, quarter, prev.rows.map((x) => ({ jurisdiction: x.jurisdiction, rate: x.rate, surcharge: x.surcharge })));
+  await writeAudit(db, ctx, "ifta", quarter, "import", undefined, `IFTA rate matrix: ${r.saved} rate(s) from the ${prev.column} column (${prev.rows.filter((x) => x.change === "changed").length} changed, ${prev.rows.filter((x) => x.change === "new").length} new)`);
+  return { saved: r.saved, changed: prev.rows.filter((x) => x.change === "changed").length, skipped: prev.skipped.length };
+}

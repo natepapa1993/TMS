@@ -16,7 +16,7 @@ import type { LegState } from "@/db/schema";
  */
 
 type Stop = { id: string; name: string; type: string; country: string; address: { line1?: string; city?: string; state?: string } | null; windowStart: string | null; windowEnd: string | null; contact: string | null; notes: string | null; refs?: Record<string, string> | null; arrivedAt?: string | null; departedAt?: string | null; sealIn?: string | null; sealOut?: string | null };
-type Item = { leg: { id: string; seq: number; type: string; state: LegState }; order: { orderNumber: string; equipment: string; cargoNote: string | null; refs: Record<string, string>; held?: boolean; holdReason?: string | null }; from: Stop | null; to: Stop | null; mids?: Stop[]; truck: { unitNumber: string } | null; next: { to: LegState; label: string; es: string } | null; crossing: { id: string; state: string; trailerNumber: string | null; packetToken: string | null; nextStep: string | null; wait?: { en: string; es: string } | null; stateLabel?: string; steps?: Record<string, { en: string; es: string }> } | null; docs: { pod: boolean; seal: boolean }; sealExpected: string | null; freightReady?: boolean | null };
+type Item = { leg: { id: string; seq: number; type: string; state: LegState }; order: { orderNumber: string; equipment: string; cargoNote: string | null; refs: Record<string, string>; held?: boolean; holdReason?: string | null }; from: Stop | null; to: Stop | null; mids?: Stop[]; truck: { unitNumber: string } | null; next: { to: LegState; label: string; es: string } | null; crossing: { id: string; state: string; trailerNumber: string | null; packetToken: string | null; nextStep: string | null; wait?: { en: string; es: string } | null; stateLabel?: string; steps?: Record<string, { en: string; es: string }> } | null; docs: { pod: boolean; seal: boolean; bol?: boolean }; sealExpected: string | null; freightReady?: boolean | null };
 const XSTEP: Record<string, { en: string; es: string }> = { departed_yard: { en: "Departed the yard", es: "Salí del patio" }, at_mx_customs: { en: "At Mexican customs", es: "En aduana mexicana" }, in_us_customs: { en: "At US customs", es: "En aduana americana" }, cleared: { en: "Cleared — US side", es: "Liberado — lado americano" } };
 // the English part of XLABEL, as the server labels a Mexico → US crossing; any other direction uses the server's label
 const XLABEL_EN: Record<string, string> = { packet_sent: "Packet sent", departed_yard: "Departed yard", at_mx_customs: "At MX customs", in_us_customs: "In US customs", cleared: "Cleared", held: "Held", returned: "Returned to MX" };
@@ -185,6 +185,7 @@ export function DriverApp({ token, data }: { token: string; data: Data }) {
           </div>
           <div className="px-4 pb-5">
             {cur.leg.state === "at_pickup" && <PhotoButton token={token} legId={cur.leg.id} code="SEAL_PHOTO" done={cur.docs.seal} label="Seal photo · Foto del sello" onDone={() => router.refresh()} />}
+            {["at_pickup", "loaded"].includes(cur.leg.state) && <PhotoButton token={token} legId={cur.leg.id} code="BOL" done={!!cur.docs.bol} label="BOL photo · Foto del BOL" onDone={() => router.refresh()} />}
             {(cur.leg.state === "at_delivery" || cur.leg.state === "completed" || (cur.leg.state === "en_route" && (cur.mids ?? []).some((m) => m.arrivedAt && !m.departedAt))) && <PhotoButton token={token} legId={cur.leg.id} code="POD" done={cur.docs.pod} label="POD photo · Foto del POD" onDone={() => router.refresh()} />}
             {sealAsk && (
               <div className="mb-3" data-testid="seal">
@@ -365,14 +366,14 @@ function PayCard({ token, stub, onChanged }: { token: string; stub: PayStub; onC
   return (
     <div className="rounded-lg border border-line p-3">
       <button type="button" className="w-full flex items-center justify-between text-left" onClick={() => setOpen((o) => !o)} aria-expanded={open}>
-        <div>
+        <div className="min-w-0">
           <div className="font-extrabold text-body">
             Week of {d(stub.periodStart)} – {d(new Date(new Date(stub.periodEnd).getTime() - 1).toISOString())}
           </div>
           <div className={`text-footnote font-semibold ${stub.state === "paid" ? "text-teal" : "text-muted"}`}>{PAY_STATE[stub.state] ?? stub.state}</div>
         </div>
-        <div className="text-right">
-          <div className="font-extrabold text-headline">{money(stub.netCents, stub.currency)}</div>
+        <div className="text-right flex-none pl-2">
+          <div className="font-extrabold text-headline whitespace-nowrap">{money(stub.netCents, stub.currency)}</div>
           <div className="text-caption text-faint">net · neto</div>
         </div>
       </button>
@@ -443,7 +444,7 @@ function PayCard({ token, stub, onChanged }: { token: string; stub: PayStub; onC
 }
 
 /** One tap: the camera opens, the photo goes up, a check appears. Never in the way of the milestone button. */
-function PhotoButton({ token, legId, code, done, label, onDone }: { token: string; legId: string; code: "POD" | "SEAL_PHOTO"; done: boolean; label: string; onDone: () => void }) {
+function PhotoButton({ token, legId, code, done, label, onDone }: { token: string; legId: string; code: "POD" | "SEAL_PHOTO" | "BOL"; done: boolean; label: string; onDone: () => void }) {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [just, setJust] = useState(false);
@@ -474,7 +475,7 @@ function PhotoButton({ token, legId, code, done, label, onDone }: { token: strin
             } else setErr(r.error);
           }}
         />
-        {busy ? "Sending… · Enviando…" : ok ? `✓ ${code === "POD" ? "POD" : "Seal · Sello"} on file · tap for another · otra foto` : `📷 ${label}`}
+        {busy ? "Sending… · Enviando…" : ok ? `✓ ${code === "POD" ? "POD" : code === "BOL" ? "BOL" : "Seal · Sello"} on file · tap for another · otra foto` : `📷 ${label}`}
       </label>
       {err && (
         <div className="error mt-1" role="alert">
@@ -606,7 +607,7 @@ function Chat({ token, legId, thread, dispatchPhone, onDone }: { token: string; 
 export function DispatchLinks({ phone }: { phone: string }) {
   const digits = phone.replace(/\D/g, "");
   return (
-    <span className="flex gap-1.5" data-testid="dispatch-links">
+    <span className="flex gap-1.5 flex-none" data-testid="dispatch-links">
       <a className="btn btn-sm" href={`tel:+${digits}`}>
         ☎ Call · Llamar
       </a>

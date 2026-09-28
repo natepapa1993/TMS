@@ -145,7 +145,10 @@ export function FieldInput({ f, value, onChange, error, refs, span, autoFocus }:
       );
       break;
     case "ref": {
-      const opts = refs[f.ref ?? ""] ?? [];
+      // a picker for one country lists that country's records, plus the one already chosen
+      const all = refs[f.ref ?? ""] ?? [];
+      const byCountry = f.refCountry ? refs[`${f.ref}@${f.refCountry}`] : undefined;
+      const opts = byCountry ? [...byCountry, ...all.filter((o) => o.id === value && !byCountry.some((x) => x.id === o.id))] : all;
       input = (
         <select {...common} className="select" value={value} onChange={(e) => onChange(e.target.value)}>
           <option value="">—</option>

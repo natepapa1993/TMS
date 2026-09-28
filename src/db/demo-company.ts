@@ -56,7 +56,7 @@ export async function ensureDemoCompany(opts: { force?: boolean; now?: Date } = 
 }
 
 /** Bump when the builder changes: every deployment then rebuilds the demo once with the new data. */
-const DEMO_VERSION = 5;
+const DEMO_VERSION = 6;
 const BASE = { demo: true, dispatchPhone: "+1 956 555 0142" };
 
 async function ensure(opts: { force?: boolean; now?: Date }): Promise<string> {

@@ -1,3 +1,4 @@
+import { CUSTOMER_DOC_KEYS, docKey } from "./load-docs-rules";
 import { normCountry, HANDOFF } from "./zones";
 import { and, eq, inArray, or, desc, gte, sql } from "drizzle-orm";
 import { db } from "@/db/client";
@@ -45,6 +46,17 @@ export const CUSTOMER_STATE: Record<s.OrderState, string> = {
   cancelled: "Cancelled",
 };
 
+/**
+ * Owner #17: "Driver assigned" only once someone has the load. A tender out to a carrier that hasn't answered,
+ * or a leg still being planned, reads "Assigning a truck".
+ */
+export function portalStateKey(state: s.OrderState, current: Pick<typeof s.legs.$inferSelect, "state" | "assigneeKind"> | null): string {
+  if (state !== "dispatched" || !current) return state;
+  if (["unassigned", "planned", "declined"].includes(current.state)) return "assigning";
+  if (current.state === "dispatched" && current.assigneeKind === "carrier") return "assigning";
+  return state;
+}
+
 export async function customerPortalLink(ctx: Ctx, customerId: string) {
   assertCtx(ctx);
   const [c] = await db.select().from(s.customers).where(and(eq(s.customers.tenantId, ctx.tenantId), eq(s.customers.id, customerId))).limit(1);
@@ -67,7 +79,8 @@ async function loadCustomer(tenantId: string, customerId: string) {
 const place = (st: typeof s.stops.$inferSelect) => ({ id: st.id, seq: st.seq, type: st.type, name: st.name, city: st.address?.city ?? null, state: st.address?.state ?? null, country: st.country, windowStart: st.windowStart, windowEnd: st.windowEnd, arrivedAt: st.arrivedAt, departedAt: st.departedAt });
 
 /** Documents a customer may download: what they would get by email anyway. */
-const CUSTOMER_DOC_CODES = ["POD", "BOL", "RATE_CON", "carta_porte", "invoice", "packing_list"];
+/** The portal's labels are keyed by the codes it always used: the crossing's lower-case ones for customs paper. */
+const portalCode = (key: string) => (["CARTA_PORTE", "INVOICE", "PACKING_LIST"].includes(key) ? key.toLowerCase() : key);
 
 /** Everything the customer's page shows. */
 export async function customerPortalView(tenantId: string, customerId: string, now = new Date()) {
@@ -87,7 +100,8 @@ export async function customerPortalView(tenantId: string, customerId: string, n
     ? await Promise.all([
         db.select().from(s.stops).where(inArray(s.stops.orderId, orderIds)).orderBy(s.stops.seq),
         db.select().from(s.legs).where(inArray(s.legs.orderId, orderIds)).orderBy(s.legs.seq),
-        db.select().from(s.documents).where(and(eq(s.documents.tenantId, tenantId), eq(s.documents.subjectKind, "order"), inArray(s.documents.subjectId, orderIds), inArray(s.documents.status, ["present", "verified"]))),
+        // the load's paper wherever it was uploaded: a BOL or carta porte from the crossing shows here too (owner #8)
+        import("./load-docs").then(({ loadDocuments }) => loadDocuments(tenantId, orderIds)),
         db.select().from(s.accessTokens).where(and(eq(s.accessTokens.tenantId, tenantId), eq(s.accessTokens.kind, "tracking_link"), inArray(s.accessTokens.subjectId, orderIds), sql`${s.accessTokens.revokedAt} is null`)),
         db.select().from(s.invoices).where(and(eq(s.invoices.tenantId, tenantId), eq(s.invoices.customerId, customerId), sql`${s.invoices.state} <> 'draft'`)).orderBy(desc(s.invoices.issuedAt)),
       ])
@@ -110,13 +124,16 @@ export async function customerPortalView(tenantId: string, customerId: string, n
     const ls = legs.filter((l) => l.orderId === o.id && l.state !== "cancelled");
     const current = ls.find((l) => l.state !== "completed") ?? ls[ls.length - 1] ?? null;
     const inv = invoices.find((i) => i.orderIds.includes(o.id)) ?? null;
+    const stateKey = portalStateKey(o.state, current);
     return {
       eta: etaByOrder.get(o.id) ?? null,
       id: o.id,
       orderNumber: o.orderNumber,
       state: o.state,
-      stateLabel: CUSTOMER_STATE[o.state],
-      stateLabelEs: CUSTOMER_STATE_ES[o.state],
+      stateKey,
+      stateLabel: stateKey === "assigning" ? "Assigning a truck" : CUSTOMER_STATE[o.state],
+      stateLabelEs: stateKey === "assigning" ? "Asignando camión" : CUSTOMER_STATE_ES[o.state],
+      stepKey: current?.state ?? null,
       step: current ? LEG_LABEL[current.state] : null,
       stepEs: current ? LEG_LABEL_ES[current.state] : null,
       equipment: o.equipment,
@@ -127,7 +144,7 @@ export async function customerPortalView(tenantId: string, customerId: string, n
       createdAt: o.createdAt,
       source: o.source,
       trackingUrl: trackingByOrder.has(o.id) ? publicUrl(`/track/${trackingByOrder.get(o.id)}`) : null,
-      docs: docs.filter((d) => d.subjectId === o.id && d.code && CUSTOMER_DOC_CODES.includes(d.code)).map((d) => ({ id: d.id, code: d.code!, fileName: d.fileName, createdAt: d.createdAt })),
+      docs: docs.filter((d) => d.orderId === o.id && CUSTOMER_DOC_KEYS.has(d.key)).map((d) => ({ id: d.id, code: portalCode(d.key), fileName: d.fileName, createdAt: d.createdAt })),
       invoice: inv ? { id: inv.id, number: inv.number, state: inv.state, totalCents: inv.totalCents, currency: inv.currency, url: inv.token && inv.pdfStorageKey ? publicUrl(`/i/${inv.token}`) : null } : null,
     };
   });
@@ -243,9 +260,12 @@ export async function portalRequestLoad(tenantId: string, customerId: string, in
 
 /** A document off one of the customer's own loads. */
 export async function portalDocument(tenantId: string, customerId: string, documentId: string) {
-  const [doc] = await db.select().from(s.documents).where(and(eq(s.documents.tenantId, tenantId), eq(s.documents.id, documentId), eq(s.documents.subjectKind, "order"))).limit(1);
-  if (!doc || !doc.code || !CUSTOMER_DOC_CODES.includes(doc.code)) throw new NotFoundError("document", documentId);
-  const [o] = await db.select({ id: s.orders.id }).from(s.orders).where(and(eq(s.orders.tenantId, tenantId), eq(s.orders.id, doc.subjectId), or(eq(s.orders.customerId, customerId), eq(s.orders.brokerId, customerId)))).limit(1);
+  const [doc] = await db.select().from(s.documents).where(and(eq(s.documents.tenantId, tenantId), eq(s.documents.id, documentId), inArray(s.documents.subjectKind, ["order", "leg", "crossing"]), inArray(s.documents.status, ["present", "verified"]))).limit(1);
+  if (!doc || !CUSTOMER_DOC_KEYS.has(docKey(doc.code))) throw new NotFoundError("document", documentId);
+  const { orderOfDocument } = await import("./load-docs");
+  const orderId = await orderOfDocument(doc);
+  if (!orderId) throw new NotFoundError("document", documentId);
+  const [o] = await db.select({ id: s.orders.id }).from(s.orders).where(and(eq(s.orders.tenantId, tenantId), eq(s.orders.id, orderId), or(eq(s.orders.customerId, customerId), eq(s.orders.brokerId, customerId)))).limit(1);
   if (!o) throw new NotFoundError("document", documentId);
   const id = doc.storageKey.replace(/^blob:/, "");
   const [blob] = await db.select().from(s.documentBlobs).where(and(eq(s.documentBlobs.tenantId, tenantId), eq(s.documentBlobs.id, id))).limit(1);

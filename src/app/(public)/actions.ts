@@ -75,7 +75,7 @@ export async function driverPhotoAction(token: string, legId: string, form: Form
   try {
     const file = form.get("file");
     if (!(file instanceof File) || file.size === 0) throw Object.assign(new Error("take the photo first · toma la foto primero"), { name: "ValidationError", field: "file" });
-    const code = String(form.get("code") ?? "POD") as "POD" | "SEAL_PHOTO";
+    const code = String(form.get("code") ?? "POD") as "POD" | "SEAL_PHOTO" | "BOL";
     const mime = file.type || (file.name.toLowerCase().endsWith(".pdf") ? "application/pdf" : "image/jpeg");
     const { driverUploadPhoto } = await import("@/domain/tracking");
     const rows = await driverUploadPhoto(t.ctx.tenantId, t.subjectId, legId, { code, fileName: file.name || `${code.toLowerCase()}.jpg`, mimeType: mime, bytes: Buffer.from(await file.arrayBuffer()) });

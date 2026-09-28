@@ -1,5 +1,5 @@
 {
-  "id": "deaa352a-dd0a-4f00-948f-3a9ca602637f",
+  "id": "59525bb0-d793-4489-b50b-deb5afb08bb0",
   "prevId": "101de4a6-f4ee-485c-a6fa-326e9f32a142",
   "version": "7",
   "dialect": "postgresql",
@@ -1224,6 +1224,12 @@
         },
         "us_broker_id": {
           "name": "us_broker_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "ca_broker_id": {
+          "name": "ca_broker_id",
           "type": "text",
           "primaryKey": false,
           "notNull": false
@@ -6169,6 +6175,30 @@
           "primaryKey": false,
           "notNull": false
         },
+        "counter_cents": {
+          "name": "counter_cents",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "counter_note": {
+          "name": "counter_note",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "counter_by": {
+          "name": "counter_by",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "counter_at": {
+          "name": "counter_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
         "created_at": {
           "name": "created_at",
           "type": "timestamp with time zone",
@@ -7489,6 +7519,145 @@
       "checkConstraints": {},
       "isRLSEnabled": false
     },
+    "public.override_requests": {
+      "name": "override_requests",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "tenant_id": {
+          "name": "tenant_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "kind": {
+          "name": "kind",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "state": {
+          "name": "state",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'pending'"
+        },
+        "title": {
+          "name": "title",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "reason": {
+          "name": "reason",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "order_id": {
+          "name": "order_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "leg_id": {
+          "name": "leg_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "crossing_id": {
+          "name": "crossing_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "subject_kind": {
+          "name": "subject_kind",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "subject_id": {
+          "name": "subject_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "replay": {
+          "name": "replay",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "requested_by": {
+          "name": "requested_by",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "decided_by": {
+          "name": "decided_by",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "decided_at": {
+          "name": "decided_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "decision_note": {
+          "name": "decision_note",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "override_requests_tenant_state": {
+          "name": "override_requests_tenant_state",
+          "columns": [
+            {
+              "expression": "tenant_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "state",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
     "public.accounting_exports": {
       "name": "accounting_exports",
       "schema": "",
@@ -7748,6 +7917,12 @@
         },
         "quick_pay_pct": {
           "name": "quick_pay_pct",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "exchange_rate_e4": {
+          "name": "exchange_rate_e4",
           "type": "integer",
           "primaryKey": false,
           "notNull": false
@@ -9343,6 +9518,12 @@
           "primaryKey": false,
           "notNull": false
         },
+        "exported_at": {
+          "name": "exported_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
         "created_at": {
           "name": "created_at",
           "type": "timestamp with time zone",
@@ -9596,6 +9777,12 @@
           "notNull": true,
           "default": 0
         },
+        "exchange_rate_e4": {
+          "name": "exchange_rate_e4",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
         "exported_at": {
           "name": "exported_at",
           "type": "timestamp with time zone",
@@ -9708,6 +9895,12 @@
         "payment_id": {
           "name": "payment_id",
           "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "exchange_rate_e4": {
+          "name": "exchange_rate_e4",
+          "type": "integer",
           "primaryKey": false,
           "notNull": false
         },

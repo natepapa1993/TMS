@@ -1089,6 +1089,10 @@ export async function planLeg(ctx: Ctx, legId: string, a: Assignment, opts: Plan
       // a schedule call (a double booking, time off) is dispatch's to make; anything about paperwork is Safety's
       requirePermission(ctx, elig.findings.some((f) => f.level === "red" && needsSafety(f)) ? "compliance.override" : "dispatch.override");
       if (!opts.reason?.trim()) throw new ValidationError("an override needs a reason", "reason");
+      // the owner approves overrides (owner #18): queued for review, or only a request when the company says so
+      const { overrideGate } = await import("./approvals");
+      const iso = (d: Date | null | undefined) => (d === undefined ? undefined : d ? d.toISOString() : null);
+      await overrideGate(ctx, { kind: elig.findings.some((f) => f.level === "red" && needsSafety(f)) ? "paperwork" : "schedule", title: `${order.orderNumber} leg ${leg.seq}: ${elig.findings.filter((f) => f.level === "red").map((f) => f.message).join("; ")}`, reason: opts.reason, orderId: order.id, legId: leg.id, replay: { fn: "planLeg", legId: leg.id, assignment: a as unknown as Record<string, unknown>, opts: { plannedStart: iso(opts.plannedStart), plannedEnd: iso(opts.plannedEnd), plannedMiles: opts.plannedMiles } } }, tx);
       await writeAudit(tx, ctx, "leg", leg.id, "override", overrideChanges(elig.findings, a.kind === "truck" ? { truckId: a.truckId, driverId: a.driverId ?? null, coDriverId: a.coDriverId ?? null, trailerId: a.trailerId ?? null } : { carrierId: a.carrierId }), opts.reason);
     }
 
@@ -1105,7 +1109,8 @@ export async function planLeg(ctx: Ctx, legId: string, a: Assignment, opts: Plan
       delete changes.updatedAt;
       await writeAudit(tx, ctx, "leg", leg.id, "assign", changes, opts.reason ?? "changed in place; the leg stays sent");
       if (Object.keys(changes).length) await tx.insert(s.legEvents).values({ id: newId(), tenantId: ctx.tenantId, legId: leg.id, orderId: leg.orderId, kind: "note", source: "dispatcher", userId: ctx.userId, note: `Changed without re-sending: ${Object.keys(changes).map((k) => CHANGE_LABEL[k] ?? k).join(", ")}` });
-      return { leg: row, findings: elig.findings, kept: true };
+      const fit = await syncEquipmentFlag(tx, ctx, order, row);
+      return { leg: row, findings: [...elig.findings, ...fit], kept: true };
     }
     const extra = {
       ...assignment,
@@ -1130,8 +1135,27 @@ export async function planLeg(ctx: Ctx, legId: string, a: Assignment, opts: Plan
     // the leg has someone again: "declined", "truck removed" and "tender expired" are answered (N9)
     await tx.update(s.flags).set({ clearedAt: new Date(), clearedBy: ctx.userId ?? "system" }).where(and(eq(s.flags.tenantId, ctx.tenantId), eq(s.flags.legId, leg.id), inArray(s.flags.code, ["declined", "truck_removed", "tender_expired"]), isNull(s.flags.clearedAt)));
     await recomputeOrder(tx, ctx, order.id);
-    return { leg: after, findings: elig.findings, kept: false };
+    const fit = await syncEquipmentFlag(tx, ctx, order, after);
+    return { leg: after, findings: [...elig.findings, ...fit], kept: false };
   });
+}
+
+/**
+ * Owner N8: the truck and trailer on a leg against the load's equipment and weight. A mismatch is a yellow flag
+ * on the load (a reefer load on a dry van, a Sprinter for a 53' load, too heavy); it clears when the leg is
+ * re-planned with equipment that fits. Returns the mismatches as warnings for the assign dialog.
+ */
+async function syncEquipmentFlag(tx: Tx, ctx: Ctx, order: Order, leg: Leg): Promise<Finding[]> {
+  const { equipmentMismatches, loadWeight } = await import("./equipment-rules");
+  const [truck] = leg.assigneeKind === "truck" && leg.truckId ? await tx.select().from(s.trucks).where(eq(s.trucks.id, leg.truckId)).limit(1) : [];
+  const [trailer] = leg.assigneeKind === "truck" && leg.trailerId ? await tx.select().from(s.trailers).where(eq(s.trailers.id, leg.trailerId)).limit(1) : [];
+  const msgs = leg.assigneeKind === "truck" ? equipmentMismatches({ equipment: order.equipment, weightLb: loadWeight(order) }, truck ?? null, trailer ?? null) : [];
+  const [open] = await tx.select().from(s.flags).where(and(eq(s.flags.tenantId, ctx.tenantId), eq(s.flags.legId, leg.id), eq(s.flags.code, "equipment_mismatch"), isNull(s.flags.clearedAt))).limit(1);
+  const title = msgs.length ? `Equipment: ${msgs[0]}${msgs.length > 1 ? ` (+${msgs.length - 1} more)` : ""}` : "";
+  if (!msgs.length && open) await tx.update(s.flags).set({ clearedAt: new Date(), clearedBy: ctx.userId ?? "system" }).where(eq(s.flags.id, open.id));
+  else if (msgs.length && open && open.title !== title) await tx.update(s.flags).set({ title, detail: msgs.join("; ") }).where(eq(s.flags.id, open.id));
+  else if (msgs.length && !open) await tx.insert(s.flags).values({ id: newId(), tenantId: ctx.tenantId, orderId: order.id, legId: leg.id, code: "equipment_mismatch", level: "yellow", title, detail: msgs.join("; "), owner: "dispatch" });
+  return msgs.map((m) => ({ level: "yellow", code: "equipment_mismatch", message: m, overridable: true }));
 }
 
 const CHANGE_LABEL: Record<string, string> = { trailerId: "trailer", coDriverId: "co-driver", plannedMiles: "miles", carrierRateCents: "carrier rate", plannedStart: "planned start", plannedEnd: "planned end" };
@@ -1560,6 +1584,9 @@ export async function setLegDrivers(ctx: Ctx, legId: string, drivers: { driverId
       if (!opts.override) throw new EligibilityError(elig.findings, false);
       requirePermission(ctx, elig.findings.some((f) => f.level === "red" && needsSafety(f)) ? "compliance.override" : "dispatch.override");
       if (!opts.reason?.trim()) throw new ValidationError("an override needs a reason", "reason");
+      const { overrideGate } = await import("./approvals");
+      const [o] = await tx.select({ n: s.orders.orderNumber }).from(s.orders).where(eq(s.orders.id, leg.orderId)).limit(1);
+      await overrideGate(ctx, { kind: elig.findings.some((f) => f.level === "red" && needsSafety(f)) ? "paperwork" : "schedule", title: `${o?.n ?? "Load"} leg ${leg.seq}: ${elig.findings.filter((f) => f.level === "red").map((f) => f.message).join("; ")}`, reason: opts.reason, orderId: leg.orderId, legId: leg.id, replay: { fn: "setLegDrivers", legId: leg.id, drivers } }, tx);
       await writeAudit(tx, ctx, "leg", leg.id, "override", overrideChanges(elig.findings, { truckId: leg.truckId, ...next, trailerId: leg.trailerId }), opts.reason);
     }
     const [after] = await tx.update(s.legs).set({ ...next, updatedAt: new Date(), updatedBy: ctx.userId }).where(and(eq(s.legs.tenantId, ctx.tenantId), eq(s.legs.id, leg.id))).returning();
@@ -1598,6 +1625,8 @@ export async function candidatesForLeg(ctx: Ctx, legId: string, now = new Date()
   const leg = await db.select().from(s.legs).where(and(eq(s.legs.tenantId, ctx.tenantId), eq(s.legs.id, legId))).limit(1).then((r) => r[0]);
   if (!leg) throw new NotFoundError("leg", legId);
   const zone = await zoneForLeg(db, leg);
+  const [legOrder] = await db.select({ equipment: s.orders.equipment, freight: s.orders.freight, weightLbs: s.orders.weightLbs }).from(s.orders).where(eq(s.orders.id, leg.orderId)).limit(1);
+  const { equipmentMismatches, loadWeight } = await import("./equipment-rules");
   const trucks = await db.select().from(s.trucks).where(and(eq(s.trucks.tenantId, ctx.tenantId), sql`${s.trucks.archivedAt} is null`));
   const drivers = await db.select().from(s.drivers).where(and(eq(s.drivers.tenantId, ctx.tenantId), sql`${s.drivers.archivedAt} is null`));
   const busyRows = await db
@@ -1639,6 +1668,8 @@ export async function candidatesForLeg(ctx: Ctx, legId: string, now = new Date()
     if (!drv) findings.push({ level: "yellow", code: "no_driver", message: `${t.unitNumber} has no driver assigned`, overridable: true });
     findings.push(...eventFindings(events, [{ kind: "truck", id: t.id, label: `unit ${t.unitNumber}` }, ...(drv ? [{ kind: "driver", id: drv.id, label: drv.name }] : [])], companyZone));
     findings.push(...(conflicts.get(t.id) ?? []));
+    // owner N8: a Sprinter offered for a 53' load, or more weight than it carries
+    if (legOrder) for (const m of equipmentMismatches({ equipment: legOrder.equipment, weightLb: loadWeight(legOrder) }, t, null)) findings.push({ level: "yellow", code: "equipment_mismatch", message: m, overridable: true });
     const sum = summarize(findings);
     const busy = busyBy.get(t.id) ?? [];
     let score = 0;

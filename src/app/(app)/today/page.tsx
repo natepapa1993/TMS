@@ -3,6 +3,8 @@ import { requireCtx } from "@/lib/auth";
 import { ownerToday, type MoneyLine } from "@/domain/today";
 import { PageHeader } from "@/components/page-header";
 import { formatCents } from "@/data/fields";
+import { approvalsQueue, overridesNeedOwner } from "@/domain/approvals";
+import { Approvals } from "./approvals";
 
 export const metadata = { title: "Today" };
 export const dynamic = "force-dynamic";
@@ -22,6 +24,7 @@ const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? o
 export default async function TodayPage() {
   const ctx = await requireCtx();
   const d = await ownerToday(ctx);
+  const [approvals, needOwner] = ctx.role === "owner" ? await Promise.all([approvalsQueue(ctx), overridesNeedOwner(ctx.tenantId)]) : [null, false];
   const week = `${new Date(d.week.start).toLocaleDateString("en-US", { month: "short", day: "numeric" })} – ${new Date(new Date(d.week.end).getTime() - 1).toLocaleDateString("en-US", { month: "short", day: "numeric" })}`;
   const groups: { title: string; tiles: Tile[] }[] = [];
   if (d.cashIn && d.cashOut) {
@@ -61,6 +64,7 @@ export default async function TodayPage() {
         What needs you this morning. Every number opens the list behind it. Money is shown per currency.
       </PageHeader>
       <div className="px-gutter pb-10 space-y-6" data-testid="today">
+        {approvals && <Approvals rows={approvals} needOwner={needOwner} />}
         {groups.map((g) => (
           <section key={g.title} aria-label={g.title}>
             <div className="eyebrow mb-2">{g.title}</div>

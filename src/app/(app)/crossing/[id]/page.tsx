@@ -71,6 +71,7 @@ export default async function CrossingPage({ params }: PageProps<"/crossing/[id]
               coDriver: p.coDriver,
               customer: p.customer,
               broker: p.broker,
+              caBroker: p.caBroker,
               port: p.port,
               people: Object.fromEntries(people.map((x) => [x.id, x.name])),
               docFields: DOC_FIELDS,

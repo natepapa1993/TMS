@@ -19,6 +19,8 @@ export type Field = {
   group: string;
   options?: { value: string; label: string }[];
   ref?: RecordKind; // for type=ref
+  /** for type=ref: only offer records from this country (a Mexican broker for the Mexican side) */
+  refCountry?: string;
   help?: string;
   placeholder?: string;
   unique?: boolean;
@@ -96,8 +98,9 @@ export const FIELDS: Record<RecordKind, Field[]> = {
       column: true,
       group: "User",
       options: [
-        { value: "owner", label: "Owner" },
+        // owner #22: a new person is a dispatcher unless the owner picks otherwise (the first option is the default)
         { value: "dispatcher", label: "Dispatcher" },
+        { value: "owner", label: "Owner" },
         { value: "billing", label: "Billing" },
         { value: "compliance", label: "Safety & compliance" },
         { value: "mx_office", label: "Mexico office" },
@@ -221,8 +224,9 @@ export const FIELDS: Record<RecordKind, Field[]> = {
       ],
     },
     { name: "contacts", label: "Contacts", type: "contacts", group: "Requirements", help: "one per line: Name | role | email | phone | WhatsApp · the first with an email gets tracking links" },
-    { name: "mxBrokerId", label: "Mexican customs broker", type: "ref", ref: "customsBroker", group: "Requirements" },
-    { name: "usBrokerId", label: "US customs broker", type: "ref", ref: "customsBroker", group: "Requirements" },
+    { name: "mxBrokerId", label: "Mexican customs broker", type: "ref", ref: "customsBroker", refCountry: "MX", group: "Requirements" },
+    { name: "usBrokerId", label: "US customs broker", type: "ref", ref: "customsBroker", refCountry: "US", group: "Requirements" },
+    { name: "caBrokerId", label: "Canadian customs broker", type: "ref", ref: "customsBroker", refCountry: "CA", group: "Requirements", help: "files the PARS / cargo control # for loads into Canada" },
     { name: "knowledgeMd", label: "What to know", type: "textarea", group: "Requirements", help: "Shows to dispatch on every order for this customer." },
   ],
   customsBroker: [

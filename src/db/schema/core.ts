@@ -194,6 +194,7 @@ export const customers = pgTable(
     portalUrl: text("portal_url"), // where invoices are uploaded, for portal customers
     mxBrokerId: text("mx_broker_id"),
     usBrokerId: text("us_broker_id"),
+    caBrokerId: text("ca_broker_id"), // owner N10: the Canadian customs broker (PARS / cargo control #)
     knowledgeMd: text("knowledge_md"),
     contacts: jsonb("contacts").$type<Contact[]>().notNull().default(sql`'[]'::jsonb`),
     custom: jsonb("custom").$type<Record<string, unknown>>().notNull().default(sql`'{}'::jsonb`),

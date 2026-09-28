@@ -340,7 +340,8 @@ export async function computeRequirements(ctx: Ctx, c: Crossing): Promise<Requir
     const cur = byCode.get(r.code);
     if (!cur || specificity(r) > specificity(cur)) byCode.set(r.code, r);
   }
-  const docs = await db.select().from(s.documents).where(and(eq(s.documents.tenantId, ctx.tenantId), eq(s.documents.subjectKind, "crossing"), eq(s.documents.subjectId, c.id), inArray(s.documents.status, ["present", "verified"])));
+  // one upload counts everywhere (owner #8): the load's BOL or commercial invoice ticks this checklist too
+  const docs = (await crossingDocs(ctx.tenantId, c)).map((d) => ({ ...d, code: d.key.toLowerCase() }));
   const prev = new Map(c.requirements.map((r) => [r.code, r]));
   const out: Requirement[] = [];
   for (const r of [...byCode.values()].sort((p, q) => p.packetOrder - q.packetOrder)) {
@@ -365,7 +366,7 @@ export async function computeRequirements(ctx: Ctx, c: Crossing): Promise<Requir
     const customers = ships.length ? await db.select({ id: s.customers.id, name: s.customers.name }).from(s.customers).where(inArray(s.customers.id, ships.map((x) => x.customerId ?? ""))) : [];
     ships.forEach((sh, i) => {
       const code = `shipment:${sh.id}`;
-      const doc = docs.filter((d) => d.code === code).sort((p, q) => q.version - p.version)[0];
+      const doc = docs.filter((d) => d.code === code.toLowerCase()).sort((p, q) => q.version - p.version)[0];
       const old = prev.get(code);
       const humanNa = !doc && old?.status === "na" && old.naReason !== "optional";
       const refs = Object.values(sh.refs).filter(Boolean).slice(0, 2).join(" ");
@@ -376,6 +377,13 @@ export async function computeRequirements(ctx: Ctx, c: Crossing): Promise<Requir
 }
 
 // ---------- documents ----------
+
+/** The paper this crossing sees: its own, plus the load's (and its legs') that is not another crossing's. */
+async function crossingDocs(tenantId: string, c: Pick<Crossing, "id" | "orderId">) {
+  const { loadDocuments } = await import("./load-docs");
+  const { CROSSING_ONLY } = await import("./load-docs-rules");
+  return (await loadDocuments(tenantId, [c.orderId])).filter((d) => d.crossingId === c.id || !CROSSING_ONLY.has(d.key));
+}
 
 export type UploadInput = { code: string; fileName: string; mimeType: string; bytes: Buffer; source?: string; fields?: Record<string, unknown>; notes?: string | null; extract?: boolean };
 
@@ -390,16 +398,18 @@ export async function uploadDocument(ctx: Ctx, crossingId: string, input: Upload
   const sha = createHash("sha256").update(input.bytes).digest("hex");
   const doc = await db.transaction(async (tx) => {
     const [blob] = await tx.insert(s.documentBlobs).values({ id: newId(), tenantId: ctx.tenantId, sha256: sha, mimeType: input.mimeType, sizeBytes: input.bytes.length, bytes: input.bytes }).returning({ id: s.documentBlobs.id });
-    const prior = await tx.select().from(s.documents).where(and(eq(s.documents.tenantId, ctx.tenantId), eq(s.documents.subjectKind, "crossing"), eq(s.documents.subjectId, crossingId), eq(s.documents.code, input.code), inArray(s.documents.status, ["present", "verified"])));
-    for (const p of prior) await tx.update(s.documents).set({ status: "superseded", updatedAt: new Date(), updatedBy: ctx.userId }).where(eq(s.documents.id, p.id));
-    const version = (Math.max(0, ...prior.map((p) => p.version)) || 0) + 1;
+    // the same paper uploaded on the load (a BOL) is replaced too: one record, counted everywhere
+    const { supersedePrior } = await import("./load-docs");
+    const version = await supersedePrior(tx, ctx.tenantId, { orderId: c.orderId, crossingId, legId: c.legId }, input.code, ctx.userId);
     const extracted: Record<string, { value: unknown; confidence: number; source?: "ai" | "human" }> = {};
     for (const [k, v] of Object.entries(input.fields ?? {})) if (v !== undefined && v !== null && v !== "") extracted[k] = { value: v, confidence: 1, source: "human" };
     const [row] = await tx
       .insert(s.documents)
       .values({ id: newId(), tenantId: ctx.tenantId, code: input.code, subjectKind: "crossing", subjectId: crossingId, fileName: input.fileName, mimeType: input.mimeType, sizeBytes: input.bytes.length, storageKey: `blob:${blob.id}`, sha256: sha, source: input.source ?? "upload", status: "present", version, extracted, notes: input.notes ?? null, createdBy: ctx.userId, updatedBy: ctx.userId })
       .returning();
-    await event(tx, ctx, crossingId, { kind: "document", note: `${input.code} v${version} ${input.source ?? "uploaded"}: ${input.fileName}`, data: { documentId: row.id, code: input.code } });
+    const { docLabel } = await import("./load-docs-rules");
+    const how = !input.source || input.source === "upload" ? "uploaded" : `from the ${input.source.replace(/_/g, " ")}`;
+    await event(tx, ctx, crossingId, { kind: "document", note: `${input.code.startsWith("shipment:") ? "Shipment docs" : docLabel(input.code)}${version > 1 ? ` v${version}` : ""} ${how}: ${input.fileName}`, data: { documentId: row.id, code: input.code } });
     await writeAudit(tx, ctx, "document", row.id, "create", undefined, `${input.code} on crossing ${crossingId}`);
     return row;
   });
@@ -443,7 +453,7 @@ export async function extractDocumentFields(ctx: Ctx, documentId: string, fetchI
     if (doc.subjectKind === "crossing") {
       await event(db, ctx, doc.subjectId, { kind: "document", note: `${doc.code}: AI read ${filled} field(s) — confirm them`, data: { documentId } });
       await recompute(ctx, doc.subjectId);
-    }
+    } else await recomputeFor(ctx, doc);
     return { ran: true as const, filled, fields: r.fields, note };
   } catch (e) {
     const msg = (e as Error).message;
@@ -468,6 +478,16 @@ export async function setDocumentFields(ctx: Ctx, documentId: string, fields: Re
   await db.update(s.documents).set({ extracted, status: confirm ? "verified" : doc.status === "verified" ? "present" : doc.status, updatedAt: new Date(), updatedBy: ctx.userId }).where(eq(s.documents.id, documentId));
   await writeAudit(db, ctx, "document", documentId, "update", { fields: { from: Object.keys(doc.extracted ?? {}), to: Object.keys(extracted) } }, confirm ? "confirmed" : undefined);
   if (doc.subjectKind === "crossing") await recompute(ctx, doc.subjectId);
+  else await recomputeFor(ctx, doc);
+}
+
+/** A load-level document's fields feed the crossing's checks too. */
+async function recomputeFor(ctx: Ctx, doc: typeof s.documents.$inferSelect) {
+  const { orderOfDocument } = await import("./load-docs");
+  const orderId = await orderOfDocument(doc);
+  if (!orderId) return;
+  const { recomputeCrossingsOf } = await import("./billing");
+  await recomputeCrossingsOf(ctx, orderId);
 }
 
 export async function markNotApplicable(ctx: Ctx, crossingId: string, code: string, reason: string) {
@@ -711,9 +731,9 @@ export async function runChecks(ctx: Ctx, crossingId: string) {
   const driver = leg?.driverId ? (await db.select().from(s.drivers).where(eq(s.drivers.id, leg.driverId)).limit(1))[0] : null;
   const customer = order?.customerId ? (await db.select().from(s.customers).where(eq(s.customers.id, order.customerId)).limit(1))[0] : null;
   const broker = customer?.mxBrokerId ? (await db.select().from(s.customsBrokers).where(eq(s.customsBrokers.id, customer.mxBrokerId)).limit(1))[0] : null;
-  const docs = await db.select().from(s.documents).where(and(eq(s.documents.subjectKind, "crossing"), eq(s.documents.subjectId, crossingId), inArray(s.documents.status, ["present", "verified"])));
+  const docs = (await crossingDocs(ctx.tenantId, c)).sort((p, q) => p.createdAt.getTime() - q.createdAt.getTime());
   const byCode: Record<string, Record<string, unknown>> = {};
-  for (const d of docs) if (d.code) byCode[d.code] = Object.fromEntries(Object.entries(d.extracted ?? {}).map(([k, v]) => [k, v.value]));
+  for (const d of docs) if (d.code) byCode[d.key.toLowerCase()] = Object.fromEntries(Object.entries(d.extracted ?? {}).map(([k, v]) => [k, v.value]));
   const partner = await partnerOnLeg(leg);
   const results = runChecksPure({
     now: new Date(),
@@ -750,6 +770,10 @@ export async function overrideCheck(ctx: Ctx, crossingId: string, code: string, 
   const [chk] = await db.select().from(s.crossingChecks).where(and(eq(s.crossingChecks.tenantId, ctx.tenantId), eq(s.crossingChecks.crossingId, crossingId), eq(s.crossingChecks.code, code))).limit(1);
   if (!chk) throw new NotFoundError("check", code);
   if (chk.state !== "fail") throw new ValidationError("only a failed check can be overridden");
+  const { overrideGate } = await import("./approvals");
+  const x = await load(ctx, crossingId);
+  const [o] = await db.select({ n: s.orders.orderNumber }).from(s.orders).where(eq(s.orders.id, x.orderId)).limit(1);
+  await overrideGate(ctx, { kind: "crossing", title: `${o?.n ?? "Load"} crossing, ${code} check: ${chk.message ?? "failed"}`, reason, orderId: x.orderId, legId: x.legId, crossingId, replay: { fn: "overrideCheck", crossingId, code } });
   await db.update(s.crossingChecks).set({ state: "overridden", overrideReason: reason.trim(), overrideBy: ctx.userId, overrideAt: new Date() }).where(eq(s.crossingChecks.id, chk.id));
   await event(db, ctx, crossingId, { kind: "check", note: `override ${code}: ${reason.trim()}` });
   await writeAudit(db, ctx, "crossing", crossingId, "override", { check: { from: "fail", to: "overridden" } }, `${code}: ${reason.trim()}`);
@@ -874,6 +898,9 @@ export async function overrideEligibility(ctx: Ctx, crossingId: string, reason: 
   if (!reason?.trim()) throw new ValidationError("a reason is required", "reason");
   const c = await load(ctx, crossingId);
   if (c.eligibility?.hardBlocked) throw new ValidationError("a hard block cannot be overridden: fix the truck or driver");
+  const { overrideGate } = await import("./approvals");
+  const [o] = await db.select({ n: s.orders.orderNumber }).from(s.orders).where(eq(s.orders.id, c.orderId)).limit(1);
+  await overrideGate(ctx, { kind: "crossing", title: `${o?.n ?? "Load"} crossing eligibility: ${(c.eligibility?.findings ?? []).filter((f) => f.level === "red").map((f) => f.message).join("; ") || "red"}`, reason, orderId: c.orderId, legId: c.legId, crossingId, replay: { fn: "overrideEligibility", crossingId } });
   await db.update(s.crossings).set({ eligibilityOverride: { reason: reason.trim(), by: ctx.userId, at: new Date().toISOString() }, updatedAt: new Date(), updatedBy: ctx.userId }).where(eq(s.crossings.id, crossingId));
   await writeAudit(db, ctx, "crossing", crossingId, "override", { eligibility: { from: "red", to: "overridden" } }, reason.trim());
   await recompute(ctx, crossingId);
@@ -1071,7 +1098,7 @@ export async function generateCartaRetiro(ctx: Ctx, crossingId: string, input: {
     // a partner transfer carrier picks up the caja: the letter names the carrier, its driver, unit and plates
     if (!partner.tender?.driverName) throw new ValidationError(`${partner.carrier.name} has not named the driver yet`);
     const plates = partner.tender.unitPlate ?? "";
-    data = { companyName: tenant.name, legalName: tenant.name, date: new Date(), yardName: input.yardName || fromStop?.name || "patio", trailerNumber: caja, transfer: partner.carrier.name, drivers: [partner.tender.driverName], unitNumber: partner.tender.unitNumber ?? "", usPlate: plates, mxPlate: "", orderNumber: order.orderNumber, authorizedBy: input.authorizedBy || "", place: yardPlace, zone: yardZone };
+    data = { companyName: tenant.name, legalName: tenant.name, date: new Date(), yardName: input.yardName || fromStop?.name || "patio", trailerNumber: caja, transfer: partner.carrier.name, drivers: [partner.tender.driverName], unitNumber: partner.tender.unitNumber ?? "", usPlate: plates, mxPlate: "", orderNumber: order.orderNumber, authorizedBy: input.authorizedBy || "", place: yardPlace, zone: yardZone, partnerTransfer: true };
   } else {
     if (!truck) throw new ValidationError("assign the crossing truck first");
     if (!drivers.length) throw new ValidationError("assign the crossing driver first");
@@ -1207,17 +1234,22 @@ export async function crossingPage(ctx: Ctx, crossingId: string) {
   const c = await recompute(ctx, crossingId);
   const [leg] = await db.select().from(s.legs).where(eq(s.legs.id, c.legId)).limit(1);
   const [order] = await db.select().from(s.orders).where(eq(s.orders.id, c.orderId)).limit(1);
-  const [checks, events, docs, port] = await Promise.all([
+  const [checks, events, own, fromLoad, port] = await Promise.all([
     db.select().from(s.crossingChecks).where(eq(s.crossingChecks.crossingId, crossingId)),
     db.select().from(s.crossingEvents).where(eq(s.crossingEvents.crossingId, crossingId)).orderBy(desc(s.crossingEvents.at)).limit(200),
     db.select().from(s.documents).where(and(eq(s.documents.subjectKind, "crossing"), eq(s.documents.subjectId, crossingId))).orderBy(desc(s.documents.createdAt)),
+    // the load's own paper that this checklist asks for (a BOL uploaded on the load, a POD from the driver)
+    crossingDocs(ctx.tenantId, c).then((ds) => ds.filter((d) => d.crossingId !== c.id && c.requirements.some((r) => r.code.toUpperCase() === d.key)).map((d) => ({ ...d, code: d.key.toLowerCase(), fromLoad: true as const }))),
     c.portId ? db.select().from(s.ports).where(eq(s.ports.id, c.portId)).limit(1).then((r) => r[0] ?? null) : Promise.resolve(null),
   ]);
+  const docs = [...own.map((d) => ({ ...d, fromLoad: false })), ...fromLoad.map((d) => ({ id: d.id, tenantId: d.tenantId, documentTypeId: d.documentTypeId, code: d.code, subjectKind: d.subjectKind, subjectId: d.subjectId, fileName: d.fileName, mimeType: d.mimeType, sizeBytes: d.sizeBytes, storageKey: d.storageKey, sha256: d.sha256, issuedAt: d.issuedAt, expiresAt: d.expiresAt, number: d.number, source: d.source, status: d.status, version: d.version, extracted: d.extracted, extractionAt: d.extractionAt, extractionNote: d.extractionNote, notes: d.notes, createdAt: d.createdAt, createdBy: d.createdBy, updatedAt: d.updatedAt, updatedBy: d.updatedBy, archivedAt: d.archivedAt, fromLoad: true }))];
   const truck = leg?.truckId ? (await db.select().from(s.trucks).where(eq(s.trucks.id, leg.truckId)).limit(1))[0] : null;
   const driver = leg?.driverId ? (await db.select().from(s.drivers).where(eq(s.drivers.id, leg.driverId)).limit(1))[0] : null;
   const coDriver = leg?.coDriverId ? (await db.select().from(s.drivers).where(eq(s.drivers.id, leg.coDriverId)).limit(1))[0] : null;
   const customer = order?.customerId ? (await db.select().from(s.customers).where(eq(s.customers.id, order.customerId)).limit(1))[0] : null;
   const broker = customer?.mxBrokerId ? (await db.select().from(s.customsBrokers).where(eq(s.customsBrokers.id, customer.mxBrokerId)).limit(1))[0] : null;
+  // owner N10: a load into Canada waits on the customer's Canadian broker for the PARS
+  const caBroker = customer?.caBrokerId ? ((await db.select({ name: s.customsBrokers.name }).from(s.customsBrokers).where(eq(s.customsBrokers.id, customer.caBrokerId)).limit(1))[0] ?? null) : null;
   const waitingOn = c.requirements.find((r) => r.status === "missing") ?? null;
   // the border yard's clock (Nuevo Laredo keeps US daylight time; a Canadian crossing starts in Detroit)
   const yard = leg?.fromStopId ? (await db.select().from(s.stops).where(eq(s.stops.id, leg.fromStopId)).limit(1))[0] : null;
@@ -1226,7 +1258,7 @@ export async function crossingPage(ctx: Ctx, crossingId: string) {
   const companyZone = await tenantZone(ctx.tenantId);
   const yardZone = yard ? stopZone(yard, companyZone) : companyZone;
   const partner = await partnerOnLeg(leg);
-  return { crossing: c, leg, order, checks, events, docs, port, truck, driver, coDriver, customer, broker, waitingOn, yardZone, partner: partner ? { carrier: partner.carrier.name, driverName: partner.tender?.driverName ?? null, driverPhone: partner.tender?.driverPhone ?? null, unitNumber: partner.tender?.unitNumber ?? null, unitPlate: partner.tender?.unitPlate ?? null } : null };
+  return { crossing: c, leg, order, checks, events, docs, port, truck, driver, coDriver, customer, broker, caBroker, waitingOn, yardZone, partner: partner ? { carrier: partner.carrier.name, driverName: partner.tender?.driverName ?? null, driverPhone: partner.tender?.driverPhone ?? null, unitNumber: partner.tender?.unitNumber ?? null, unitPlate: partner.tender?.unitPlate ?? null } : null };
 }
 
 /** Job: dwell watch (spec 3.5). Yellow at the threshold, red at 2×; once each. */

@@ -2,9 +2,9 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Mark } from "./mark";
-import { Sun, ArrowLeftRight, Banknote, BarChart3, ClipboardCheck, FolderCheck, Menu, X, Building2, Cable, CalendarRange, FileText, Handshake, Landmark, LayoutGrid, Map as MapIcon, MapPin, MessageSquare, Package, Plug, Receipt, Route, Settings, ShieldCheck, TriangleAlert, Truck, Users, Wallet, type LucideIcon } from "lucide-react";
+import { ChevronDown, Sun, ArrowLeftRight, Banknote, BarChart3, ClipboardCheck, FolderCheck, Menu, X, Building2, Cable, CalendarRange, FileText, Handshake, Landmark, LayoutGrid, Map as MapIcon, MapPin, MessageSquare, Package, Plug, Receipt, Route, Settings, ShieldCheck, TriangleAlert, Truck, Users, Wallet, type LucideIcon } from "lucide-react";
 import { logoutAction } from "@/app/(auth)/actions";
 import { GlobalSearch } from "./global-search";
 
@@ -79,6 +79,25 @@ export function Shell({ user, children }: { user: { name: string; role: string; 
   }, [open]);
   // the most specific link that matches the path is the current one
   const current = ALL.filter((n) => path === n.href || path.startsWith(n.href + "/")).sort((p, q) => q.href.length - p.href.length)[0];
+  // short screens (owner #32): the rail scrolls, says what is below ("More: Safety, Company") and keeps the current page in view
+  const navRef = useRef<HTMLElement>(null);
+  const [below, setBelow] = useState<string[]>([]);
+  const measure = useCallback(() => {
+    const nav = navRef.current;
+    if (!nav) return;
+    const bottom = nav.getBoundingClientRect().bottom;
+    const hidden = [...nav.querySelectorAll<HTMLElement>("[data-rail-section]")].filter((el) => el.getBoundingClientRect().bottom > bottom - 4).map((el) => el.dataset.railSection!);
+    setBelow(nav.scrollHeight - nav.scrollTop - nav.clientHeight > 8 ? hidden : []);
+  }, []);
+  useEffect(() => {
+    measure();
+    window.addEventListener("resize", measure);
+    return () => window.removeEventListener("resize", measure);
+  }, [measure]);
+  useEffect(() => {
+    navRef.current?.querySelector<HTMLElement>('[aria-current="page"]')?.scrollIntoView({ block: "nearest" });
+    measure();
+  }, [path, measure]);
   const initials = user.name.split(/\s+/).map((w) => w[0]).slice(0, 2).join("").toUpperCase();
   return (
     <div className="min-h-screen lg:grid lg:grid-cols-[var(--sidebar-w)_minmax(0,1fr)]">
@@ -106,12 +125,13 @@ export function Shell({ user, children }: { user: { name: string; role: string; 
         <div className="px-4 pb-2 shrink-0">
           <GlobalSearch />
         </div>
-        <nav className="px-3 pb-4 flex-1 overflow-y-auto">
+        <div className="relative flex-1 min-h-0 flex flex-col">
+        <nav ref={navRef} onScroll={measure} className="rail-nav px-3 pb-4 flex-1 overflow-y-auto">
           {NAV.map((g) => {
             const items = g.items.filter((n) => !n.roles || n.roles.includes(user.role));
             if (!items.length) return null;
             return (
-              <div key={g.section}>
+              <div key={g.section} data-rail-section={g.section}>
                 <div className="rail-section">{g.section}</div>
                 <div className="space-y-0.5">
                   {items.map((n) => {
@@ -129,6 +149,13 @@ export function Shell({ user, children }: { user: { name: string; role: string; 
             );
           })}
         </nav>
+        {below.length > 0 && (
+          <button type="button" className="rail-more" onClick={() => navRef.current?.scrollTo({ top: navRef.current.scrollHeight, behavior: "smooth" })} data-testid="rail-more">
+            <ChevronDown size={16} aria-hidden />
+            More: {below.join(", ")}
+          </button>
+        )}
+        </div>
         <div className="px-4 py-4 border-t border-line shrink-0 flex items-center gap-3">
           <div className="w-9 h-9 rounded-full bg-fill grid place-items-center text-footnote font-semibold text-ink-2 shrink-0" aria-hidden>
             {initials}

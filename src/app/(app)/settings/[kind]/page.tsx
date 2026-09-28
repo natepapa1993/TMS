@@ -9,6 +9,8 @@ import { loadRefs } from "@/data/refs";
 import { PageHeader } from "@/components/page-header";
 import { QuickAdd } from "./quick-add";
 import { Pill } from "@/components/ui";
+import { InviteUser, PendingInvites } from "./invite";
+import { pendingInvites } from "@/domain/invites";
 
 export default async function KindListPage({ params, searchParams }: PageProps<"/settings/[kind]">) {
   const { kind: path } = await params;
@@ -24,6 +26,8 @@ export default async function KindListPage({ params, searchParams }: PageProps<"
   const { options, names } = await loadRefs(ctx, kind);
   const cols = FIELDS[kind].filter((f) => f.column);
   const q = typeof sp.q === "string" ? fold(sp.q.trim()) : "";
+  // users (owner #22): the owner invites by email; the person sets their own password
+  const invites = kind === "user" && ctx.role === "owner" ? await pendingInvites(ctx) : null;
   const filtered = q ? rows.filter((r) => cols.some((c) => fold(fieldDisplay(c, r[c.name], names)).includes(q))) : rows;
 
   return (
@@ -41,6 +45,7 @@ export default async function KindListPage({ params, searchParams }: PageProps<"
             <Link href={`/settings/${path}/import`} className="btn">
               Import CSV
             </Link>
+            {invites && <InviteUser openInitially={sp.invite === "1"} />}
             <QuickAdd kind={kind} fields={fieldsFor(kind, can(ctx, "compliance.edit"))} refs={options} label={`Add ${meta.singular.toLowerCase()}`} openInitially={sp.add === "1"} openAfter={["driver", "truck", "trailer", "carrier", "documentType"].includes(kind) ? `/settings/${meta.path}` : undefined} />
           </>
           )
@@ -63,6 +68,7 @@ export default async function KindListPage({ params, searchParams }: PageProps<"
             </a>
           )}
         </div>
+        {invites && <PendingInvites rows={JSON.parse(JSON.stringify(invites))} />}
         <div className="card overflow-hidden">
           {filtered.length === 0 ? (
             <div className="py-14 text-center">

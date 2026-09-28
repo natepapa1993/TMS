@@ -491,28 +491,33 @@ export function OrderForm({ customers, entities, locations, templates = [], zone
               </button>
             }
           >
-            <div className="hidden md:grid grid-cols-[minmax(0,2fr)_100px_150px_130px_90px_40px] gap-4 mb-2">
-              {["Commodity", "Pieces", "Packaging", "Weight (lb)", "Hazmat", ""].map((h) => (
-                <span key={h} className="label m-0">
-                  {h}
-                </span>
-              ))}
-            </div>
-            <div className="space-y-3">
-              {freight.map((l, i) => (
-                <div key={i} className="grid grid-cols-2 md:grid-cols-[minmax(0,2fr)_100px_150px_130px_90px_40px] gap-4 items-center">
-                  <input className="input col-span-2 md:col-span-1" placeholder="Commodity" value={l.commodity} onChange={(e) => setFreight((x) => x.map((y, j) => (j === i ? { ...y, commodity: e.target.value } : y)))} aria-label={`Freight ${i + 1} commodity`} />
-                  <input className="input" placeholder="Pieces" inputMode="numeric" value={l.pieces} onChange={(e) => setFreight((x) => x.map((y, j) => (j === i ? { ...y, pieces: e.target.value } : y)))} aria-label={`Freight ${i + 1} pieces`} />
-                  <input className="input" placeholder="Pallets, boxes…" value={l.packaging} onChange={(e) => setFreight((x) => x.map((y, j) => (j === i ? { ...y, packaging: e.target.value } : y)))} aria-label={`Freight ${i + 1} packaging`} />
-                  <input className="input" placeholder="lb" inputMode="numeric" value={l.weightLb} onChange={(e) => setFreight((x) => x.map((y, j) => (j === i ? { ...y, weightLb: e.target.value } : y)))} aria-label={`Freight ${i + 1} weight`} />
-                  <label className="flex items-center gap-2 text-callout cursor-pointer">
-                    <input type="checkbox" className="accent-teal w-4 h-4" checked={l.hazmat} onChange={(e) => setFreight((x) => x.map((y, j) => (j === i ? { ...y, hazmat: e.target.checked } : y)))} /> <span className="md:sr-only">Hazmat</span>
-                  </label>
-                  <button type="button" className="btn btn-ghost btn-sm text-red justify-self-end" disabled={freight.length === 1} onClick={() => setFreight((x) => x.filter((_, j) => j !== i))} aria-label={`Remove freight ${i + 1}`}>
-                    ✕
-                  </button>
-                </div>
-              ))}
+            {/* owner #31: the commodity gets the room it needs; the grid follows the section's width, not the window's */}
+            <div className="@container">
+              <div className="hidden @3xl:grid grid-cols-[minmax(12rem,1fr)_90px_150px_120px_120px] gap-4 mb-2">
+                {["Commodity", "Pieces", "Packaging", "Weight (lb)", "Hazmat"].map((h) => (
+                  <span key={h} className="label m-0 truncate">
+                    {h}
+                  </span>
+                ))}
+              </div>
+              <div className="space-y-3">
+                {freight.map((l, i) => (
+                  <div key={i} className="grid grid-cols-2 @lg:grid-cols-4 @3xl:grid-cols-[minmax(12rem,1fr)_90px_150px_120px_120px] gap-x-4 gap-y-3 items-center" data-testid="freight-line">
+                    <input className="input col-span-2 @lg:col-span-4 @3xl:col-span-1" placeholder="Commodity" value={l.commodity} onChange={(e) => setFreight((x) => x.map((y, j) => (j === i ? { ...y, commodity: e.target.value } : y)))} aria-label={`Freight ${i + 1} commodity`} />
+                    <input className="input" placeholder="Pieces" inputMode="numeric" value={l.pieces} onChange={(e) => setFreight((x) => x.map((y, j) => (j === i ? { ...y, pieces: e.target.value } : y)))} aria-label={`Freight ${i + 1} pieces`} />
+                    <input className="input" placeholder="Pallets, boxes…" value={l.packaging} onChange={(e) => setFreight((x) => x.map((y, j) => (j === i ? { ...y, packaging: e.target.value } : y)))} aria-label={`Freight ${i + 1} packaging`} />
+                    <input className="input" placeholder="lb" inputMode="numeric" value={l.weightLb} onChange={(e) => setFreight((x) => x.map((y, j) => (j === i ? { ...y, weightLb: e.target.value } : y)))} aria-label={`Freight ${i + 1} weight`} />
+                    <div className="flex items-center justify-between gap-2">
+                      <label className="flex items-center gap-2 text-callout cursor-pointer">
+                        <input type="checkbox" className="accent-teal w-4 h-4" checked={l.hazmat} onChange={(e) => setFreight((x) => x.map((y, j) => (j === i ? { ...y, hazmat: e.target.checked } : y)))} /> <span className="@3xl:sr-only">Hazmat</span>
+                      </label>
+                      <button type="button" className="btn btn-ghost btn-sm text-red" disabled={freight.length === 1} onClick={() => setFreight((x) => x.filter((_, j) => j !== i))} aria-label={`Remove freight ${i + 1}`}>
+                        ✕
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
             </div>
             <div className="mt-6">
               <label className="label" htmlFor="l-cargo">

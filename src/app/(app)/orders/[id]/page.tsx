@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { and, eq, inArray } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { requireCtx } from "@/lib/auth";
 import { getOrder, orderTimeline } from "@/domain/orders";
 import { listNotes } from "@/domain/notes";
@@ -17,7 +17,9 @@ import type { Loc } from "@/components/stop-fields";
 import { chargesFor, orderPnl, requiredRefsFor } from "@/domain/billing";
 import { pickRate, toHome } from "@/domain/fx-rules";
 import { db } from "@/db/client";
-import { documents, users } from "@/db/schema";
+import { crossings, users } from "@/db/schema";
+import { loadDocuments } from "@/domain/load-docs";
+import { whereItCounts } from "@/domain/load-docs-rules";
 
 export const dynamic = "force-dynamic";
 
@@ -39,7 +41,7 @@ export default async function OrderPage({ params }: PageProps<"/orders/[id]">) {
   const zoneOf = (st: (typeof stops)[number] | undefined | null) => (st ? stopZone(st, companyZone) : companyZone);
   const when = (d: Date | string | null | undefined, zone = companyZone) => fmtWhen(d, zone, { style: "short" }) ?? "—";
   const atStop = (d: Date | string | null | undefined, st: (typeof stops)[number] | undefined | null) => fmtWhen(d, zoneOf(st)) ?? "—";
-  const [tl, customers, entities, trucks, drivers, carriers, people, locations, notes, docRows] = await Promise.all([
+  const [tl, customers, entities, trucks, drivers, carriers, people, locations, notes, docRowsRaw] = await Promise.all([
     orderTimeline(ctx, id),
     list(ctx, "customer", { limit: 2000 }),
     list(ctx, "billingEntity", { limit: 100 }),
@@ -49,12 +51,10 @@ export default async function OrderPage({ params }: PageProps<"/orders/[id]">) {
     db.select({ id: users.id, name: users.name, archivedAt: users.archivedAt }).from(users).where(eq(users.tenantId, ctx.tenantId)),
     list(ctx, "location", { limit: 2000 }),
     listNotes(ctx, id),
-    db
-      .select({ id: documents.id, code: documents.code, fileName: documents.fileName, status: documents.status, source: documents.source, createdAt: documents.createdAt, author: users.name })
-      .from(documents)
-      .leftJoin(users, eq(users.id, documents.createdBy))
-      .where(and(eq(documents.tenantId, ctx.tenantId), eq(documents.subjectKind, "order"), eq(documents.subjectId, id), inArray(documents.status, ["present", "verified", "pending"]))),
+    // every document of the load, wherever it came in: the load, a leg (a carrier's invoice), a crossing (owner #8)
+    loadDocuments(ctx.tenantId, [id], { statuses: ["present", "verified", "pending"] }),
   ]);
+  const xReqs = await db.select({ requirements: crossings.requirements }).from(crossings).where(and(eq(crossings.tenantId, ctx.tenantId), eq(crossings.orderId, id)));
   const name = (rows: { id: string; [k: string]: unknown }[], key: string) => new Map(rows.map((r) => [r.id, String(r[key])]));
   const cName = name(customers, "name");
   const tName = name(trucks, "unitNumber");
@@ -65,6 +65,9 @@ export default async function OrderPage({ params }: PageProps<"/orders/[id]">) {
   const [chargeRows, pnl] = billingView ? await Promise.all([chargesFor(ctx, id), ["delivered", "ready_to_bill", "invoiced", "paid"].includes(order.state) ? orderPnl(ctx, id).catch(() => null) : Promise.resolve(null)]) : [[], null];
   const cust = customers.find((c) => c.id === (order.customerId ?? order.brokerId));
   const requiredDocs = ((cust?.requiredDocs as string[] | undefined) ?? ["POD", "BOL", "RATE_CON"]).filter((c) => !(order.tonu && ["POD", "BOL", "SEAL"].includes(c)));
+  const countsIn = { billing: requiredDocs, packet: (cust?.invoiceDocs as string[] | null | undefined) ?? undefined, crossing: xReqs.flatMap((x) => x.requirements.filter((r) => r.status !== "na").map((r) => r.code)), carrierLeg: legs.some((l) => l.assigneeKind === "carrier") };
+  const legSeq = new Map(legs.map((l) => [l.id, l.seq]));
+  const docRows = docRowsRaw.map((d) => ({ id: d.id, code: d.key || d.code, fileName: d.fileName, status: d.status, source: d.source, createdAt: d.createdAt, author: d.createdBy ? (who.get(d.createdBy) ?? null) : null, on: d.on === "crossing" ? "Crossing" : d.on === "leg" ? `Leg ${legSeq.get(d.legId ?? "") ?? ""}`.trim() : "Load", crossingId: d.crossingId, counts: whereItCounts(d.code, countsIn) }));
   const stopById = new Map(stops.map((s) => [s.id, s]));
   const closed = ["paid", "cancelled"].includes(order.state);
   const readOnly = closed || !!order.lockedAt;

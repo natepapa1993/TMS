@@ -1,1 +1,0 @@
-ALTER TABLE "carrier_bills" ADD COLUMN "exchange_rate_e4" integer;

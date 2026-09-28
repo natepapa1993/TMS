@@ -410,7 +410,8 @@ export async function portalSubmitInvoice(tenantId: string, carrierId: string, l
   if (["approved", "scheduled", "paid"].includes(bill.state)) throw new ValidationError(`this load is already ${bill.state}`);
   let docId: string | null = null;
   if (input.bytes?.length) {
-    const doc = await uploadOrderDocument(ctx, l.orderId, { code: "CARRIER_INVOICE", fileName: input.fileName ?? "invoice.pdf", mimeType: input.mimeType ?? "application/pdf", bytes: input.bytes, source: "carrier_portal" });
+    // filed on the carrier's own leg: one invoice per carrier, and it is the bill's document for the three-way match
+    const doc = await uploadOrderDocument(ctx, l.orderId, { code: "CARRIER_INVOICE", fileName: input.fileName ?? "invoice.pdf", mimeType: input.mimeType ?? "application/pdf", bytes: input.bytes, source: "carrier_portal", legId });
     docId = doc.id;
   }
   return receiveCarrierBill(ctx, bill.id, { invoicedCents: Math.round(input.amountCents), carrierInvoiceNumber: input.invoiceNumber.trim(), docId });
