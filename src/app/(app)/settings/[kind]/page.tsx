@@ -1,3 +1,4 @@
+import { fold } from "@/lib/fold";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { requireCtx } from "@/lib/auth";
@@ -20,8 +21,8 @@ export default async function KindListPage({ params, searchParams }: PageProps<"
   const rows = await list(ctx, kind, { archived: showArchived ? "archived" : "active", limit: 2000 });
   const { options, names } = await loadRefs(ctx, kind);
   const cols = FIELDS[kind].filter((f) => f.column);
-  const q = typeof sp.q === "string" ? sp.q.toLowerCase() : "";
-  const filtered = q ? rows.filter((r) => cols.some((c) => fieldDisplay(c, r[c.name], names).toLowerCase().includes(q))) : rows;
+  const q = typeof sp.q === "string" ? fold(sp.q.trim()) : "";
+  const filtered = q ? rows.filter((r) => cols.some((c) => fold(fieldDisplay(c, r[c.name], names)).includes(q))) : rows;
 
   return (
     <div>

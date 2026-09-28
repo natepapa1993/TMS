@@ -6,7 +6,7 @@ import { Search } from "lucide-react";
 import { searchAllAction } from "@/app/(app)/search-actions";
 import type { SearchHit } from "@/domain/search";
 
-const KIND: Record<SearchHit["kind"], string> = { load: "Load", truck: "Unit", trailer: "Trailer", driver: "Driver", customer: "Customer", carrier: "Carrier" };
+const KIND: Record<SearchHit["kind"], string> = { load: "Load", truck: "Unit", trailer: "Trailer", driver: "Driver", customer: "Customer", carrier: "Carrier", invoice: "Invoice", credit: "Credit", bill: "Carrier bill", payment: "Payment", crossing: "Crossing" };
 
 /** ⌘K / Ctrl+K anywhere: find a load by any number on it (PO, BOL, customer ref), a unit, a driver, a partner. */
 export function GlobalSearch() {
@@ -70,7 +70,7 @@ export function GlobalSearch() {
                 ref={input}
                 id="global-search"
                 className="flex-1 h-12 outline-none text-headline bg-transparent"
-                placeholder="Load #, PO, BOL, customer ref, unit, trailer, driver, customer, carrier…"
+                placeholder="Load #, PO, caja, seal, pedimento, invoice #, unit, driver, customer…"
                 value={q}
                 onChange={(e) => setQ(e.target.value)}
                 onKeyDown={(e) => {

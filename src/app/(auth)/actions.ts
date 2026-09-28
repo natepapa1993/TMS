@@ -8,6 +8,7 @@ import { tenants, users } from "@/db/schema";
 import { eq } from "drizzle-orm";
 import { headers } from "next/headers";
 import { throttled, failed, succeeded, safeNext } from "@/lib/throttle";
+import { homeFor } from "@/lib/home";
 
 async function clientKey() {
   const h = await headers();
@@ -19,7 +20,8 @@ export type AuthState = { error?: string; fields?: Record<string, string> };
 export async function loginAction(_prev: AuthState, form: FormData): Promise<AuthState> {
   const email = String(form.get("email") ?? "").trim();
   const password = String(form.get("password") ?? "");
-  const next = String(form.get("next") ?? "/dispatch");
+  // no page asked for: the role's own home (owner → Today, billing → Billing, Safety → Compliance)
+  const next = String(form.get("next") ?? "");
   if (!email || !password) return { error: "Enter your email and password.", fields: { email } };
   const keys = [`email:${email.toLowerCase()}`, `ip:${await clientKey()}`];
   const wait = keys.map((k) => throttled(k)).find((w) => w != null);
@@ -30,7 +32,7 @@ export async function loginAction(_prev: AuthState, form: FormData): Promise<Aut
     return { error: "That email and password don't match.", fields: { email } };
   }
   for (const k of keys) succeeded(k);
-  redirect(safeNext(next));
+  redirect(next ? safeNext(next) : homeFor(user.role));
 }
 
 export async function logoutAction() {
@@ -91,6 +93,6 @@ export async function resetAction(_prev: AuthState, form: FormData): Promise<Aut
   } catch (e) {
     return { error: (e as Error).message };
   }
-  await signIn(email, password);
-  redirect("/dispatch");
+  const u = await signIn(email, password);
+  redirect(homeFor(u?.role));
 }

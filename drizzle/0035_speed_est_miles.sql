@@ -1,0 +1,1 @@
+ALTER TABLE "legs" ADD COLUMN "est_miles" integer;

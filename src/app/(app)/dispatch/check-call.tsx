@@ -27,7 +27,7 @@ type Call = { id: string; at: string | Date; status: string; location: string | 
  * One-line check call: status, where (blank = the last GPS position), ETA at the stop's own clock,
  * reefer temperature, a note, and "send to the customer". The log of earlier calls sits under it.
  */
-export function CheckCallBox({ orderId, legId, zone, reefer, onDone }: { orderId: string; legId: string | null; zone: string; reefer: boolean; onDone?: (msg: string) => void }) {
+export function CheckCallBox({ orderId, legId, zone, reefer, onDone, etaStop = null }: { orderId: string; legId: string | null; zone: string; reefer: boolean; onDone?: (msg: string) => void; etaStop?: string | null }) {
   const [saved, setSaved] = useState<string | null>(null);
   const [f, setF] = useState({ status: "on_time", location: "", eta: "", tempF: "", note: "", send: false });
   const [calls, setCalls] = useState<Call[] | null>(null);
@@ -66,7 +66,7 @@ export function CheckCallBox({ orderId, legId, zone, reefer, onDone }: { orderId
         </select>
         <input id="cc-location" aria-label="Where" className="input h-9 text-callout" placeholder="Where (blank = last GPS)" value={f.location} onChange={(e) => setF({ ...f, location: e.target.value })} />
         <label className="col-span-2 flex items-center gap-2 text-footnote text-muted">
-          ETA ({abbr})
+          <span title="The dispatcher's ETA drives Late and At risk until a newer GPS position comes in">ETA{etaStop ? ` at ${etaStop}` : ""} ({abbr})</span>
           <input id="cc-eta" type="datetime-local" className="input h-9 text-callout flex-1" value={f.eta} onChange={(e) => setF({ ...f, eta: e.target.value })} />
           {reefer && <input id="cc-temp" aria-label="Reefer °F" className="input h-9 text-callout w-16" inputMode="numeric" placeholder="°F" value={f.tempF} onChange={(e) => setF({ ...f, tempF: e.target.value })} />}
         </label>

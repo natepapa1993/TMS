@@ -7,7 +7,10 @@ import { coords, roadMiles } from "@/lib/geo";
 import { assertCtx, requirePermission, type Ctx } from "@/lib/context";
 import { writeAudit } from "@/lib/audit";
 import type { Finding } from "./eligibility";
-import { NotFoundError, ValidationError } from "./orders";
+import { NotFoundError, ValidationError, candidatesForLeg, openBreakdowns, type Candidate } from "./orders";
+import { placeOf } from "./miles";
+import { reachability, REACH_PENALTY, type Reach } from "./planner-rules";
+import { stopZone } from "@/lib/time";
 
 /**
  * The dispatch planner: loads that need a truck on one side, drivers on the other with when and where
@@ -96,7 +99,9 @@ export type PlannerLeg = {
   rateCents: number | null;
   currency: string;
   miles: number | null;
-  from: { name: string; city: string | null; state: string | null; country: string; at: string | null; lat: number | null; lng: number | null };
+  /** the miles are estimated from the stops (nobody typed them) */
+  milesEst: boolean;
+  from: { name: string; city: string | null; state: string | null; country: string; at: string | null; until: string | null; zone: string; lat: number | null; lng: number | null };
   to: { name: string; city: string | null; state: string | null; country: string; at: string | null };
   assigned: string | null;
 };
@@ -144,7 +149,7 @@ export async function plannerData(ctx: Ctx, now = new Date()) {
     .innerJoin(s.orders, eq(s.orders.id, s.legs.orderId))
     .where(and(eq(s.legs.tenantId, ctx.tenantId), inArray(s.legs.state, [...new Set([...OPEN_LEG, ...ACTIVE])]), inArray(s.orders.state, ["booked", "dispatched", "in_transit", "exception"])));
   const orderIds = [...new Set(legs.map((l) => l.order.id))];
-  const [stops, allLegCounts, customers, drivers, trucks, users, events, lastPos, blocked, recentDone] = await Promise.all([
+  const [stops, allLegCounts, customers, drivers, trucks, users, events, lastPos, blocked, recentDone, broken, [tenant]] = await Promise.all([
     orderIds.length ? db.select().from(s.stops).where(and(eq(s.stops.tenantId, ctx.tenantId), inArray(s.stops.orderId, orderIds))) : Promise.resolve([]),
     orderIds.length ? db.select({ orderId: s.legs.orderId, id: s.legs.id, seq: s.legs.seq, type: s.legs.type, state: s.legs.state }).from(s.legs).where(and(eq(s.legs.tenantId, ctx.tenantId), inArray(s.legs.orderId, orderIds))) : Promise.resolve([]),
     db.select({ id: s.customers.id, name: s.customers.name }).from(s.customers).where(eq(s.customers.tenantId, ctx.tenantId)),
@@ -162,7 +167,10 @@ export async function plannerData(ctx: Ctx, now = new Date()) {
       .where(and(eq(s.legs.tenantId, ctx.tenantId), eq(s.legs.state, "completed"), gte(s.legs.completedAt, new Date(now.getTime() - 14 * 86400_000))))
       .orderBy(desc(s.legs.completedAt))
       .limit(500),
+    openBreakdowns(db, ctx.tenantId),
+    db.select({ zone: s.tenants.timeZone }).from(s.tenants).where(eq(s.tenants.id, ctx.tenantId)).limit(1),
   ]);
+  const companyZone = tenant?.zone ?? "America/Chicago";
   const stop = new Map(stops.map((x) => [x.id, x]));
   const cName = new Map(customers.map((c) => [c.id, c.name]));
   const uName = new Map(users.map((u) => [u.id, u.name]));
@@ -175,7 +183,8 @@ export async function plannerData(ctx: Ctx, now = new Date()) {
     .map(({ leg, order }) => {
       const a = stop.get(leg.fromStopId ?? "");
       const b = stop.get(leg.toStopId ?? "");
-      const c = a ? coords(a.lat, a.lng) : null;
+      // no coordinates yet: the city on the stop from the built-in list, so empty miles still show
+      const c = a ? placeOf(a) : null;
       return {
         legId: leg.id,
         orderId: order.id,
@@ -189,8 +198,9 @@ export async function plannerData(ctx: Ctx, now = new Date()) {
         priority: order.priority,
         rateCents: order.rateTbd ? null : order.rateCents,
         currency: order.currency,
-        miles: leg.plannedMiles,
-        from: { name: a?.name ?? "", city: a?.address?.city ?? null, state: a?.address?.state ?? null, country: a?.country ?? "US", at: iso(a?.windowStart), lat: c?.lat ?? null, lng: c?.lng ?? null },
+        miles: leg.plannedMiles ?? leg.estMiles,
+        milesEst: leg.plannedMiles == null && leg.estMiles != null,
+        from: { name: a?.name ?? "", city: a?.address?.city ?? null, state: a?.address?.state ?? null, country: a?.country ?? "US", at: iso(a?.windowStart), until: iso(a?.windowEnd), zone: a ? stopZone(a, companyZone) : companyZone, lat: c?.lat ?? null, lng: c?.lng ?? null },
         to: { name: b?.name ?? "", city: b?.address?.city ?? null, state: b?.address?.state ?? null, country: b?.country ?? "US", at: iso(b?.windowEnd ?? b?.windowStart) },
         assigned: leg.state === "planned" ? [trucks.find((t) => t.id === leg.truckId)?.unitNumber, drivers.find((d) => d.id === leg.driverId)?.name].filter(Boolean).join(" · ") || "carrier" : null,
       };
@@ -213,10 +223,10 @@ export async function plannerData(ctx: Ctx, now = new Date()) {
     const lastStop = last ? stop.get(last.leg.toStopId ?? "") : done?.stop;
     const pos = lastPos.find((p) => p.driverId === d.id || (truck && p.truckId === truck.id));
     const posC = pos ? coords(pos.lat, pos.lng) : null;
-    const lastC = lastStop ? coords(lastStop.lat, lastStop.lng) : null;
+    const lastC = lastStop ? placeOf(lastStop) : null;
     const evs = events.filter((e) => (e.subjectKind === "driver" && e.subjectId === d.id) || (truck && e.subjectKind === "truck" && e.subjectId === truck.id));
     const offNow = evs.find((e) => e.hard && e.startsAt <= now && e.endsAt >= now);
-    const status: PlannerDriver["status"] = offNow || truck?.status === "oos" ? "off" : cur ? "on_load" : planned.length ? "planned" : "available";
+    const status: PlannerDriver["status"] = offNow || truck?.status === "oos" || (truck && broken.has(truck.id)) ? "off" : cur ? "on_load" : planned.length ? "planned" : "available";
     const lastEnd = last ? end(last) : null;
     const freeAt = offNow ? offNow.endsAt : lastEnd && lastEnd > now ? lastEnd : last ? now : now;
     return {
@@ -276,7 +286,9 @@ export async function plannerData(ctx: Ctx, now = new Date()) {
       const dBlocks = crewD.map((d) => blockOf("driver", d.driverId));
       let status: PlannerTruck["status"] = "available";
       let why: string | null = null;
+      const bd = broken.get(t.id);
       if (t.status === "oos") { status = "unavailable"; why = `Out of service${t.oosReason ? ` — ${t.oosReason}` : ""}${t.oosUntil ? ` · until ${fmtUntil(t.oosUntil)}` : ""}`; }
+      else if (bd) { status = "unavailable"; why = `Unavailable — breakdown on ${bd.orderNumber}${bd.title.includes(" near ") ? ` near ${bd.title.split(" near ").slice(1).join(" near ")}` : ""} · clear the flag once it runs`; }
       else if (!crewD.length) { status = "unavailable"; why = "No driver in this truck"; }
       else if (offNow) { status = "unavailable"; why = `${offNow.label} until ${fmtUntil(new Date(offNow.endsAt))}`; }
       const blockText = tBlock ? `Truck: ${blockWhy(tBlock)}` : crewD.length && dBlocks.every(Boolean) ? `${crewD[0].name.split(" ")[0]}: ${blockWhy(dBlocks[0]!)}` : null;
@@ -321,6 +333,46 @@ export async function plannerData(ctx: Ctx, now = new Date()) {
 /** Road miles from where the driver comes free to the leg's pickup, when both have coordinates. */
 export const deadhead = (d: { availableLat: number | null; availableLng: number | null }, l: { from: { lat: number | null; lng: number | null } }) =>
   d.availableLat != null && d.availableLng != null && l.from.lat != null && l.from.lng != null ? Math.round(roadMiles({ lat: d.availableLat, lng: d.availableLng }, { lat: l.from.lat, lng: l.from.lng })) : null;
+
+export type RankedCandidate = Candidate & { reach: { status: Reach["status"]; arriveAt: string | null; message: string | null } | null; pickupPassed: boolean };
+
+/**
+ * Trucks ranked for a leg, the way a dispatcher ranks them (M5): who may run it (eligibility, time off,
+ * double booking, breakdown), then who can actually get to the pickup in time — when it comes free,
+ * the empty miles from there at an average road speed plus time to hook and check in, and the driver's
+ * hours from the ELD. A truck that can't make the appointment says when it would get there and sinks
+ * below every truck that can. A pickup already in the past is said once, for the load.
+ */
+export async function rankForLeg(ctx: Ctx, legId: string, now = new Date()): Promise<RankedCandidate[]> {
+  const cands = await candidatesForLeg(ctx, legId, now);
+  const pd = await plannerData(ctx, now);
+  const [leg] = await db.select().from(s.legs).where(and(eq(s.legs.tenantId, ctx.tenantId), eq(s.legs.id, legId))).limit(1);
+  if (!leg) throw new NotFoundError("leg", legId);
+  const [from] = leg.fromStopId ? await db.select().from(s.stops).where(eq(s.stops.id, leg.fromStopId)).limit(1) : [];
+  const [tenant] = await db.select({ zone: s.tenants.timeZone }).from(s.tenants).where(eq(s.tenants.id, ctx.tenantId)).limit(1);
+  const zone = from ? stopZone(from, tenant?.zone ?? "America/Chicago") : (tenant?.zone ?? "America/Chicago");
+  const pickup = from ? placeOf(from) : null;
+  const out: RankedCandidate[] = cands.map((c) => {
+    const t = pd.trucks.find((x) => x.truckId === c.truckId);
+    const dh = t && pickup && t.availableLat != null && t.availableLng != null ? Math.round(roadMiles({ lat: t.availableLat, lng: t.availableLng }, pickup)) : null;
+    const freeAt = t?.availableAt ? new Date(t.availableAt) : null;
+    const hos = t?.hos ? { driveMin: t.hos.driveMin, shiftMin: t.hos.shiftMin, at: t.hos.at ? new Date(t.hos.at) : null } : null;
+    const r = reachability({ now, freeAt, deadheadMi: dh, pickupStart: from?.windowStart ?? null, pickupEnd: from?.windowEnd ?? null, zone, hos });
+    const late = r.status === "late";
+    const reason = !c.hardBlocked && c.ok && late && r.message ? r.message : c.reason;
+    return {
+      ...c,
+      reason,
+      score: c.score + REACH_PENALTY[r.status],
+      freeAt: t?.availableAt ?? null,
+      freeWhere: t?.availableIn ?? null,
+      deadheadMi: dh,
+      reach: { status: r.status, arriveAt: r.arriveAt?.toISOString() ?? null, message: r.message },
+      pickupPassed: r.status === "past",
+    };
+  });
+  return out.sort((p, q) => p.score - q.score || (p.deadheadMi ?? 99999) - (q.deadheadMi ?? 99999) || p.unitNumber.localeCompare(q.unitNumber, undefined, { numeric: true }));
+}
 
 /** Everyone's events in a window, for a calendar. */
 export async function listEvents(ctx: Ctx, from: Date, to: Date) {

@@ -1,5 +1,6 @@
 "use client";
 
+import { fold } from "@/lib/fold";
 import Link from "next/link";
 import { useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
@@ -9,7 +10,20 @@ import type { PlannerDriver, PlannerLeg, PlannerTruck } from "@/domain/planner";
 import { planAction, planAndDispatchAction } from "../actions";
 import { rankAction, addEventAction, deleteEventAction, dispatchManyAction } from "./actions";
 
-type Candidate = { truckId: string; unitNumber: string; driverId: string | null; driverName: string | null; ok: boolean; hardBlocked: boolean; reason: string; score: number };
+type Candidate = { truckId: string; unitNumber: string; driverId: string | null; driverName: string | null; ok: boolean; hardBlocked: boolean; reason: string; score: number; reach?: { status: "ok" | "late" | "past" | "unknown"; arriveAt: string | null; message: string | null } | null; pickupPassed?: boolean };
+/** How a ranked truck fits the picked load, in one line and one colour. */
+const fit = (c: Candidate): { text: string; tone: "red" | "amber" | "green" } =>
+  c.hardBlocked ? { text: `Blocked: ${c.reason}`, tone: "red" }
+  : !c.ok ? { text: `Override: ${c.reason.replace(/^needs override:\s*/i, "")}`, tone: "amber" }
+  : c.pickupPassed ? { text: "Pickup time passed — move the appointment first", tone: "amber" }
+  : c.reach?.status === "late" ? { text: c.reach.message ?? c.reason, tone: "amber" }
+  : c.reason.startsWith("free") ? { text: c.reach?.message ?? "Ready for this load", tone: "green" }
+  : { text: c.reason, tone: "green" };
+const FIT_CLASS = { red: "text-red", amber: "text-amber", green: "text-green" } as const;
+const passed = (l: PlannerLeg) => {
+  const by = l.from.until ?? l.from.at;
+  return !!by && new Date(by).getTime() < Date.now();
+};
 
 const LEG_LABEL: Record<string, string> = { mx: "MX", ca: "CA", crossing: "Crossing", us: "US", domestic: "Domestic", equipment_move: "Equipment" };
 const STATUS: Record<PlannerDriver["status"], [string, "green" | "blue" | "teal" | "slate"]> = { available: ["Available", "green"], planned: ["Planned", "blue"], on_load: ["On a load", "teal"], off: ["Off", "slate"] };
@@ -65,15 +79,15 @@ export function Planner({ data, canPlan }: { data: { legs: PlannerLeg[]; drivers
 
   const leg = data.legs.find((l) => l.legId === sel) ?? null;
   const legs = useMemo(() => {
-    const q = legQ.trim().toLowerCase();
-    return data.legs.filter((l) => (legF === "unassigned" ? l.state !== "planned" : legF === "planned" ? l.state === "planned" : legF === "today" ? isToday(l.from.at) : legF === "tomorrow" ? isToday(l.from.at, 1) : true) && (!q || [l.orderNumber, l.customer, l.from.name, l.from.city, l.to.name, l.to.city].some((x) => x?.toLowerCase().includes(q))));
+    const q = fold(legQ.trim());
+    return data.legs.filter((l) => (legF === "unassigned" ? l.state !== "planned" : legF === "planned" ? l.state === "planned" : legF === "today" ? isToday(l.from.at) : legF === "tomorrow" ? isToday(l.from.at, 1) : true) && (!q || [l.orderNumber, l.customer, l.from.name, l.from.city, l.to.name, l.to.city].some((x) => fold(x).includes(q))));
   }, [data.legs, legQ, legF]);
 
   const cands = sel ? ranked[sel] : undefined;
   const drivers = useMemo(() => {
-    const q = drvQ.trim().toLowerCase();
+    const q = fold(drvQ.trim());
     const rows = data.drivers
-      .filter((d) => (drvF === "all" ? true : d.status === drvF) && (!q || [d.name, d.unit, d.availableIn, d.dispatcher].some((x) => x?.toLowerCase().includes(q))))
+      .filter((d) => (drvF === "all" ? true : d.status === drvF) && (!q || [d.name, d.unit, d.availableIn, d.dispatcher].some((x) => fold(x).includes(q))))
       .map((d) => {
         const c = cands?.find((x) => x.truckId === d.truckId);
         const dh = leg && d.availableLat != null && d.availableLng != null && leg.from.lat != null && leg.from.lng != null ? Math.round(roadMiles({ lat: d.availableLat, lng: d.availableLng }, { lat: leg.from.lat, lng: leg.from.lng })) : null;
@@ -84,9 +98,9 @@ export function Planner({ data, canPlan }: { data: { legs: PlannerLeg[]; drivers
   }, [data.drivers, drvQ, drvF, cands, leg]);
 
   const trucks = useMemo(() => {
-    const q = drvQ.trim().toLowerCase();
+    const q = fold(drvQ.trim());
     const rows = data.trucks
-      .filter((t) => (trkF === "all" || t.status === trkF) && (!q || [t.unit, t.availableIn, t.dispatcher, ...t.crew.map((c) => c.name)].some((x) => x?.toLowerCase().includes(q))))
+      .filter((t) => (trkF === "all" || t.status === trkF) && (!q || [t.unit, t.availableIn, t.dispatcher, ...t.crew.map((c) => c.name)].some((x) => fold(x).includes(q))))
       .map((t) => {
         const c = cands?.find((x) => x.truckId === t.truckId);
         const dh = leg && t.availableLat != null && t.availableLng != null && leg.from.lat != null && leg.from.lng != null ? Math.round(roadMiles({ lat: t.availableLat, lng: t.availableLng }, { lat: leg.from.lat, lng: leg.from.lng })) : null;
@@ -209,8 +223,9 @@ export function Planner({ data, canPlan }: { data: { legs: PlannerLeg[]; drivers
                           </span>
                           {l.priority !== "none" && <Pill tone={l.priority === "high" ? "red" : l.priority === "medium" ? "amber" : "slate"}>{l.priority}</Pill>}
                           {l.state === "planned" ? <Pill tone="blue">{l.assigned}</Pill> : l.state === "declined" ? <Pill tone="red">declined</Pill> : null}
+                          {passed(l) && <Pill tone="red" title="The pickup appointment is already past: call the shipper and move it">pickup passed</Pill>}
                           <span className="ml-auto text-callout text-muted tabular-nums">
-                            {l.miles != null ? `${l.miles.toLocaleString("en-US")} mi · ` : ""}
+                            {l.miles != null ? `${l.miles.toLocaleString("en-US")} mi${l.milesEst ? " est." : ""} · ` : ""}
                             {money(l.rateCents, l.currency)}
                           </span>
                         </div>
@@ -350,7 +365,7 @@ export function Planner({ data, canPlan }: { data: { legs: PlannerLeg[]; drivers
                         {leg && <td className="text-right tabular-nums">{dh != null ? `${dh.toLocaleString("en-US")} mi` : <span className="text-faint">—</span>}</td>}
                         {leg && (
                           <td className="max-w-[240px]">
-                            {!c ? <span className="text-faint text-callout">{pending && !cands ? "…" : d.truckId ? "—" : "no truck"}</span> : <span className={`text-callout font-semibold ${c.hardBlocked ? "text-red" : !c.ok ? "text-amber" : "text-green"}`} title={c.reason}>{c.hardBlocked ? "Blocked: " : !c.ok ? "Override: " : ""}{c.ok && c.reason.startsWith("free") ? "Ready" : c.reason}</span>}
+                            {!c ? <span className="text-faint text-callout">{pending && !cands ? "…" : d.truckId ? "—" : "no truck"}</span> : <span className={`text-callout font-semibold ${FIT_CLASS[fit(c).tone]}`} title={c.reason}>{fit(c).text}</span>}
                           </td>
                         )}
                         <td className="text-right whitespace-nowrap">
@@ -566,6 +581,11 @@ function TrucksPanel(p: {
             </button>
           )}
         </div>
+        {leg && passed(leg) && (
+          <div className="mt-2 rounded-md bg-red-soft text-red text-callout font-semibold px-3 py-2" role="alert" data-testid="pickup-passed">
+            The pickup appointment ({shortWhen(leg.from.until ?? leg.from.at)}) has already passed — call the shipper and move it before you send a truck.
+          </div>
+        )}
       </div>
       <div className="max-h-[calc(100vh-270px)] overflow-auto">
         {p.rows.length === 0 ? (
@@ -611,9 +631,8 @@ function TrucksPanel(p: {
                       {t.why && <div className={`text-footnote mt-1 ${t.status === "unavailable" ? "text-red" : t.status === "on_load" ? "text-amber font-semibold" : "text-ink-2"}`}>{t.why}</div>}
                       {t.status === "on_load" && t.current && <div className="text-footnote text-muted mt-1">{t.current.orderNumber} → {t.current.to}</div>}
                       {leg && c && (
-                        <div className={`text-footnote font-semibold mt-1.5 line-clamp-3 ${c.hardBlocked ? "text-red" : !c.ok ? "text-amber" : "text-green"}`} title={c.reason} data-testid="truck-fit">
-                          {c.hardBlocked ? "Blocked: " : !c.ok ? "Override: " : ""}
-                          {c.ok && c.reason.startsWith("free") ? "Ready for this load" : c.reason.replace(/^needs override:\s*/i, "")}
+                        <div className={`text-footnote font-semibold mt-1.5 line-clamp-3 ${FIT_CLASS[fit(c).tone]}`} title={c.reason} data-testid="truck-fit" data-reach={c.reach?.status ?? "unknown"}>
+                          {fit(c).text}
                         </div>
                       )}
                       {leg && !c && p.pending && !p.cands && <div className="text-footnote text-faint mt-1.5">checking…</div>}

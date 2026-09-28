@@ -14,17 +14,11 @@ const touch = () => {
   revalidatePath("/fleet");
 };
 
-/** Trucks ranked for a leg, with when and where each comes free and the deadhead from there to the pickup. */
+/** Trucks ranked for a leg, with when and where each comes free, the deadhead to the pickup, and whether it can make the appointment. */
 export async function candidatesAction(legId: string) {
   return act(async (ctx) => {
-    const cands = await O.candidatesForLeg(ctx, legId);
-    const { plannerData, deadhead } = await import("@/domain/planner");
-    const pd = await plannerData(ctx);
-    const pl = pd.legs.find((l) => l.legId === legId);
-    return cands.map((c) => {
-      const d = pd.drivers.find((x) => x.truckId === c.truckId);
-      return { ...c, freeAt: d?.availableAt ?? null, freeWhere: d?.availableIn ?? null, deadheadMi: d && pl ? deadhead(d, pl) : null };
-    });
+    const { rankForLeg } = await import("@/domain/planner");
+    return rankForLeg(ctx, legId);
   });
 }
 
@@ -272,4 +266,35 @@ export async function checkCallAction(orderId: string, v: { legId?: string | nul
 export async function checkCallsAction(orderId: string) {
   const { listCheckCalls } = await import("@/domain/check-calls");
   return act((ctx) => listCheckCalls(ctx, orderId));
+}
+
+/** Take a leg back. A partner carrier who already accepted it must be confirmed and is sent a cancellation. */
+export async function pullBackAction(legId: string, v: { reason?: string; confirmCarrier?: boolean } = {}) {
+  const r = await act(async (ctx) => {
+    const { pullBackLeg } = await import("@/domain/carrier-notice");
+    const out = await pullBackLeg(ctx, legId, { reason: v.reason ?? null, confirmCarrier: !!v.confirmCarrier });
+    return { note: out.notice?.note ?? null };
+  });
+  if (r.ok) touch();
+  return r;
+}
+
+/** Someone dealt with a flag (a breakdown fixed, a decline re-covered): it leaves the board. */
+export async function clearFlagAction(flagId: string, note?: string) {
+  const r = await act((ctx) => O.clearFlag(ctx, flagId, note ?? null));
+  if (r.ok) {
+    touch();
+    revalidatePath("/dispatch/planner");
+  }
+  return r;
+}
+
+/** A delivered load goes to billing without a POD, with the reason on the record. */
+export async function waivePodAction(orderId: string, reason: string) {
+  const r = await act((ctx) => O.waivePod(ctx, orderId, reason));
+  if (r.ok) {
+    touch();
+    revalidatePath("/billing");
+  }
+  return r;
 }

@@ -70,8 +70,11 @@ export default async function OrderPage({ params }: PageProps<"/orders/[id]">) {
   const pickup = stops.find((s) => s.type === "pickup") ?? stops[0];
   const delivery = [...stops].reverse().find((s) => s.type === "delivery") ?? stops[stops.length - 1];
   const place = (s: (typeof stops)[number] | undefined) => (s ? [s.address?.city, s.address?.state].filter(Boolean).join(", ") || s.name : "—");
-  const milesKnown = legs.some((l) => l.plannedMiles != null);
-  const miles = milesKnown ? legs.reduce((a, l) => a + (l.plannedMiles ?? 0), 0) : null;
+  // typed miles, else the estimate from the stops, marked "est."
+  const liveLegs = legs.filter((l) => l.state !== "cancelled");
+  const milesKnown = liveLegs.some((l) => l.plannedMiles != null || l.estMiles != null);
+  const miles = milesKnown ? liveLegs.reduce((a, l) => a + (l.plannedMiles ?? l.estMiles ?? 0), 0) : null;
+  const milesEst = milesKnown && liveLegs.some((l) => l.plannedMiles == null);
   const carrierCost = legs.reduce((a, l) => a + (l.carrierRateCents ?? 0), 0) + (order.tollsFeesCents ?? 0);
   const covered = legs.every((l) => !["unassigned", "declined"].includes(l.state));
   const rate = order.rateTbd ? null : order.rateCents;
@@ -85,7 +88,7 @@ export default async function OrderPage({ params }: PageProps<"/orders/[id]">) {
     ["Rate", rate == null ? "TBD" : formatCents(rate, order.currency), order.rateType !== "flat" && order.rateUnitCents != null ? `${formatCents(order.rateUnitCents, order.currency)} × ${order.rateQty ?? "?"}` : undefined],
     ["Carrier cost", carrierCost ? formatCents(carrierCost, order.currency) : "—"],
     ["Margin", margin == null ? "—" : formatCents(margin, order.currency), margin != null && headPnl ? `${headPnl.marginPct}% after carriers, driver pay${headPnl.driverPayEstimated ? " (est.)" : ""}, fuel` : margin != null && rate ? `${((margin / rate) * 100).toFixed(1)}%` : covered ? undefined : "legs not covered yet"],
-    ["Miles", miles == null ? "—" : miles.toLocaleString("en-US"), miles && rate ? `$${(rate / miles / 100).toFixed(2)} / mile` : undefined],
+    ["Miles", miles == null ? "—" : `${miles.toLocaleString("en-US")}${milesEst ? " est." : ""}`, miles && rate ? `$${(rate / miles / 100).toFixed(2)} / mile${milesEst ? " est." : ""}` : undefined],
   ];
   // where it is: the leg on the road, its last position and ETA, and the check calls
   const liveLeg = legs.find((l) => ["dispatched", "accepted", "en_route_to_pickup", "at_pickup", "loaded", "en_route", "at_delivery"].includes(l.state)) ?? null;
@@ -135,7 +138,7 @@ export default async function OrderPage({ params }: PageProps<"/orders/[id]">) {
                   <Pill tone={l.state === "completed" ? "green" : l.state === "declined" ? "red" : l.state === "unassigned" ? "slate" : l.state === "cancelled" ? "slate" : "teal"}>{LEG_LABEL[l.state]}</Pill>
                 </td>
                 <td>
-                  <LegMiles legId={l.id} miles={l.plannedMiles} locked={closed || ["invoiced", "paid"].includes(order.state)} />
+                  <LegMiles legId={l.id} miles={l.plannedMiles} est={l.estMiles} locked={closed || ["invoiced", "paid"].includes(order.state)} />
                 </td>
                 <td className="text-muted text-callout">{l.dispatchedAt ? when(l.dispatchedAt) : "—"}</td>
                 <td className="text-muted text-callout">{l.completedAt ? when(l.completedAt) : "—"}</td>

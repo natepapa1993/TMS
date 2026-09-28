@@ -287,7 +287,7 @@ test("forgot password: no sender → ask the owner; with a sender the emailed li
   await anon.fill("#password", "brand-new-password-9");
   await anon.fill("#again", "brand-new-password-9");
   await anon.click("button:has-text('Set password and sign in')");
-  await anon.waitForURL("**/dispatch");
+  await anon.waitForURL("**/today");
   await anon.context().clearCookies();
   await anon.goto("/login");
   await anon.fill("#email", me.email);
@@ -296,6 +296,6 @@ test("forgot password: no sender → ask the owner; with a sender the emailed li
   await expect(anon.getByRole("alert").filter({ hasText: "don't match" })).toBeVisible();
   await anon.fill("#password", "brand-new-password-9");
   await anon.click("button:has-text('Sign in')");
-  await anon.waitForURL("**/dispatch");
+  await anon.waitForURL("**/today"); // the owner starts on Today
   await anon.context().close();
 });

@@ -1404,11 +1404,17 @@ body {
 .driver-app {
   font-size: 1.0625rem; /* 17 */
   line-height: 1.5;
+  /* a 390 px phone never scrolls sideways: long names and numbers wrap */
+  overflow-wrap: anywhere;
+  max-width: 100%;
 }
 .driver-app .btn {
   min-height: 3rem; /* 48 */
   font-size: 1.0625rem;
   border-radius: 12px;
+  white-space: normal;
+  text-align: center;
+  line-height: 1.25;
 }
 .driver-app .btn-primary,
 .driver-app .btn-lg {

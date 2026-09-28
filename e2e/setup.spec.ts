@@ -106,7 +106,7 @@ test("users and roles: the owner adds a safety manager with a password; she sign
   await p2.fill("#email", email);
   await p2.fill("#password", "safety-pass-123");
   await p2.click("button:has-text('Sign in')");
-  await p2.waitForURL("**/dispatch");
+  await p2.waitForURL("**/compliance"); // Safety starts on Compliance
   await expect(p2.locator("aside")).toContainText("Safety & compliance");
   await expect(p2.locator("aside nav")).not.toContainText("Billing");
   const r = await p2.goto("/billing");

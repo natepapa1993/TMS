@@ -32,7 +32,7 @@ const ROLLING = ["en_route_to_pickup", "at_pickup", "loaded", "en_route", "at_de
 const BEFORE_LOADED = ["unassigned", "declined", "planned", "dispatched", "accepted", "en_route_to_pickup", "at_pickup"];
 
 type LegLike = { id: string; state: string; truckId: string | null; fromStopId: string | null; toStopId: string | null };
-type StopLike = { id: string; seq: number; type: string; windowStart: string | null; windowEnd: string | null; arrivedAt: string | null };
+type StopLike = { id: string; seq: number; type: string; windowStart: string | null; windowEnd: string | null; arrivedAt: string | null; departedAt?: string | null };
 export type RowLike = { order: { state: string }; stage: string; legs: LegLike[]; stops: StopLike[]; tenders: { legId: string; state: string; expiresAt: string }[]; openFlags: unknown[] };
 export type BoardCtx = { now: number; etas: Record<string, { at: string; late: boolean }>; lastPing: (leg: LegLike) => string | null; today: (stop: StopLike) => string; dayOf: (iso: string, stop: StopLike) => string };
 
@@ -94,10 +94,46 @@ export function alertsOf(r: RowLike, c: BoardCtx): Set<AlertKey> {
   return out;
 }
 
-/** Sort key: late first, then at risk, then no truck soon, then by the next appointment. */
+export type EtaEntry = { at: string; stopName: string; miles: number | null; late: boolean; positionAt: string; source?: "gps" | "check_call" };
+type CallLike = { at: string; etaAt: string | null; legId: string | null };
+
+/**
+ * The dispatcher's word beats the GPS math (M6): a check call with an ETA for the leg that is running
+ * now stands as that leg's ETA — and drives Late and At risk — until a GPS position newer than the call
+ * comes in, or the truck gets to the stop.
+ */
+export function mergeCallEtas<S extends StopLike & { name: string }>(rows: { order: { id: string }; legs: LegLike[]; stops: S[] }[], gps: Record<string, EtaEntry>, calls: Record<string, CallLike>): Record<string, EtaEntry> {
+  const out: Record<string, EtaEntry> = { ...gps };
+  for (const r of rows) {
+    const call = calls[r.order.id];
+    const cur = currentLeg(r.legs);
+    if (!call?.etaAt || !cur || (call.legId && call.legId !== cur.id)) continue;
+    const ns = nextStop(r);
+    if (!ns || ns.arrivedAt) continue;
+    // a call made before the truck left the stop before this one was about that stop, not this one
+    const left = r.stops.filter((x) => x.seq < ns.seq && x.departedAt).map((x) => new Date(x.departedAt!).getTime());
+    if (left.length && Math.max(...left) > new Date(call.at).getTime()) continue;
+    const g = gps[cur.id];
+    if (g && new Date(g.positionAt).getTime() > new Date(call.at).getTime()) continue;
+    const a = appt(ns);
+    out[cur.id] = { at: call.etaAt, stopName: ns.name, miles: g?.miles ?? null, late: !!a && new Date(call.etaAt).getTime() > new Date(a).getTime(), positionAt: call.at, source: "check_call" };
+  }
+  return out;
+}
+
+/** A leg the driver or carrier just turned down, or a truck taken off it (out of service): it needs a new truck now (m5, m6). */
+export function lostItsTruck(r: Pick<RowLike, "legs" | "openFlags">): boolean {
+  if (r.legs.some((l) => l.state === "declined")) return true;
+  return r.openFlags.some((f) => {
+    const code = (f as { code?: string }).code;
+    return code === "truck_removed" || code === "declined";
+  }) && r.legs.some((l) => l.state === "unassigned" || l.state === "declined");
+}
+
+/** Sort key: late first, then a load that just lost its truck, then at risk, then no truck soon, then by the next appointment. */
 export function urgency(r: RowLike, alerts: Set<AlertKey>): number {
   const ns = nextStop(r);
   const a = appt(ns) ?? r.stops[0]?.windowStart ?? null;
   const t = a ? new Date(a).getTime() / 60_000 : 9e9;
-  return (alerts.has("late") ? 0 : alerts.has("at_risk") ? 1e8 : alerts.has("uncovered_soon") ? 2e8 : alerts.has("no_ping") ? 3e8 : 4e8) + t / 1e3;
+  return (alerts.has("late") ? 0 : lostItsTruck(r) ? 0.5e8 : alerts.has("at_risk") ? 1e8 : alerts.has("uncovered_soon") ? 2e8 : alerts.has("no_ping") ? 3e8 : 4e8) + t / 1e3;
 }

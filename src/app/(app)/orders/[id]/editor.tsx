@@ -375,12 +375,12 @@ export function OrderActions({ order }: { order: Order }) {
 }
 
 /** Inline planned-miles cell on the legs table: type, blur or Enter to save. */
-export function LegMiles({ legId, miles, locked }: { legId: string; miles: number | null; locked: boolean }) {
+export function LegMiles({ legId, miles, est = null, locked }: { legId: string; miles: number | null; est?: number | null; locked: boolean }) {
   const router = useRouter();
   const [v, setV] = useState(miles != null ? String(miles) : "");
   const [state, setState] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const [msg, setMsg] = useState<string | null>(null);
-  if (locked) return <span className="mono">{miles ?? "—"}</span>;
+  if (locked) return <span className="mono">{miles ?? (est != null ? `${est} est.` : "—")}</span>;
   const save = async () => {
     if (v === (miles != null ? String(miles) : "")) return;
     setState("saving");
@@ -396,7 +396,7 @@ export function LegMiles({ legId, miles, locked }: { legId: string; miles: numbe
   };
   return (
     <span className="inline-flex items-center gap-1">
-      <input className="input w-20 h-7 px-2 mono" inputMode="numeric" value={v} aria-label="Planned miles" onChange={(e) => setV(e.target.value)} onBlur={save} onKeyDown={(e) => e.key === "Enter" && (e.target as HTMLInputElement).blur()} placeholder="mi" aria-invalid={state === "error"} />
+      <input className="input w-20 h-7 px-2 mono" inputMode="numeric" value={v} aria-label="Planned miles" onChange={(e) => setV(e.target.value)} onBlur={save} onKeyDown={(e) => e.key === "Enter" && (e.target as HTMLInputElement).blur()} placeholder={est != null ? `${est} est.` : "mi"} title={est != null && miles == null ? `Estimated ${est} mi from the stops — type the real miles to replace it` : undefined} aria-invalid={state === "error"} />
       {state === "saved" && <span className="text-teal text-caption font-bold">✓</span>}
       {msg && <span className="error m-0 text-caption">{msg}</span>}
     </span>

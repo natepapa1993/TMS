@@ -1,5 +1,6 @@
 "use client";
 
+import { fold } from "@/lib/fold";
 import dynamic from "next/dynamic";
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
@@ -30,8 +31,8 @@ export function MapScreen({ data }: { data: { units: MapUnit[]; unplaced: { id: 
     return () => clearInterval(t);
   }, [router]);
   const units = useMemo(() => {
-    const s = q.trim().toLowerCase();
-    return data.units.filter((u) => (f === "all" ? true : f === "carrier" ? u.kind === "carrier" : u.status === f) && (!s || [u.label, u.driver, u.load?.orderNumber, u.place, u.load?.next].some((x) => x?.toLowerCase().includes(s))));
+    const s = fold(q.trim());
+    return data.units.filter((u) => (f === "all" ? true : f === "carrier" ? u.kind === "carrier" : u.status === f) && (!s || [u.label, u.driver, u.load?.orderNumber, u.place, u.load?.next].some((x) => fold(x).includes(s))));
   }, [data.units, q, f]);
   const count = (k: string) => (k === "all" ? data.units.length : k === "carrier" ? data.units.filter((u) => u.kind === "carrier").length : data.units.filter((u) => u.status === k).length);
   return (

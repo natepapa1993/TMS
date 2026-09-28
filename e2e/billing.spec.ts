@@ -133,7 +133,7 @@ test("billing day: charges, docs gate, invoice to paid, AR, carrier three-way wi
   }
   await expect(page.locator("tr", { hasText: o1 }).locator("button.pill-red")).toHaveCount(0);
   // RXO also requires its PO on the order: the red reference pill opens the order to add it
-  await expect(page.locator("tr", { hasText: o1 }).locator("button:has-text('Create invoice')")).toBeDisabled();
+  await expect(page.locator("tr", { hasText: o1 }).getByTestId("bill-one")).toBeDisabled();
   await page.locator("tr", { hasText: o1 }).locator("a.pill-red:has-text('po #')").click();
   await page.waitForURL("**/orders/**", { waitUntil: "commit" });
   await expect(page.locator("#charges")).toContainText("po # missing");
@@ -143,7 +143,7 @@ test("billing day: charges, docs gate, invoice to paid, AR, carrier three-way wi
   await expect(page.locator("#charges")).toContainText("po # ✓");
   await page.goto("/billing");
   await expect(page.locator("tr", { hasText: o1 }).locator(".pill-red")).toHaveCount(0);
-  await page.locator("tr", { hasText: o1 }).locator("button:has-text('Create invoice')").click();
+  await page.locator("tr", { hasText: o1 }).locator("button:has-text('Draft')").click();
   await expect(page.getByRole("status")).toContainText("Draft invoice created");
 
   // ---- invoice: issue → number, send, partial receipt, AR, full receipt → paid

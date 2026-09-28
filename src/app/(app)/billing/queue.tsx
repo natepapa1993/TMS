@@ -6,7 +6,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Confirm, Modal, Pill, Toast, useToast } from "@/components/ui";
 import { formatCents } from "@/data/fields";
-import { createInvoiceAction, acceptMismatchAction, uploadOrderDocAction } from "./actions";
+import { createInvoiceAction, acceptMismatchAction, uploadOrderDocAction, runBatchAction } from "./actions";
 import { BillingRun } from "./run";
 import { ApprovalDialog } from "./approvals";
 
@@ -30,6 +30,17 @@ export function Queue({ rows, role }: { rows: Row[]; role: string }) {
         t.ok(label);
         router.refresh();
       } else t.err(r.error ?? "Could not do that");
+    });
+  // one click for one load (billing #12): the batch run with one load in it — made, issued and sent
+  const billOne = (r: Row) =>
+    start(async () => {
+      const res = await runBatchAction([r.order.id], { issue: true, send: true });
+      if (!res.ok) return t.err(res.error);
+      const x = res.data.results[0];
+      if (!x || !x.ok) return t.err(x?.note ?? "Could not bill it");
+      const where = x.state === "sent" ? (x.method === "factor" ? "sent to the factor" : "sent") : x.state;
+      t.ok(`${x.number ?? "Invoice"} ${where}${x.note ? ` — ${x.note}` : ""}`);
+      router.refresh();
     });
   return (
     <>
@@ -128,9 +139,20 @@ export function Queue({ rows, role }: { rows: Row[]; role: string }) {
                         </Link>
                       ) : (
                         canBill && (
-                          <button className="btn btn-sm btn-primary" disabled={!ok || pending} title={r.pending.count ? "The extras waiting for approval stay off this invoice; once approved they go on a supplemental" : undefined} onClick={() => run(r.supplemental ? "Supplemental draft created" : "Draft invoice created", () => createInvoiceAction([r.order.id], r.pending.count > 0))}>
-                            {r.pending.count ? "Invoice without extras" : r.supplemental ? "Create supplemental" : "Create invoice"}
-                          </button>
+                          <span className="inline-flex items-center gap-1">
+                            <button
+                              className="btn btn-sm btn-primary"
+                              disabled={!ok || pending}
+                              data-testid="bill-one"
+                              title={r.pending.count ? "The extras waiting for approval stay off this invoice; once approved they go on a supplemental" : "Make the invoice, number it and send it the customer's way, in one go"}
+                              onClick={() => (r.order.currency === "MXN" ? setRunFor([r.order.id]) : billOne(r))}
+                            >
+                              {r.supplemental ? "Supplemental: issue & send" : r.pending.count ? "Issue & send without extras" : "Create, issue & send"}
+                            </button>
+                            <button className="btn btn-sm btn-ghost" disabled={!ok || pending} title="Only make the draft; issue and send it yourself from the invoice" onClick={() => run(r.supplemental ? "Supplemental draft created" : "Draft invoice created", () => createInvoiceAction([r.order.id], r.pending.count > 0))}>
+                              Draft
+                            </button>
+                          </span>
                         )
                       )}
                     </td>

@@ -11,7 +11,7 @@ const touch = () => {
 };
 
 export async function rankAction(legId: string) {
-  return act((ctx) => O.candidatesForLeg(ctx, legId));
+  return act((ctx) => P.rankForLeg(ctx, legId));
 }
 
 export async function addEventAction(input: { subjectKind: string; subjectId: string; kind: string; startsAt: string; endsAt: string; hard: boolean; note: string }) {

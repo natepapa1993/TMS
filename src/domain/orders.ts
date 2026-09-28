@@ -115,6 +115,25 @@ async function loadStops(tx: Tx, ctx: Ctx, orderId: string): Promise<Stop[]> {
   return tx.select().from(s.stops).where(and(eq(s.stops.tenantId, ctx.tenantId), eq(s.stops.orderId, orderId))).orderBy(asc(s.stops.seq));
 }
 
+/**
+ * Keep each leg's estimated miles current from its stops (coordinates, else the built-in city list).
+ * Typed planned miles always win where they are shown; the estimate only fills the gap. Cheap: pure math
+ * over the order's stops, and a write only for a leg whose estimate changed.
+ */
+export async function refreshEstMiles(tx: Tx | typeof db, tenantId: string, orderId: string) {
+  const { estimateMiles } = await import("./miles");
+  const [st, lg] = await Promise.all([
+    tx.select().from(s.stops).where(and(eq(s.stops.tenantId, tenantId), eq(s.stops.orderId, orderId))),
+    tx.select({ id: s.legs.id, fromStopId: s.legs.fromStopId, toStopId: s.legs.toStopId, estMiles: s.legs.estMiles }).from(s.legs).where(and(eq(s.legs.tenantId, tenantId), eq(s.legs.orderId, orderId))),
+  ]);
+  for (const l of lg) {
+    const a = st.find((x) => x.id === l.fromStopId);
+    const b = st.find((x) => x.id === l.toStopId);
+    const est = estimateMiles(a, b);
+    if (est !== l.estMiles) await tx.update(s.legs).set({ estMiles: est }).where(eq(s.legs.id, l.id));
+  }
+}
+
 export async function getOrder(ctx: Ctx, orderId: string) {
   assertCtx(ctx);
   requirePermission(ctx, "orders.view");
@@ -256,7 +275,11 @@ export async function createOrder(ctx: Ctx, input: CreateOrderInput) {
       createdBy: ctx.userId,
       updatedBy: ctx.userId,
     }));
-    const legs = legRows.length ? await tx.insert(s.legs).values(legRows).returning() : []; // a tailgate shipment has none: its trip moves it
+    let legs = legRows.length ? await tx.insert(s.legs).values(legRows).returning() : []; // a tailgate shipment has none: its trip moves it
+    if (legs.length) {
+      await refreshEstMiles(tx, ctx.tenantId, orderId);
+      legs = await loadLegs(tx, ctx, orderId);
+    }
 
     let finalOrder = order;
     if (input.book) finalOrder = await bookIn(tx, ctx, order, stops);
@@ -444,6 +467,7 @@ export async function updateStop(ctx: Ctx, stopId: string, values: Partial<StopI
       .returning();
     await writeAudit(tx, ctx, "stop", stopId, "update", diff(before as unknown as Record<string, unknown>, after as unknown as Record<string, unknown>));
     if ("sealIn" in safe || "sealOut" in safe) await checkSealContinuity(tx, ctx, before.orderId);
+    if ("address" in safe || "name" in safe || "locationId" in safe) await refreshEstMiles(tx, ctx.tenantId, before.orderId);
     return after;
   });
 }
@@ -456,10 +480,13 @@ export async function updateStop(ctx: Ctx, stopId: string, values: Partial<StopI
 export async function learnStopCoordinates(tx: Tx | typeof db, ctx: Ctx, stopId: string, lat: string, lng: string) {
   const c = coords(lat, lng);
   if (!c) return;
-  const [stop] = await tx.select({ id: s.stops.id, lat: s.stops.lat, lng: s.stops.lng, locationId: s.stops.locationId }).from(s.stops).where(and(eq(s.stops.tenantId, ctx.tenantId), eq(s.stops.id, stopId))).limit(1);
+  const [stop] = await tx.select({ id: s.stops.id, orderId: s.stops.orderId, lat: s.stops.lat, lng: s.stops.lng, locationId: s.stops.locationId }).from(s.stops).where(and(eq(s.stops.tenantId, ctx.tenantId), eq(s.stops.id, stopId))).limit(1);
   if (!stop) return;
   const val = { lat: c.lat.toFixed(6), lng: c.lng.toFixed(6) };
-  if (!coords(stop.lat, stop.lng)) await tx.update(s.stops).set(val).where(eq(s.stops.id, stop.id));
+  if (!coords(stop.lat, stop.lng)) {
+    await tx.update(s.stops).set(val).where(eq(s.stops.id, stop.id));
+    await refreshEstMiles(tx, ctx.tenantId, stop.orderId);
+  }
   if (stop.locationId) {
     const [loc] = await tx.select({ id: s.locations.id, lat: s.locations.lat, lng: s.locations.lng }).from(s.locations).where(and(eq(s.locations.tenantId, ctx.tenantId), eq(s.locations.id, stop.locationId))).limit(1);
     if (loc && !coords(loc.lat, loc.lng)) {
@@ -612,6 +639,7 @@ async function restructureStops(ctx: Ctx, orderId: string, change: (stops: StopD
         if (type !== l.type) await tx.update(s.legs).set({ type }).where(eq(s.legs.id, l.id));
       }
     }
+    await refreshEstMiles(tx, ctx.tenantId, orderId);
     await writeAudit(tx, ctx, "order", orderId, "update", { stops: { from: before.map((x) => x.name).join(", "), to: stopsNow.map((x) => x.name).join(", ") } }, note);
     return { stops: stopsNow };
   });
@@ -683,6 +711,66 @@ export async function cancelOrder(ctx: Ctx, orderId: string, reason: string) {
   });
 }
 
+// ---------- flags ----------
+
+/**
+ * Someone dealt with a flag: it leaves the board. A breakdown flag holds its truck out of the planner
+ * until it is cleared this way (repaired, towed, repowered). The note goes on the record.
+ */
+export async function clearFlag(ctx: Ctx, flagId: string, note?: string | null) {
+  assertCtx(ctx);
+  requirePermission(ctx, "orders.edit");
+  const [f] = await db.select().from(s.flags).where(and(eq(s.flags.tenantId, ctx.tenantId), eq(s.flags.id, flagId))).limit(1);
+  if (!f) throw new NotFoundError("flag", flagId);
+  if (f.clearedAt) return f;
+  const [after] = await db.update(s.flags).set({ clearedAt: new Date(), clearedBy: ctx.userId ?? "system" }).where(eq(s.flags.id, f.id)).returning();
+  if (f.legId) await db.insert(s.legEvents).values({ id: newId(), tenantId: ctx.tenantId, legId: f.legId, orderId: f.orderId, kind: "flag_cleared", source: "dispatcher", userId: ctx.userId, note: `${f.title} — cleared${note?.trim() ? `: ${note.trim()}` : ""}` });
+  await writeAudit(db, ctx, "order", f.orderId, "update", { flag: { from: f.title, to: null } }, `flag cleared: ${f.title}${note?.trim() ? ` — ${note.trim()}` : ""}`);
+  return after;
+}
+
+/** Trucks with an open breakdown (logged by a check call, not cleared yet): they are out of the planner. */
+export async function openBreakdowns(tx: Tx | typeof db, tenantId: string, truckIds?: string[]) {
+  const rows = await tx
+    .select({ id: s.flags.id, orderId: s.flags.orderId, title: s.flags.title, openedAt: s.flags.openedAt, data: s.flags.data, orderNumber: s.orders.orderNumber })
+    .from(s.flags)
+    .innerJoin(s.orders, eq(s.orders.id, s.flags.orderId))
+    .where(and(eq(s.flags.tenantId, tenantId), eq(s.flags.code, "breakdown"), isNull(s.flags.clearedAt)));
+  const out = new Map<string, { flagId: string; orderNumber: string; title: string; openedAt: Date }>();
+  for (const r of rows) {
+    const t = typeof r.data?.truckId === "string" ? r.data.truckId : null;
+    if (t && (!truckIds || truckIds.includes(t)) && !out.has(t)) out.set(t, { flagId: r.id, orderNumber: r.orderNumber, title: r.title, openedAt: r.openedAt });
+  }
+  return out;
+}
+
+export const breakdownFinding = (unit: string, b: { orderNumber: string; title: string }): Finding => ({ level: "red", code: "breakdown", message: `unit ${unit} is broken down (${b.title.replace(/^Breakdown\s*/i, "").trim() || "logged"} on ${b.orderNumber}) — clear the breakdown flag once it's fixed`, overridable: false });
+
+// ---------- POD before billing (M14) ----------
+
+/**
+ * A delivered load waits for its POD before it counts as ready to bill. When the POD will not come (a
+ * drop at a yard, a customer who signs electronically), dispatch or billing says so once, with the reason.
+ */
+export async function waivePod(ctx: Ctx, orderId: string, reason: string) {
+  assertCtx(ctx);
+  requirePermission(ctx, "orders.edit");
+  if (!reason?.trim()) throw new ValidationError("say why there is no POD (goes on the record)", "reason");
+  return db.transaction(async (tx) => {
+    const order = await loadOrder(tx, ctx, orderId);
+    if (!["delivered", "ready_to_bill", "in_transit", "exception"].includes(order.state)) throw new ValidationError("only a delivered load can go to billing without a POD");
+    const custom = { ...(order.custom ?? {}), podWaived: { reason: reason.trim(), by: ctx.userId, at: new Date().toISOString() } };
+    const [after] = await tx.update(s.orders).set({ custom, updatedAt: new Date(), updatedBy: ctx.userId }).where(eq(s.orders.id, order.id)).returning();
+    await writeAudit(tx, ctx, "order", order.id, "override", { podWaived: { from: null, to: reason.trim() } }, `billed without a POD: ${reason.trim()}`);
+    return after;
+  });
+}
+
+/** Whether a load has its POD for billing: a POD on file, or dispatch's "bill without POD". A TONU needs none. */
+export function podSatisfied(order: Pick<Order, "tonu" | "custom">, hasPodDoc: boolean) {
+  return order.tonu || hasPodDoc || !!(order.custom as { podWaived?: unknown } | null)?.podWaived;
+}
+
 // ---------- lock / TONU ----------
 
 /** Lock a load against edits (billing is checking it, or it was agreed as is). */
@@ -713,7 +801,9 @@ export async function markTonu(ctx: Ctx, orderId: string, input: { amountCents: 
   requirePermission(ctx, "orders.cancel");
   if (!input.reason?.trim()) throw new ValidationError("say why the load was cancelled", "reason");
   if (!Number.isFinite(input.amountCents) || input.amountCents <= 0) throw new ValidationError("enter the TONU amount", "amount");
-  return db.transaction(async (tx) => {
+  // partner carriers who were offered or had accepted a leg are told it's off (M9) once the TONU is on the record
+  const toTell = (await db.select({ id: s.legs.id, state: s.legs.state, assigneeKind: s.legs.assigneeKind, carrierId: s.legs.carrierId }).from(s.legs).where(and(eq(s.legs.tenantId, ctx.tenantId), eq(s.legs.orderId, orderId)))).filter((l) => l.assigneeKind === "carrier" && l.carrierId && ["dispatched", "accepted"].includes(l.state));
+  const after = await db.transaction(async (tx) => {
     const order = await loadOrder(tx, ctx, orderId);
     if (order.kind !== "order") throw new ValidationError("TONU applies to a load, not a trip or a shipment");
     if (!["booked", "dispatched", "in_transit", "exception"].includes(order.state)) throw new TransitionError("order", order.state, "tonu", "only a booked or dispatched load can be a TONU");
@@ -732,6 +822,15 @@ export async function markTonu(ctx: Ctx, orderId: string, input: { amountCents: 
     await writeAudit(tx, ctx, "order", order.id, "tonu", { state: { from: order.state, to: "delivered" }, rateCents: { from: order.rateCents, to: input.amountCents } }, input.reason.trim());
     return after;
   });
+  if (toTell.length) {
+    const { notifyCarrierCancelled } = await import("./carrier-notice");
+    const { closeOpenTenderForLeg } = await import("./tenders");
+    for (const l of toTell) {
+      await closeOpenTenderForLeg(ctx, l.id, "withdrawn", `TONU: ${input.reason.trim()}`);
+      await notifyCarrierCancelled(ctx, l.id, { kind: "tonu", reason: input.reason.trim() });
+    }
+  }
+  return after;
 }
 
 // ---------- hold / release (order-level exception) ----------
@@ -742,7 +841,8 @@ export async function holdOrder(ctx: Ctx, orderId: string, reason: string) {
   if (!reason?.trim()) throw new ValidationError("a hold reason is required", "reason");
   return db.transaction(async (tx) => {
     const order = await loadOrder(tx, ctx, orderId);
-    if (!canOrderTransition(order.state, "exception")) throw new TransitionError("order", order.state, "exception", "only dispatched or in-transit orders can be held");
+    // any stage from booked to rolling: no truck yet, planned, sent, on the road (M8)
+    if (!["booked", "dispatched", "in_transit"].includes(order.state) || !canOrderTransition(order.state, "exception")) throw new TransitionError("order", order.state, "exception", order.state === "exception" ? "it is already on hold" : order.state === "draft" ? "book it first" : "only a booked, dispatched or in-transit load can be held");
     return setOrderState(tx, ctx, order, "exception", { holdReason: reason.trim() }, reason);
   });
 }
@@ -760,6 +860,12 @@ export async function releaseOrder(ctx: Ctx, orderId: string) {
 }
 
 // ---------- legs: plan / unplan / dispatch / accept / decline / advance ----------
+
+/** A held load's steps are frozen (M8): nothing moves until someone releases it. */
+async function assertNotHeld(tx: Tx, ctx: Ctx, orderId: string, what: string) {
+  const [o] = await tx.select({ state: s.orders.state, holdReason: s.orders.holdReason }).from(s.orders).where(and(eq(s.orders.tenantId, ctx.tenantId), eq(s.orders.id, orderId))).limit(1);
+  if (o?.state === "exception") throw new ValidationError(`the load is on hold${o.holdReason ? ` (${o.holdReason})` : ""} — release it before you ${what}`);
+}
 
 async function setLegState(
   tx: Tx,
@@ -818,6 +924,8 @@ export async function eligibilityFor(ctx: Ctx, legType: LegType | LegZone, a: As
     if (!truck) throw new NotFoundError("truck", a.truckId);
     if (truck.archivedAt) findings.push({ level: "red", code: "truck_archived", message: `${truck.unitNumber} is archived`, overridable: false });
     findings.push(...checkTruck(truck, legType, now));
+    const broken = (await openBreakdowns(db, ctx.tenantId, [truck.id])).get(truck.id);
+    if (broken) findings.push(breakdownFinding(truck.unitNumber, broken));
     findings.push(...(await complianceFindings(ctx, "truck", truck.id, `unit ${truck.unitNumber}`, legType)));
     for (const did of [a.driverId, a.coDriverId]) {
       if (!did) continue;
@@ -910,6 +1018,8 @@ export async function planLeg(ctx: Ctx, legId: string, a: Assignment, opts: Plan
       after = await setLegState(tx, ctx, leg, "planned", { source: "dispatcher", note: opts.reason }, extra);
       await writeAudit(tx, ctx, "leg", leg.id, "assign", diff({}, assignment as Record<string, unknown>));
     }
+    // the leg has someone again: "declined" and "truck removed" are answered
+    await tx.update(s.flags).set({ clearedAt: new Date(), clearedBy: ctx.userId ?? "system" }).where(and(eq(s.flags.tenantId, ctx.tenantId), eq(s.flags.legId, leg.id), inArray(s.flags.code, ["declined", "truck_removed"]), isNull(s.flags.clearedAt)));
     await recomputeOrder(tx, ctx, order.id);
     return { leg: after, findings: elig.findings };
   });
@@ -969,6 +1079,7 @@ export async function acceptLeg(ctx: Ctx, legId: string, source: EventSource = "
   assertCtx(ctx);
   return db.transaction(async (tx) => {
     const leg = await loadLeg(tx, ctx, legId);
+    await assertNotHeld(tx, ctx, leg.orderId, "accept it");
     const after = await setLegState(tx, ctx, leg, "accepted", { source }, { acceptedAt: new Date() });
     await recomputeOrder(tx, ctx, leg.orderId);
     return after;
@@ -1016,6 +1127,7 @@ export async function stampStop(ctx: Ctx, legId: string, stopId: string, which: 
   assertCtx(ctx);
   return db.transaction(async (tx) => {
     const leg = await loadLeg(tx, ctx, legId);
+    await assertNotHeld(tx, ctx, leg.orderId, "clock this stop");
     const stops = await tx.select().from(s.stops).where(and(eq(s.stops.tenantId, ctx.tenantId), eq(s.stops.orderId, leg.orderId)));
     const stop = midStops(leg, stops).find((x) => x.id === stopId);
     if (!stop) throw new ValidationError("that stop is not between this leg's pickup and delivery", "stopId");
@@ -1052,6 +1164,7 @@ export async function advanceLeg(ctx: Ctx, legId: string, to: LegState | "next",
   }
   return db.transaction(async (tx) => {
     const leg = await loadLeg(tx, ctx, legId);
+    await assertNotHeld(tx, ctx, leg.orderId, "move this leg");
     let target: LegState;
     if (to === "next") {
       const i = LEG_FORWARD.indexOf(leg.state);
@@ -1075,6 +1188,13 @@ export async function advanceLeg(ctx: Ctx, legId: string, to: LegState | "next",
       await tx.update(s.stops).set({ ...set, updatedAt: new Date(), updatedBy: ctx.userId }).where(and(eq(s.stops.tenantId, ctx.tenantId), eq(s.stops.id, stopId)));
       if (seal) await checkSealContinuity(tx, ctx, leg.orderId);
       if (arriving && ev.verified && ev.lat && ev.lng) await learnStopCoordinates(tx, ctx, stopId, ev.lat, ev.lng);
+    }
+    if (target === "completed") {
+      // 430 miles in 0 minutes, or delivered from 200 miles away: a yellow flag, not a block (M14)
+      const { implausibleDelivery } = await import("./tracking-rules");
+      const [to] = leg.toStopId ? await tx.select({ lat: s.stops.lat, lng: s.stops.lng }).from(s.stops).where(eq(s.stops.id, leg.toStopId)).limit(1) : [];
+      const problems = implausibleDelivery({ miles: leg.plannedMiles ?? leg.estMiles, startedAt: leg.acceptedAt ?? leg.dispatchedAt, completedAt: at, fix: ev.lat && ev.lng ? coords(ev.lat, ev.lng) : null, stop: to ? coords(to.lat, to.lng) : null });
+      if (problems.length) await tx.insert(s.flags).values({ id: newId(), tenantId: ctx.tenantId, orderId: leg.orderId, legId: leg.id, code: "implausible_delivery", level: "yellow", title: problems[0], detail: problems.slice(1).join("; ") || "Call the driver and fix the arrival and departure times before billing.", owner: "dispatch" });
     }
     await recomputeOrder(tx, ctx, leg.orderId, target === "completed" ? at : undefined);
     return after;
@@ -1174,6 +1294,7 @@ export async function splitLeg(ctx: Ctx, legId: string, at: StopInput, secondTyp
         updatedBy: ctx.userId,
       })
       .returning();
+    await refreshEstMiles(tx, ctx.tenantId, leg.orderId);
     await writeAudit(tx, ctx, "leg", leg.id, "update", { toStopId: { from: leg.toStopId, to: mid.id } }, `split at ${mid.name}`);
     await writeAudit(tx, ctx, "leg", second.id, "create", diff(null, { seq: second.seq, type: second.type, fromStopId: mid.id, toStopId: leg.toStopId }), `split from leg ${leg.seq}`);
     await recomputeOrder(tx, ctx, leg.orderId);
@@ -1205,6 +1326,8 @@ export async function setTruckOos(ctx: Ctx, truckId: string, reason: string, unt
         let cur = l;
         if (cur.state === "dispatched" || cur.state === "accepted") cur = await setLegState(tx, ctx, cur, "planned", { source: "system", note: `unit ${truck.unitNumber} OOS: ${reason}` });
         cur = await setLegState(tx, ctx, cur, "unassigned", { source: "system", note: `unit ${truck.unitNumber} OOS: ${reason}` }, cleared);
+        // say so on the board: the load did not just "need a truck", it lost one (m6); planning a new truck clears it
+        await tx.insert(s.flags).values({ id: newId(), tenantId: ctx.tenantId, orderId: l.orderId, legId: l.id, code: "truck_removed", level: "red", title: `Truck removed — unit ${truck.unitNumber} out of service`, detail: reason.trim(), owner: "dispatch", data: { truckId } });
         unplanned.push(cur);
         await recomputeOrder(tx, ctx, l.orderId);
       }
@@ -1296,6 +1419,7 @@ export async function candidatesForLeg(ctx: Ctx, legId: string, now = new Date()
   const { legWindow, eventsBetween, eventFindings } = await import("./planner");
   const win = await legWindow(db, leg, now);
   const events = await eventsBetween(db, ctx.tenantId, win.start, win.end);
+  const broken = await openBreakdowns(db, ctx.tenantId);
   const compFindings = (kind: "truck" | "driver", id: string, label: string): Finding[] => {
     const raw = kind === "truck" ? truckComp.get(id) : driverComp.get(id);
     if (!raw) return [];
@@ -1317,7 +1441,8 @@ export async function candidatesForLeg(ctx: Ctx, legId: string, now = new Date()
   }
   const out: Candidate[] = trucks.map((t) => {
     const drv = drivers.find((d) => d.currentTruckId === t.id) ?? null;
-    const findings = [...checkTruck(t, zone, now), ...compFindings("truck", t.id, `unit ${t.unitNumber}`), ...(drv ? [...checkDriver(drv, zone, now), ...compFindings("driver", drv.id, drv.name)] : [])];
+    const bd = broken.get(t.id);
+    const findings = [...(bd ? [breakdownFinding(t.unitNumber, bd)] : []), ...checkTruck(t, zone, now), ...compFindings("truck", t.id, `unit ${t.unitNumber}`), ...(drv ? [...checkDriver(drv, zone, now), ...compFindings("driver", drv.id, drv.name)] : [])];
     if (!drv) findings.push({ level: "yellow", code: "no_driver", message: `${t.unitNumber} has no driver assigned`, overridable: true });
     findings.push(...eventFindings(events, [{ kind: "truck", id: t.id, label: `unit ${t.unitNumber}` }, ...(drv ? [{ kind: "driver", id: drv.id, label: drv.name }] : [])]));
     findings.push(...(conflicts.get(t.id) ?? []));

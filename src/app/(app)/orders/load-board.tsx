@@ -40,6 +40,7 @@ const COLUMNS: ColumnDef<LoadRow, unknown>[] = [
   col({ id: "state", accessorFn: (r) => (r.tonu ? "TONU" : (STATE_LABEL[r.state] ?? r.state)), size: 124, filterFn: "select" as never, meta: { label: "Status", filter: "select" }, header: "Status", cell: ({ row }) => (
       <span className="inline-flex items-center gap-1">
         <Pill tone={row.original.tonu ? "amber" : (STATE_TONE[row.original.state] ?? "slate")}>{row.original.tonu ? "TONU" : (STATE_LABEL[row.original.state] ?? row.original.state)}</Pill>
+        {row.original.podMissing && <Pill tone="red" title="No POD on file — upload it or mark it 'bill without POD' on the load">no POD</Pill>}
         {row.original.locked && (
           <svg width="12" height="12" viewBox="0 0 16 16" aria-label="Locked" className="text-muted">
             <title>Locked</title>
@@ -69,8 +70,8 @@ const COLUMNS: ColumnDef<LoadRow, unknown>[] = [
   col({ id: "cost", accessorFn: (r) => r.carrierCostCents, size: 104, meta: { label: "Carrier cost", align: "right", filter: "none", csv: (r) => (r.carrierCostCents / 100).toFixed(2) }, header: "Cost", cell: ({ row }) => (row.original.carrierCostCents ? money(row.original.carrierCostCents, row.original.currency) : <span className="text-faint">—</span>) }),
   col({ id: "margin", accessorFn: (r) => r.marginCents ?? -Infinity, size: 104, meta: { label: "Margin", align: "right", filter: "none", csv: (r) => (r.marginCents == null ? "" : (r.marginCents / 100).toFixed(2)) }, header: "Margin", cell: ({ row }) => (row.original.marginCents == null ? "" : <span className={row.original.marginCents < 0 ? "text-red font-semibold" : ""}>{money(row.original.marginCents, row.original.currency)}</span>) }),
   col({ id: "marginPct", accessorFn: (r) => (r.rateCents ? (r.marginCents ?? 0) / r.rateCents : -Infinity), size: 84, meta: { label: "Margin %", align: "right", filter: "none", csv: (r) => (r.rateCents ? (((r.marginCents ?? 0) / r.rateCents) * 100).toFixed(1) : "") }, header: "Margin %", cell: ({ row }) => (row.original.rateCents ? `${(((row.original.marginCents ?? 0) / row.original.rateCents) * 100).toFixed(0)}%` : "") }),
-  col({ id: "miles", accessorFn: (r) => r.miles ?? -1, size: 84, meta: { label: "Miles", align: "right", filter: "none", csv: (r) => r.miles ?? "" }, header: "Miles", cell: ({ row }) => (row.original.miles == null ? <span className="text-faint">—</span> : row.original.miles.toLocaleString("en-US")) }),
-  col({ id: "rpm", accessorFn: (r) => r.rpmCents ?? -1, size: 80, meta: { label: "Rate / mile", align: "right", filter: "none", csv: (r) => (r.rpmCents == null ? "" : (r.rpmCents / 100).toFixed(2)) }, header: "RPM", cell: ({ row }) => (row.original.rpmCents == null ? "" : `$${(row.original.rpmCents / 100).toFixed(2)}`) }),
+  col({ id: "miles", accessorFn: (r) => r.miles ?? -1, size: 84, meta: { label: "Miles", align: "right", filter: "none", csv: (r) => r.miles ?? "" }, header: "Miles", cell: ({ row }) => (row.original.miles == null ? <span className="text-faint">—</span> : <>{row.original.miles.toLocaleString("en-US")}{row.original.milesEst && <span className="text-faint text-footnote" title="Estimated from the stops — type the real miles on the load"> est.</span>}</>) }),
+  col({ id: "rpm", accessorFn: (r) => r.rpmCents ?? -1, size: 80, meta: { label: "Rate / mile", align: "right", filter: "none", csv: (r) => (r.rpmCents == null ? "" : (r.rpmCents / 100).toFixed(2)) }, header: "RPM", cell: ({ row }) => (row.original.rpmCents == null ? "" : `$${(row.original.rpmCents / 100).toFixed(2)}${row.original.milesEst ? " est." : ""}`) }),
   col({ id: "refs", accessorFn: (r) => r.refs, size: 200, meta: { label: "References" }, header: "References", cell: ({ row }) => <span className="text-muted">{row.original.refs}</span> }),
   col({ id: "po", accessorFn: (r) => r.po ?? "", size: 120, meta: { label: "PO", mono: true }, header: "PO" }),
   col({ id: "reference", accessorFn: (r) => r.reference ?? "", size: 130, meta: { label: "Customer load #", mono: true }, header: "Cust. load #" }),
@@ -146,7 +147,8 @@ export function LoadBoard({ rows, views, role }: { rows: LoadRow[]; views: GridV
     { id: "uncovered", label: "Needs a truck", test: (r) => OPEN.includes(r.state) && r.uncoveredLegs > 0 },
     { id: "today", label: "Picking up today", test: (r) => sameDay(r.pickupAt, today) },
     { id: "transit", label: "In transit", test: (r) => r.state === "in_transit" || r.state === "dispatched" },
-    { id: "tobill", label: "To bill", test: (r) => r.state === "delivered" || r.state === "ready_to_bill" },
+    { id: "tobill", label: "To bill", test: (r) => (r.state === "delivered" || r.state === "ready_to_bill") && !r.podMissing },
+    { id: "nopod", label: "Missing POD", test: (r) => r.podMissing },
     { id: "border", label: "Cross-border", test: (r) => r.crossBorder },
     { id: "flags", label: "Flagged", test: (r) => r.flags > 0 },
   ];

@@ -29,6 +29,8 @@ export type LegPayInput = {
   customerId: string | null;
   equipment: string;
   loadedMiles: number | null;
+  /** the loaded miles are estimated from the stops (nobody typed them) */
+  loadedMilesEst?: boolean;
   emptyMiles: number | null;
   stops: number; // pickups and deliveries on the leg
   hours: number | null;
@@ -71,7 +73,8 @@ export function legPayLines(plan: { rules: PayRule[]; teamSplit: string }, l: Le
           continue;
         }
         if (mi === 0) continue;
-        line(r, mi, "mi", r.amount, mi * r.amount, `${mi} ${which} mi × ${money(r.amount)}`, r.kind === "per_empty_mile" ? "empty miles from the last delivery" : "planned miles");
+        const est = r.kind !== "per_empty_mile" && !!l.loadedMilesEst;
+        line(r, mi, "mi", r.amount, mi * r.amount, `${mi} ${which} mi${est ? " (est.)" : ""} × ${money(r.amount)}`, r.kind === "per_empty_mile" ? "empty miles from the last delivery" : est ? "estimated miles" : "planned miles");
         break;
       }
       case "pct_linehaul":
