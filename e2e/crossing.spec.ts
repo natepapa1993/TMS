@@ -75,7 +75,8 @@ test("border day: waiting on DODA → seal mismatch → override → packet → 
   await page.getByRole("dialog").getByPlaceholder("name on the signature line").fill("Nate Papa");
   await page.getByRole("dialog").locator("button:has-text('Generate PDF')").click();
   await expect(page.getByRole("status")).toContainText("generated");
-  await expect(page.locator("li", { hasText: "Carta de retiro" })).toContainText("verified");
+  // (the timeline names the letter too since owner N11: the checklist row comes first)
+  await expect(page.locator("li", { hasText: "Carta de retiro" }).first()).toContainText("verified");
   await expect(page.locator("iframe[title=document]")).toBeVisible();
 
   await upload(page, "Carta porte", fx("carta_porte"), { trailer: "10743", usPlate: "RC59022", mxPlate: "35ES3A", seal: "S-771", uuid: "AB12", grossWeight: "18200", pieces: "26" });
