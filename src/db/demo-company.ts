@@ -97,6 +97,8 @@ async function ensure(opts: { force?: boolean; now?: Date }): Promise<string> {
       return `demo company is up to date (${today})`;
     }
     await wipe(t.id);
+    // a fresh start: settings people changed while trying the demo (a closed period, rates) go too
+    await db.update(s.tenants).set({ settings: { ...BASE, demoBuilding: now.toISOString() } }).where(eq(s.tenants.id, t.id));
     // the password follows DEMO_PASSWORD
     for (const [, , email] of DEMO_LOGINS) await db.update(s.users).set({ passwordHash: hash }).where(and(eq(s.users.tenantId, t.id), eq(s.users.email, email)));
   }
