@@ -1,5 +1,7 @@
 "use client";
 
+import { fmtWhen, stopZone } from "@/lib/time";
+import { useZone } from "@/components/zone";
 import Link from "next/link";
 import { useRef, useState, useTransition } from "react";
 import { previewLoadsAction, importLoadsAction } from "../actions";
@@ -13,6 +15,7 @@ const EXAMPLE = [
 const place = (s: Preview["loads"][number]["stops"][number]) => [[s.city, s.state].filter(Boolean).join(", ") || s.name, s.country !== "US" ? s.country : ""].filter(Boolean).join(" · ");
 
 export function ImportLoads() {
+  const zone = useZone();
   const [file, setFile] = useState<File | null>(null);
   const [preview, setPreview] = useState<Preview | null>(null);
   const [book, setBook] = useState(false);
@@ -109,7 +112,7 @@ export function ImportLoads() {
                       {l.stops.length ? `${place(l.stops[0])} → ${place(l.stops[l.stops.length - 1])}` : "—"}
                       {l.stops.length > 2 ? <span className="text-muted"> · {l.stops.length} stops</span> : null}
                     </td>
-                    <td className="text-callout text-muted">{l.stops[0]?.at ? new Date(l.stops[0].at).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) : "—"}</td>
+                    <td className="text-callout text-muted">{l.stops[0]?.at ? fmtWhen(l.stops[0].at, stopZone({ country: l.stops[0].country, name: l.stops[0].name, address: { city: l.stops[0].city, state: l.stops[0].state } }, zone), { style: "short" }) : "—"}</td>
                     <td className="tabular-nums">{l.rateCents == null ? <span className="text-faint">TBD</span> : new Intl.NumberFormat("en-US", { style: "currency", currency: l.currency }).format(l.rateCents / 100)}</td>
                     <td className="text-callout text-red">{l.errors.join("; ")}</td>
                   </tr>

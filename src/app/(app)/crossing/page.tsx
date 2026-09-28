@@ -23,12 +23,13 @@ export default async function CrossingBoardPage({ searchParams }: PageProps<"/cr
     if (c) redirect(`/crossing/${c.id}`);
   }
   await backfillCrossings(ctx);
-  const [rows, customers, trucks, drivers, ports] = await Promise.all([crossingBoard(ctx), list(ctx, "customer", { limit: 2000 }), list(ctx, "truck", { limit: 2000 }), list(ctx, "driver", { limit: 2000 }), list(ctx, "port", { limit: 100 })]);
+  const [rows, customers, trucks, drivers, ports, carriers] = await Promise.all([crossingBoard(ctx), list(ctx, "customer", { limit: 2000 }), list(ctx, "truck", { limit: 2000 }), list(ctx, "driver", { limit: 2000 }), list(ctx, "port", { limit: 100 }), list(ctx, "carrier", { limit: 2000, archived: "all" })]);
   const name = (rs: { id: string; [k: string]: unknown }[], k: string) => new Map(rs.map((r) => [r.id, String(r[k])]));
   const cn = name(customers, "name");
   const tn = name(trucks, "unitNumber");
   const dn = name(drivers, "name");
   const pn = name(ports, "name");
+  const kn = name(carriers, "name");
   const bucket = (BUCKETS as string[]).includes(String(sp.b)) ? (sp.b as Bucket) : "waiting";
   const now = await currentTime();
   const recent = now - 48 * 3600_000;
@@ -75,7 +76,7 @@ export default async function CrossingBoardPage({ searchParams }: PageProps<"/cr
                   </div>
                   <div className="font-semibold mono">{r.c.trailerNumber ?? <span className="text-faint">—</span>}</div>
                   <div className="min-w-0">
-                    <div className="font-semibold truncate">{r.truckId ? `Unit ${tn.get(r.truckId)}` : <span className="text-faint">no truck</span>}</div>
+                    <div className="font-semibold truncate">{r.truckId ? `Unit ${tn.get(r.truckId)}` : r.carrierId ? kn.get(r.carrierId) : <span className="text-faint">no truck</span>}</div>
                     <div className="text-muted text-callout truncate">{r.driverId ? dn.get(r.driverId) : r.c.portId ? pn.get(r.c.portId) : ""}</div>
                   </div>
                   <div className="min-w-0 text-callout">

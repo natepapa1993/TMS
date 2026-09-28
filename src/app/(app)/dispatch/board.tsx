@@ -9,7 +9,7 @@ import type { LegState } from "@/db/schema";
 import type { Candidate } from "@/domain/orders";
 import * as A from "./actions";
 import { BUCKETS, ALERTS, bucketsOf, alertsOf, urgency, currentLeg, nextStop, type BucketKey, type AlertKey } from "@/domain/board-buckets";
-import { fmtIn, stopZone, zonedDate, toZoneInput, fromZoneInput, zoneAbbrev } from "@/lib/time";
+import { fmtIn, fmtWhen, shortDate, stopZone, zonedDate, toZoneInput, fromZoneInput, zoneAbbrev } from "@/lib/time";
 import { CheckCallBox } from "./check-call";
 import { money as fxMoney } from "@/domain/fx-rules";
 
@@ -53,7 +53,7 @@ export type Row = { order: Order; stops: Stop[]; legs: Leg[]; openFlags: Flag[];
 
 export type BoardData = {
   rows: Row[];
-  etas?: Record<string, { at: string; stopName: string; miles: number; late: boolean; positionAt: string }>;
+  etas?: Record<string, { at: string; stopId?: string; stopName: string; miles: number; late: boolean; positionAt: string }>;
   customers: { id: string; name: string; kind: string; note: string | null }[];
   carriers: { id: string; name: string; country: string; doNotUse: boolean }[];
   drivers: { id: string; name: string; driverType: string; currentTruckId: string | null }[];
@@ -223,7 +223,7 @@ export function DispatchBoard({ data, initialOrder }: { data: BoardData; initial
       <div className={`min-w-0 transition-[padding] ${selected ? "lg:pr-[420px]" : ""}`}>
         <div className="px-gutter pt-6 pb-3 flex items-end justify-between gap-4 flex-wrap">
           <div>
-            <div className="eyebrow mb-1">{new Date().toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" })}</div>
+            <div className="eyebrow mb-1" suppressHydrationWarning>{fmtWhen(now, data.zone, { style: "day" })}</div>
             <div className="h1">Dispatch</div>
           </div>
           <div className="flex items-center gap-2 flex-wrap">
@@ -402,7 +402,15 @@ function BoardRow({ r, alerts, data, now, selected, onClick }: { r: Row; alerts:
   const nsAppt = apptOf(ns);
   const etaTone = eta && nsAppt ? (new Date(eta.at).getTime() > new Date(nsAppt).getTime() ? "late" : new Date(eta.at).getTime() > new Date(nsAppt).getTime() - 3600_000 ? "risk" : "ok") : eta?.late ? "late" : eta ? "ok" : null;
   const needing = r.legs.filter((l) => l.state === "unassigned" || l.state === "declined");
-  const tender = r.tenders.find((x) => x.state === "sent");
+  // the tender that belongs to the leg on screen; one on another leg says which leg it is (M20)
+  const tender = r.tenders.find((x) => x.state === "sent" && x.legId === cur?.id);
+  const otherTender = r.tenders.find((x) => x.state === "sent" && x.legId !== cur?.id);
+  const legName = (legId: string) => {
+    const l = r.legs.find((x) => x.id === legId);
+    return l ? `${LEG_TYPE_LABEL[l.type]} leg` : "another leg";
+  };
+  const minsLeft = (t: { expiresAt: string }) => Math.max(0, Math.round((new Date(t.expiresAt).getTime() - now) / 60000));
+  const expired = r.openFlags.find((f) => f.code === "tender_expired");
   const ping = cur ? (data.pings.byLeg[cur.id] ?? (cur.truckId ? data.pings.byTruck[cur.truckId] : undefined) ?? null) : null;
   const rolling = cur && ["en_route_to_pickup", "at_pickup", "loaded", "en_route", "at_delivery"].includes(cur.state);
   const pingAge = rolling ? ago(ping, now) : null;
@@ -424,6 +432,7 @@ function BoardRow({ r, alerts, data, now, selected, onClick }: { r: Row; alerts:
       <div className="min-w-0">
         <div className="flex items-center gap-1 flex-wrap">
           <Pill tone={statusTone}>{status}</Pill>
+          {expired && <span className="pill pill-red" title={expired.title}>Tender expired</span>}
           {alerts.has("late") && <span className="pill pill-red">Late</span>}
           {!alerts.has("late") && alerts.has("at_risk") && <span className="pill pill-amber">At risk</span>}
         </div>
@@ -467,21 +476,24 @@ function BoardRow({ r, alerts, data, now, selected, onClick }: { r: Row; alerts:
         ) : cur?.assigneeKind === "carrier" ? (
           <>
             <div className="truncate font-semibold">{cur.carrierName}</div>
-            <div className="sub truncate">{tender ? `tender out · ${Math.max(0, Math.round((new Date(tender.expiresAt).getTime() - now) / 60000))} min left` : "partner carrier"}</div>
+            <div className="sub truncate">{tender ? `tender out · ${minsLeft(tender)} min left` : otherTender ? `${legName(otherTender.legId)}: tender to ${otherTender.carrierName} · ${minsLeft(otherTender)} min` : `partner carrier · ${LEG_TYPE_LABEL[cur.type]} leg`}</div>
           </>
         ) : tender ? (
           <>
             <div className="truncate font-semibold">{tender.carrierName}</div>
-            <div className="sub truncate text-amber">tendered · {Math.max(0, Math.round((new Date(tender.expiresAt).getTime() - now) / 60000))} min left</div>
+            <div className="sub truncate text-amber">tendered · {minsLeft(tender)} min left</div>
           </>
         ) : cur ? (
-          <div className="text-red font-semibold truncate">Needs truck</div>
+          <>
+            <div className="text-red font-semibold truncate">Needs truck</div>
+            {otherTender && <div className="sub truncate">{legName(otherTender.legId)}: tender to {otherTender.carrierName} · {minsLeft(otherTender)} min</div>}
+          </>
         ) : (
           <span className="text-faint">—</span>
         )}
         {needing.length > 0 && cur && !["unassigned", "declined"].includes(cur.state) && <div className="sub text-red truncate">{needing.map((l) => LEG_TYPE_LABEL[l.type]).join(", ")} leg needs truck</div>}
       </div>
-      <div className={`text-callout tabular-nums ${pingTone}`} title={ping ? `Last position ${new Date(ping).toLocaleString()}` : rolling ? "No GPS position" : ""}>
+      <div className={`text-callout tabular-nums ${pingTone}`} title={ping ? `Last position ${fmtWhen(ping, data.zone, { style: "short" })}` : rolling ? "No GPS position" : ""}>
         {rolling ? (pingAge ?? "none") : "—"}
       </div>
       <div className="text-right min-w-0">
@@ -497,6 +509,10 @@ const STAMPS: LegState[] = ["en_route_to_pickup", "at_pickup", "en_route", "at_d
 function SidePanel({ r, data, busy, canDispatch, onClose, onPopup, run, onToast }: { r: Row; data: BoardData; busy: boolean; canDispatch: boolean; onClose: () => void; onPopup: (p: { kind: "assign" | "split" | "hold" | "cancel" | "oos" | "decline" | "drivers" | "track"; legId?: string }) => void; run: (label: string, fn: () => Promise<{ ok: boolean; error?: string }>) => void; onToast: (msg: string) => void }) {
   const nl = nextLeg(r);
   const [confirming, setConfirming] = useState<{ legId: string; label: string; when: string } | null>(null);
+  const zoneOfStopId = (id: string | null | undefined) => {
+    const st = r.stops.find((x) => x.id === id);
+    return st ? stopZone(st, data.zone) : data.zone;
+  };
   // the clock a step stamps is the clock of the stop it happens at
   const zoneOfLeg = (l: Leg) => {
     const st = r.stops.find((x) => x.id === (["en_route_to_pickup", "at_pickup"].includes(l.state) ? l.fromStopId : l.toStopId));
@@ -635,8 +651,8 @@ function SidePanel({ r, data, busy, canDispatch, onClose, onPopup, run, onToast 
                     )}
                     {l.declineReason && <div className="text-red">Declined: {l.declineReason}</div>}
                     {data.etas?.[l.id] && (
-                      <div className={data.etas[l.id].late ? "text-red font-semibold" : "text-teal font-semibold"} data-testid="eta" title={`${data.etas[l.id].miles} mi from the last position at ${new Date(data.etas[l.id].positionAt).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })}`}>
-                        ETA {new Date(data.etas[l.id].at).toLocaleString("en-US", { weekday: "short", hour: "numeric", minute: "2-digit" })} at {data.etas[l.id].stopName}
+                      <div className={data.etas[l.id].late ? "text-red font-semibold" : "text-teal font-semibold"} data-testid="eta" title={`${data.etas[l.id].miles} mi from the last position at ${fmtWhen(data.etas[l.id].positionAt, data.zone, { style: "time" })}`}>
+                        ETA {fmtWhen(data.etas[l.id].at, zoneOfStopId(data.etas[l.id].stopId ?? l.toStopId))} at {data.etas[l.id].stopName}
                         {data.etas[l.id].late ? " — past the window" : ""}
                       </div>
                     )}
@@ -728,7 +744,7 @@ function SidePanel({ r, data, busy, canDispatch, onClose, onPopup, run, onToast 
         {r.order.state !== "draft" && !closed && canDispatch && (
           <details className="accordion" open={rolling}>
             <summary>
-              Check calls {data.lastCalls[r.order.id] && <span className="text-faint font-normal">· last {new Date(data.lastCalls[r.order.id].at).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })}</span>}
+              Check calls {data.lastCalls[r.order.id] && <span className="text-faint font-normal">· last {fmtWhen(data.lastCalls[r.order.id].at, dest ? stopZone(dest, data.zone) : data.zone, { style: "short" })}</span>}
             </summary>
             <div className="pb-3">
               <CheckCallBox orderId={r.order.id} legId={nl?.id ?? null} zone={dest ? stopZone(dest, data.zone) : data.zone} reefer={r.order.equipment.includes("reefer")} onDone={onToast} />
@@ -795,9 +811,11 @@ function QuickBtn({ label, onClick, disabled, hint }: { label: string; onClick?:
 /* ---------- popups ---------- */
 
 function AssignModal({ leg, order, data, onClose, onDone }: { leg: Leg; order: Order; data: BoardData; onClose: () => void; onDone: (msg: string) => void }) {
-  const [tab, setTab] = useState<"truck" | "carrier">(leg.type === "mx" ? "carrier" : "truck");
+  // Change: the dialog opens on what the leg has now (M3)
+  const [tab, setTab] = useState<"truck" | "carrier">(leg.assigneeKind === "carrier" ? "carrier" : leg.assigneeKind === "truck" ? "truck" : leg.type === "mx" ? "carrier" : "truck");
   const [cands, setCands] = useState<Candidate[] | null>(null);
-  const [pick, setPick] = useState<{ truckId: string; driverId: string | null; coDriverId: string | null } | null>(null);
+  const [pick, setPick] = useState<{ truckId: string; driverId: string | null; coDriverId: string | null } | null>(leg.assigneeKind === "truck" && leg.truckId ? { truckId: leg.truckId, driverId: leg.driverId, coDriverId: leg.coDriverId } : null);
+  const sentAlready = leg.state === "dispatched" || leg.state === "accepted";
   const [trailerId, setTrailerId] = useState(leg.trailerId ?? "");
   const [openedAt] = useState(() => Date.now());
   const [carrierId, setCarrierId] = useState(leg.carrierId ?? "");
@@ -848,8 +866,21 @@ function AssignModal({ leg, order, data, onClose, onDone }: { leg: Leg; order: O
       }
       const a = tab === "truck" ? (pick ? { kind: "truck" as const, ...pick, trailerId: trailerId || null } : null) : { kind: "carrier" as const, carrierId, carrierRateCents: rateCents, carrierRateCurrency: rateCur };
       if (!a) return setErr("Pick a unit");
-      const r = sendNow && (leg.state === "unassigned" || leg.state === "declined" || leg.state === "planned") ? await A.planAndDispatchAction(leg.id, a, opts) : await A.planAction(leg.id, a, opts);
-      if (r.ok) onDone(sendNow ? (tab === "carrier" ? "Marked sent — confirm by phone, then press Accepted" : "Assigned and sent") : "Assigned — in Planned");
+      const wasSent = leg.state === "dispatched" || leg.state === "accepted";
+      const r = sendNow || wasSent ? await A.planAndDispatchAction(leg.id, a, opts) : await A.planAction(leg.id, a, opts);
+      const res = r.ok ? (r.data as { kept?: boolean; resent?: boolean }) : null;
+      if (r.ok)
+        onDone(
+          res?.kept
+            ? "Updated — the leg stays sent, nothing re-dispatched"
+            : res?.resent
+              ? `${tab === "carrier" ? "New carrier" : "New truck or driver"} — the leg was re-sent`
+              : sendNow
+                ? tab === "carrier"
+                  ? "Marked sent — confirm by phone, then press Accepted"
+                  : "Assigned and sent"
+                : "Assigned — in Planned",
+        );
       else if (r.code === "eligibility") eligibilityFail(r);
       else setErr(r.error);
     });
@@ -888,6 +919,7 @@ function AssignModal({ leg, order, data, onClose, onDone }: { leg: Leg; order: O
           Partner carrier
         </button>
       </div>
+      {sentAlready && <div className="help mb-3" data-testid="change-hint">Already sent. A new trailer, co-driver, rate or miles keeps it sent; a new truck, driver or carrier re-sends it.</div>}
       {tab === "truck" ? (
         !cands ? (
           <div className="py-8 text-center text-muted">
@@ -905,14 +937,22 @@ function AssignModal({ leg, order, data, onClose, onDone }: { leg: Leg; order: O
             {cands.map((c) => {
               const active = pick?.truckId === c.truckId;
               return (
-                <div key={c.truckId} className={`flex items-center gap-3 px-3 py-2.5 rounded-lg cursor-pointer ${active ? "bg-teal-soft" : "hover:bg-ground"} ${c.hardBlocked ? "opacity-60" : ""}`} onClick={() => !c.hardBlocked && setPick({ truckId: c.truckId, driverId: c.driverId, coDriverId: null })}>
+                <div key={c.truckId} className={`flex items-center gap-3 px-3 py-2.5 rounded-lg cursor-pointer ${active ? "bg-teal-soft" : "hover:bg-ground"} ${c.hardBlocked ? "opacity-60" : ""}`} onClick={() => {
+                    if (c.hardBlocked) return;
+                    // a team truck brings its co-driver (M4)
+                    const mate = driversFor(c.truckId).find((d) => d.id !== c.driverId);
+                    setPick({ truckId: c.truckId, driverId: c.driverId, coDriverId: pick?.truckId === c.truckId ? pick.coDriverId : (mate?.id ?? null) });
+                  }}>
                   <span className={`w-2.5 h-2.5 rounded-full flex-none ${c.hardBlocked ? "bg-red" : c.ok ? (c.busy.length ? "bg-amber" : "bg-green") : "bg-amber"}`} />
-                  <div className="w-16 font-extrabold mono">{c.unitNumber}</div>
+                  <div className="w-16 font-extrabold mono">
+                    {c.unitNumber}
+                    {driversFor(c.truckId).length > 1 && <div className="crew-tag crew-team mt-0.5">Team</div>}
+                  </div>
                   <div className="flex-1 min-w-0">
                     <div className="text-callout truncate">
                       {c.driverName ?? <span className="text-faint">no driver</span>}
                       <span className="text-muted text-footnote">
-                        {c.freeAt && new Date(c.freeAt).getTime() > openedAt + 15 * 60_000 ? ` · free ${new Date(c.freeAt).toLocaleString("en-US", { weekday: "short", hour: "numeric", minute: "2-digit" })}` : " · free now"}
+                        {c.freeAt && new Date(c.freeAt).getTime() > openedAt + 15 * 60_000 ? ` · free ${fmtWhen(c.freeAt, c.freeZone ?? data.zone, { now: openedAt })}` : " · free now"}
                         {c.freeWhere ? ` at ${c.freeWhere}` : ""}
                         {c.deadheadMi != null ? ` · ${c.deadheadMi} mi empty` : ""}
                       </span>
@@ -1032,7 +1072,7 @@ function AssignModal({ leg, order, data, onClose, onDone }: { leg: Leg; order: O
               {lane && (
                 <div className="help" data-testid="lane-rate">
                   Lane rate on file: {lane.lane} · fuel {lane.fuelRule === "included" ? "included" : lane.fuelRule === "pct" ? `${lane.fuelValue ?? 0}% extra` : `${((lane.fuelValue ?? 0) / 100).toFixed(2)}/mi extra`}
-                  {lane.validTo ? ` · valid to ${new Date(lane.validTo).toLocaleDateString("en-US", { month: "short", day: "numeric" })}` : ""}
+                  {lane.validTo ? ` · valid to ${shortDate(lane.validTo)}` : ""}
                 </div>
               )}
             </div>
@@ -1059,7 +1099,7 @@ function AssignModal({ leg, order, data, onClose, onDone }: { leg: Leg; order: O
             <div>
               <label className="label">Note to the carrier (optional)</label>
               <input className="input" value={tender.message} onChange={(e) => setTender({ ...tender, message: e.target.value })} placeholder="Team drivers please. Pickup appointment is firm." />
-              <div className="help">They get the pickup, delivery, equipment, rate and a link to accept or decline. No answer by the deadline = back to Pending with a flag.</div>
+              <div className="help">They get the pickup, delivery, equipment, rate and a link to accept or decline. No answer by the deadline: the leg goes back to Needs truck with a red “Tender expired” flag at the top of the board.</div>
             </div>
           )}
         </div>

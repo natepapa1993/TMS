@@ -14,6 +14,7 @@ import { respondToTender, type TenderResponse } from "./tenders";
 import { statusFor, subjectDocuments, uploadSubjectDocument } from "./compliance";
 import { uploadOrderDocument, receiveCarrierBill, syncCarrierBills } from "./billing";
 import { LEG_LABEL } from "./states";
+import { HANDOFF } from "./zones";
 
 /**
  * Carrier portal (spec Module 10): one persistent link per partner carrier — their offers, the loads they
@@ -235,20 +236,28 @@ export async function carrierDriverLink(tenantId: string, legId: string) {
 export async function carrierDriverView(tenantId: string, legId: string) {
   const [l] = await db.select().from(s.legs).where(and(eq(s.legs.tenantId, tenantId), eq(s.legs.id, legId))).limit(1);
   if (!l || !l.carrierId) throw new NotFoundError("load", legId);
-  const [order, stops, carrier, tenant, at] = await Promise.all([
+  const [order, stops, carrier, tenant, at, orderLegs] = await Promise.all([
     db.select().from(s.orders).where(eq(s.orders.id, l.orderId)).limit(1).then((r) => r[0]),
     db.select().from(s.stops).where(eq(s.stops.orderId, l.orderId)).orderBy(s.stops.seq),
     loadCarrier(tenantId, l.carrierId),
     db.select({ name: s.tenants.name }).from(s.tenants).where(eq(s.tenants.id, tenantId)).limit(1).then((r) => r[0]),
-    db.select({ driverName: s.tenders.driverName }).from(s.tenders).where(and(eq(s.tenders.legId, legId), eq(s.tenders.state, "accepted"))).orderBy(desc(s.tenders.respondedAt)).limit(1).then((r) => r[0]),
+    db.select({ driverName: s.tenders.driverName, trailerNumber: s.tenders.trailerNumber }).from(s.tenders).where(and(eq(s.tenders.legId, legId), eq(s.tenders.state, "accepted"))).orderBy(desc(s.tenders.respondedAt)).limit(1).then((r) => r[0]),
+    db.select().from(s.legs).where(eq(s.legs.orderId, l.orderId)).orderBy(s.legs.seq),
   ]);
+  const flow = await partnerFlow(l);
   const mid = pendingMidStop(l, stops);
-  const next = ["completed", "cancelled", "unassigned", "planned", "declined"].includes(l.state) ? null : mid ? { to: l.state, en: `${mid.which === "arrived" ? "Arrived at" : "Leaving"} ${mid.stop.name}`, es: `${mid.which === "arrived" ? "Llegué a" : "Saliendo de"} ${mid.stop.name}` } : (NEXT[l.state] ?? null);
+  const done = ["completed", "cancelled", "unassigned", "planned", "declined"].includes(l.state);
+  const next = done ? null : flow ? flowNext(flow) : mid ? { to: l.state, en: `${mid.which === "arrived" ? "Arrived at" : "Leaving"} ${mid.stop.name}`, es: `${mid.which === "arrived" ? "Llegué a" : "Saliendo de"} ${mid.stop.name}` } : (NEXT[l.state] ?? null);
   const stop = (id: string | null) => {
     const x = stops.find((st) => st.id === id);
-    return x ? { id: x.id, name: x.name, type: x.type, country: x.country, address: x.address, windowStart: x.windowStart, windowEnd: x.windowEnd, contact: x.contact, notes: x.notes, arrivedAt: x.arrivedAt, departedAt: x.departedAt } : null;
+    return x ? { id: x.id, name: x.name, type: x.type, country: x.country, address: x.address, windowStart: x.windowStart, windowEnd: x.windowEnd, contact: x.contact, notes: x.notes, arrivedAt: x.arrivedAt, departedAt: x.departedAt, refs: x.refs } : null;
   };
+  const toStop = stops.find((x) => x.id === l.toStopId);
+  // a drop at the border yard (or any hand-off) for the next truck: the caja number, its seal and a photo go to the crossing (M18)
+  const nextLeg = orderLegs.find((x) => x.fromStopId === l.toStopId && x.id !== l.id);
+  const handoff = toStop && HANDOFF.includes(toStop.type) && nextLeg ? { kind: toStop.type, crossing: nextLeg.type === "crossing", caja: at?.trailerNumber ?? null } : null;
   const { tenantContact } = await import("./company");
+  const photos = await db.select({ code: s.documents.code }).from(s.documents).where(and(eq(s.documents.tenantId, tenantId), eq(s.documents.subjectKind, "order"), eq(s.documents.subjectId, l.orderId), inArray(s.documents.code, ["POD", "SEAL_PHOTO"]), inArray(s.documents.status, ["present", "verified"])));
   return {
     company: tenant?.name ?? "",
     dispatchPhone: (await tenantContact(tenantId)).dispatchPhone,
@@ -267,24 +276,68 @@ export async function carrierDriverView(tenantId: string, legId: string) {
       return [...stops].filter((x) => x.seq < seq && x.sealOut).sort((p, q) => q.seq - p.seq)[0]?.sealOut ?? null;
     })(),
     next,
-    podOnFile: !!(await db.select({ id: s.documents.id }).from(s.documents).where(and(eq(s.documents.tenantId, tenantId), eq(s.documents.subjectKind, "order"), eq(s.documents.subjectId, l.orderId), eq(s.documents.code, "POD"), inArray(s.documents.status, ["present", "verified"]))).limit(1)).length,
+    wait: flow?.kind === "wait" ? { en: flow.en, es: flow.es } : null,
+    handoff,
+    podOnFile: photos.some((p) => p.code === "POD"),
+    cajaPhotoOnFile: photos.some((p) => p.code === "SEAL_PHOTO"),
   };
 }
 
+/** A partner on a crossing leg walks the same ordered flow as our own driver: its leg steps to the caja, then the border. */
+async function partnerFlow(l: typeof s.legs.$inferSelect) {
+  if (l.type !== "crossing") return null;
+  const [x] = await db.select().from(s.crossings).where(eq(s.crossings.legId, l.id)).limit(1);
+  if (!x) return null;
+  const X = await import("./crossing");
+  return { ...X.crossingDriverNext(l.state, x.state), crossing: x, labels: (k: s.CrossingState) => X.stepLabel(k, x) };
+}
+function flowNext(f: NonNullable<Awaited<ReturnType<typeof partnerFlow>>>): { to: string; en: string; es: string; border?: boolean } | null {
+  if (f.kind === "leg") return Object.values(NEXT).find((n) => n?.to === f.to) ?? null;
+  if (f.kind === "border") {
+    const lb = f.labels(f.to);
+    return { to: f.to, en: lb?.en ?? f.to, es: lb?.es ?? f.to, border: true };
+  }
+  return null;
+}
+
 /** The carrier's driver pressed the button: a position when the phone gave one, and the step, verified when it did. */
-export async function carrierDriverStep(tenantId: string, legId: string, input: { lat?: number | null; lng?: number | null; accuracyM?: number | null; seal?: string | null }) {
+export async function carrierDriverStep(tenantId: string, legId: string, input: { lat?: number | null; lng?: number | null; accuracyM?: number | null; seal?: string | null; caja?: string | null }) {
   const ctx = systemCtx(tenantId);
   const [l] = await db.select().from(s.legs).where(and(eq(s.legs.tenantId, tenantId), eq(s.legs.id, legId))).limit(1);
   if (!l || !l.carrierId) throw new NotFoundError("load", legId);
   const hasPos = input.lat != null && input.lng != null;
   if (hasPos) await recordPosition(ctx, { source: "phone", lat: input.lat!, lng: input.lng!, accuracyM: input.accuracyM ?? null, legId: l.id }).catch(() => null);
   const ev = { source: "carrier" as const, verified: hasPos, lat: hasPos ? String(Number(input.lat).toFixed(6)) : undefined, lng: hasPos ? String(Number(input.lng).toFixed(6)) : undefined, note: "from the driver's phone", seal: input.seal ?? null };
+  const flow = await partnerFlow(l);
+  if (flow?.kind === "border") {
+    const X = await import("./crossing");
+    await X.step(ctx, flow.crossing.id, flow.to, { source: "carrier", verified: hasPos });
+    const [after] = await db.select().from(s.legs).where(eq(s.legs.id, l.id)).limit(1);
+    return after;
+  }
+  if (flow && flow.kind !== "leg") throw new ValidationError(flow.kind === "wait" ? `${flow.en} · ${flow.es}` : "wait for dispatch · espera a despacho");
   if (l.state === "en_route") {
     const stops = await db.select().from(s.stops).where(eq(s.stops.orderId, l.orderId));
     if (pendingMidStop(l, stops)) return advanceLeg(ctx, legId, "next", ev);
   }
   const next = NEXT[l.state];
   if (!next) throw new ValidationError("nothing further on this load");
+  // dropping the caja at the border yard for the crossing truck: its number (and seal) go onto the crossing
+  if (next.to === "completed") {
+    const [toStop] = l.toStopId ? await db.select().from(s.stops).where(eq(s.stops.id, l.toStopId)).limit(1) : [];
+    const [nextLeg] = l.toStopId ? await db.select().from(s.legs).where(and(eq(s.legs.orderId, l.orderId), eq(s.legs.fromStopId, l.toStopId))).limit(1) : [];
+    if (toStop && HANDOFF.includes(toStop.type) && nextLeg) {
+      const caja = input.caja?.trim();
+      if (!caja && nextLeg.type === "crossing") throw new ValidationError("type the caja number before you leave it · escribe el número de caja", "caja");
+      const moved = await advanceLeg(ctx, legId, next.to, ev);
+      if (caja) {
+        const { cajaFromCarrier } = await import("./crossing");
+        const [c] = await db.select({ name: s.carriers.name }).from(s.carriers).where(eq(s.carriers.id, l.carrierId)).limit(1);
+        await cajaFromCarrier(ctx, l.orderId, nextLeg.id, caja, `${c?.name ?? "carrier"} driver at ${toStop.name}`, input.seal ?? null);
+      }
+      return moved;
+    }
+  }
   return advanceLeg(ctx, legId, next.to, ev);
 }
 
@@ -315,6 +368,16 @@ export async function portalUploadDocument(tenantId: string, carrierId: string, 
 }
 
 /** The carrier sends the POD for a leg they ran (at the delivery or after): the document our three-way check and the customer's invoice wait for. */
+/** The caja photo at a border-yard drop (the partner driver's link): on the load's documents and the crossing's timeline. */
+export async function portalUploadCajaPhoto(tenantId: string, carrierId: string, legId: string, file: { fileName: string; mimeType: string; bytes: Buffer }) {
+  const ctx = systemCtx(tenantId);
+  const l = await ownLeg(tenantId, carrierId, legId);
+  if (!["at_delivery", "completed"].includes(l.state)) throw new ValidationError("take the caja photo at the yard · toma la foto de la caja en el patio");
+  const row = await uploadOrderDocument(ctx, l.orderId, { code: "SEAL_PHOTO", fileName: file.fileName, mimeType: file.mimeType, bytes: file.bytes, source: "carrier_portal" });
+  await db.insert(s.legEvents).values({ id: newId(), tenantId, legId: l.id, orderId: l.orderId, kind: "document", source: "carrier", verified: false, note: "Caja / seal photo from the carrier's driver" });
+  return row;
+}
+
 export async function portalUploadPod(tenantId: string, carrierId: string, legId: string, file: { fileName: string; mimeType: string; bytes: Buffer }) {
   const ctx = systemCtx(tenantId);
   const l = await ownLeg(tenantId, carrierId, legId);
@@ -379,11 +442,14 @@ export async function rateConPdf(tenantId: string, carrierId: string, legId: str
   T(entity?.legalName ?? tenant?.name ?? "", 330, y - 13, 11, bold);
   T([entity?.mcNumber && `MC ${entity.mcNumber}`, entity?.dotNumber && `DOT ${entity.dotNumber}`].filter(Boolean).join("  ") || "", 330, y - 26, 9, font, muted);
   y = 640;
-  const fmt = (d: Date | null | undefined) => (d ? d.toISOString().slice(0, 16).replace("T", " ") + " UTC" : "");
+  // the rate con prints each stop's time on that stop's clock, with the zone
+  const { tenantZone } = await import("./company");
+  const { fmtWindow, stopZone } = await import("@/lib/time");
+  const companyZone = await tenantZone(tenantId);
   const stopLine = (label: string, st?: typeof from) => {
     T(label, 54, y, 8, bold, muted);
     T(st ? `${st.name}${st.address?.line1 ? `, ${st.address.line1}` : ""}${st.address?.city ? `, ${st.address.city}` : ""}${st.address?.state ? ` ${st.address.state}` : ""} ${st.country}` : "", 54, y - 13, 10);
-    const w = st ? [st.windowStart && `from ${fmt(st.windowStart)}`, st.windowEnd && `to ${fmt(st.windowEnd)}`, st.appointment && "appointment"].filter(Boolean).join(" · ") : "";
+    const w = st ? [fmtWindow(st.windowStart, st.windowEnd, stopZone(st, companyZone)), st.appointment && "appointment"].filter(Boolean).join(" · ") : "";
     if (w) T(w, 54, y - 26, 9, font, muted);
     if (st?.contact) T(`Contact: ${st.contact}`, 54, y - 39, 9, font, muted);
     y -= 60;

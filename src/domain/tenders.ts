@@ -1,7 +1,7 @@
 import { and, eq, inArray, lt, desc, sql } from "drizzle-orm";
-import { fmtIn } from "@/lib/time";
+import { fmtWhen, fmtWindow, stopZone } from "@/lib/time";
 import { tenantZone } from "./company";
-import { db } from "@/db/client";
+import { db, type Tx } from "@/db/client";
 import * as s from "@/db/schema";
 import type { TenderChannel } from "@/db/schema";
 import { newId } from "@/lib/ids";
@@ -9,13 +9,21 @@ import { assertCtx, requirePermission, systemCtx, type Ctx } from "@/lib/context
 import { writeAudit } from "@/lib/audit";
 import { newToken, publicUrl } from "@/lib/tokens";
 import { enqueue, deliverQueued } from "@/lib/outbox";
-import { planLeg, dispatchLeg, acceptLeg, declineLeg, NotFoundError, ValidationError, normCurrency } from "./orders";
+import { planLeg, dispatchLeg, acceptLeg, declineLeg, unplanLeg, NotFoundError, ValidationError, normCurrency } from "./orders";
 import { TransitionError } from "./states";
 
 /**
  * Tendering (spec §4): a leg is offered to one carrier at a time, with a rate, a deadline and a
- * link. Accept moves the leg to accepted; decline or expiry sends it back to Pending with a flag.
+ * link. Accept moves the leg to accepted; decline or expiry sends it back to Pending (Needs truck)
+ * with a red flag. Every step — sent, accepted, declined, expired, withdrawn — is on the load's timeline.
  */
+
+export type TenderEventState = "sent" | "accepted" | "declined" | "expired" | "withdrawn";
+
+/** A tender step on the load's timeline (leg events, kind "tender"). */
+async function tenderEvent(tx: Tx | typeof db, ctx: Ctx, t: { id: string; legId: string; orderId: string; carrierId: string }, state: TenderEventState, note: string, at = new Date()) {
+  await tx.insert(s.legEvents).values({ id: newId(), tenantId: ctx.tenantId, legId: t.legId, orderId: t.orderId, at, kind: "tender", source: state === "accepted" || state === "declined" ? "carrier" : ctx.userId ? "dispatcher" : "system", userId: ctx.userId, note, data: { tenderId: t.id, state, carrierId: t.carrierId } });
+}
 
 export type SendTenderInput = {
   carrierId: string;
@@ -43,7 +51,7 @@ export async function sendTender(ctx: Ctx, legId: string, input: SendTenderInput
   // the carrier is paid in its own currency (a Mexican carrier in pesos): the tender, the leg and the bill carry it
   const currency = normCurrency(input.currency ?? legBefore.carrierRateCurrency);
   if (legBefore.state !== "planned" || legBefore.carrierId !== input.carrierId)
-    await planLeg(ctx, legId, { kind: "carrier", carrierId: input.carrierId, carrierRateCents: input.rateCents ?? null, carrierRateCurrency: currency }, { override: input.override, reason: input.reason });
+    await planLeg(ctx, legId, { kind: "carrier", carrierId: input.carrierId, carrierRateCents: input.rateCents ?? null, carrierRateCurrency: currency }, { override: input.override, reason: input.reason, inPlace: false });
   else if (input.rateCents != null && (input.rateCents !== legBefore.carrierRateCents || currency !== (legBefore.carrierRateCurrency ?? "USD")))
     await db.update(s.legs).set({ carrierRateCents: input.rateCents, carrierRateCurrency: currency, updatedAt: new Date(), updatedBy: ctx.userId }).where(eq(s.legs.id, legId));
 
@@ -55,10 +63,14 @@ export async function sendTender(ctx: Ctx, legId: string, input: SendTenderInput
   if (channel === "whatsapp" && !to) throw new ValidationError(`${carrier.name} has no WhatsApp number; add one on the carrier record or tender by another channel`, "to");
 
   // 2. one open tender per leg
-  await db
+  const replaced = await db
     .update(s.tenders)
     .set({ state: "withdrawn", respondedAt: new Date(), respondedBy: "dispatcher", responseNote: "replaced by a new tender", updatedAt: new Date(), updatedBy: ctx.userId })
-    .where(and(eq(s.tenders.tenantId, ctx.tenantId), eq(s.tenders.legId, legId), eq(s.tenders.state, "sent")));
+    .where(and(eq(s.tenders.tenantId, ctx.tenantId), eq(s.tenders.legId, legId), eq(s.tenders.state, "sent")))
+    .returning();
+  for (const r of replaced) await tenderEvent(db, ctx, r, "withdrawn", "Tender withdrawn: replaced by a new tender");
+  // a new tender answers the old "tender expired" / "declined" flag on this leg
+  await db.update(s.flags).set({ clearedAt: new Date(), clearedBy: ctx.userId ?? "system" }).where(and(eq(s.flags.tenantId, ctx.tenantId), eq(s.flags.legId, legId), inArray(s.flags.code, ["tender_expired", "declined"]), sql`${s.flags.clearedAt} is null`));
 
   // 3. the leg goes to "sent"
   const leg = await dispatchLeg(ctx, legId);
@@ -73,7 +85,9 @@ export async function sendTender(ctx: Ctx, legId: string, input: SendTenderInput
   // the code first ("MXN 9,500.00"): a bare "$" means pesos to a Mexican carrier and dollars to a US one
   const rate = (input.rateCents ?? leg.carrierRateCents) != null ? `${currency} ${(((input.rateCents ?? leg.carrierRateCents) as number) / 100).toLocaleString("en-US", { minimumFractionDigits: 2 })}` : "rate to be confirmed";
   const zone = await tenantZone(ctx.tenantId);
-  const fmt = (d: Date | null | undefined) => fmtIn(d, zone);
+  // each stop's time on that stop's clock; the deadline on the company's
+  const fmt = (d: Date | null | undefined) => fmtWhen(d, zone);
+  const atStop = (st: typeof from) => (st ? fmtWindow(st.windowStart, st.windowEnd, stopZone(st, zone)) : null);
   const place = (st?: typeof from) => (st ? `${st.name}${st.address?.city ? `, ${st.address.city}` : ""}${st.address?.state ? ` ${st.address.state}` : ""}` : "");
   const subject = `Load offer ${order.orderNumber}: ${place(from)} → ${place(toStop)} · ${rate}`;
   const body = [
@@ -81,8 +95,8 @@ export async function sendTender(ctx: Ctx, legId: string, input: SendTenderInput
     ``,
     `We have a ${LEG_TYPE_LABEL[leg.type] ?? leg.type} leg for you.`,
     ``,
-    `Pickup:   ${place(from)}  (${fmt(from?.windowStart) ?? "ASAP"})`,
-    `Delivery: ${place(toStop)}${toStop?.windowEnd ? `  (by ${fmt(toStop.windowEnd)})` : ""}`,
+    `Pickup:   ${place(from)}  (${atStop(from) ?? "ASAP"})`,
+    `Delivery: ${place(toStop)}${atStop(toStop) ? `  (${atStop(toStop)})` : ""}`,
     `Equipment: ${order.equipment.replace("_", " ")}`,
     order.cargoNote ? `Cargo: ${order.cargoNote}` : null,
     `Rate: ${rate}`,
@@ -118,6 +132,7 @@ export async function sendTender(ctx: Ctx, legId: string, input: SendTenderInput
       })
       .returning();
     await writeAudit(tx, ctx, "tender", row.id, "create", { carrierId: { from: null, to: carrier.id }, rateCents: { from: null, to: row.rateCents } }, `leg ${leg.seq} of ${order.orderNumber} tendered to ${carrier.name} by ${channel}`);
+    await tenderEvent(tx, ctx, row, "sent", `Tender sent to ${carrier.name} by ${channel}${to ? ` (${to})` : ""} · ${rate} · answer by ${fmt(expiresAt)}`);
     if (to && channel === "email") await enqueue(ctx, { channel: "email", to, subject, body, subjectKind: "tender", subjectId: row.id }, tx);
     // WhatsApp: the template (when the company has one approved) takes carrier, lane, rate, link; otherwise the same text
     if (to && channel === "whatsapp") await enqueue(ctx, { channel: "whatsapp", to, subject, body, subjectKind: "tender", subjectId: row.id, meta: { kind: "tender", template: { name: "", params: [carrier.name, `${place(from)} → ${place(toStop)}`, rate, link] } } }, tx);
@@ -142,7 +157,7 @@ export async function tenderByToken(token: string) {
   return { ctx, tender: { ...t, state: effective }, leg, order, carrier, tenant, from, to };
 }
 
-export type TenderResponse = { accept: boolean; name: string; note?: string | null; driverName?: string | null; driverPhone?: string | null; unitNumber?: string | null; trailerNumber?: string | null };
+export type TenderResponse = { accept: boolean; name: string; note?: string | null; driverName?: string | null; driverPhone?: string | null; unitNumber?: string | null; unitPlate?: string | null; trailerNumber?: string | null };
 
 /** The carrier's answer from the public page. No login: the token is the authorization. */
 export async function respondToTender(token: string, r: TenderResponse) {
@@ -164,7 +179,8 @@ export async function respondToTender(token: string, r: TenderResponse) {
       driverName: r.driverName?.trim() || null,
       driverPhone: r.driverPhone?.trim() || null,
       unitNumber: r.unitNumber?.trim() || null,
-      trailerNumber: r.trailerNumber?.trim() || null,
+      unitPlate: r.unitPlate?.trim().toUpperCase() || null,
+      trailerNumber: r.trailerNumber?.trim().toUpperCase() || null,
       updatedAt: new Date(),
     })
     .where(eq(s.tenders.id, tender.id));
@@ -172,9 +188,15 @@ export async function respondToTender(token: string, r: TenderResponse) {
 
   if (r.accept) {
     const leg = await acceptLeg(ctx, tender.legId, "carrier");
-    await db.insert(s.legEvents).values({ id: newId(), tenantId: ctx.tenantId, legId: leg.id, orderId: leg.orderId, kind: "note", source: "carrier", note: `Carrier accepted. Driver ${r.driverName}${r.driverPhone ? ` ${r.driverPhone}` : ""}${r.unitNumber ? `, unit ${r.unitNumber}` : ""}${r.trailerNumber ? `, trailer ${r.trailerNumber}` : ""}` });
+    await tenderEvent(db, ctx, tender, "accepted", `Tender accepted by ${r.name.trim()} (${found.carrier?.name ?? "carrier"}). Driver ${r.driverName}${r.driverPhone ? ` ${r.driverPhone}` : ""}${r.unitNumber ? `, unit ${r.unitNumber}` : ""}${r.unitPlate ? ` (plates ${r.unitPlate.trim().toUpperCase()})` : ""}${r.trailerNumber ? `, trailer ${r.trailerNumber.trim().toUpperCase()}` : ""}`);
+    // the caja the carrier named goes onto the crossing papers
+    if (r.trailerNumber?.trim()) {
+      const { cajaFromCarrier } = await import("./crossing");
+      await cajaFromCarrier(ctx, leg.orderId, leg.id, r.trailerNumber.trim().toUpperCase(), `${found.carrier?.name ?? "carrier"} at acceptance`).catch(() => null);
+    }
     return { state: "accepted" as const, leg };
   }
+  await tenderEvent(db, ctx, tender, "declined", `Tender declined by ${r.name.trim()} (${found.carrier?.name ?? "carrier"}): ${r.note?.trim()}`);
   const leg = await declineLeg(ctx, tender.legId, `${found.carrier?.name ?? "carrier"} declined: ${r.note?.trim()}`, "carrier");
   return { state: "declined" as const, leg };
 }
@@ -182,10 +204,12 @@ export async function respondToTender(token: string, r: TenderResponse) {
 /** Dispatcher heard back by phone: close the open tender to match the leg. */
 export async function closeOpenTenderForLeg(ctx: Ctx, legId: string, state: "accepted" | "declined" | "withdrawn", note?: string) {
   assertCtx(ctx);
-  await db
+  const closed = await db
     .update(s.tenders)
     .set({ state, respondedAt: new Date(), respondedBy: "dispatcher", responseNote: note ?? null, updatedAt: new Date(), updatedBy: ctx.userId })
-    .where(and(eq(s.tenders.tenantId, ctx.tenantId), eq(s.tenders.legId, legId), eq(s.tenders.state, "sent")));
+    .where(and(eq(s.tenders.tenantId, ctx.tenantId), eq(s.tenders.legId, legId), eq(s.tenders.state, "sent")))
+    .returning();
+  for (const t of closed) await tenderEvent(db, ctx, t, state, `Tender ${state} by dispatch${note ? `: ${note}` : ""}`);
 }
 
 export async function openTendersForOrders(ctx: Ctx, orderIds: string[]) {
@@ -201,19 +225,32 @@ export async function openTendersForOrders(ctx: Ctx, orderIds: string[]) {
   });
 }
 
-/** Job: every tender past its deadline expires and its leg returns to Pending with a flag. */
-export async function expireTenders(now = new Date()) {
-  const due = await db.select().from(s.tenders).where(and(eq(s.tenders.state, "sent"), lt(s.tenders.expiresAt, now)));
+/**
+ * Every tender past its deadline expires: the leg goes back to Needs truck (Pending, nobody on it) with a red
+ * "Tender expired" flag that puts the load at the top of the board, and the expiry is on the load's timeline.
+ * Runs from the job ticker and on read (the board, the planner, the Loads grid and the load page call it for
+ * their company first), so the board is right between ticks. Idempotent: a tender expires once.
+ */
+export async function expireTenders(now = new Date(), opts: { tenantId?: string } = {}) {
+  const due = await db
+    .select()
+    .from(s.tenders)
+    .where(and(eq(s.tenders.state, "sent"), lt(s.tenders.expiresAt, now), opts.tenantId ? eq(s.tenders.tenantId, opts.tenantId) : sql`true`));
   let expired = 0;
   for (const t of due) {
     const ctx = systemCtx(t.tenantId);
-    await db.update(s.tenders).set({ state: "expired", respondedAt: now, respondedBy: "system", updatedAt: now }).where(and(eq(s.tenders.id, t.id), eq(s.tenders.state, "sent")));
+    const [won] = await db.update(s.tenders).set({ state: "expired", respondedAt: now, respondedBy: "system", updatedAt: now }).where(and(eq(s.tenders.id, t.id), eq(s.tenders.state, "sent"))).returning({ id: s.tenders.id });
+    if (!won) continue; // another reader got it first
+    const [carrier] = await db.select({ name: s.carriers.name }).from(s.carriers).where(eq(s.carriers.id, t.carrierId)).limit(1);
+    const who = carrier?.name ?? "carrier";
     await writeAudit(db, ctx, "tender", t.id, "transition", { state: { from: "sent", to: "expired" } }, "no answer before the deadline");
+    const zone = await tenantZone(t.tenantId);
+    await tenderEvent(db, ctx, t, "expired", `Tender to ${who} expired: no answer by ${fmtWhen(t.expiresAt, zone)}`, now);
     const [leg] = await db.select().from(s.legs).where(eq(s.legs.id, t.legId)).limit(1);
-    if (leg && leg.state === "dispatched") {
-      const [carrier] = await db.select({ name: s.carriers.name }).from(s.carriers).where(eq(s.carriers.id, t.carrierId)).limit(1);
-      await declineLeg(ctx, leg.id, `${carrier?.name ?? "carrier"} did not answer the tender in time`, "system").catch(() => null);
-      await db.update(s.flags).set({ code: "tender_expired", title: `Tender to ${carrier?.name ?? "carrier"} expired` }).where(and(eq(s.flags.legId, leg.id), eq(s.flags.code, "declined"), sql`${s.flags.clearedAt} is null`));
+    if (leg && (leg.state === "dispatched" || leg.state === "planned") && leg.carrierId === t.carrierId) {
+      // nobody is on it any more: back to Needs truck
+      await unplanLeg(ctx, leg.id, `${who} did not answer the tender in time`).catch(() => null);
+      await db.insert(s.flags).values({ id: newId(), tenantId: t.tenantId, orderId: t.orderId, legId: leg.id, code: "tender_expired", level: "red", title: `Tender expired — ${who} did not answer`, detail: `Leg ${leg.seq} needs a truck again. Tender it to the next carrier or put a truck on it.`, owner: "dispatch", data: { tenderId: t.id, carrierId: t.carrierId } });
     }
     expired++;
   }

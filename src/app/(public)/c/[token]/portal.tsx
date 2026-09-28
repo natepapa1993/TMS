@@ -1,7 +1,8 @@
 "use client";
 
 import { useRef, useState, useTransition } from "react";
-import { ZoneProvider, useWhen } from "@/components/zone";
+import { ZoneProvider, useClock } from "@/components/zone";
+import { shortDate } from "@/lib/time";
 import { call } from "@/lib/client-call";
 import { useRouter } from "next/navigation";
 import { Pill, Modal } from "@/components/ui";
@@ -10,7 +11,7 @@ import type { LegState } from "@/db/schema";
 
 /** The partner carrier's page (spec Module 10): offers, loads, pay, documents, score. English with Spanish under it. */
 
-type Place = { name: string; city: string | null; state: string | null; country: string; windowStart: string | null; windowEnd: string | null; contact: string | null; notes: string | null } | null;
+type Place = { name: string; city: string | null; state: string | null; country: string; address?: { city?: string | null; state?: string | null } | null; windowStart: string | null; windowEnd: string | null; contact: string | null; notes: string | null } | null;
 type Offer = { id: string; legId: string; orderNumber: string; type: string; rateCents: number | null; currency: string; expiresAt: string; message: string | null; from: Place; to: Place; equipment: string | null; cargoNote: string | null };
 type Bill = { id: string; state: string; expectedCents: number; invoicedCents: number | null; approvedCents: number | null; paidCents: number | null; paidAt: string | null; payDate: string | null; shortPayNote: string | null; carrierInvoiceNumber: string | null; currency?: string } | null;
 type Leg = { id: string; seq: number; type: string; state: string; stateLabel: string; next: { to: LegState; en: string; es: string } | null; orderNumber: string; equipment: string | null; cargoNote: string | null; refs: Record<string, string>; rateCents: number | null; rateCurrency?: string; from: Place; to: Place; driverName: string | null; driverPhone: string | null; unitNumber: string | null; trailerNumber: string | null; completedAt: string | null; podOnFile: boolean; driverLink: string | null; bill: Bill };
@@ -126,16 +127,17 @@ function CarrierPortalBody({ token, data }: { token: string; data: Data }) {
 }
 
 function OfferCard({ token, o, onDone }: { token: string; o: Offer; onDone: (t: string, err?: boolean) => void }) {
-  const when = useWhen({ weekday: "short" });
+  const clock = useClock();
+  const at = (p: Place, end = false) => (p ? clock.stop(end ? p.windowEnd : p.windowStart, { country: p.country, name: p.name, address: { city: p.city, state: p.state } }) : null);
   const [mode, setMode] = useState<"idle" | "accept" | "decline">("idle");
-  const [f, setF] = useState({ name: "", driverName: "", driverPhone: "", unitNumber: "", trailerNumber: "", note: "" });
+  const [f, setF] = useState({ name: "", driverName: "", driverPhone: "", unitNumber: "", unitPlate: "", trailerNumber: "", note: "" });
   const [err, setErr] = useState<string | null>(null);
   const [pending, start] = useTransition();
   const [mins] = useState(() => Math.round((new Date(o.expiresAt).getTime() - Date.now()) / 60000)); // read once; the page refreshes on every action
   const go = (accept: boolean) =>
     start(async () => {
       setErr(null);
-      const r = await portalRespondAction(token, o.id, { accept, name: f.name, note: f.note || null, driverName: f.driverName || null, driverPhone: f.driverPhone || null, unitNumber: f.unitNumber || null, trailerNumber: f.trailerNumber || null });
+      const r = await portalRespondAction(token, o.id, { accept, name: f.name, note: f.note || null, driverName: f.driverName || null, driverPhone: f.driverPhone || null, unitNumber: f.unitNumber || null, unitPlate: f.unitPlate || null, trailerNumber: f.trailerNumber || null });
       if (r.ok) onDone(accept ? `Accepted ${o.orderNumber} — it is on your Loads tab. · Aceptada.` : `Declined ${o.orderNumber}. · Rechazada.`);
       else setErr(r.error);
     });
@@ -151,12 +153,12 @@ function OfferCard({ token, o, onDone }: { token: string; o: Offer; onDone: (t: 
         <div>
           <div className="eyebrow">Pickup · Carga</div>
           <div className="font-semibold">{place(o.from)}</div>
-          <div className="text-muted text-footnote">{when(o.from?.windowStart) ?? "ASAP"}</div>
+          <div className="text-muted text-footnote">{at(o.from) ?? "ASAP"}</div>
         </div>
         <div>
           <div className="eyebrow">Delivery · Entrega</div>
           <div className="font-semibold">{place(o.to)}</div>
-          <div className="text-muted text-footnote">{o.to?.windowEnd ? `by ${when(o.to.windowEnd)}` : ""}</div>
+          <div className="text-muted text-footnote">{o.to?.windowEnd ? `by ${at(o.to, true)}` : ""}</div>
         </div>
       </div>
       <div className="text-callout text-muted mt-2">
@@ -179,10 +181,11 @@ function OfferCard({ token, o, onDone }: { token: string; o: Offer; onDone: (t: 
           {mode === "accept" && (
             <>
               <input className="input" placeholder="Driver name · Nombre del operador" value={f.driverName} onChange={(e) => setF({ ...f, driverName: e.target.value })} />
-              <div className="grid grid-cols-3 gap-2">
+              <div className="grid grid-cols-2 gap-2">
                 <input className="input" placeholder="Driver phone" value={f.driverPhone} onChange={(e) => setF({ ...f, driverPhone: e.target.value })} />
                 <input className="input" placeholder="Unit · Unidad" value={f.unitNumber} onChange={(e) => setF({ ...f, unitNumber: e.target.value })} />
-                <input className="input" placeholder="Trailer · Caja" value={f.trailerNumber} onChange={(e) => setF({ ...f, trailerNumber: e.target.value })} />
+                <input className="input mono" placeholder="Plates · Placas" value={f.unitPlate} onChange={(e) => setF({ ...f, unitPlate: e.target.value })} />
+                <input className="input mono" placeholder="Trailer · Caja" value={f.trailerNumber} onChange={(e) => setF({ ...f, trailerNumber: e.target.value })} />
               </div>
             </>
           )}
@@ -203,7 +206,8 @@ function OfferCard({ token, o, onDone }: { token: string; o: Offer; onDone: (t: 
 }
 
 function LegCard({ token, l, onDone }: { token: string; l: Leg; onDone: (t: string, err?: boolean) => void }) {
-  const when = useWhen({ weekday: "short" });
+  const clock = useClock();
+  const at = (p: Place, end = false) => (p ? clock.stop(end ? p.windowEnd : p.windowStart, { country: p.country, name: p.name, address: { city: p.city, state: p.state } }) : null);
   const [driver, setDriver] = useState(false);
   const [f, setF] = useState({ driverName: l.driverName ?? "", driverPhone: l.driverPhone ?? "", unitNumber: l.unitNumber ?? "", trailerNumber: l.trailerNumber ?? "", by: "" });
   const [err, setErr] = useState<string | null>(null);
@@ -222,13 +226,13 @@ function LegCard({ token, l, onDone }: { token: string; l: Leg; onDone: (t: stri
         <div>
           <div className="eyebrow">Pickup · Carga</div>
           <div className="font-semibold">{place(l.from)}</div>
-          <div className="text-muted text-footnote">{when(l.from?.windowStart) ?? ""}</div>
+          <div className="text-muted text-footnote">{at(l.from) ?? ""}</div>
           {l.from?.contact && <div className="text-muted text-footnote">{l.from.contact}</div>}
         </div>
         <div>
           <div className="eyebrow">Delivery · Entrega</div>
           <div className="font-semibold">{place(l.to)}</div>
-          <div className="text-muted text-footnote">{l.to?.windowEnd ? `by ${when(l.to.windowEnd)}` : ""}</div>
+          <div className="text-muted text-footnote">{l.to?.windowEnd ? `by ${at(l.to, true)}` : ""}</div>
           {l.to?.contact && <div className="text-muted text-footnote">{l.to.contact}</div>}
         </div>
       </div>
@@ -328,7 +332,7 @@ function PayCard({ token, l, onDone }: { token: string; l: Leg; onDone: (t: stri
     <div className="card p-4">
       <div className="flex items-center justify-between gap-2">
         <div>
-          <span className="font-extrabold mono">{l.orderNumber}</span> <span className="text-muted text-callout">{l.type} leg · delivered {l.completedAt ? new Date(l.completedAt).toLocaleDateString() : ""}</span>
+          <span className="font-extrabold mono">{l.orderNumber}</span> <span className="text-muted text-callout">{l.type} leg · delivered {l.completedAt ? shortDate(l.completedAt) : ""}</span>
         </div>
         <div className="text-headline font-extrabold mono">{money(b?.paidCents ?? b?.approvedCents ?? b?.expectedCents ?? l.rateCents, b?.currency ?? l.rateCurrency)}</div>
       </div>
@@ -340,8 +344,8 @@ function PayCard({ token, l, onDone }: { token: string; l: Leg; onDone: (t: stri
           <span>
             <Pill tone={b.state === "paid" ? "green" : b.state === "approved" || b.state === "scheduled" ? "teal" : b.state === "disputed" ? "red" : "amber"}>{BILL_LABEL[b.state] ?? b.state}</Pill>
             {b.carrierInvoiceNumber && <span className="text-muted ml-1">#{b.carrierInvoiceNumber}</span>}
-            {b.payDate && !b.paidAt && <span className="text-muted ml-1">· pay date {new Date(b.payDate).toLocaleDateString()}</span>}
-            {b.paidAt && <span className="text-muted ml-1">· paid {new Date(b.paidAt).toLocaleDateString()}</span>}
+            {b.payDate && !b.paidAt && <span className="text-muted ml-1">· pay date {shortDate(b.payDate)}</span>}
+            {b.paidAt && <span className="text-muted ml-1">· paid {shortDate(b.paidAt)}</span>}
             {b.shortPayNote && <div className="text-amber text-footnote">{b.shortPayNote}</div>}
           </span>
           {(b.state === "expected" || b.state === "received" || b.state === "disputed") && (
@@ -397,7 +401,7 @@ function DocsPanel({ token, data, onDone }: { token: string; data: Data; onDone:
             {data.compliance.items.map((i) => (
               <li key={i.key} className="flex justify-between gap-2">
                 <span>{i.label}</span>
-                <span className={i.status === "ok" || i.status === "na" ? "text-green font-semibold" : i.status === "expiring" ? "text-amber font-semibold" : "text-red font-bold"}>{i.status === "ok" ? "OK" : i.status === "na" ? "—" : i.status === "expiring" ? `expiring ${i.expiresAt ? new Date(i.expiresAt).toLocaleDateString() : ""}` : i.status === "expired" ? "EXPIRED · VENCIDO" : "missing · falta"}</span>
+                <span className={i.status === "ok" || i.status === "na" ? "text-green font-semibold" : i.status === "expiring" ? "text-amber font-semibold" : "text-red font-bold"}>{i.status === "ok" ? "OK" : i.status === "na" ? "—" : i.status === "expiring" ? `expiring ${i.expiresAt ? shortDate(i.expiresAt) : ""}` : i.status === "expired" ? "EXPIRED · VENCIDO" : "missing · falta"}</span>
               </li>
             ))}
             {data.compliance.items.length === 0 && <li className="text-muted">Nothing required right now.</li>}
@@ -445,7 +449,7 @@ function DocsPanel({ token, data, onDone }: { token: string; data: Data; onDone:
                 <span>
                   <b>{d.typeName}</b> {d.number ? `#${d.number}` : ""} <span className="text-muted">{d.fileName}</span>
                 </span>
-                <span className="text-muted">{d.status === "superseded" ? "replaced" : d.expiresAt ? `expires ${new Date(d.expiresAt).toLocaleDateString()}` : new Date(d.createdAt).toLocaleDateString()}</span>
+                <span className="text-muted">{d.status === "superseded" ? "replaced" : d.expiresAt ? `expires ${shortDate(d.expiresAt)}` : shortDate(d.createdAt)}</span>
               </li>
             ))}
           </ul>

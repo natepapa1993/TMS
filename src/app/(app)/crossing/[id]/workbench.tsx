@@ -1,5 +1,6 @@
 "use client";
 
+import { fmtWhen } from "@/lib/time";
 import { useMemo, useRef, useState, useTransition } from "react";
 import { call } from "@/lib/client-call";
 import { useRouter } from "next/navigation";
@@ -22,7 +23,9 @@ type Data = {
   checks: Check[];
   events: Ev[];
   docs: Doc[];
-  truck: { unitNumber: string; mxPlateClass: string | null; usPlate: string | null; mxPlate: string | null } | null;
+  truck: { unitNumber: string; mxPlateClass: string | null; usPlate: string | null; mxPlate: string | null; caPlate?: string | null } | null;
+  /** a partner transfer carrier runs the crossing leg: what it gave when it accepted */
+  partner?: { carrier: string; driverName: string | null; driverPhone: string | null; unitNumber: string | null; unitPlate: string | null } | null;
   driver: { name: string } | null;
   coDriver: { name: string } | null;
   customer: { name: string; knowledgeMd?: string | null } | null;
@@ -35,13 +38,15 @@ type Data = {
   stateLabel: Record<string, string>;
   stepLabel: Record<string, string>;
   role: string;
+  /** the border yard's clock: every time on the workbench is printed there, labelled */
+  yardZone: string;
 };
 
-const fmt = (d: string | null | undefined) => (d ? new Date(d).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) : "");
 const STEP: Partial<Record<CrossingState, string>> = { departed_yard: "Departed the yard", at_mx_customs: "At Mexican customs", in_us_customs: "At US customs", cleared: "Cleared — US side" };
 const NEXT: Partial<Record<CrossingState, CrossingState>> = { packet_sent: "departed_yard", departed_yard: "at_mx_customs", at_mx_customs: "in_us_customs", in_us_customs: "cleared" };
 
 export function CrossingWorkbench({ data }: { data: Data }) {
+  const fmt = (d: string | null | undefined) => fmtWhen(d, data.yardZone, { style: "short" }) ?? "";
   const router = useRouter();
   const t = useToast();
   const [pending, start] = useTransition();
@@ -56,7 +61,14 @@ export function CrossingWorkbench({ data }: { data: Data }) {
   const [retiroOpen, setRetiroOpen] = useState(false);
   const [details, setDetails] = useState({ trailerNumber: c.trailerNumber ?? "", sealNumber: c.sealNumber ?? "", bridge: c.bridge ?? "" });
   const canEdit = ["owner", "dispatcher", "mx_office"].includes(data.role);
+  // a failed cross-check can be waived with a reason by whoever works the crossing (audited); eligibility stays with the owner / MX office
+  const canWaive = ["owner", "mx_office", "dispatcher", "compliance"].includes(data.role);
   const canOverride = ["owner", "mx_office"].includes(data.role);
+  const canada = c.fromCountry === "CA" || c.toCountry === "CA";
+  const mexico = c.fromCountry === "MX" || c.toCountry === "MX";
+  const legState = data.leg?.state ?? null;
+  const pickedUp = !!legState && ["loaded", "en_route", "at_delivery", "completed"].includes(legState);
+  const [legPrompt, setLegPrompt] = useState<string | null>(null);
 
   const run = (label: string, fn: () => Promise<{ ok: boolean; error?: string }>) =>
     start(async () => {
@@ -75,6 +87,15 @@ export function CrossingWorkbench({ data }: { data: Data }) {
   const required = c.requirements.filter((r) => r.status !== "na");
   const presentCount = required.filter((r) => r.status !== "missing").length;
   const failing = data.checks.filter((k) => k.state === "fail");
+  // green only when the checks actually ran: a check without enough documents is unknown, not clear
+  const unknown = data.checks.filter((k) => k.state === "skipped" || k.state === "pending");
+  const passed = data.checks.filter((k) => k.state === "pass" || k.state === "overridden");
+  const checkSummary = failing.length ? { text: `${failing.length} failing`, tone: "text-red" } : !passed.length ? { text: "not checked yet", tone: "text-muted" } : unknown.length ? { text: `${passed.length} passed · ${unknown.length} unknown`, tone: "text-amber" } : { text: "all clear", tone: "text-green" };
+  const platesLine = data.partner
+    ? `${data.partner.carrier} · unit ${data.partner.unitNumber ?? "?"}${data.partner.unitPlate ? ` · plates ${data.partner.unitPlate}` : ""}`
+    : data.truck
+      ? `Unit ${data.truck.unitNumber} · US ${data.truck.usPlate ?? "—"}${mexico ? ` · MX ${data.truck.mxPlate ?? "—"}${data.truck.mxPlateClass ? ` (${data.truck.mxPlateClass})` : ""}` : ""}${canada ? ` · CA ${data.truck.caPlate ?? "—"}` : ""}`
+      : "No crossing truck";
 
   return (
     <div className="space-y-4">
@@ -90,7 +111,7 @@ export function CrossingWorkbench({ data }: { data: Data }) {
         </div>
         <div>
           <label className="label">Bridge</label>
-          <input className="input" list="port-bridges" value={details.bridge} onChange={(e) => setDetails({ ...details, bridge: e.target.value })} placeholder={data.port?.bridges?.[0] ?? "World Trade"} disabled={!canEdit} />
+          <input className="input" list="port-bridges" value={details.bridge} onChange={(e) => setDetails({ ...details, bridge: e.target.value })} placeholder={data.port?.bridges?.[0] ?? (canada ? "Ambassador Bridge" : "World Trade")} disabled={!canEdit} />
           <datalist id="port-bridges">
             {(data.port?.bridges ?? []).map((b) => (
               <option key={b} value={b} />
@@ -98,7 +119,7 @@ export function CrossingWorkbench({ data }: { data: Data }) {
           </datalist>
         </div>
         <div className="text-callout text-muted">
-          {c.departedYardAt ? `Left the yard ${fmt(c.departedYardAt)}${c.arrivedYardAt ? ` (there since ${fmt(c.arrivedYardAt)})` : ""}` : c.arrivedYardAt ? `At the yard since ${fmt(c.arrivedYardAt)}` : "Not at the border yard yet"}
+          {c.departedYardAt ? `Left the yard ${fmt(c.departedYardAt)}${c.arrivedYardAt ? ` (there since ${fmt(c.arrivedYardAt)})` : ""}` : c.arrivedYardAt ? `At the yard since ${fmt(c.arrivedYardAt)}` : canada || c.toCountry === "MX" ? "Not picked up yet" : "Not at the border yard yet"}
           {c.fromCountry !== "MX" && c.toCountry !== "MX" ? "" : data.broker ? ` · MX broker ${data.broker.name}${data.broker.patente ? ` (patente ${data.broker.patente})` : ""}` : " · customer has no MX broker on file"}
         </div>
         <div className="flex gap-2">
@@ -152,7 +173,7 @@ export function CrossingWorkbench({ data }: { data: Data }) {
                   </div>
                   <div className="text-footnote text-muted flex items-center justify-between gap-2 mt-0.5">
                     <span className="truncate">
-                      {doc ? `${doc.fileName} · v${doc.version} · ${doc.source}` : r.status === "na" ? (r.naReason === "optional" ? "not required" : r.naReason) : `from ${r.providedBy.replace("_", " ")}`}
+                      {doc ? `${doc.fileName} · v${doc.version} · ${doc.source}` : r.onFile ? r.onFile : r.status === "na" ? (r.naReason === "optional" ? "not required" : r.naReason) : `from ${r.providedBy.replace("_", " ")}`}
                     </span>
                     {canEdit && beforePacket && (
                       <span className="flex gap-1 flex-none" onClick={(e) => e.stopPropagation()}>
@@ -237,7 +258,7 @@ export function CrossingWorkbench({ data }: { data: Data }) {
           <div className="card">
             <div className="px-4 pt-3 pb-2 border-b border-line flex items-center justify-between">
               <div className="h2">Cross-checks</div>
-              <span className={`text-footnote font-bold ${failing.length ? "text-red" : data.checks.some((k) => k.state === "pass") ? "text-green" : "text-muted"}`}>{failing.length ? `${failing.length} failing` : data.checks.some((k) => k.state === "pass") ? "all clear" : "not checked yet"}</span>
+              <span className={`text-footnote font-bold ${checkSummary.tone}`} data-testid="checks-summary">{checkSummary.text}</span>
             </div>
             <ul className="divide-y divide-line max-h-[360px] overflow-auto">
               {data.checks
@@ -248,16 +269,20 @@ export function CrossingWorkbench({ data }: { data: Data }) {
                     <div className="flex items-start gap-2">
                       <span className={`w-2 h-2 rounded-full mt-1.5 flex-none ${k.state === "pass" ? "bg-green" : k.state === "fail" ? "bg-red" : k.state === "overridden" ? "bg-amber" : "bg-line"}`} />
                       <div className="min-w-0 flex-1">
-                        <div className="text-callout font-semibold">{data.checkLabel[k.code] ?? k.code}</div>
+                        <div className="text-callout font-semibold">
+                          {data.checkLabel[k.code] ?? k.code}
+                          {(k.state === "skipped" || k.state === "pending") && <span className="text-faint font-normal"> · unknown</span>}
+                          {k.state === "overridden" && <span className="text-amber font-normal"> · waived</span>}
+                        </div>
                         <div className={`text-footnote ${k.state === "fail" ? "text-red" : "text-muted"}`}>{k.message}</div>
                         {k.state === "overridden" && (
                           <div className="text-footnote text-amber">
-                            overridden{k.overrideBy ? ` by ${data.people[k.overrideBy] ?? "someone"}` : ""}: {k.overrideReason}
+                            waived{k.overrideBy ? ` by ${data.people[k.overrideBy] ?? "someone"}` : ""}: {k.overrideReason}
                           </div>
                         )}
                       </div>
-                      {k.state === "fail" && canOverride && beforePacket && (
-                        <button className="btn btn-sm" onClick={() => setOverrideFor(k.code)}>
+                      {k.state === "fail" && canWaive && beforePacket && (
+                        <button className="btn btn-sm" onClick={() => setOverrideFor(k.code)} title="Waive this check with a reason; it goes on the crossing record">
                           Override
                         </button>
                       )}
@@ -273,7 +298,7 @@ export function CrossingWorkbench({ data }: { data: Data }) {
               {c.eligibility && <Pill tone={c.eligibility.ok ? "green" : c.eligibility.hardBlocked ? "red" : c.eligibilityOverride ? "amber" : "red"}>{c.eligibility.ok ? "Green" : c.eligibility.hardBlocked ? "Blocked" : c.eligibilityOverride ? "Overridden" : "Red"}</Pill>}
             </div>
             <div className="text-callout text-muted mt-1">
-              {data.truck ? `Unit ${data.truck.unitNumber} · ${data.truck.mxPlateClass ?? "no MX"} plates` : "No crossing truck"} · {data.driver ? data.driver.name : "no driver"}
+              {platesLine} · {data.partner ? (data.partner.driverName ?? "no driver named yet") : data.driver ? data.driver.name : "no driver"}
               {data.coDriver ? ` / ${data.coDriver.name}` : ""}
             </div>
             {c.eligibility?.findings.map((f) => (
@@ -288,7 +313,7 @@ export function CrossingWorkbench({ data }: { data: Data }) {
                 Override
               </button>
             )}
-            {(!data.truck || !data.driver) && <div className="help mt-1">Assign the crossing unit and driver from Dispatch.</div>}
+            {!data.partner && (!data.truck || !data.driver) && <div className="help mt-1">Assign the crossing unit and driver (or a transfer carrier) from Dispatch.</div>}
           </div>
 
           <div className="card p-4">
@@ -303,7 +328,20 @@ export function CrossingWorkbench({ data }: { data: Data }) {
                     <button className="btn" disabled={pending || !["eligibility_checked", "ready_to_cross"].includes(c.state)} onClick={() => run("Packet built", () => A.buildPacketAction(c.id))}>
                       {c.packetBuiltAt ? "Rebuild packet" : "Build packet"}
                     </button>
-                    <button className="btn btn-primary" disabled={pending || c.state !== "ready_to_cross"} onClick={() => run("Packet sent to the driver", () => A.sendPacketAction(c.id))}>
+                    <button
+                      className="btn btn-primary"
+                      disabled={pending || c.state !== "ready_to_cross"}
+                      onClick={() =>
+                        start(async () => {
+                          const r = await A.sendPacketAction(c.id);
+                          if (r.ok) {
+                            t.ok("Packet sent to the driver");
+                            router.refresh();
+                          } else if (r.field === "dispatchLeg") setLegPrompt(r.error);
+                          else t.err(r.error);
+                        })
+                      }
+                    >
                       Send to driver
                     </button>
                   </div>
@@ -351,11 +389,12 @@ export function CrossingWorkbench({ data }: { data: Data }) {
             </ol>
             {canEdit && (
               <div className="flex flex-wrap gap-2 mt-3">
-                {next && c.state !== "held" && (
+                {next && c.state !== "held" && (pickedUp || c.arrivedYardAt || legState === "at_pickup") && (
                   <button className="btn btn-primary btn-sm" disabled={pending} onClick={() => run(data.stepLabel[next] ?? STEP[next] ?? next, () => A.stepAction(c.id, next))}>
                     {data.stepLabel[next] ?? STEP[next]}
                   </button>
                 )}
+                {next && c.state !== "held" && !pickedUp && !c.arrivedYardAt && legState !== "at_pickup" && <div className="help w-full">The border steps start once the caja is at the yard and picked up (crossing leg: {legState?.replace(/_/g, " ") ?? "—"}).</div>}
                 {c.state === "held" ? (
                   <button className="btn btn-sm" onClick={() => run("Released", () => A.releaseCrossingAction(c.id))}>
                     Release hold
@@ -370,7 +409,7 @@ export function CrossingWorkbench({ data }: { data: Data }) {
                 )}
                 {["at_mx_customs", "in_us_customs", "held"].includes(c.state) && (
                   <button className="btn btn-sm" onClick={() => setReturnedOpen(true)}>
-                    Returned to MX
+                    Returned to {c.fromCountry}
                   </button>
                 )}
               </div>
@@ -410,7 +449,7 @@ export function CrossingWorkbench({ data }: { data: Data }) {
       </div>
 
       {/* popups */}
-      {uploadFor && <UploadModal crossingId={c.id} code={uploadFor} label={c.requirements.find((r) => r.code === uploadFor)?.label ?? uploadFor} fields={data.docFields[uploadFor] ?? []} onClose={() => setUploadFor(null)} onDone={() => { setUploadFor(null); setSelCode(uploadFor); t.ok("Uploaded — checks re-run"); router.refresh(); }} />}
+      {uploadFor && <UploadModal crossingId={c.id} code={uploadFor} label={c.requirements.find((r) => r.code === uploadFor)?.label ?? uploadFor} fields={data.docFields[uploadFor] ?? []} canada={canada} onClose={() => setUploadFor(null)} onDone={() => { setUploadFor(null); setSelCode(uploadFor); t.ok("Uploaded — checks re-run"); router.refresh(); }} />}
       {retiroOpen && (
         <RetiroModal
           crossingId={c.id}
@@ -428,7 +467,18 @@ export function CrossingWorkbench({ data }: { data: Data }) {
       <Confirm open={!!overrideFor} onClose={() => setOverrideFor(null)} title={`Override: ${data.checkLabel[overrideFor ?? ""] ?? ""}`} body={<span>{data.checks.find((k) => k.code === overrideFor)?.message}. Your name, the time and this reason go on the crossing record.</span>} needReason="Reason" confirmLabel="Override" onConfirm={(reason) => { const code = overrideFor!; setOverrideFor(null); run("Overridden — checks re-run", () => A.overrideCheckAction(c.id, code, reason)); }} />
       <Confirm open={eligOverride} onClose={() => setEligOverride(false)} title="Override eligibility" body="Only a soft finding can be overridden. Expired legal documents and B-1 rules never can." needReason="Reason" confirmLabel="Override" onConfirm={(reason) => { setEligOverride(false); run("Eligibility overridden", () => A.overrideEligibilityAction(c.id, reason)); }} />
       <Confirm open={holdOpen} onClose={() => setHoldOpen(false)} title="Hold this crossing" needReason="Reason (CBP secondary, missing doc…)" confirmLabel="Hold" danger onConfirm={(reason) => { setHoldOpen(false); run("On hold", () => A.holdCrossingAction(c.id, reason)); }} />
-      <Confirm open={returnedOpen} onClose={() => setReturnedOpen(false)} title="Truck returned to the Mexican side" body="The packet is withdrawn. Fix the documents, then re-verify." needReason="Why was it turned back?" confirmLabel="Mark returned" danger onConfirm={(reason) => { setReturnedOpen(false); run("Marked returned", () => A.returnedAction(c.id, reason)); }} />
+      <Confirm
+        open={!!legPrompt}
+        onClose={() => setLegPrompt(null)}
+        title="Send the crossing leg too?"
+        body={legPrompt ?? ""}
+        confirmLabel="Send leg and packet"
+        onConfirm={() => {
+          setLegPrompt(null);
+          run("Leg and packet sent to the driver", () => A.sendPacketAction(c.id, { dispatchLeg: true }));
+        }}
+      />
+      <Confirm open={returnedOpen} onClose={() => setReturnedOpen(false)} title={`Truck returned to the ${c.fromCountry === "CA" ? "Canadian" : c.fromCountry === "US" ? "US" : "Mexican"} side`} body="The packet is withdrawn. Fix the documents, then re-verify." needReason="Why was it turned back?" confirmLabel="Mark returned" danger onConfirm={(reason) => { setReturnedOpen(false); run("Marked returned", () => A.returnedAction(c.id, reason)); }} />
       <Toast message={t.toast?.message ?? null} tone={t.toast?.tone} onDone={t.clear} />
     </div>
   );
@@ -480,7 +530,7 @@ function FieldsPanel({ doc, fields, canEdit, onSave, onExtract }: { doc: Doc; fi
   );
 }
 
-function UploadModal({ crossingId, code, label, fields, onClose, onDone }: { crossingId: string; code: string; label: string; fields: { key: string; label: string; kind?: string }[]; onClose: () => void; onDone: () => void }) {
+function UploadModal({ crossingId, code, label, fields, onClose, onDone, canada = false }: { crossingId: string; code: string; label: string; fields: { key: string; label: string; kind?: string }[]; onClose: () => void; onDone: () => void; canada?: boolean }) {
   const ref = useRef<HTMLFormElement>(null);
   const [err, setErr] = useState<string | null>(null);
   const [pending, start] = useTransition();
@@ -524,7 +574,7 @@ function UploadModal({ crossingId, code, label, fields, onClose, onDone }: { cro
         <label className="block border-2 border-dashed border-line rounded-lg p-5 text-center cursor-pointer hover:border-teal">
           <input type="file" name="file" accept="application/pdf,image/jpeg,image/png" className="hidden" onChange={(e) => setName(e.target.files?.[0]?.name ?? null)} />
           <div className="font-semibold">{name ?? "Choose a PDF or photo"}</div>
-          <div className="text-footnote text-muted">From NAD, Viatpro, email or the yard. Up to 15 MB.</div>
+          <div className="text-footnote text-muted">{canada ? "From the customs broker, email or the shipper." : "From NAD, Viatpro, email or the yard."} Up to 15 MB.</div>
         </label>
         <input type="hidden" name="source" value="upload" />
         {fields.length > 0 && (

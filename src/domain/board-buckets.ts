@@ -33,7 +33,7 @@ const BEFORE_LOADED = ["unassigned", "declined", "planned", "dispatched", "accep
 
 type LegLike = { id: string; state: string; truckId: string | null; fromStopId: string | null; toStopId: string | null };
 type StopLike = { id: string; seq: number; type: string; windowStart: string | null; windowEnd: string | null; arrivedAt: string | null };
-export type RowLike = { order: { state: string }; stage: string; legs: LegLike[]; stops: StopLike[]; tenders: { legId: string; state: string; expiresAt: string }[]; openFlags: unknown[] };
+export type RowLike = { order: { state: string }; stage: string; legs: LegLike[]; stops: StopLike[]; tenders: { legId: string; state: string; expiresAt: string }[]; openFlags: { code?: string; level?: string }[] };
 export type BoardCtx = { now: number; etas: Record<string, { at: string; late: boolean }>; lastPing: (leg: LegLike) => string | null; today: (stop: StopLike) => string; dayOf: (iso: string, stop: StopLike) => string };
 
 /** The leg that needs work next: the first one not done. */
@@ -94,10 +94,13 @@ export function alertsOf(r: RowLike, c: BoardCtx): Set<AlertKey> {
   return out;
 }
 
-/** Sort key: late first, then at risk, then no truck soon, then by the next appointment. */
+/** A tender ran out with nobody on the leg: the load goes to the very top until someone covers it (B1). */
+export const tenderExpired = (r: Pick<RowLike, "openFlags">) => r.openFlags.some((f) => f.code === "tender_expired");
+
+/** Sort key: an expired tender first, then late, then at risk, then no truck soon, then by the next appointment. */
 export function urgency(r: RowLike, alerts: Set<AlertKey>): number {
   const ns = nextStop(r);
   const a = appt(ns) ?? r.stops[0]?.windowStart ?? null;
   const t = a ? new Date(a).getTime() / 60_000 : 9e9;
-  return (alerts.has("late") ? 0 : alerts.has("at_risk") ? 1e8 : alerts.has("uncovered_soon") ? 2e8 : alerts.has("no_ping") ? 3e8 : 4e8) + t / 1e3;
+  return (tenderExpired(r) ? -1e8 : alerts.has("late") ? 0 : alerts.has("at_risk") ? 1e8 : alerts.has("uncovered_soon") ? 2e8 : alerts.has("no_ping") ? 3e8 : 4e8) + t / 1e3;
 }

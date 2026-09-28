@@ -260,7 +260,7 @@ async function handle204(ctx: Ctx, p: Partner, set: { control: string; segments:
 
 /** The customer's stops as they sent them; the legs are cut from them like any load. */
 function stopsFromTender(t: Tender204, companyZone: string): { stops: StopInput[]; template: string | null } {
-  const at = (st: Tender204["stops"][number], l: { date: string; time: string; code: string | null } | null, fallback: Date | null) => (l ? localToInstant(l.date, l.time, zoneFor({ code: l.code, state: st.party?.state, country: st.party?.country }, companyZone)) : fallback);
+  const at = (st: Tender204["stops"][number], l: { date: string; time: string; code: string | null } | null, fallback: Date | null) => (l ? localToInstant(l.date, l.time, zoneFor({ code: l.code, state: st.party?.state, city: st.party?.city, country: st.party?.country }, companyZone)) : fallback);
   const ends: StopInput[] = t.stops.map((st) => ({
     type: st.type,
     name: st.party?.name || (st.type === "pickup" ? "Pickup" : "Delivery"),

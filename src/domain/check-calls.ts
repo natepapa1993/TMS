@@ -76,7 +76,7 @@ export async function addCheckCall(ctx: Ctx, orderId: string, input: CheckCallIn
     const stops = await db.select().from(s.stops).where(eq(s.stops.orderId, orderId)).orderBy(s.stops.seq);
     const [tenant] = await db.select({ zone: s.tenants.timeZone, name: s.tenants.name }).from(s.tenants).where(eq(s.tenants.id, ctx.tenantId)).limit(1);
     const dest = stops[stops.length - 1];
-    const zone = dest ? zoneFor({ state: dest.address?.state, country: dest.country }, tenant?.zone ?? "America/Chicago") : (tenant?.zone ?? "America/Chicago");
+    const zone = dest ? zoneFor({ state: dest.address?.state, city: dest.address?.city, name: dest.name, country: dest.country }, tenant?.zone ?? "America/Chicago") : (tenant?.zone ?? "America/Chicago");
     const refs = Object.entries(order.refs ?? {})
       .filter(([, v]) => v)
       .map(([k, v]) => `${k.toUpperCase()} ${v}`)

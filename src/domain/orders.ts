@@ -444,6 +444,20 @@ export async function updateStop(ctx: Ctx, stopId: string, values: Partial<StopI
     const safe: Record<string, unknown> = {};
     for (const k of allowed) if (k in values) safe[k] = values[k];
     if (typeof safe.name === "string") safe.name = safe.name.trim();
+    // only what was edited changes: an address or references patch merges into what the stop has
+    if ("address" in safe && safe.address) safe.address = mergeStopAddress(before.address, safe.address as Stop["address"]);
+    if ("refs" in safe && safe.refs) safe.refs = Object.fromEntries(Object.entries({ ...before.refs, ...(safe.refs as Record<string, string>) }).filter(([, v]) => v != null && v !== ""));
+    if ("locationId" in safe && safe.locationId && safe.locationId !== before.locationId) {
+      // a different saved location brings its own coordinates
+      const [loc] = await tx.select({ lat: s.locations.lat, lng: s.locations.lng }).from(s.locations).where(and(eq(s.locations.tenantId, ctx.tenantId), eq(s.locations.id, String(safe.locationId)))).limit(1);
+      if (!loc) throw new NotFoundError("location", String(safe.locationId));
+      safe.lat = loc.lat ?? null;
+      safe.lng = loc.lng ?? null;
+    } else if ("address" in safe && addressMoved(before.address, safe.address as Stop["address"])) {
+      // typed somewhere else: the old fix no longer applies (the next verified arrival learns the new one)
+      safe.lat = null;
+      safe.lng = null;
+    }
     for (const k of ["sealIn", "sealOut"] as const) if (k in safe) safe[k] = typeof safe[k] === "string" && (safe[k] as string).trim() ? (safe[k] as string).trim() : null;
     if ("windowStart" in safe || "windowEnd" in safe) {
       // the new times must still fit between the stops around this one
@@ -461,6 +475,29 @@ export async function updateStop(ctx: Ctx, stopId: string, values: Partial<StopI
     if ("sealIn" in safe || "sealOut" in safe) await checkSealContinuity(tx, ctx, before.orderId);
     return after;
   });
+}
+
+/**
+ * An address patch on a stop: the keys given replace, an empty one clears, the rest (city, state — and so the
+ * stop's time zone) stay. Null clears the whole address. Pure, for the editor's regression test.
+ */
+export function mergeStopAddress(before: Stop["address"], patch: Stop["address"] | undefined): Stop["address"] {
+  if (patch === undefined) return before;
+  if (patch === null) return null;
+  const out: Record<string, string> = { ...(before ?? {}) } as Record<string, string>;
+  for (const [k, v] of Object.entries(patch)) {
+    if (v === undefined) continue;
+    if (v === null || String(v).trim() === "") delete out[k];
+    else out[k] = String(v).trim();
+  }
+  if (out.state) out.state = out.state.toUpperCase();
+  return Object.keys(out).length ? (out as Stop["address"]) : null;
+}
+
+/** Whether an edit moved the stop to another town (city, state or country), not just added a street or a ZIP. */
+function addressMoved(a: Stop["address"], b: Stop["address"]) {
+  const k = (x: Stop["address"]) => [x?.city, x?.state, x?.country].map((v) => String(v ?? "").trim().toLowerCase()).join("|");
+  return k(a) !== k(b);
 }
 
 /**
@@ -830,7 +867,7 @@ export function normCurrency(c: string | null | undefined): string {
   throw new ValidationError(`${c} isn't a currency we use: USD, MXN or CAD`, "currency");
 }
 
-export type PlanOptions = { override?: boolean; reason?: string; plannedStart?: Date | null; plannedEnd?: Date | null; plannedMiles?: number | null };
+export type PlanOptions = { override?: boolean; reason?: string; plannedStart?: Date | null; plannedEnd?: Date | null; plannedMiles?: number | null; /** false: re-plan even when the crew is unchanged (a new tender goes out again) */ inPlace?: boolean };
 
 /** Run the eligibility engine for a proposed assignment. Pure read; used by planLeg and the picker. */
 export async function eligibilityFor(ctx: Ctx, legType: LegType | LegZone, a: Assignment, now = new Date(), window?: { start: Date; end: Date }, excludeLegId?: string | null) {
@@ -882,7 +919,8 @@ export async function eligibilityFor(ctx: Ctx, legType: LegType | LegZone, a: As
     if (evs.length) {
       const names = people.length ? await db.select({ id: s.drivers.id, name: s.drivers.name }).from(s.drivers).where(inArray(s.drivers.id, people)) : [];
       const [t] = await db.select({ unit: s.trucks.unitNumber }).from(s.trucks).where(eq(s.trucks.id, a.truckId)).limit(1);
-      findings.push(...eventFindings(evs, [{ kind: "truck", id: a.truckId, label: `unit ${t?.unit ?? ""}` }, ...names.map((n) => ({ kind: "driver", id: n.id, label: n.name }))]));
+      const { tenantZone } = await import("./company");
+      findings.push(...eventFindings(evs, [{ kind: "truck", id: a.truckId, label: `unit ${t?.unit ?? ""}` }, ...names.map((n) => ({ kind: "driver", id: n.id, label: n.name }))], await tenantZone(ctx.tenantId)));
     }
   }
   return summarize(findings);
@@ -913,6 +951,17 @@ export async function planLeg(ctx: Ctx, legId: string, a: Assignment, opts: Plan
       a.kind === "truck"
         ? { assigneeKind: "truck", truckId: a.truckId, driverId: a.driverId ?? null, coDriverId: a.coDriverId ?? null, trailerId: a.trailerId ?? null, carrierId: null, carrierRateCents: null, carrierRateCurrency: null }
         : { assigneeKind: "carrier", carrierId: a.carrierId, carrierRateCents: a.carrierRateCents ?? null, carrierRateCurrency: a.carrierRateCents != null ? normCurrency(a.carrierRateCurrency) : null, truckId: null, driverId: null, coDriverId: null, trailerId: null };
+    // M3: the same truck and driver (or the same carrier) on a leg already sent: a new trailer, co-driver, rate or
+    // miles is edited in place and the leg stays Sent — only a new truck, driver or carrier re-dispatches it
+    if (["dispatched", "accepted"].includes(leg.state) && sameCrew(leg, a) && opts.inPlace !== false) {
+      const patch = { ...assignment, plannedStart: opts.plannedStart ?? leg.plannedStart, plannedEnd: opts.plannedEnd ?? leg.plannedEnd, plannedMiles: opts.plannedMiles !== undefined ? opts.plannedMiles : leg.plannedMiles };
+      const [row] = await tx.update(s.legs).set({ ...patch, updatedAt: new Date(), updatedBy: ctx.userId }).where(and(eq(s.legs.tenantId, ctx.tenantId), eq(s.legs.id, leg.id))).returning();
+      const changes = diff(leg as unknown as Record<string, unknown>, row as unknown as Record<string, unknown>);
+      delete changes.updatedAt;
+      await writeAudit(tx, ctx, "leg", leg.id, "assign", changes, opts.reason ?? "changed in place; the leg stays sent");
+      if (Object.keys(changes).length) await tx.insert(s.legEvents).values({ id: newId(), tenantId: ctx.tenantId, legId: leg.id, orderId: leg.orderId, kind: "note", source: "dispatcher", userId: ctx.userId, note: `Changed without re-sending: ${Object.keys(changes).map((k) => CHANGE_LABEL[k] ?? k).join(", ")}` });
+      return { leg: row, findings: elig.findings, kept: true };
+    }
     const extra = {
       ...assignment,
       plannedStart: opts.plannedStart ?? leg.plannedStart,
@@ -934,8 +983,16 @@ export async function planLeg(ctx: Ctx, legId: string, a: Assignment, opts: Plan
       await writeAudit(tx, ctx, "leg", leg.id, "assign", diff({}, assignment as Record<string, unknown>));
     }
     await recomputeOrder(tx, ctx, order.id);
-    return { leg: after, findings: elig.findings };
+    return { leg: after, findings: elig.findings, kept: false };
   });
+}
+
+const CHANGE_LABEL: Record<string, string> = { trailerId: "trailer", coDriverId: "co-driver", plannedMiles: "miles", carrierRateCents: "carrier rate", plannedStart: "planned start", plannedEnd: "planned end" };
+
+/** The same crew: truck and driver for our trucks, the carrier for a partner. A trailer, co-driver or rate is not a new crew. */
+export function sameCrew(leg: Pick<Leg, "assigneeKind" | "truckId" | "driverId" | "carrierId">, a: Assignment) {
+  if (a.kind === "truck") return leg.assigneeKind === "truck" && leg.truckId === a.truckId && (leg.driverId ?? null) === (a.driverId ?? null);
+  return leg.assigneeKind === "carrier" && leg.carrierId === a.carrierId;
 }
 
 /** Planned miles on a leg: drives per-mile driver pay and the fuel estimate. Editable until the order is invoiced. */
@@ -1069,7 +1126,7 @@ export async function stampStop(ctx: Ctx, legId: string, stopId: string, which: 
 }
 
 /** Move a leg one step (or to an explicit forward state). Writes the stop timestamps. */
-export async function advanceLeg(ctx: Ctx, legId: string, to: LegState | "next", ev: AdvanceEvent = {}) {
+export async function advanceLeg(ctx: Ctx, legId: string, to: LegState | "next", ev: AdvanceEvent = {}, opts: { syncCrossing?: boolean } = {}) {
   assertCtx(ctx);
   // "next" while en route with a stop still to clock in between = clock that stop, not the delivery
   if (to === "next") {
@@ -1080,7 +1137,7 @@ export async function advanceLeg(ctx: Ctx, legId: string, to: LegState | "next",
       if (mid) return stampStop(ctx, legId, mid.stop.id, mid.which, ev);
     }
   }
-  return db.transaction(async (tx) => {
+  const moved = await db.transaction(async (tx) => {
     const leg = await loadLeg(tx, ctx, legId);
     let target: LegState;
     if (to === "next") {
@@ -1106,9 +1163,36 @@ export async function advanceLeg(ctx: Ctx, legId: string, to: LegState | "next",
       if (seal) await checkSealContinuity(tx, ctx, leg.orderId);
       if (arriving && ev.verified && ev.lat && ev.lng) await learnStopCoordinates(tx, ctx, stopId, ev.lat, ev.lng);
     }
+    if (target === "loaded") await closeHandedOffLeg(tx, ctx, leg, at);
     await recomputeOrder(tx, ctx, leg.orderId, target === "completed" ? at : undefined);
     return after;
   });
+  // the crossing follows its leg right away (departed the yard once it rolls, cleared once delivered), not at the next page load
+  if (moved.type === "crossing" && opts.syncCrossing !== false && ["at_pickup", "en_route", "at_delivery", "completed"].includes(moved.state)) {
+    const [x] = await db.select({ id: s.crossings.id }).from(s.crossings).where(and(eq(s.crossings.tenantId, ctx.tenantId), eq(s.crossings.legId, moved.id))).limit(1);
+    if (x) await (await import("./crossing")).recompute(ctx, x.id).catch(() => null);
+  }
+  return moved;
+}
+
+/**
+ * The next truck has the trailer, so the leg that brought it there delivered (B3): a partner's MX leg still "en
+ * route" to the patio when the crossing truck picks the caja up is closed at the hand-off stop, on the system's
+ * word, so the board and the planner stop saying the freight is on the Mexican side.
+ */
+async function closeHandedOffLeg(tx: Tx, ctx: Ctx, leg: Leg, at: Date) {
+  if (!leg.fromStopId) return;
+  const [prev] = await tx.select().from(s.legs).where(and(eq(s.legs.tenantId, ctx.tenantId), eq(s.legs.orderId, leg.orderId), eq(s.legs.toStopId, leg.fromStopId))).limit(1);
+  if (!prev || !["loaded", "en_route", "at_delivery"].includes(prev.state)) return;
+  const [stop] = await tx.select().from(s.stops).where(eq(s.stops.id, leg.fromStopId)).limit(1);
+  const note = `the next leg picked up the trailer at ${stop?.name ?? "the hand-off"}`;
+  let cur = prev;
+  for (const to of ["en_route", "at_delivery", "completed"] as LegState[]) {
+    const order: LegState[] = ["loaded", "en_route", "at_delivery", "completed"];
+    if (order.indexOf(cur.state) >= order.indexOf(to)) continue;
+    cur = await setLegState(tx, ctx, cur, to, { source: "system", at, note }, to === "completed" ? { completedAt: at } : {});
+  }
+  if (stop && !stop.arrivedAt) await tx.update(s.stops).set({ arrivedAt: at }).where(eq(s.stops.id, stop.id));
 }
 
 // ---------- order state derivation ----------
@@ -1304,6 +1388,8 @@ export type Candidate = {
   safetySignoff?: boolean;
   /** when and where the unit comes free, and the empty miles from there to this pickup (the assign picker) */
   freeAt?: string | null;
+  /** the clock of the place it comes free */
+  freeZone?: string | null;
   freeWhere?: string | null;
   deadheadMi?: number | null;
 };
@@ -1328,6 +1414,7 @@ export async function candidatesForLeg(ctx: Ctx, legId: string, now = new Date()
   const { legWindow, eventsBetween, eventFindings } = await import("./planner");
   const win = await legWindow(db, leg, now);
   const events = await eventsBetween(db, ctx.tenantId, win.start, win.end);
+  const companyZone = await (await import("./company")).tenantZone(ctx.tenantId);
   const compFindings = (kind: "truck" | "driver", id: string, label: string): Finding[] => {
     const raw = kind === "truck" ? truckComp.get(id) : driverComp.get(id);
     if (!raw) return [];
@@ -1351,7 +1438,7 @@ export async function candidatesForLeg(ctx: Ctx, legId: string, now = new Date()
     const drv = drivers.find((d) => d.currentTruckId === t.id) ?? null;
     const findings = [...checkTruck(t, zone, now), ...compFindings("truck", t.id, `unit ${t.unitNumber}`), ...(drv ? [...checkDriver(drv, zone, now), ...compFindings("driver", drv.id, drv.name)] : [])];
     if (!drv) findings.push({ level: "yellow", code: "no_driver", message: `${t.unitNumber} has no driver assigned`, overridable: true });
-    findings.push(...eventFindings(events, [{ kind: "truck", id: t.id, label: `unit ${t.unitNumber}` }, ...(drv ? [{ kind: "driver", id: drv.id, label: drv.name }] : [])]));
+    findings.push(...eventFindings(events, [{ kind: "truck", id: t.id, label: `unit ${t.unitNumber}` }, ...(drv ? [{ kind: "driver", id: drv.id, label: drv.name }] : [])], companyZone));
     findings.push(...(conflicts.get(t.id) ?? []));
     const sum = summarize(findings);
     const busy = busyBy.get(t.id) ?? [];
@@ -1394,6 +1481,8 @@ export type BoardRow = {
 export async function board(ctx: Ctx, opts: { includeClosed?: boolean; deliveredDays?: number } = {}): Promise<BoardRow[]> {
   assertCtx(ctx);
   requirePermission(ctx, "orders.view");
+  // a tender past its deadline is expired now, not at the next tick: the board never shows it as covered
+  await (await import("./tenders")).expireTenders(new Date(), { tenantId: ctx.tenantId });
   const states: OrderState[] = opts.includeClosed ? [...s.ORDER_STATES] : ["draft", "booked", "dispatched", "in_transit", "exception", "delivered"];
   // shipments ride on trips: the trip is the row; the shipments show inside it.
   // Delivered rows are this week's: older ones live on Orders and in the billing queue, not on today's board.

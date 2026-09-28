@@ -6,7 +6,7 @@ import type { MailKind, MailProposal, MailExtracted, MailAttachment } from "@/db
 import { newId } from "@/lib/ids";
 import { assertCtx, requirePermission, systemCtx, type Ctx } from "@/lib/context";
 import { writeAudit } from "@/lib/audit";
-import { fmtIn } from "@/lib/time";
+import { fmtWhen, stopZone } from "@/lib/time";
 import { parseEmail, openImap, type ParsedEmail, type MailBox, type ImapConfig } from "@/integrations/mail";
 import { API, DEFAULT_MODEL } from "@/integrations/extractor";
 import { NotFoundError, ValidationError, createOrder, getOrder } from "./orders";
@@ -277,7 +277,8 @@ export async function draftStatusReply(tenantId: string, orderId: string, m: { f
   const { tenantZone } = await import("./company");
   const [v, etas, zone] = await Promise.all([trackingView(tenantId, orderId), orderEtas(tenantId, orderId), tenantZone(tenantId)]);
   const es = /[¿¡]|\b(d[oó]nde|estatus|unidad|embarque|gracias|saludos|hola|por favor)\b/i.test(`${m.subject} ${m.text}`);
-  const fmt = (d: Date | null | undefined) => fmtIn(d, zone);
+  // a stop's time on that stop's clock, with its zone; anything else on the company's
+  const fmt = (d: Date | null | undefined, st?: { country: string; name: string; state: string | null; city: string | null } | null) => fmtWhen(d, st ? stopZone(st, zone) : zone);
   const here = v.stops.find((st) => st.arrivedAt && !st.departedAt);
   const lastDone = [...v.stops].reverse().find((st) => st.departedAt);
   const next = v.stops.find((st) => !st.arrivedAt);
@@ -286,13 +287,13 @@ export async function draftStatusReply(tenantId: string, orderId: string, m: { f
   const lines: string[] = [];
   lines.push(es ? `Hola${name ? ` ${name}` : ""},` : `Hi${name ? ` ${name}` : ""},`);
   lines.push("");
-  if (v.order.deliveredAt) lines.push(es ? `El embarque ${v.order.orderNumber} se entregó el ${fmt(v.order.deliveredAt)}.` : `Load ${v.order.orderNumber} was delivered ${fmt(v.order.deliveredAt)}.`);
-  else if (here) lines.push(es ? `El embarque ${v.order.orderNumber} está en ${here.name} desde las ${fmt(here.arrivedAt)}.` : `Load ${v.order.orderNumber} is at ${here.name}, arrived ${fmt(here.arrivedAt)}.`);
-  else if (lastDone) lines.push(es ? `El embarque ${v.order.orderNumber} salió de ${lastDone.name} a las ${fmt(lastDone.departedAt)}${next ? ` rumbo a ${next.name}` : ""}.` : `Load ${v.order.orderNumber} left ${lastDone.name} at ${fmt(lastDone.departedAt)}${next ? `, heading to ${next.name}` : ""}.`);
+  if (v.order.deliveredAt) lines.push(es ? `El embarque ${v.order.orderNumber} se entregó el ${fmt(v.order.deliveredAt, v.stops[v.stops.length - 1])}.` : `Load ${v.order.orderNumber} was delivered ${fmt(v.order.deliveredAt, v.stops[v.stops.length - 1])}.`);
+  else if (here) lines.push(es ? `El embarque ${v.order.orderNumber} está en ${here.name} desde las ${fmt(here.arrivedAt, here)}.` : `Load ${v.order.orderNumber} is at ${here.name}, arrived ${fmt(here.arrivedAt, here)}.`);
+  else if (lastDone) lines.push(es ? `El embarque ${v.order.orderNumber} salió de ${lastDone.name} a las ${fmt(lastDone.departedAt, lastDone)}${next ? ` rumbo a ${next.name}` : ""}.` : `Load ${v.order.orderNumber} left ${lastDone.name} at ${fmt(lastDone.departedAt, lastDone)}${next ? `, heading to ${next.name}` : ""}.`);
   else lines.push(es ? `El embarque ${v.order.orderNumber} está programado; aún no sale de ${v.stops[0]?.name ?? "origen"}.` : `Load ${v.order.orderNumber} is booked; it has not left ${v.stops[0]?.name ?? "the origin"} yet.`);
   if (v.lastPosition) lines.push(es ? `Última posición GPS: ${v.lastPosition.place ?? `${Number(v.lastPosition.lat).toFixed(2)}, ${Number(v.lastPosition.lng).toFixed(2)}`} a las ${fmt(v.lastPosition.at)}.` : `Last GPS position: ${v.lastPosition.place ?? `${Number(v.lastPosition.lat).toFixed(2)}, ${Number(v.lastPosition.lng).toFixed(2)}`} at ${fmt(v.lastPosition.at)}.`);
-  if (eta && !v.order.deliveredAt) lines.push(es ? `Llegada estimada a ${eta.stopName}: ${fmt(eta.at)} (${eta.miles} mi por recorrer).` : `ETA at ${eta.stopName}: ${fmt(eta.at)} (${eta.miles} mi to go).`);
-  else if (next?.windowStart && !v.order.deliveredAt) lines.push(es ? `Cita en ${next.name}: ${fmt(next.windowStart)}.` : `Appointment at ${next.name}: ${fmt(next.windowStart)}.`);
+  if (eta && !v.order.deliveredAt) lines.push(es ? `Llegada estimada a ${eta.stopName}: ${fmt(eta.at, v.stops.find((x) => x.id === eta.stopId) ?? next)} (${eta.miles} mi por recorrer).` : `ETA at ${eta.stopName}: ${fmt(eta.at, v.stops.find((x) => x.id === eta.stopId) ?? next)} (${eta.miles} mi to go).`);
+  else if (next?.windowStart && !v.order.deliveredAt) lines.push(es ? `Cita en ${next.name}: ${fmt(next.windowStart, next)}.` : `Appointment at ${next.name}: ${fmt(next.windowStart, next)}.`);
   lines.push("");
   lines.push(es ? `Saludos,\n${v.carrier}` : `Regards,\n${v.carrier}`);
   return lines.join("\n");

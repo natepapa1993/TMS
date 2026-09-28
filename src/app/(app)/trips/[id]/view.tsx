@@ -1,5 +1,6 @@
 "use client";
 
+import { useClock } from "@/components/zone";
 import { useEffect, useState, useTransition } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -17,6 +18,7 @@ const LABEL: Record<string, string> = { draft: "Draft", booked: "Booked", dispat
 const stopName = (stops: Stop[], id: string | null) => stops.find((s) => s.id === id)?.name ?? "?";
 
 export function TripView({ tripId, state, stops, shipments, capacity, customers, canEdit }: { tripId: string; state: string; stops: Stop[]; shipments: Shipment[]; capacity: Capacity; customers: { id: string; name: string }[]; canEdit: boolean }) {
+  const clock = useClock();
   const router = useRouter();
   const t = useToast();
   const [adding, setAdding] = useState(false);
@@ -85,8 +87,8 @@ export function TripView({ tripId, state, stops, shipments, capacity, customers,
                       <td className="text-right mono">{st.afterLinearFt}</td>
                       <td className="text-right mono">{st.afterPieces}</td>
                       <td className="text-footnote text-muted whitespace-nowrap">
-                        {stop.arrivedAt ? `in ${new Date(stop.arrivedAt).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })}` : ""}
-                        {stop.departedAt ? ` · out ${new Date(stop.departedAt).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })}` : ""}
+                        {stop.arrivedAt ? `in ${clock.stop(stop.arrivedAt, stop, { style: "short" })}` : ""}
+                        {stop.departedAt ? ` · out ${clock.stop(stop.departedAt, stop, { style: "time" })}` : ""}
                       </td>
                     </tr>
                   );

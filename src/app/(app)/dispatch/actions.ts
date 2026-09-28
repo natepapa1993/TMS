@@ -23,7 +23,7 @@ export async function candidatesAction(legId: string) {
     const pl = pd.legs.find((l) => l.legId === legId);
     return cands.map((c) => {
       const d = pd.drivers.find((x) => x.truckId === c.truckId);
-      return { ...c, freeAt: d?.availableAt ?? null, freeWhere: d?.availableIn ?? null, deadheadMi: d && pl ? deadhead(d, pl) : null };
+      return { ...c, freeAt: d?.availableAt ?? null, freeZone: d?.availableZone ?? null, freeWhere: d?.availableIn ?? null, deadheadMi: d && pl ? deadhead(d, pl) : null };
     });
   });
 }
@@ -70,10 +70,17 @@ export async function dispatchAction(legId: string) {
   return r;
 }
 
+/**
+ * Assign and send. On a leg already sent, the same truck and driver with a new trailer, co-driver or miles stays
+ * Sent (kept); a new truck or driver goes back through Planned and is sent again (resent) — the dialog says which.
+ */
 export async function planAndDispatchAction(legId: string, a: O.Assignment, opts: PlanOpts = {}) {
   const r = await act(async (ctx) => {
-    await O.planLeg(ctx, legId, a, opts);
-    return O.dispatchLeg(ctx, legId);
+    const before = await O.getLeg(ctx, legId);
+    const planned = await O.planLeg(ctx, legId, a, opts);
+    if (planned.kept) return { leg: planned.leg, kept: true, resent: false };
+    const leg = await O.dispatchLeg(ctx, legId);
+    return { leg, kept: false, resent: ["dispatched", "accepted"].includes(before.state) };
   });
   if (r.ok) touch();
   return r;

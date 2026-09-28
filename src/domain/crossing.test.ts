@@ -1,10 +1,10 @@
-// Features: F-3 F-3.10 crossing — rules → checklist, documents, cross-checks, eligibility, packet, Solicitud de Retiro, 16-state machine, dwell
+// Features: F-3 F-3.10 F-31.3 F-31.7 crossing — rules → checklist, documents, cross-checks, eligibility, packet, Solicitud de Retiro, 16-state machine, dwell
 import { describe, it, expect, beforeEach, vi, afterEach } from "vitest";
 import { PDFDocument } from "pdf-lib";
 import { truncateAll, makeTenant } from "@/test/helpers";
 import { create, update } from "@/data/records";
 import { db } from "@/db/client";
-import { crossings, crossingDocRules, flags, documents } from "@/db/schema";
+import { crossings, crossingDocRules, flags, documents, legs } from "@/db/schema";
 import { and, eq } from "drizzle-orm";
 import { createOrder, planLeg, dispatchLeg, acceptLeg, advanceLeg, ValidationError } from "./orders";
 import * as X from "./crossing";
@@ -44,6 +44,8 @@ beforeEach(async () => {
   f = { rxo: rxo.id, t2117: t2117.id, benja: benja.id, martin: martin.id, garza: garza.id, entity: entity.id, broker: broker.id };
 });
 
+const getLegState = async (legId: string) => (await db.select({ state: legs.state }).from(legs).where(eq(legs.id, legId)))[0].state;
+
 async function crossingOrder() {
   const o = await createOrder(a, { customerId: f.rxo, rateCents: 285000, stops, book: true });
   const [c] = await db.select().from(crossings).where(eq(crossings.legId, o.legs[1].id));
@@ -57,6 +59,7 @@ const goodDocs = {
   ace_manifest: { trailer: "10743", driver: "Benjamin Xochihua", usPlate: "RC59022", mxPlate: "35ES3A", scac: "TSEX", submittedAt: "2026-09-27T10:00:00Z", estimatedArrival: "2026-09-27T12:00:00Z", grossWeight: 18300, pieces: 26, fast: "yes" },
   bol: { trailer: "10743", seal: "S-771", pieces: 26, grossWeight: 18250 },
   invoice: { seal: "S-771", grossWeight: 18200, pieces: 26 },
+  entry: { pedimento: "26 24 3456 6001234", entryNumber: "PAPS-4471" },
 };
 const truck = { unitNumber: "2117", usPlate: "RC59022", mxPlate: "35ES3A", mxPlateClass: "brown", scac: "TSEX", entityScac: "TSEX", dtopsYear: new Date().getUTCFullYear(), dtopsConfirmation: "DT-1", usPlateExpires: future, mxPlateExpires: future, dotInspectionExpires: future };
 const driver = { name: "Benjamín Xochihua", licenseExpires: future, mxLicenseExpires: future, medicalExpires: future, fastExpires: future, i94Until: future };
@@ -114,7 +117,8 @@ describe("crossing lifecycle (spec §3.1)", () => {
     const codes = c.requirements.map((r) => `${r.code}:${r.status}`);
     expect(codes).toContain("carta_retiro:missing");
     expect(codes).toContain("doda:missing");
-    expect(codes).toContain("entry:na"); // optional
+    expect(codes).toContain("entry:missing"); // entering the US always needs the entry / PAPS pre-file (M16)
+    expect(codes).toContain("dtops:missing"); // and DTOPS: no truck on the leg yet, so nothing on file
     const rules = await db.select().from(crossingDocRules).where(eq(crossingDocRules.tenantId, a.tenantId));
     expect(rules.length).toBe(X.DEFAULT_CROSSING_RULES.length);
   });
@@ -163,6 +167,9 @@ describe("crossing lifecycle (spec §3.1)", () => {
     await up("ace_manifest");
     await up("bol");
     await up("invoice");
+    await up("entry");
+    // DTOPS is on the truck record for this year: that counts, no upload needed
+    expect((await X.recompute(a, c.id)).requirements.find((r) => r.code === "dtops")).toMatchObject({ status: "verified", onFile: expect.stringContaining("DT-1") });
     expect((await X.recompute(a, c.id)).state).toBe("awaiting_doda");
     let page = await X.crossingPage(a, c.id);
     expect(page.waitingOn?.code).toBe("doda");
@@ -175,9 +182,9 @@ describe("crossing lifecycle (spec §3.1)", () => {
     const seal = page.checks.find((k) => k.code === "seal")!;
     expect(seal.state).toBe("fail");
     await expect(X.buildPacket(a, c.id)).rejects.toThrow(/cross-check is failing/);
-    // dispatcher role cannot override, owner can
-    await expect(X.overrideCheck({ ...a, role: "dispatcher" }, c.id, "seal", "seal replaced at the yard, S-772 recorded")).rejects.toThrow(/permission/);
-    await X.overrideCheck(a, c.id, "seal", "seal replaced at the yard, S-772 recorded");
+    // billing cannot waive a check; the dispatcher can, with a reason (audited) — M16
+    await expect(X.overrideCheck({ ...a, role: "billing" }, c.id, "seal", "seal replaced at the yard, S-772 recorded")).rejects.toThrow(/permission/);
+    await X.overrideCheck({ ...a, role: "dispatcher" }, c.id, "seal", "seal replaced at the yard, S-772 recorded");
     cur = await X.recompute(a, c.id);
     expect(cur.state).toBe("eligibility_checked"); // docs verified + brown plates w/ carta porte, B-1 team on the crossing = green
     expect(cur.eligibility?.ok).toBe(true);
@@ -194,38 +201,52 @@ describe("crossing lifecycle (spec §3.1)", () => {
     cur = await X.buildPacket(a, c.id);
     expect(cur.state).toBe("ready_to_cross");
     const packet = await PDFDocument.load((await X.readBlob(a, cur.packetStorageKey!)).bytes);
-    expect(packet.getPageCount()).toBe(1 + 6); // cover + one page per document
-    cur = await X.sendPacket(a, c.id);
+    expect(packet.getPageCount()).toBe(1 + 7); // cover + one page per document
+    // B3: the crossing leg is only planned — the packet does not go out without it, unless dispatch sends both
+    await expect(X.sendPacket(a, c.id)).rejects.toThrow(/not sent to Benjamín Xochihua yet/);
+    cur = await X.sendPacket(a, c.id, { dispatchLeg: true });
     expect(cur.state).toBe("packet_sent");
     expect(cur.packetSentAt).not.toBeNull();
+    expect((await getLegState(o.legs[1].id))).toBe("dispatched");
 
     // the driver opens it (ack), then taps through the border
     const opened = await X.packetByToken(cur.packetToken!);
     expect(opened).not.toBeNull();
     expect((await X.crossingPage(a, c.id)).crossing.packetAckAt).not.toBeNull();
     await expect(X.step(a, c.id, "in_us_customs", { source: "driver_app" })).rejects.toBeInstanceOf(TransitionError); // one step at a time
-    for (const st of ["departed_yard", "at_mx_customs", "in_us_customs", "cleared"] as const) cur = await X.step(a, c.id, st, { source: "driver_app", verified: true });
+    // the border steps wait for the caja to be picked up at the yard
+    await expect(X.step(a, c.id, "departed_yard", { source: "driver_app" })).rejects.toThrow(/Loaded/);
+    for (const st of ["accepted", "en_route_to_pickup", "at_pickup", "loaded"] as const) await advanceLeg(a, o.legs[1].id, st, { source: "driver_app" });
+    cur = await X.step(a, c.id, "departed_yard", { source: "driver_app", verified: true });
+    expect(await getLegState(o.legs[1].id)).toBe("en_route"); // left the yard = the leg is rolling
+    for (const st of ["at_mx_customs", "in_us_customs", "cleared"] as const) cur = await X.step(a, c.id, st, { source: "driver_app", verified: true });
     expect(cur.state).toBe("cleared");
     expect(cur.clearedAt).not.toBeNull();
+    expect(await getLegState(o.legs[1].id)).toBe("completed"); // cleared = delivered at the Laredo yard
     expect(X.bucketOf(cur.state)).toBe("cleared");
     // a document arriving now does not yank the state back
     await X.uploadDocument(a, c.id, { code: "packing_list", fileName: "pl.pdf", mimeType: "application/pdf", bytes: await pdf("pl"), fields: { pieces: 26 } });
     expect((await X.recompute(a, c.id)).state).toBe("cleared");
-  });
+  }, 30_000); // many documents, the packet, the border: slow on a busy machine
 
   it("packet unacknowledged → red flag; hold and release; returned → re-verify", async () => {
     const { o, c } = await crossingOrder();
     await planLeg(a, o.legs[1].id, { kind: "truck", truckId: f.t2117, driverId: f.benja });
     await X.setCrossingDetails(a, c.id, { trailerNumber: "10743" });
     await X.generateCartaRetiro(a, c.id, {});
-    for (const code of ["carta_porte", "doda", "ace_manifest", "bol", "invoice"] as const) await X.uploadDocument(a, c.id, { code, fileName: `${code}.pdf`, mimeType: "application/pdf", bytes: await pdf(code), fields: goodDocs[code] as Record<string, unknown> });
+    for (const code of ["carta_porte", "doda", "ace_manifest", "bol", "invoice", "entry"] as const) await X.uploadDocument(a, c.id, { code, fileName: `${code}.pdf`, mimeType: "application/pdf", bytes: await pdf(code), fields: goodDocs[code] as Record<string, unknown> });
     await X.buildPacket(a, c.id);
+    await dispatchLeg(a, o.legs[1].id);
     let cur = await X.sendPacket(a, c.id);
     await db.update(crossings).set({ packetSentAt: new Date(Date.now() - 45 * 60000) }).where(eq(crossings.id, c.id));
     expect((await X.flagUnacknowledgedPackets(new Date())).flagged).toBe(1);
     expect((await X.flagUnacknowledgedPackets(new Date())).flagged).toBe(0);
 
-    cur = await X.step(a, c.id, "departed_yard", { source: "driver_app" });
+    // the office can say it left once the caja was at the yard: the leg walks forward to en route with it
+    await expect(X.step(a, c.id, "departed_yard", { source: "dispatcher" })).rejects.toThrow(/not at the yard yet/);
+    await X.markArrivedYard(a, c.id);
+    cur = await X.step(a, c.id, "departed_yard", { source: "dispatcher" });
+    expect(await getLegState(o.legs[1].id)).toBe("en_route");
     cur = await X.step(a, c.id, "at_mx_customs", { source: "driver_app" });
     await expect(X.hold(a, c.id, "")).rejects.toBeInstanceOf(ValidationError);
     cur = await X.hold(a, c.id, "CBP secondary");
@@ -244,7 +265,7 @@ describe("crossing lifecycle (spec §3.1)", () => {
     cur = await X.reverify(a, c.id);
     expect(["docs_complete", "docs_verified", "eligibility_checked"]).toContain(cur.state);
     expect(cur.packetBuiltAt).toBeNull();
-  });
+  }, 30_000); // many documents, the packet, the border: slow on a busy machine
 
   it("rules: a customer-specific row overrides the base; blue plates make carta porte optional; n/a needs a reason", async () => {
     const { c } = await crossingOrder();

@@ -57,10 +57,11 @@ test("tender by email: carrier opens the link, accepts with driver details; disp
   const ctx2 = await browser.newContext();
   const carrier = await ctx2.newPage();
   await carrier.goto(url);
-  await expect(carrier.locator("body")).toContainText("Transportes Garza, can you cover this?");
-  await expect(carrier.locator("body")).toContainText("MXN 450.00"); // a Mexican carrier is paid in pesos unless the dispatcher picks USD
+  // a Mexican carrier reads the offer in Spanish (M1), and is paid in pesos unless the dispatcher picks USD
+  await expect(carrier.locator("body")).toContainText("Transportes Garza, ¿puede cubrir esta carga?");
+  await expect(carrier.locator("body")).toContainText("MXN 450.00");
   await expect(carrier.locator("body")).toContainText("Appointment is firm.");
-  await carrier.click("button:has-text('Yes, accept')");
+  await carrier.click("button:has-text('Sí, acepto')");
   await carrier.locator("input").first().fill("Luis");
   await carrier.click("button:has-text('Confirm')");
   await expect(carrier.locator(".error")).toContainText(/driver name/i);
@@ -68,10 +69,10 @@ test("tender by email: carrier opens the link, accepts with driver details; disp
   await carrier.locator("input").nth(2).fill("+52 81 000 0000");
   await carrier.locator("input").nth(3).fill("MX-45");
   await carrier.click("button:has-text('Confirm')");
-  await expect(carrier.locator("body")).toContainText("it's yours");
+  await expect(carrier.locator("body")).toContainText("es suya");
   await expect(carrier.locator("body")).toContainText("Pedro Ruiz");
   await carrier.reload();
-  await expect(carrier.locator("body")).toContainText("Accepted");
+  await expect(carrier.locator("body")).toContainText("Aceptada");
   await ctx2.close();
 
   await page.reload();
@@ -145,18 +146,18 @@ test("driver app: link from Fleet, one button per step with GPS, customer tracki
   await expect(mid.locator("body")).toContainText("ETA");
   await expect(mid.locator("body")).toContainText("from GPS at");
   await mid.close();
-  // at the delivery the driver reads the seal on the doors: the app says what it should be
-  await expect(big).toContainText("Arrived at delivery");
+  // a crossing leg rolling from the border yard: the border steps take over — one button at a time — and
+  // Cleared delivers the leg at the Laredo yard (B3)
+  await expect(phone.locator("body")).toContainText("Border · Frontera");
+  for (const label of ["At Mexican customs", "At US customs"]) {
+    await expect(big).toContainText(label);
+    await big.click();
+    await phone.waitForTimeout(400);
+  }
+  // cleared = at the Laredo yard: the driver reads the seal on the doors, the app says what it should be
+  await expect(big).toContainText("Cleared");
   await expect(phone.getByTestId("seal")).toContainText("Should be MX-4471");
   await phone.getByLabel("Seal found").fill("MX-9999"); // not the same seal
-  await big.click();
-  await phone.waitForTimeout(400);
-  // at the delivery: the POD photo is asked for before the last button
-  await expect(big).toContainText("Delivered — empty");
-  await expect(phone.locator("body")).toContainText("No POD photo yet");
-  await phone.getByTestId("photo-POD").locator("input[type=file]").setInputFiles(bol);
-  await expect(phone.getByTestId("photo-POD")).toContainText("✓ POD on file", { timeout: 10000 });
-  await expect(phone.locator("body")).not.toContainText("No POD photo yet");
   await big.click();
   await phone.waitForTimeout(400);
   await expect(phone.locator("body")).toContainText("Nothing assigned right now");
@@ -201,7 +202,8 @@ test("driver app: link from Fleet, one button per step with GPS, customer tracki
   await page.click("a:has-text('26-00001')");
   await expect(page.locator("body")).toContainText("SEAL_PHOTO");
   await expect(page.locator("body")).toContainText("POD");
-  await expect(page.locator("body")).toContainText("POD photo from the driver app at Laredo yard");
+  // the crossing leg ended at the Laredo yard by clearing customs: the next leg is told the freight is there (B3)
+  await expect(page.locator("body")).toContainText("Freight cleared customs and is at Laredo yard");
   await expect(page.locator("body")).toContainText("seal out MX-4471"); // recorded on the stops
   await expect(page.locator("body")).toContainText("seal in MX-9999");
   await expect(page.locator("body")).toContainText("Dispatch to Benjamín Xochihua: OK, tell them");

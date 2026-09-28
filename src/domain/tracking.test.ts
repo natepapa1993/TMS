@@ -60,8 +60,10 @@ describe("tendering (F-4)", () => {
     const [t] = await db.select().from(tendersTable).where(eq(tendersTable.id, r.tender.id));
     expect(t.state).toBe("accepted");
     expect(t.driverName).toBe("Pedro Ruiz");
-    const notes = await db.select().from(legEvents).where(and(eq(legEvents.legId, o.legs[0].id), eq(legEvents.kind, "note")));
-    expect(notes[0].note).toContain("Pedro Ruiz");
+    // every tender step is on the load's timeline (B1): sent, then accepted with the driver
+    const notes = await db.select().from(legEvents).where(and(eq(legEvents.legId, o.legs[0].id), eq(legEvents.kind, "tender")));
+    expect(notes.map((n) => (n.data as { state: string }).state).sort()).toEqual(["accepted", "sent"]);
+    expect(notes.find((n) => (n.data as { state: string }).state === "accepted")!.note).toContain("Pedro Ruiz");
     // a second answer is refused
     await expect(respondToTender(r.tender.token, { accept: false, name: "Luis", note: "changed my mind" })).rejects.toBeInstanceOf(TransitionError);
   });
@@ -101,10 +103,15 @@ describe("tendering (F-4)", () => {
     expect((await tenderByToken(r.tender.token))!.tender.state).toBe("sent");
     expect((await expireTenders(later)).expired).toBe(1);
     expect((await tenderByToken(r.tender.token))!.tender.state).toBe("expired");
+    // back to Needs truck: nobody on the leg, a red flag, and the expiry on the timeline (B1)
     const g = await getOrder(a, o.order.id);
-    expect(g.legs[0].state).toBe("declined");
+    expect(g.legs[0].state).toBe("unassigned");
+    expect(g.legs[0].carrierId).toBeNull();
     const fl = await db.select().from(flags).where(eq(flags.legId, o.legs[0].id));
-    expect(fl[0].code).toBe("tender_expired");
+    expect(fl.map((x) => `${x.code}:${x.level}`)).toEqual(["tender_expired:red"]);
+    const ev = await db.select().from(legEvents).where(and(eq(legEvents.legId, o.legs[0].id), eq(legEvents.kind, "tender")));
+    expect(ev.map((e) => (e.data as { state: string }).state).sort()).toEqual(["expired", "sent"]);
+    expect((await expireTenders(later)).expired).toBe(0); // once
     await expect(respondToTender(r.tender.token, { accept: true, name: "x", driverName: "y" })).rejects.toThrow(/expired/);
   });
 

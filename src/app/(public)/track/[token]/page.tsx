@@ -1,5 +1,5 @@
 import { resolveToken } from "@/lib/tokens";
-import { fmtIn, zoneAbbrev } from "@/lib/time";
+import { fmtWhen, fmtWindow, stopZone } from "@/lib/time";
 import { tenantZone } from "@/domain/company";
 import { trackingView } from "@/domain/tracking";
 import { Pill } from "@/components/ui";
@@ -16,8 +16,8 @@ const STOP_TYPE_ES: Record<string, string> = { pickup: "recolección", delivery:
 
 /** English or Spanish: the customer's country decides, ?lang= overrides. */
 const STR = {
-  en: { tracking: "shipment tracking", route: "Route", window: "window", arrived: "Arrived", departed: "Departed", next: "Next", lastPos: "Last known position", openMaps: "Open in Google Maps", noPos: "No position yet. It appears once the truck is moving.", updates: "Updates", times: "Times shown in", questions: (c: string) => `Questions? Contact ${c} dispatch.`, other: "Español", po: "PO", shipment: "Shipment", ref: "Ref", eta: "ETA", fromGps: "from GPS at" },
-  es: { tracking: "rastreo de embarque", route: "Ruta", window: "cita", arrived: "Llegó", departed: "Salió", next: "Siguiente", lastPos: "Última posición conocida", openMaps: "Abrir en Google Maps", noPos: "Aún sin posición. Aparece cuando el camión está en movimiento.", updates: "Actualizaciones", times: "Horas en", questions: (c: string) => `¿Dudas? Contacta a despacho de ${c}.`, other: "English", po: "PO", shipment: "Embarque", ref: "Ref", eta: "Llegada estimada", fromGps: "según GPS de las" },
+  en: { tracking: "shipment tracking", route: "Route", window: "window", arrived: "Arrived", departed: "Departed", next: "Next", lastPos: "Last known position", openMaps: "Open in Google Maps", noPos: "No position yet. It appears once the truck is moving.", updates: "Updates", times: "Every time is on the stop's local clock", questions: (c: string) => `Questions? Contact ${c} dispatch.`, other: "Español", po: "PO", shipment: "Shipment", ref: "Ref", eta: "ETA", fromGps: "from GPS at" },
+  es: { tracking: "rastreo de embarque", route: "Ruta", window: "cita", arrived: "Llegó", departed: "Salió", next: "Siguiente", lastPos: "Última posición conocida", openMaps: "Abrir en Google Maps", noPos: "Aún sin posición. Aparece cuando el camión está en movimiento.", updates: "Actualizaciones", times: "Cada hora está en la hora local de la parada", questions: (c: string) => `¿Dudas? Contacta a despacho de ${c}.`, other: "English", po: "PO", shipment: "Embarque", ref: "Ref", eta: "Llegada estimada", fromGps: "según GPS de las" },
 };
 
 export default async function TrackPage({ params, searchParams }: PageProps<"/track/[token]">) {
@@ -36,7 +36,8 @@ export default async function TrackPage({ params, searchParams }: PageProps<"/tr
   const S = STR[lang];
   const legLabel = lang === "es" ? LEG_LABEL_ES : LEG_LABEL;
   const zone = await tenantZone(t.ctx.tenantId);
-  const fmt = (d: Date | string | null | undefined) => fmtIn(d, zone);
+  // each stop on its own clock with the zone's name; anything else on the company's
+  const fmt = (d: Date | string | null | undefined, st?: (typeof v.stops)[number] | null) => fmtWhen(d, st ? stopZone(st, zone) : zone, { style: "short" });
   const doneStops = new Set(v.stops.filter((s) => s.departedAt).map((s) => s.id));
   const hereStop = v.stops.find((s) => s.arrivedAt && !s.departedAt);
   const lastTouched = [...v.stops].reverse().find((s) => s.arrivedAt || s.departedAt);
@@ -84,18 +85,18 @@ export default async function TrackPage({ params, searchParams }: PageProps<"/tr
                   </div>
                   <div className="text-callout text-muted">
                     {lang === "es" ? (STOP_TYPE_ES[s.type] ?? s.type) : s.type.replace("_", " ")}
-                    {s.windowStart ? ` · ${S.window} ${fmt(s.windowStart)}${s.windowEnd ? ` – ${fmt(s.windowEnd)}` : ""}` : ""}
+                    {s.windowStart ? ` · ${S.window} ${fmtWindow(s.windowStart, s.windowEnd, stopZone(s, zone), { short: true })}` : ""}
                   </div>
                   <div className="text-callout">
-                    {s.arrivedAt && <span className="text-teal font-semibold">{S.arrived} {fmt(s.arrivedAt)}</span>}
-                    {s.departedAt && <span className="text-teal font-semibold"> · {S.departed} {fmt(s.departedAt)}</span>}
+                    {s.arrivedAt && <span className="text-teal font-semibold">{S.arrived} {fmt(s.arrivedAt, s)}</span>}
+                    {s.departedAt && <span className="text-teal font-semibold"> · {S.departed} {fmt(s.departedAt, s)}</span>}
                     {next && !s.arrivedAt && <span className="text-amber font-semibold">{S.next}</span>}
                     {(() => {
                       const e = Object.values(v.etas).find((x) => x.stopId === s.id);
                       return e && !s.arrivedAt ? (
                         <span className={`font-semibold ${e.late ? "text-red" : "text-teal"}`}>
                           {" "}
-                          · {S.eta} {fmt(e.at)} <span className="text-faint font-normal">({S.fromGps} {fmt(e.positionAt)})</span>
+                          · {S.eta} {fmt(e.at, s)} <span className="text-faint font-normal">({S.fromGps} {fmt(e.positionAt)})</span>
                         </span>
                       ) : null;
                     })()}
@@ -132,7 +133,9 @@ export default async function TrackPage({ params, searchParams }: PageProps<"/tr
             {customerEvents.slice(0, 12).map((e, i) => {
               // on a multi-leg move, say which stop a leg's step refers to ("Delivered" at the border yard is not the final delivery)
               const leg = v.legs.length > 1 ? v.legs.find((l) => l.id === e.legId) : null;
-              const stopName = leg ? v.stops.find((st) => st.id === (["at_delivery", "completed", "en_route"].includes(e.toState ?? "") ? leg.toStopId : leg.fromStopId))?.name : null;
+              const legOf = v.legs.find((l) => l.id === e.legId);
+              const evStop = legOf ? (v.stops.find((st) => st.id === (["at_delivery", "completed", "en_route"].includes(e.toState ?? "") ? legOf.toStopId : legOf.fromStopId)) ?? null) : null;
+              const stopName = leg ? evStop?.name : null;
               return (
               <li key={i} className="flex justify-between gap-3">
                 <span className="font-semibold">
@@ -140,7 +143,7 @@ export default async function TrackPage({ params, searchParams }: PageProps<"/tr
                   {stopName && <span className="text-muted font-normal"> · {stopName}</span>}
                 </span>
                 <span className="text-muted whitespace-nowrap">
-                  {fmt(e.at)}
+                  {fmt(e.at, evStop)}
                   {e.verified ? " · GPS" : ""}
                 </span>
               </li>
@@ -150,7 +153,7 @@ export default async function TrackPage({ params, searchParams }: PageProps<"/tr
         </div>
       )}
       <div className="mt-4 text-footnote text-faint text-center">
-        {S.times} {zoneAbbrev(zone)}. {S.questions(v.carrier)}
+        {S.times}. {S.questions(v.carrier)}
       </div>
     </div>
   );

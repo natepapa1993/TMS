@@ -74,8 +74,8 @@ export async function buildPacketAction(crossingId: string) {
   if (r.ok) touch(crossingId);
   return r;
 }
-export async function sendPacketAction(crossingId: string) {
-  const r = await act((ctx) => X.sendPacket(ctx, crossingId));
+export async function sendPacketAction(crossingId: string, opts: { dispatchLeg?: boolean } = {}) {
+  const r = await act((ctx) => X.sendPacket(ctx, crossingId, opts));
   if (r.ok) touch(crossingId);
   return r;
 }

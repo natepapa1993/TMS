@@ -1,4 +1,4 @@
-// Features: F-3 crossing through the browser — checklist, uploads with typed fields, cross-check failure + override, Solicitud de Retiro, packet, driver taps through the border
+// Features: F-3 F-31.3 F-31.7 crossing through the browser — checklist, uploads with typed fields, cross-check failure + override, Solicitud de Retiro, packet, driver taps through the border
 import { test, expect, type Page } from "@playwright/test";
 import path from "node:path";
 import { signupFresh, quickAdd, future, buildLoad, mxToUs } from "./helpers";
@@ -82,6 +82,9 @@ test("border day: waiting on DODA → seal mismatch → override → packet → 
   await upload(page, "ACE e-Manifest", fx("ace_manifest"), { trailer: "10743", driver: "Benjamin Xochihua", usPlate: "RC59022", mxPlate: "35ES3A", scac: "TSEX", grossWeight: "18300", pieces: "26" });
   await upload(page, "Bill of lading", fx("bol"), { trailer: "10743", seal: "S-771", pieces: "26", grossWeight: "18250" });
   await upload(page, "Commercial invoice", fx("invoice"), { seal: "S-771", grossWeight: "18200", pieces: "26" });
+  // northbound always needs the US entry (PAPS / pre-file); DTOPS is on the truck record (M16)
+  await expect(page.locator("li", { hasText: "DTOPS" }).first()).toContainText("on unit 2117");
+  await upload(page, "US entry", fx("invoice"), { pedimento: "26 24 3456 6001234", entryNumber: "PAPS-4471" });
   await expect(page.locator(".pill.pill-slate", { hasText: "Waiting on DODA" })).toBeVisible();
   await expect(page.locator(".pill.pill-amber", { hasText: "MX customs broker" })).toBeVisible();
 
@@ -94,7 +97,9 @@ test("border day: waiting on DODA → seal mismatch → override → packet → 
   await page.getByRole("dialog").locator("input").fill("seal replaced at the yard, S-772 recorded");
   await page.getByRole("dialog").locator("button:has-text('Override')").click();
   await expect(page.getByRole("status")).toContainText("Overridden");
-  await expect(page.locator("main")).toContainText("all clear");
+  // green only for what was checked: the rest is unknown, not "all clear" (M16)
+  await expect(page.getByTestId("checks-summary")).toContainText("passed");
+  await expect(page.getByTestId("checks-summary")).not.toContainText("failing");
   await expect(page.locator(".pill", { hasText: "Eligibility OK" })).toBeVisible();
 
   // packet
@@ -115,6 +120,13 @@ test("border day: waiting on DODA → seal mismatch → override → packet → 
   const phone = await ctx2.newPage();
   await phone.setViewportSize({ width: 390, height: 844 });
   await phone.goto(url!);
+  // one ordered flow: the leg's steps up to the caja on the truck, then the border (B3)
+  await expect(phone.locator("body")).not.toContainText("Border · Frontera");
+  for (const label of ["Accept this load", "Rolling to pickup", "Arrived at pickup", "Loaded — leaving"]) {
+    await expect(phone.locator("button.btn-primary").first()).toContainText(label);
+    await phone.locator("button.btn-primary").first().click();
+    await phone.waitForTimeout(400);
+  }
   await expect(phone.locator("body")).toContainText("Border · Frontera");
   await expect(phone.locator("body")).toContainText("Caja 10743");
   const packet = phone.locator("a:has-text('Open packet')");
@@ -160,10 +172,14 @@ test("a returned crossing withdraws the packet and re-verifies; hold from the dr
   await upload(page, "ACE e-Manifest", fx("ace_manifest"), { trailer: "10743", driver: "Benjamin Xochihua", scac: "TSEX" });
   await upload(page, "Bill of lading", fx("bol"), { trailer: "10743", seal: "S-1" });
   await upload(page, "Commercial invoice", fx("invoice"), { seal: "S-1" });
+  await upload(page, "US entry", fx("invoice"), { entryNumber: "PAPS-1" });
   await page.click("button:has-text('Build packet')");
   await expect(page.getByRole("status")).toContainText("Packet built");
   await page.click("button:has-text('Send to driver')");
   await expect(page.getByRole("status")).toContainText("Packet sent");
+  // the office says it left once the caja was at the yard; the crossing leg rolls with it
+  await page.click("button:has-text('Trailer is at the yard')");
+  await expect(page.getByRole("status")).toContainText("Dwell clock");
   await page.click("button:has-text('Departed the yard')");
   await expect(page.getByRole("status")).toBeVisible();
   await page.click("button:has-text('At Mexican customs')");

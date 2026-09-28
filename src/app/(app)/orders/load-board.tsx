@@ -8,6 +8,7 @@ import { DataGrid, type GridView, type QuickFilter, type ViewConfig } from "@/co
 import { Pill, Toast, useToast } from "@/components/ui";
 import type { LoadRow } from "@/domain/load-grid";
 import { saveLoadViewAction, deleteLoadViewAction, bulkBookAction } from "./actions";
+import { fmtWhen, zonedDate } from "@/lib/time";
 
 const STATE_LABEL: Record<string, string> = { draft: "Draft", booked: "Booked", dispatched: "Dispatched", in_transit: "In transit", exception: "On hold", delivered: "Delivered", ready_to_bill: "Ready to bill", invoiced: "Invoiced", paid: "Paid", cancelled: "Cancelled" };
 const STATE_TONE: Record<string, "slate" | "teal" | "amber" | "red" | "green" | "blue" | "navy"> = { draft: "slate", booked: "blue", dispatched: "amber", in_transit: "teal", exception: "red", delivered: "green", ready_to_bill: "green", invoiced: "navy", paid: "slate", cancelled: "slate" };
@@ -15,13 +16,14 @@ const EQUIPMENT: Record<string, string> = { "53_dry": "53' van", "53_reefer": "5
 
 const money = (c: number | null, cur = "USD") => (c == null ? "" : new Intl.NumberFormat("en-US", { style: "currency", currency: cur }).format(c / 100));
 const money0 = (c: number | null, cur = "USD") => (c == null ? "" : new Intl.NumberFormat("en-US", { style: "currency", currency: cur, maximumFractionDigits: 0 }).format(c / 100));
-const when = (s: string | null) => (s ? new Date(s).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) : "");
+/** On the stop's own clock, with its zone: the same text on the server and in any browser. */
+const when = (s: string | null, zone: string) => fmtWhen(s, zone, { style: "short" }) ?? "";
 /** "Toronto, ON · CA" — or the stop's name when it has no city. */
 const place = (city: string | null, st: string | null, country: string | null, name?: string | null) => {
   const where = [city, st].filter(Boolean).join(", ") || name || "";
   return [where, country && country !== "US" ? country : ""].filter(Boolean).join(" · ");
 };
-const sameDay = (s: string | null, d: Date) => !!s && new Date(s).toDateString() === d.toDateString();
+const sameDay = (s: string | null, d: Date, zone: string) => !!s && zonedDate(new Date(s), zone) === zonedDate(d, zone);
 const OPEN = ["draft", "booked", "dispatched", "in_transit", "exception"];
 
 const col = (c: ColumnDef<LoadRow, unknown>) => c;
@@ -55,10 +57,10 @@ const COLUMNS: ColumnDef<LoadRow, unknown>[] = [
   col({ id: "broker", accessorFn: (r) => r.broker ?? "", size: 150, filterFn: "select" as never, meta: { label: "Broker", filter: "select" }, header: "Broker" }),
   col({ id: "origin", accessorFn: (r) => place(r.pickupCity, r.pickupState, r.pickupCountry, r.pickupName), size: 160, meta: { label: "Origin" }, header: "Origin", cell: ({ row }) => <span title={row.original.pickupName ?? ""}>{place(row.original.pickupCity, row.original.pickupState, row.original.pickupCountry, row.original.pickupName)}</span> }),
   col({ id: "shipper", accessorFn: (r) => r.pickupName ?? "", size: 170, meta: { label: "Shipper" }, header: "Shipper" }),
-  col({ id: "pickupAt", accessorFn: (r) => r.pickupAt ?? "", size: 132, meta: { label: "Pickup", filter: "none", csv: (r) => r.pickupAt ?? "" }, header: "Pickup", cell: ({ row }) => when(row.original.pickupAt) }),
+  col({ id: "pickupAt", accessorFn: (r) => r.pickupAt ?? "", size: 132, meta: { label: "Pickup", filter: "none", csv: (r) => r.pickupAt ?? "" }, header: "Pickup", cell: ({ row }) => when(row.original.pickupAt, row.original.pickupZone) }),
   col({ id: "destination", accessorFn: (r) => place(r.deliveryCity, r.deliveryState, r.deliveryCountry, r.deliveryName), size: 160, meta: { label: "Destination" }, header: "Destination", cell: ({ row }) => <span title={row.original.deliveryName ?? ""}>{place(row.original.deliveryCity, row.original.deliveryState, row.original.deliveryCountry, row.original.deliveryName)}</span> }),
   col({ id: "consignee", accessorFn: (r) => r.deliveryName ?? "", size: 170, meta: { label: "Consignee" }, header: "Consignee" }),
-  col({ id: "deliveryAt", accessorFn: (r) => r.deliveryAt ?? "", size: 132, meta: { label: "Delivery", filter: "none", csv: (r) => r.deliveryAt ?? "" }, header: "Delivery", cell: ({ row }) => when(row.original.deliveryAt) }),
+  col({ id: "deliveryAt", accessorFn: (r) => r.deliveryAt ?? "", size: 132, meta: { label: "Delivery", filter: "none", csv: (r) => r.deliveryAt ?? "" }, header: "Delivery", cell: ({ row }) => when(row.original.deliveryAt, row.original.deliveryZone) }),
   col({ id: "stops", accessorFn: (r) => r.stops, size: 70, meta: { label: "Stops", align: "right", filter: "none" }, header: "Stops" }),
   col({ id: "legs", accessorFn: (r) => r.legs, size: 150, meta: { label: "Legs" }, header: "Legs", cell: ({ row }) => <span className="text-muted">{row.original.legs}</span> }),
   col({ id: "equipment", accessorFn: (r) => EQUIPMENT[r.equipment] ?? r.equipment, size: 104, filterFn: "select" as never, meta: { label: "Equipment", filter: "select" }, header: "Equipment" }),
@@ -80,8 +82,8 @@ const COLUMNS: ColumnDef<LoadRow, unknown>[] = [
   col({ id: "flags", accessorFn: (r) => r.flags, size: 72, meta: { label: "Flags", align: "right", filter: "none" }, header: "Flags", cell: ({ row }) => (row.original.flags ? <Pill tone={row.original.redFlags ? "red" : "amber"}>{row.original.flags}</Pill> : "") }),
   col({ id: "source", accessorFn: (r) => r.source, size: 96, filterFn: "select" as never, meta: { label: "Source", filter: "select" }, header: "Source" }),
   col({ id: "enteredBy", accessorFn: (r) => r.enteredBy ?? "", size: 130, filterFn: "select" as never, meta: { label: "Entered by", filter: "select" }, header: "Entered by" }),
-  col({ id: "createdAt", accessorFn: (r) => r.createdAt, size: 124, meta: { label: "Created", filter: "none", csv: (r) => r.createdAt }, header: "Created", cell: ({ row }) => when(row.original.createdAt) }),
-  col({ id: "deliveredAt", accessorFn: (r) => r.deliveredAt ?? "", size: 124, meta: { label: "Delivered", filter: "none", csv: (r) => r.deliveredAt ?? "" }, header: "Delivered", cell: ({ row }) => when(row.original.deliveredAt) }),
+  col({ id: "createdAt", accessorFn: (r) => r.createdAt, size: 124, meta: { label: "Created", filter: "none", csv: (r) => r.createdAt }, header: "Created", cell: ({ row }) => when(row.original.createdAt, row.original.companyZone) }),
+  col({ id: "deliveredAt", accessorFn: (r) => r.deliveredAt ?? "", size: 124, meta: { label: "Delivered", filter: "none", csv: (r) => r.deliveredAt ?? "" }, header: "Delivered", cell: ({ row }) => when(row.original.deliveredAt, row.original.deliveryZone) }),
 ];
 
 const DEFAULT: ViewConfig = {
@@ -150,7 +152,7 @@ export function LoadBoard({ rows, views, role }: { rows: LoadRow[]; views: GridV
   const quick: QuickFilter<LoadRow>[] = [
     { id: "open", label: "Open", test: (r) => OPEN.includes(r.state) },
     { id: "uncovered", label: "Needs a truck", test: (r) => OPEN.includes(r.state) && r.uncoveredLegs > 0 },
-    { id: "today", label: "Picking up today", test: (r) => sameDay(r.pickupAt, today) },
+    { id: "today", label: "Picking up today", test: (r) => sameDay(r.pickupAt, today, r.pickupZone) },
     { id: "transit", label: "In transit", test: (r) => r.state === "in_transit" || r.state === "dispatched" },
     { id: "tobill", label: "To bill", test: (r) => r.state === "delivered" || r.state === "ready_to_bill" },
     { id: "border", label: "Cross-border", test: (r) => r.crossBorder },

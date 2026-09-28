@@ -5,6 +5,7 @@ import { newId } from "@/lib/ids";
 import { assertCtx, requirePermission, type Ctx } from "@/lib/context";
 import { writeAudit } from "@/lib/audit";
 import { NotFoundError, ValidationError } from "./orders";
+import { stopZone } from "@/lib/time";
 
 /**
  * The load board: one flat row per load with everything a dispatcher or biller scans for — lane,
@@ -34,11 +35,14 @@ export type LoadRow = {
   pickupState: string | null;
   pickupCountry: string | null;
   pickupAt: string | null;
+  /** the stop's own clock: the grid prints the pickup and delivery there, with the zone */
+  pickupZone: string;
   deliveryName: string | null;
   deliveryCity: string | null;
   deliveryState: string | null;
   deliveryCountry: string | null;
   deliveryAt: string | null;
+  deliveryZone: string;
   stops: number;
   legs: string;
   uncoveredLegs: number;
@@ -61,6 +65,8 @@ export type LoadRow = {
   enteredBy: string | null;
   createdAt: string;
   deliveredAt: string | null;
+  /** times not tied to a stop (created) are on the company's clock */
+  companyZone: string;
 };
 
 const CLOSED = ["paid", "cancelled"] as const;
@@ -71,6 +77,7 @@ const iso = (d: Date | null | undefined) => (d ? d.toISOString() : null);
 export async function loadGrid(ctx: Ctx, opts: { days?: number } = {}): Promise<LoadRow[]> {
   assertCtx(ctx);
   requirePermission(ctx, "orders.view");
+  await (await import("./tenders")).expireTenders(new Date(), { tenantId: ctx.tenantId });
   const days = opts.days ?? 60;
   const since = new Date(Date.now() - days * 86400_000);
   const scope = eq(s.orders.tenantId, ctx.tenantId);
@@ -91,7 +98,8 @@ export async function loadGrid(ctx: Ctx, opts: { days?: number } = {}): Promise<
     db.select({ id: s.users.id, name: s.users.name }).from(s.users).where(eq(s.users.tenantId, ctx.tenantId)),
   ]);
   const { crossingStateLabel } = await import("./crossing");
-  const [ten] = await db.select({ settings: s.tenants.settings }).from(s.tenants).where(eq(s.tenants.id, ctx.tenantId)).limit(1);
+  const [ten] = await db.select({ settings: s.tenants.settings, timeZone: s.tenants.timeZone }).from(s.tenants).where(eq(s.tenants.id, ctx.tenantId)).limit(1);
+  const companyZone = ten?.timeZone || "America/Detroit";
   const fuelCpm = Number((ten?.settings as Record<string, unknown> | null)?.fuelCostCentsPerMile ?? 65);
   // money in USD: a peso rate or a carrier paid in pesos is converted before anything is added or divided
   const { pickRate, toHome } = await import("./fx-rules");
@@ -167,12 +175,14 @@ export async function loadGrid(ctx: Ctx, opts: { days?: number } = {}): Promise<
       pickupCity: pu?.address?.city ?? null,
       pickupState: pu?.address?.state ?? null,
       pickupCountry: pu?.country ?? null,
-      pickupAt: iso(pu?.windowStart),
+      pickupAt: iso(pu?.windowStart ?? pu?.windowEnd),
+      pickupZone: pu ? stopZone(pu, companyZone) : companyZone,
       deliveryName: de?.name ?? null,
       deliveryCity: de?.address?.city ?? null,
       deliveryState: de?.address?.state ?? null,
       deliveryCountry: de?.country ?? null,
-      deliveryAt: iso(de?.windowStart),
+      deliveryAt: iso(de?.windowStart ?? de?.windowEnd),
+      deliveryZone: de ? stopZone(de, companyZone) : companyZone,
       stops: st.length,
       legs: lg.map((l) => LEG_SHORT[l.type] ?? l.type).join(" → "),
       uncoveredLegs: lg.filter((l) => l.state === "unassigned" || l.state === "declined").length,
@@ -194,6 +204,7 @@ export async function loadGrid(ctx: Ctx, opts: { days?: number } = {}): Promise<
       source: o.source,
       enteredBy: o.createdBy ? (uName.get(o.createdBy) ?? null) : null,
       createdAt: o.createdAt.toISOString(),
+      companyZone,
       deliveredAt: iso(o.deliveredAt),
     };
   });
