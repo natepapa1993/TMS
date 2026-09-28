@@ -2,11 +2,11 @@ import Link from "next/link";
 import { requireCtx } from "@/lib/auth";
 import { can } from "@/lib/context";
 import { inspectionsBoard } from "@/domain/safety";
-import { BASICS } from "@/domain/safety-rules";
+import { BASICS, roadsideOos } from "@/domain/safety-rules";
 import { list } from "@/data/records";
 import { PageHeader } from "@/components/page-header";
 import { SafetyNav } from "../nav";
-import { InspectionButton } from "../safety-ui";
+import { InspectionButton, RepairButton } from "../safety-ui";
 
 export const metadata = { title: "Inspections" };
 export const dynamic = "force-dynamic";
@@ -162,11 +162,39 @@ export default async function InspectionsPage() {
                         <ul className="text-callout space-y-0.5">
                           {i.violations.map((v, k) => (
                             <li key={k} className={v.removed ? "line-through text-faint" : ""}>
-                              <span className="mono">{v.code}</span> {v.description} <span className="text-muted">· {BASICS.find((x) => x.key === v.basic)?.label} · wt {v.severity}</span> {v.oos && <span className="pill pill-red">OOS</span>}
+                              <span className="mono">{v.code}</span> {v.description} <span className="text-muted">· {v.basic ? `${BASICS.find((x) => x.key === v.basic)?.label} · wt ${v.severity}` : "not in SMS"}</span> {v.oos && <span className="pill pill-red">OOS</span>}
                             </li>
                           ))}
                         </ul>
                       )}
+                      {(() => {
+                        const o = roadsideOos(i);
+                        const units = [o.truck.length ? name(opts.trucks, i.truckId) : "", o.trailer.length ? name(opts.trailers, i.trailerId) : ""].filter(Boolean).join(" and ");
+                        return (
+                          <>
+                            {o.driver.length > 0 && i.driverOosUntil && <div className="text-footnote text-red mt-1">Driver out of service until {new Date(i.driverOosUntil).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}</div>}
+                            {units && !i.repair && (
+                              <div className="mt-1.5 flex items-center gap-2" data-testid="unit-oos">
+                                <span className="text-footnote text-red font-semibold">{units} out of service until the repair is signed off</span>
+                                {canEdit && <RepairButton inspectionId={i.id} unit={units} />}
+                              </div>
+                            )}
+                            {units && i.repair && (
+                              <div className="text-footnote text-muted mt-1" data-testid="repair-signed">
+                                Repair signed off by {i.repair.byName}, {day(i.repair.at)}: {i.repair.note}
+                                {i.repair.documentId && (
+                                  <>
+                                    {" · "}
+                                    <a href={`/api/files/${i.repair.documentId}`} target="_blank" rel="noreferrer" className="text-teal">
+                                      repair order
+                                    </a>
+                                  </>
+                                )}
+                              </div>
+                            )}
+                          </>
+                        );
+                      })()}
                     </td>
                     <td className="capitalize">{i.dataQs === "none" ? "—" : i.dataQs}</td>
                     <td className="text-right">{canEdit && <InspectionButton {...opts} edit={JSON.parse(JSON.stringify(i))} />}</td>

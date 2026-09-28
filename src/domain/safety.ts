@@ -8,7 +8,7 @@ import { assertCtx, can, requirePermission, type Ctx } from "@/lib/context";
 import { writeAudit } from "@/lib/audit";
 import { NotFoundError, ValidationError } from "./orders";
 import { evaluateSubject, isBuiltIn } from "./compliance";
-import { DQ_ITEMS, dqLines, daStanding, clearinghouseDuty, randomRequirement, perDraw, pick, postAccidentDuty, basicOf, unitOf, basicMeasures, oosRates, driverPoints, BASICS, periodStart } from "./safety-rules";
+import { DQ_ITEMS, dqLines, daStanding, clearinghouseDuty, randomRequirement, perDraw, pick, postAccidentDuty, basicOf, unitOf, basicMeasures, oosRates, driverPoints, BASICS, periodStart, lookupViolation, roadsideOos } from "./safety-rules";
 
 /**
  * Safety depth: the driver qualification file, the drug & alcohol program, roadside inspections with the
@@ -21,13 +21,13 @@ async function loadDriver(ctx: Ctx, driverId: string) {
   return d;
 }
 
-async function storeFile(ctx: Ctx, subjectId: string, code: string, file: { fileName: string; mimeType: string; bytes: Buffer }) {
+async function storeFile(ctx: Ctx, subjectId: string, code: string, file: { fileName: string; mimeType: string; bytes: Buffer }, subjectKind: "driver" | "truck" | "trailer" = "driver") {
   if (!file.bytes?.length) throw new ValidationError("empty file", "file");
   if (file.bytes.length > 15 * 1024 * 1024) throw new ValidationError("file is over 15 MB", "file");
   if (!/^(application\/pdf|image\/(jpeg|png))$/.test(file.mimeType)) throw new ValidationError("PDF, JPG or PNG only", "file");
   const sha = createHash("sha256").update(file.bytes).digest("hex");
   const [blob] = await db.insert(s.documentBlobs).values({ id: newId(), tenantId: ctx.tenantId, sha256: sha, mimeType: file.mimeType, sizeBytes: file.bytes.length, bytes: file.bytes }).returning({ id: s.documentBlobs.id });
-  const [doc] = await db.insert(s.documents).values({ id: newId(), tenantId: ctx.tenantId, documentTypeId: null, code, subjectKind: "driver", subjectId, fileName: file.fileName, mimeType: file.mimeType, sizeBytes: file.bytes.length, storageKey: `blob:${blob.id}`, sha256: sha, source: "upload", status: "present", createdBy: ctx.userId, updatedBy: ctx.userId }).returning({ id: s.documents.id });
+  const [doc] = await db.insert(s.documents).values({ id: newId(), tenantId: ctx.tenantId, documentTypeId: null, code, subjectKind, subjectId, fileName: file.fileName, mimeType: file.mimeType, sizeBytes: file.bytes.length, storageKey: `blob:${blob.id}`, sha256: sha, source: "upload", status: "present", createdBy: ctx.userId, updatedBy: ctx.userId }).returning({ id: s.documents.id });
   return doc.id;
 }
 
@@ -239,8 +239,15 @@ export async function driverTests(ctx: Ctx, driverId: string) {
 
 // ---------- roadside inspections ----------
 
-export type InspectionInput = { inspectedAt: Date; reportNumber?: string | null; country: string; jurisdiction?: string | null; level: number; hazmat?: boolean; driverId?: string | null; truckId?: string | null; trailerId?: string | null; orderId?: string | null; location?: string | null; violations: Partial<Violation>[]; dataQs?: string; note?: string | null };
+export type InspectionInput = { inspectedAt: Date; reportNumber?: string | null; country: string; jurisdiction?: string | null; level: number; hazmat?: boolean; driverId?: string | null; truckId?: string | null; trailerId?: string | null; orderId?: string | null; location?: string | null; violations: Partial<Violation>[]; dataQs?: string; note?: string | null; driverOosUntil?: Date | null };
 
+/**
+ * A roadside inspection. US violations need their BASIC and SMS weight (the common codes fill in from the
+ * table); Canadian and Mexican ones are kept as written — code, description, OOS — and stay out of SMS.
+ * An out-of-service finding takes effect: a vehicle OOS takes the truck or trailer out of service until a
+ * repair is signed off on the inspection (396.9(c)–(d)); a driver OOS makes the driver unavailable until
+ * the time on the order.
+ */
 export async function saveInspection(ctx: Ctx, id: string | null, input: InspectionInput) {
   assertCtx(ctx);
   requirePermission(ctx, "compliance.edit");
@@ -250,29 +257,136 @@ export async function saveInspection(ctx: Ctx, id: string | null, input: Inspect
   if (!(input.level >= 1 && input.level <= 7)) throw new ValidationError("CVSA level 1 to 7", "level");
   if (!input.driverId && !input.truckId && !input.trailerId) throw new ValidationError("the driver or the unit inspected", "driverId");
   if (!["none", "filed", "accepted", "denied"].includes(input.dataQs ?? "none")) throw new ValidationError("DataQs status", "dataQs");
+  const us = input.country === "US";
   const violations: Violation[] = input.violations
     .filter((v) => v.code?.trim() || v.description?.trim())
     .map((v, i) => {
       const code = (v.code ?? "").trim();
-      const basic = (v.basic || basicOf(code)) as Violation["basic"] | null;
       if (!code) throw new ValidationError(`violation ${i + 1}: the code (e.g. 395.8(e))`, `violations.${i}.code`);
+      const known = us ? lookupViolation(code) : null;
+      const basic = (v.basic || known?.basic || (us ? basicOf(code) : null) || null) as Violation["basic"];
+      const on = v.on === "truck" || v.on === "trailer" ? v.on : undefined;
+      if (!us) {
+        // Canada (CVOR / NSC) and Mexico (SCT): no BASIC, no SMS weight — record what the report says
+        const severity = v.severity == null || String(v.severity) === "" ? 0 : Number(v.severity);
+        return { code, description: (v.description ?? "").trim() || code, basic: basic && BASICS.some((b) => b.key === basic) ? basic : null, severity: Number.isFinite(severity) ? Math.max(0, Math.min(10, Math.round(severity))) : 0, oos: !!v.oos, unit: v.unit === "driver" || v.unit === "vehicle" ? v.unit : basic ? unitOf(basic) : "driver", ...(on ? { on } : {}), removed: !!v.removed };
+      }
       if (!basic || !BASICS.some((b) => b.key === basic)) throw new ValidationError(`violation ${i + 1}: pick its BASIC`, `violations.${i}.basic`);
-      const severity = Number(v.severity ?? 0);
+      const severity = Number(v.severity == null || String(v.severity) === "" ? (known?.severity ?? 0) : v.severity);
       if (!(severity >= 1 && severity <= 10)) throw new ValidationError(`violation ${i + 1}: severity weight 1–10 (as SMS lists it)`, `violations.${i}.severity`);
-      return { code, description: (v.description ?? "").trim() || code, basic, severity: Math.round(severity), oos: !!v.oos, unit: v.unit === "driver" || v.unit === "vehicle" ? v.unit : unitOf(basic), removed: !!v.removed };
+      return { code, description: (v.description ?? "").trim() || known?.description || code, basic, severity: Math.round(severity), oos: !!v.oos, unit: v.unit === "driver" || v.unit === "vehicle" ? v.unit : unitOf(basic), ...(on ? { on } : {}), removed: !!v.removed };
     });
-  const values = { inspectedAt: input.inspectedAt, reportNumber: input.reportNumber?.trim() || null, country: input.country, jurisdiction: input.jurisdiction?.trim().toUpperCase() || null, level: input.level, hazmat: !!input.hazmat, driverId: input.driverId || null, truckId: input.truckId || null, trailerId: input.trailerId || null, orderId: input.orderId || null, location: input.location?.trim() || null, violations, dataQs: input.dataQs ?? "none", note: input.note?.trim() || null };
+  const oos = roadsideOos({ violations, truckId: input.truckId, trailerId: input.trailerId, driverId: input.driverId });
+  const driverOosUntil = oos.driver.length ? (input.driverOosUntil ?? null) : null;
+  if (oos.driver.length && !driverOosUntil) throw new ValidationError("the driver is out of service until when? (from the OOS order: 10 h off duty, 34 h, until the medical card…)", "driverOosUntil");
+  if (driverOosUntil && driverOosUntil.getTime() <= input.inspectedAt.getTime()) throw new ValidationError("the out-of-service order ends after the inspection", "driverOosUntil");
+  const values = { inspectedAt: input.inspectedAt, reportNumber: input.reportNumber?.trim() || null, country: input.country, jurisdiction: input.jurisdiction?.trim().toUpperCase() || null, level: input.level, hazmat: !!input.hazmat, driverId: input.driverId || null, truckId: input.truckId || null, trailerId: input.trailerId || null, orderId: input.orderId || null, location: input.location?.trim() || null, violations, dataQs: input.dataQs ?? "none", note: input.note?.trim() || null, driverOosUntil };
+  let row: typeof s.inspections.$inferSelect;
   if (id) {
-    const [row] = await db.update(s.inspections).set({ ...values, updatedAt: new Date(), updatedBy: ctx.userId }).where(and(eq(s.inspections.tenantId, ctx.tenantId), eq(s.inspections.id, id))).returning();
-    if (!row) throw new NotFoundError("inspection", id);
+    const [before] = await db.select().from(s.inspections).where(and(eq(s.inspections.tenantId, ctx.tenantId), eq(s.inspections.id, id))).limit(1);
+    if (!before) throw new NotFoundError("inspection", id);
+    [row] = await db.update(s.inspections).set({ ...values, updatedAt: new Date(), updatedBy: ctx.userId }).where(eq(s.inspections.id, id)).returning();
     await writeAudit(db, ctx, "inspection", id, "update");
+    // the driver or units changed on the edit: release whatever this inspection held before
+    await applyRoadsideOos(ctx, row, before);
     return row;
   }
-  const [row] = await db.insert(s.inspections).values({ id: newId(), tenantId: ctx.tenantId, ...values, createdBy: ctx.userId, updatedBy: ctx.userId }).returning();
+  [row] = await db.insert(s.inspections).values({ id: newId(), tenantId: ctx.tenantId, ...values, createdBy: ctx.userId, updatedBy: ctx.userId }).returning();
   await writeAudit(db, ctx, "inspection", row.id, "create", undefined, `${values.jurisdiction ?? values.country} level ${values.level}: ${violations.length ? `${violations.length} violation(s)${violations.some((v) => v.oos) ? ", OOS" : ""}` : "clean"}`);
   // an out-of-service driver or unit can't move until the defect is fixed: tell dispatch on the load
   if (values.orderId && violations.some((v) => v.oos && !v.removed)) await db.insert(s.flags).values({ id: newId(), tenantId: ctx.tenantId, orderId: values.orderId, code: "roadside_oos", level: "red", title: "Placed out of service at a roadside inspection", detail: violations.filter((v) => v.oos).map((v) => `${v.code} ${v.description}`).join("; "), owner: "safety" });
+  await applyRoadsideOos(ctx, row, null);
   return row;
+}
+
+const oosLabel = (i: { jurisdiction: string | null; country: string; reportNumber: string | null }, vs: Violation[]) => `Roadside OOS (${[i.jurisdiction ?? i.country, i.reportNumber].filter(Boolean).join(" ")}): ${vs.map((v) => `${v.code} ${v.description}`).join("; ")}`;
+
+/**
+ * Make an inspection's out-of-service findings real (and undo them when an edit or a DataQs removal takes
+ * them away): the truck or trailer out of service until the repair sign-off, the driver off until the
+ * order's end as Safety time off (never a schedule call dispatch can wave through).
+ */
+async function applyRoadsideOos(ctx: Ctx, i: typeof s.inspections.$inferSelect, before: typeof s.inspections.$inferSelect | null) {
+  const oos = roadsideOos(i);
+  const { setTruckOos } = await import("./orders");
+  // the truck
+  for (const truckId of new Set([before?.truckId, i.truckId].filter((x): x is string => !!x))) {
+    const [t] = await db.select().from(s.trucks).where(and(eq(s.trucks.tenantId, ctx.tenantId), eq(s.trucks.id, truckId))).limit(1);
+    if (!t) continue;
+    const hold = truckId === i.truckId && oos.truck.length > 0 && !i.repair;
+    if (hold && t.oosInspectionId !== i.id) {
+      await setTruckOos(ctx, truckId, oosLabel(i, oos.truck));
+      await db.update(s.trucks).set({ oosInspectionId: i.id }).where(eq(s.trucks.id, truckId));
+    } else if (!hold && t.oosInspectionId === i.id) {
+      await db.update(s.trucks).set({ status: "active", oosReason: null, oosUntil: null, oosInspectionId: null, updatedAt: new Date(), updatedBy: ctx.userId }).where(eq(s.trucks.id, truckId));
+      await writeAudit(db, ctx, "truck", truckId, "update", { status: { from: "oos", to: "active" } }, i.repair ? `Repair signed off by ${i.repair.byName}: ${i.repair.note}` : "Roadside out-of-service finding removed");
+    }
+  }
+  // the trailer
+  for (const trailerId of new Set([before?.trailerId, i.trailerId].filter((x): x is string => !!x))) {
+    const [t] = await db.select().from(s.trailers).where(and(eq(s.trailers.tenantId, ctx.tenantId), eq(s.trailers.id, trailerId))).limit(1);
+    if (!t) continue;
+    const hold = trailerId === i.trailerId && oos.trailer.length > 0 && !i.repair;
+    if (hold && t.oosInspectionId !== i.id) {
+      const reason = oosLabel(i, oos.trailer);
+      await db.update(s.trailers).set({ status: "oos", oosReason: reason, oosInspectionId: i.id, updatedAt: new Date(), updatedBy: ctx.userId }).where(eq(s.trailers.id, trailerId));
+      await writeAudit(db, ctx, "trailer", trailerId, "update", { status: { from: t.status, to: "oos" } }, reason);
+    } else if (!hold && t.oosInspectionId === i.id) {
+      await db.update(s.trailers).set({ status: "active", oosReason: null, oosInspectionId: null, updatedAt: new Date(), updatedBy: ctx.userId }).where(eq(s.trailers.id, trailerId));
+      await writeAudit(db, ctx, "trailer", trailerId, "update", { status: { from: "oos", to: "active" } }, i.repair ? `Repair signed off by ${i.repair.byName}: ${i.repair.note}` : "Roadside out-of-service finding removed");
+    }
+  }
+  // the driver: Safety time off from the inspection until the order ends (one per inspection, found by its start)
+  const starts = before?.inspectedAt ?? i.inspectedAt;
+  const drivers = new Set([before?.driverId, i.driverId].filter((x): x is string => !!x));
+  for (const driverId of drivers) {
+    const [ev] = await db.select().from(s.assetEvents).where(and(eq(s.assetEvents.tenantId, ctx.tenantId), eq(s.assetEvents.subjectKind, "driver"), eq(s.assetEvents.subjectId, driverId), eq(s.assetEvents.kind, "oos"), eq(s.assetEvents.startsAt, starts), isNull(s.assetEvents.archivedAt))).limit(1);
+    const hold = driverId === i.driverId && oos.driver.length > 0 && i.driverOosUntil;
+    const note = oosLabel(i, oos.driver);
+    if (hold && ev) await db.update(s.assetEvents).set({ startsAt: i.inspectedAt, endsAt: i.driverOosUntil!, note, updatedAt: new Date(), updatedBy: ctx.userId }).where(eq(s.assetEvents.id, ev.id));
+    else if (hold) {
+      await db.insert(s.assetEvents).values({ id: newId(), tenantId: ctx.tenantId, subjectKind: "driver", subjectId: driverId, kind: "oos", startsAt: i.inspectedAt, endsAt: i.driverOosUntil!, hard: true, note, createdBy: ctx.userId, updatedBy: ctx.userId });
+      await writeAudit(db, ctx, "driver", driverId, "update", undefined, `Out of service until ${i.driverOosUntil!.toISOString()}: ${note}`);
+    } else if (ev) await db.update(s.assetEvents).set({ archivedAt: new Date(), updatedBy: ctx.userId }).where(eq(s.assetEvents.id, ev.id));
+  }
+}
+
+/**
+ * The repair after a vehicle out-of-service order, certified (396.9(d)): who, when, what was done, with the
+ * repair order attached. The truck or trailer comes back into service with it — and only with it.
+ */
+export async function signOffRepair(ctx: Ctx, inspectionId: string, input: { note: string; at?: Date | null; file?: { fileName: string; mimeType: string; bytes: Buffer } | null }) {
+  assertCtx(ctx);
+  requirePermission(ctx, "compliance.edit");
+  const [i] = await db.select().from(s.inspections).where(and(eq(s.inspections.tenantId, ctx.tenantId), eq(s.inspections.id, inspectionId))).limit(1);
+  if (!i) throw new NotFoundError("inspection", inspectionId);
+  const oos = roadsideOos(i);
+  if (!oos.truck.length && !oos.trailer.length) throw new ValidationError("this inspection didn't put a truck or trailer out of service");
+  if (i.repair) throw new ValidationError(`the repair was signed off by ${i.repair.byName} on ${i.repair.at.slice(0, 10)}`);
+  const note = input.note?.trim();
+  if (!note) throw new ValidationError("what was repaired, and by whom (shop, mechanic)", "note");
+  const at = input.at ?? new Date();
+  if (at.getTime() < i.inspectedAt.getTime()) throw new ValidationError("the repair comes after the inspection", "at");
+  if (at.getTime() > Date.now() + 3600_000) throw new ValidationError("the repair time is in the future", "at");
+  const unitKind = oos.truck.length ? "truck" : "trailer";
+  const documentId = input.file ? await storeFile(ctx, (unitKind === "truck" ? i.truckId : i.trailerId)!, `repair:${i.id}`, input.file, unitKind) : null;
+  const [me] = ctx.userId ? await db.select({ name: s.users.name }).from(s.users).where(eq(s.users.id, ctx.userId)).limit(1) : [];
+  const repair = { by: ctx.userId ?? "system", byName: me?.name ?? "system", at: at.toISOString(), note, documentId };
+  const [row] = await db.update(s.inspections).set({ repair, updatedAt: new Date(), updatedBy: ctx.userId }).where(eq(s.inspections.id, i.id)).returning();
+  await writeAudit(db, ctx, "inspection", i.id, "update", { repair: { from: null, to: note } }, `Repair signed off by ${repair.byName}`);
+  await applyRoadsideOos(ctx, row, i);
+  return row;
+}
+
+/** Units still out of service from a roadside inspection, waiting for the repair sign-off. */
+export async function openRoadsideOos(ctx: Ctx) {
+  assertCtx(ctx);
+  requirePermission(ctx, "compliance.view");
+  const [trucks, trailers] = await Promise.all([
+    db.select({ id: s.trucks.id, unit: s.trucks.unitNumber, reason: s.trucks.oosReason, inspectionId: s.trucks.oosInspectionId }).from(s.trucks).where(and(eq(s.trucks.tenantId, ctx.tenantId), sql`${s.trucks.oosInspectionId} is not null`)),
+    db.select({ id: s.trailers.id, unit: s.trailers.unitNumber, reason: s.trailers.oosReason, inspectionId: s.trailers.oosInspectionId }).from(s.trailers).where(and(eq(s.trailers.tenantId, ctx.tenantId), sql`${s.trailers.oosInspectionId} is not null`)),
+  ]);
+  return [...trucks.map((t) => ({ ...t, kind: "truck" as const })), ...trailers.map((t) => ({ ...t, kind: "trailer" as const }))];
 }
 
 export async function deleteInspection(ctx: Ctx, id: string) {
@@ -281,6 +395,7 @@ export async function deleteInspection(ctx: Ctx, id: string) {
   const [row] = await db.update(s.inspections).set({ archivedAt: new Date(), updatedBy: ctx.userId }).where(and(eq(s.inspections.tenantId, ctx.tenantId), eq(s.inspections.id, id))).returning();
   if (!row) throw new NotFoundError("inspection", id);
   await writeAudit(db, ctx, "inspection", id, "archive");
+  await applyRoadsideOos(ctx, { ...row, violations: [] }, row); // logged by mistake: whatever it held is released
 }
 
 /** The inspections board: the list, the BASIC measures, OOS rates, and drivers by points. */

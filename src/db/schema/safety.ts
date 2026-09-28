@@ -84,6 +84,7 @@ export type Violation = {
   severity: number; // 1–10, the SMS severity weight; 0 outside the US
   oos: boolean;
   unit: "driver" | "vehicle";
+  on?: "truck" | "trailer"; // a vehicle violation: which unit it was found on (an OOS takes that unit out of service)
   removed?: boolean; // taken off by DataQs / dismissed in court
 };
 

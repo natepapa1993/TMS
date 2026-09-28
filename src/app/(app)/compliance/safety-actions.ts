@@ -73,13 +73,13 @@ export async function drawRandomAction(v: { period: string; drugRate: string; al
   return r;
 }
 
-export type InspectionForm = { inspectedAt: string; reportNumber: string; country: string; jurisdiction: string; level: string; hazmat: boolean; driverId: string; truckId: string; trailerId: string; orderId: string; location: string; dataQs: string; note: string; violations: { code: string; description: string; basic: string; severity: string; oos: boolean; unit: string; removed: boolean }[] };
+export type InspectionForm = { inspectedAt: string; reportNumber: string; country: string; jurisdiction: string; level: string; hazmat: boolean; driverId: string; truckId: string; trailerId: string; orderId: string; location: string; dataQs: string; note: string; driverOosUntil: string; violations: { code: string; description: string; basic: string; severity: string; oos: boolean; unit: string; on: string; removed: boolean }[] };
 
 export async function saveInspectionAction(id: string | null, v: InspectionForm) {
   const r = await act(async (ctx) => {
     const at = when(v.inspectedAt);
     if (!at) throw bad("when was the inspection?", "inspectedAt");
-    const row = await S.saveInspection(ctx, id, { ...v, inspectedAt: at, level: Number(v.level), violations: v.violations.map((x) => ({ ...x, basic: (x.basic || undefined) as Violation["basic"] | undefined, severity: Number(x.severity), unit: (x.unit || undefined) as Violation["unit"] | undefined })) });
+    const row = await S.saveInspection(ctx, id, { ...v, inspectedAt: at, level: Number(v.level), driverOosUntil: when(v.driverOosUntil), violations: v.violations.map((x) => ({ ...x, basic: (x.basic || undefined) as Violation["basic"] | undefined, severity: x.severity === "" ? undefined : Number(x.severity), unit: (x.unit || undefined) as Violation["unit"] | undefined, on: (x.on || undefined) as Violation["on"] })) });
     return { id: row.id, driverId: row.driverId };
   });
   if (r.ok) touch(r.data.driverId);
@@ -89,5 +89,21 @@ export async function saveInspectionAction(id: string | null, v: InspectionForm)
 export async function deleteInspectionAction(id: string) {
   const r = await act((ctx) => S.deleteInspection(ctx, id));
   if (r.ok) touch();
+  return r;
+}
+
+/** Safety certifies the repair after a vehicle out-of-service order: the unit is back in service. */
+export async function signOffRepairAction(inspectionId: string, form: FormData) {
+  const r = await act(async (ctx) => {
+    const file = form.get("file");
+    const f = file instanceof File && file.size > 0 ? { fileName: file.name, mimeType: file.type || (file.name.toLowerCase().endsWith(".pdf") ? "application/pdf" : "image/jpeg"), bytes: Buffer.from(await file.arrayBuffer()) } : null;
+    const row = await S.signOffRepair(ctx, inspectionId, { note: String(form.get("note") ?? ""), at: when(form.get("at")), file: f });
+    return { id: row.id, driverId: row.driverId };
+  });
+  if (r.ok) {
+    touch(r.data.driverId);
+    revalidatePath("/fleet");
+    revalidatePath("/dispatch/planner");
+  }
   return r;
 }

@@ -146,6 +146,11 @@ export default async function RecordPage({ params }: PageProps<"/settings/[kind]
                 <div className="text-callout">
                   <span className="pill pill-red">OOS</span> <span className="ml-1">{String(row.oosReason ?? "")}</span>
                   {row.oosUntil ? <div className="text-muted mt-1">Until {new Date(row.oosUntil as string).toLocaleDateString()}</div> : null}
+                  {row.oosInspectionId ? (
+                    <Link href="/compliance/inspections" className="block text-teal font-semibold mt-1">
+                      Roadside out-of-service order — Safety signs off the repair on the inspection
+                    </Link>
+                  ) : null}
                 </div>
               ) : (
                 <div className="text-callout">

@@ -3,8 +3,8 @@
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Modal, Toast, useToast } from "@/components/ui";
-import { recordDqAction, addTestAction, recordResultAction, clearinghouseReportedAction, drawRandomAction, saveInspectionAction, deleteInspectionAction, type TestForm, type InspectionForm } from "./safety-actions";
-import { basicOf, BASICS, REASON_LABEL, RESULT_LABEL } from "@/domain/safety-rules";
+import { recordDqAction, addTestAction, recordResultAction, clearinghouseReportedAction, drawRandomAction, saveInspectionAction, deleteInspectionAction, signOffRepairAction, type TestForm, type InspectionForm } from "./safety-actions";
+import { basicOf, BASICS, REASON_LABEL, RESULT_LABEL, lookupViolation } from "@/domain/safety-rules";
 import { localDay } from "@/lib/time";
 
 type Opt = { id: string; name: string };
@@ -453,19 +453,23 @@ export function DrawButton({ period, pool }: { period: string; pool: number }) {
 // ---------- roadside inspections ----------
 
 type V = InspectionForm["violations"][number];
-const blankV = (): V => ({ code: "", description: "", basic: "", severity: "", oos: false, unit: "", removed: false });
-export type InspectionRow = { id: string; inspectedAt: string; reportNumber: string | null; country: string; jurisdiction: string | null; level: number; hazmat: boolean; driverId: string | null; truckId: string | null; trailerId: string | null; orderId: string | null; location: string | null; dataQs: string; note: string | null; violations: { code: string; description: string; basic: string; severity: number; oos: boolean; unit: string; removed?: boolean }[] };
+const blankV = (): V => ({ code: "", description: "", basic: "", severity: "", oos: false, unit: "", on: "", removed: false });
+export type InspectionRow = { id: string; inspectedAt: string; reportNumber: string | null; country: string; jurisdiction: string | null; level: number; hazmat: boolean; driverId: string | null; truckId: string | null; trailerId: string | null; orderId: string | null; location: string | null; dataQs: string; note: string | null; driverOosUntil?: string | null; violations: { code: string; description: string; basic: string | null; severity: number; oos: boolean; unit: string; on?: string; removed?: boolean }[] };
 
 export function InspectionButton({ drivers, trucks, trailers, edit, driverId, label = "+ Log inspection" }: { drivers: Opt[]; trucks: Opt[]; trailers: Opt[]; edit?: InspectionRow; driverId?: string; label?: string }) {
   const router = useRouter();
   const t = useToast();
   const init = (): InspectionForm =>
     edit
-      ? { inspectedAt: localInput(edit.inspectedAt), reportNumber: edit.reportNumber ?? "", country: edit.country, jurisdiction: edit.jurisdiction ?? "", level: String(edit.level), hazmat: edit.hazmat, driverId: edit.driverId ?? "", truckId: edit.truckId ?? "", trailerId: edit.trailerId ?? "", orderId: edit.orderId ?? "", location: edit.location ?? "", dataQs: edit.dataQs, note: edit.note ?? "", violations: edit.violations.map((v) => ({ ...v, severity: String(v.severity), removed: !!v.removed })) }
-      : { inspectedAt: localInput(), reportNumber: "", country: "US", jurisdiction: "", level: "1", hazmat: false, driverId: driverId ?? "", truckId: "", trailerId: "", orderId: "", location: "", dataQs: "none", note: "", violations: [] };
+      ? { inspectedAt: localInput(edit.inspectedAt), reportNumber: edit.reportNumber ?? "", country: edit.country, jurisdiction: edit.jurisdiction ?? "", level: String(edit.level), hazmat: edit.hazmat, driverId: edit.driverId ?? "", truckId: edit.truckId ?? "", trailerId: edit.trailerId ?? "", orderId: edit.orderId ?? "", location: edit.location ?? "", dataQs: edit.dataQs, note: edit.note ?? "", driverOosUntil: edit.driverOosUntil ? localInput(edit.driverOosUntil) : "", violations: edit.violations.map((v) => ({ ...v, basic: v.basic ?? "", severity: v.severity ? String(v.severity) : "", on: v.on ?? "", removed: !!v.removed })) }
+      : { inspectedAt: localInput(), reportNumber: "", country: "US", jurisdiction: "", level: "1", hazmat: false, driverId: driverId ?? "", truckId: "", trailerId: "", orderId: "", location: "", dataQs: "none", note: "", driverOosUntil: "", violations: [] };
   const [f, setF] = useState<InspectionForm | null>(null);
   const [pending, start] = useTransition();
   const setV = (i: number, patch: Partial<V>) => setF((x) => (x ? { ...x, violations: x.violations.map((v, j) => (j === i ? { ...v, ...patch } : v)) } : x));
+  const us = f?.country === "US";
+  const isVehicle = (v: V) => (v.unit ? v.unit === "vehicle" : ["vehicle", "hm"].includes(v.basic));
+  const driverOos = !!f?.driverId && !!f?.violations.some((v) => v.oos && !v.removed && !isVehicle(v) && (v.code || v.description));
+  const vehicleOos = !!(f?.truckId || f?.trailerId) && !!f?.violations.some((v) => v.oos && !v.removed && isVehicle(v) && (v.code || v.description));
   const sel = (id: string, l: string, k: "driverId" | "truckId" | "trailerId", opts: Opt[]) => (
     <div>
       <label className="label" htmlFor={id}>
@@ -518,7 +522,7 @@ export function InspectionButton({ drivers, trucks, trailers, edit, driverId, la
                 disabled={pending}
                 onClick={() =>
                   start(async () => {
-                    const r = await saveInspectionAction(edit?.id ?? null, { ...f, inspectedAt: fromLocal(f.inspectedAt) });
+                    const r = await saveInspectionAction(edit?.id ?? null, { ...f, inspectedAt: fromLocal(f.inspectedAt), driverOosUntil: fromLocal(f.driverOosUntil) });
                     if (!r.ok) return t.err(r.error);
                     setF(null);
                     t.ok(f.violations.length ? "Inspection saved" : "Clean inspection saved");
@@ -604,34 +608,148 @@ export function InspectionButton({ drivers, trucks, trailers, edit, driverId, la
                 + Violation
               </button>
             </div>
-            {f.violations.map((v, i) => (
-              <div key={i} className="grid grid-cols-[110px_1fr_170px_70px_auto_auto_auto] gap-2 items-center mb-2" data-testid="violation-row">
-                <input className="input mono" aria-label={`Violation ${i + 1} code`} placeholder="395.8(e)" value={v.code} onChange={(e) => setV(i, { code: e.target.value, basic: v.basic || basicOf(e.target.value) || "" })} />
-                <input className="input" aria-label={`Violation ${i + 1} description`} placeholder="What the report says" value={v.description} onChange={(e) => setV(i, { description: e.target.value })} />
-                <select className="select" aria-label={`Violation ${i + 1} BASIC`} value={v.basic} onChange={(e) => setV(i, { basic: e.target.value })}>
-                  <option value="">BASIC…</option>
-                  {BASICS.filter((b) => b.key !== "crash").map((b) => (
-                    <option key={b.key} value={b.key}>
-                      {b.label}
-                    </option>
-                  ))}
-                </select>
-                <input className="input" type="number" min={1} max={10} aria-label={`Violation ${i + 1} severity`} title="SMS severity weight, 1–10" placeholder="wt" value={v.severity} onChange={(e) => setV(i, { severity: e.target.value })} />
-                <label className="flex items-center gap-1 text-footnote cursor-pointer" title="Out of service">
-                  <input type="checkbox" className="accent-red" checked={v.oos} onChange={(e) => setV(i, { oos: e.target.checked })} /> OOS
-                </label>
-                <label className="flex items-center gap-1 text-footnote cursor-pointer" title="Removed by DataQs or dismissed: leaves the measures">
-                  <input type="checkbox" className="accent-teal" checked={v.removed} onChange={(e) => setV(i, { removed: e.target.checked })} /> removed
-                </label>
-                <button className="btn btn-ghost btn-sm text-muted" aria-label="Remove violation" onClick={() => setF({ ...f, violations: f.violations.filter((_, j) => j !== i) })}>
-                  ×
-                </button>
+            {f.violations.map((v, i) => {
+              const vehicle = v.unit ? v.unit === "vehicle" : ["vehicle", "hm"].includes(v.basic);
+              return (
+                <div key={i} className={`grid ${us ? "grid-cols-[110px_1fr_170px_70px_auto_auto_auto_auto]" : "grid-cols-[130px_1fr_120px_auto_auto_auto_auto]"} gap-2 items-center mb-2`} data-testid="violation-row">
+                  <input
+                    className="input mono"
+                    aria-label={`Violation ${i + 1} code`}
+                    placeholder={us ? "395.8(e)" : f.country === "CA" ? "NSC / HTA §" : "NOM-068"}
+                    value={v.code}
+                    onChange={(e) => {
+                      // the common US codes fill in their description, BASIC and SMS weight; anything typed wins
+                      const k = us ? lookupViolation(e.target.value) : null;
+                      setV(i, { code: e.target.value, basic: v.basic || k?.basic || basicOf(e.target.value) || "", description: v.description || k?.description || "", severity: v.severity || (k ? String(k.severity) : "") });
+                    }}
+                  />
+                  <input className="input" aria-label={`Violation ${i + 1} description`} placeholder="What the report says" value={v.description} onChange={(e) => setV(i, { description: e.target.value })} />
+                  {us ? (
+                    <>
+                      <select className="select" aria-label={`Violation ${i + 1} BASIC`} value={v.basic} onChange={(e) => setV(i, { basic: e.target.value })}>
+                        <option value="">BASIC…</option>
+                        {BASICS.filter((b) => b.key !== "crash").map((b) => (
+                          <option key={b.key} value={b.key}>
+                            {b.label}
+                          </option>
+                        ))}
+                      </select>
+                      <input className="input" type="number" min={1} max={10} aria-label={`Violation ${i + 1} severity`} title="SMS severity weight, 1–10" placeholder="wt" value={v.severity} onChange={(e) => setV(i, { severity: e.target.value })} />
+                    </>
+                  ) : (
+                    <select className="select" aria-label={`Violation ${i + 1} side`} value={v.unit || "driver"} onChange={(e) => setV(i, { unit: e.target.value })}>
+                      <option value="driver">Driver</option>
+                      <option value="vehicle">Vehicle</option>
+                    </select>
+                  )}
+                  <label className="flex items-center gap-1 text-footnote cursor-pointer" title="Out of service">
+                    <input type="checkbox" className="accent-red" checked={v.oos} onChange={(e) => setV(i, { oos: e.target.checked })} /> OOS
+                  </label>
+                  {v.oos && vehicle && f.truckId && f.trailerId ? (
+                    <select className="select text-footnote" aria-label={`Violation ${i + 1} found on`} value={v.on || "truck"} onChange={(e) => setV(i, { on: e.target.value })} title="Which unit the defect is on: that one goes out of service">
+                      <option value="truck">on the truck</option>
+                      <option value="trailer">on the trailer</option>
+                    </select>
+                  ) : (
+                    <span />
+                  )}
+                  <label className="flex items-center gap-1 text-footnote cursor-pointer" title="Removed by DataQs or dismissed: leaves the measures">
+                    <input type="checkbox" className="accent-teal" checked={v.removed} onChange={(e) => setV(i, { removed: e.target.checked })} /> removed
+                  </label>
+                  <button className="btn btn-ghost btn-sm text-muted" aria-label="Remove violation" onClick={() => setF({ ...f, violations: f.violations.filter((_, j) => j !== i) })}>
+                    ×
+                  </button>
+                </div>
+              );
+            })}
+            {driverOos && (
+              <div className="rounded-lg border border-red/40 bg-red-soft/30 p-3 my-2 grid grid-cols-[1fr_220px] gap-3 items-end" data-testid="driver-oos">
+                <div className="text-callout">
+                  <b>The driver is out of service.</b> Until when does the order say? (10 hours off duty for hours of service, 34 hours for the cycle…) The driver can&rsquo;t be dispatched until then — dispatch sees it as a Safety block, not time off they can override.
+                </div>
+                <div>
+                  <label className="label" htmlFor="i-oos-until">
+                    Out of service until
+                  </label>
+                  <input id="i-oos-until" type="datetime-local" className="input" value={f.driverOosUntil} onChange={(e) => setF({ ...f, driverOosUntil: e.target.value })} />
+                </div>
               </div>
-            ))}
-            <div className="help">The BASIC fills in from the CFR part (395 = HOS, 393/396 = Vehicle Maintenance…). The severity weight is FMCSA&rsquo;s for that violation in SMS — look it up in the SMS methodology table when it isn&rsquo;t on your report. Canadian and Mexican inspections are kept but stay out of the SMS measures.</div>
+            )}
+            {vehicleOos && <div className="text-callout text-red font-semibold my-2">A vehicle out-of-service order takes the {f.trailerId && !f.truckId ? "trailer" : "unit"} out of service until you sign off the repair on this inspection.</div>}
+            <div className="help">{us ? <>Common codes fill in their description, BASIC and SMS weight — check them against your report. Other codes: the BASIC comes from the CFR part (395 = HOS, 393/396 = Vehicle Maintenance…) and the weight from FMCSA&rsquo;s SMS table.</> : <>Canadian and Mexican violations are kept as the report says them — no BASIC, no SMS weight — and stay out of the SMS measures.</>}</div>
           </div>
         </Modal>
       )}
+      <Toast message={t.toast?.message ?? null} tone={t.toast?.tone} onDone={t.clear} />
+    </>
+  );
+}
+
+/** Sign off the repair after a vehicle out-of-service order: what was fixed, by whom, when, and the repair order. */
+export function RepairButton({ inspectionId, unit }: { inspectionId: string; unit: string }) {
+  const router = useRouter();
+  const t = useToast();
+  const [open, setOpen] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const [pending, start] = useTransition();
+  const [name, setName] = useState<string | null>(null);
+  const [form, setForm] = useState<HTMLFormElement | null>(null);
+  return (
+    <>
+      <button className="btn btn-sm btn-primary" onClick={() => setOpen(true)} data-testid="sign-off-repair">
+        Sign off repair
+      </button>
+      <Modal
+        open={open}
+        onClose={() => setOpen(false)}
+        title={`Repair sign-off · ${unit}`}
+        footer={
+          <>
+            <button className="btn" onClick={() => setOpen(false)}>
+              Cancel
+            </button>
+            <button
+              className="btn btn-primary"
+              disabled={pending}
+              onClick={() =>
+                start(async () => {
+                  setErr(null);
+                  const r = await signOffRepairAction(inspectionId, new FormData(form!));
+                  if (!r.ok) return setErr(r.error);
+                  setOpen(false);
+                  t.ok(`${unit} is back in service`);
+                  router.refresh();
+                })
+              }
+            >
+              Back in service
+            </button>
+          </>
+        }
+      >
+        <form ref={setForm} onSubmit={(e) => e.preventDefault()} className="space-y-3">
+          <div>
+            <label className="label" htmlFor="rp-note">
+              What was repaired, by whom
+            </label>
+            <textarea id="rp-note" name="note" className="input" rows={3} placeholder="Slack adjusters replaced, brakes adjusted — Laredo Truck Repair, RO 5521" />
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="label" htmlFor="rp-at">
+                Repaired on
+              </label>
+              <input id="rp-at" name="at" type="date" className="input" defaultValue={today()} />
+            </div>
+            <label className="block border-2 border-dashed border-line rounded-lg p-3 text-center cursor-pointer hover:border-teal self-end">
+              <input type="file" name="file" accept="application/pdf,image/jpeg,image/png" className="hidden" onChange={(e) => setName(e.target.files?.[0]?.name ?? null)} />
+              <div className="text-callout font-semibold">{name ?? "Attach the repair order"}</div>
+            </label>
+          </div>
+          <div className="help">49 CFR 396.9(d): the out-of-service vehicle moves again only once the repair is done; this sign-off is the record — your name, the time and what was done go on the inspection.</div>
+          {err && <div className="error">{err}</div>}
+        </form>
+      </Modal>
       <Toast message={t.toast?.message ?? null} tone={t.toast?.tone} onDone={t.clear} />
     </>
   );

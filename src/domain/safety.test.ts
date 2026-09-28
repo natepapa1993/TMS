@@ -1,7 +1,7 @@
 // Features: F-25.1 F-25.2 F-25.3 F-25.4
 import { describe, it, expect, beforeEach } from "vitest";
 import { truncateAll, makeTenant } from "@/test/helpers";
-import { create } from "@/data/records";
+import { create, get } from "@/data/records";
 import { db } from "@/db/client";
 import { flags, tenants } from "@/db/schema";
 import { eq } from "drizzle-orm";
@@ -204,7 +204,8 @@ describe("inspections", () => {
     await expect(S.saveInspection(a, null, { inspectedAt: days(-1), country: "US", level: 1, violations: [] })).rejects.toThrow(/driver or the unit/);
     await expect(S.saveInspection(a, null, { inspectedAt: days(-1), country: "US", level: 1, driverId: f.d1, violations: [{ code: "395.8(e)", description: "False log", severity: 0 }] })).rejects.toThrow(/severity/);
     await expect(S.saveInspection(a, null, { inspectedAt: days(-1), country: "US", level: 1, driverId: f.d1, violations: [{ code: "ABC", description: "?", severity: 3 }] })).rejects.toThrow(/BASIC/);
-    const i = await S.saveInspection(a, null, { inspectedAt: days(-3), country: "US", jurisdiction: "tx", level: 1, driverId: f.d1, truckId: f.t1, orderId: o.order.id, reportNumber: "TX1234567", violations: [{ code: "395.8(e)", description: "False report of driver's record of duty status", severity: 7, oos: true }, { code: "393.9", description: "Inoperable lamp", severity: 6 }] });
+    await expect(S.saveInspection(a, null, { inspectedAt: days(-3), country: "US", level: 1, driverId: f.d1, violations: [{ code: "395.8(e)", description: "False log", severity: 7, oos: true }] })).rejects.toThrow(/out of service until when/);
+    const i = await S.saveInspection(a, null, { inspectedAt: days(-3), country: "US", jurisdiction: "tx", level: 1, driverId: f.d1, truckId: f.t1, orderId: o.order.id, reportNumber: "TX1234567", driverOosUntil: new Date(days(-3).getTime() + 10 * 3600_000), violations: [{ code: "395.8(e)", description: "False report of driver's record of duty status", severity: 7, oos: true }, { code: "393.9", description: "Inoperable lamp", severity: 6 }] });
     expect(i.jurisdiction).toBe("TX");
     expect(i.violations.map((v) => [v.basic, v.unit])).toEqual([["hos", "driver"], ["vehicle", "vehicle"]]);
     expect((await db.select().from(flags).where(eq(flags.orderId, o.order.id))).map((x) => x.code)).toEqual(["roadside_oos"]);
@@ -303,5 +304,79 @@ describe("hire prerequisites block by default (blocker 1)", () => {
     st = await C.statusFor(co, "driver", d.id);
     expect(st.dispatchable).toBe(false);
     expect(st.blockers).toContain("No Clearinghouse pre-employment query");
+  });
+});
+
+describe("roadside out-of-service orders take effect (blocker 5)", () => {
+  const load = () => createOrder(a, { customerId: f.cust, rateCents: 100000, stops: [{ type: "pickup", name: "A", country: "US", windowStart: days(0.5) }, { type: "delivery", name: "B", country: "US", windowStart: days(1) }], book: true });
+  it("a vehicle OOS takes the truck out of service until Safety signs off the repair — not before, and not from the Fleet page", async () => {
+    const tr = await create(a, "trailer", { unitNumber: "5401" });
+    const i = await S.saveInspection(a, null, { inspectedAt: days(-0.1), country: "US", jurisdiction: "TX", level: 1, truckId: f.t1, trailerId: tr.id, reportNumber: "TXQA901", violations: [{ code: "393.47(e)", oos: true }] });
+    expect(i.violations[0]).toMatchObject({ basic: "vehicle", severity: 4, description: "Clamp or roto-chamber brake out of adjustment", unit: "vehicle" }); // from the code table
+    let t = await get(a, "truck", f.t1);
+    expect(t).toMatchObject({ status: "oos", oosInspectionId: i.id });
+    expect(String(t.oosReason)).toMatch(/Roadside OOS \(TX TXQA901\): 393.47\(e\)/);
+    expect((await get(a, "trailer", tr.id)).status).toBe("active"); // found on the tractor
+    const o = await load();
+    const c = (await candidatesForLeg(a, o.legs[0].id)).find((x) => x.truckId === f.t1)!;
+    expect(c.hardBlocked).toBe(true);
+    expect(c.reason).toMatch(/out of service/);
+    const { setTruckActive } = await import("./orders");
+    await expect(setTruckActive(a, f.t1)).rejects.toThrow(/signs off the repair/);
+    await expect(S.signOffRepair(a, i.id, { note: "" })).rejects.toThrow(/what was repaired/);
+    await expect(S.signOffRepair({ ...a, role: "dispatcher" }, i.id, { note: "adjusted" })).rejects.toThrow(/permission/);
+    const signed = await S.signOffRepair(a, i.id, { note: "Slack adjusters replaced, brakes adjusted — Laredo Truck Repair RO 5521", file: { fileName: "ro-5521.pdf", mimeType: "application/pdf", bytes: Buffer.from("%PDF") } });
+    expect(signed.repair).toMatchObject({ byName: "owner user", note: expect.stringContaining("RO 5521") });
+    expect(signed.repair!.documentId).toBeTruthy();
+    t = await get(a, "truck", f.t1);
+    expect(t).toMatchObject({ status: "active", oosInspectionId: null });
+    await expect(S.signOffRepair(a, i.id, { note: "again" })).rejects.toThrow(/signed off by/);
+  });
+
+  it("a trailer defect takes the trailer out; a DataQs removal releases it", async () => {
+    const tr = await create(a, "trailer", { unitNumber: "5402" });
+    const input = { inspectedAt: days(-1), country: "US", level: 2, truckId: f.t1, trailerId: tr.id, violations: [{ code: "393.75(a)", oos: true, on: "trailer" as const }] };
+    const i = await S.saveInspection(a, null, input);
+    expect((await get(a, "trailer", tr.id))).toMatchObject({ status: "oos", oosInspectionId: i.id });
+    expect((await get(a, "truck", f.t1)).status).toBe("active");
+    expect((await S.openRoadsideOos(a)).map((x) => [x.kind, x.unit])).toEqual([["trailer", "5402"]]);
+    await S.saveInspection(a, i.id, { ...input, violations: [{ ...input.violations[0], removed: true }], dataQs: "accepted" });
+    expect((await get(a, "trailer", tr.id))).toMatchObject({ status: "active", oosInspectionId: null });
+  });
+
+  it("a driver OOS makes the driver unavailable until the order ends: a Safety block nobody overrides, gone when the time is up", async () => {
+    const until = days(2);
+    await S.saveInspection(a, null, { inspectedAt: days(-0.2), country: "US", level: 3, driverId: f.d1, driverOosUntil: until, violations: [{ code: "395.3(a)(1)", oos: true }] });
+    const o = await load();
+    const c = (await candidatesForLeg(a, o.legs[0].id)).find((x) => x.truckId === f.t1)!;
+    const f1 = c.findings.find((x) => x.code === "safety_oos_order")!;
+    expect(f1).toMatchObject({ level: "red", overridable: false });
+    expect(f1.message).toMatch(/Daniel Reyes: Safety — out-of-service order until/);
+    expect(c.hardBlocked).toBe(true);
+  });
+
+  it("Canadian and Mexican violations save as written, without a BASIC or an SMS weight, and stay out of the measures", async () => {
+    const ca = await S.saveInspection(a, null, { inspectedAt: days(-2), country: "CA", jurisdiction: "on", level: 2, driverId: f.d1, violations: [{ code: "NSC 13 s.6", description: "Daily trip inspection report not carried", unit: "vehicle" }] });
+    expect(ca.violations[0]).toMatchObject({ basic: null, severity: 0, unit: "vehicle" });
+    const mx = await S.saveInspection(a, null, { inspectedAt: days(-2), country: "MX", level: 1, truckId: f.t1, violations: [{ code: "NOM-068", description: "Físico-mecánica vencida" }] });
+    expect(mx.violations[0].basic).toBeNull();
+    const b = await S.inspectionsBoard(a);
+    expect(b.measures.every((m) => m.points === 0)).toBe(true);
+  });
+});
+
+describe("Safety time off is a Safety block (dispatch M25)", () => {
+  it("off for a licence renewal: only Safety or the owner can override it, and it never reads as a schedule conflict", async () => {
+    const { addEvent } = await import("./planner");
+    const { planLeg: plan, needsSafety } = await import("./orders");
+    await addEvent(a, { subjectKind: "driver", subjectId: f.d2, kind: "credentials", startsAt: days(-1), endsAt: days(3), note: "Licence renewal at DPS" });
+    await S.recordDq(a, f.d2, "clearinghouse_full", { completedAt: days(-9) });
+    await S.addTest(a, { driverId: f.d2, reason: "pre_employment", substance: "drug", collectedAt: days(-12), result: "negative" });
+    const o = await createOrder(a, { customerId: f.cust, rateCents: 100000, stops: [{ type: "pickup", name: "A", country: "US", windowStart: days(0.5) }, { type: "delivery", name: "B", country: "US", windowStart: days(1) }], book: true });
+    const err = await plan(a, o.legs[0].id, { kind: "truck", truckId: f.t1, driverId: f.d2 }).catch((e) => e);
+    const fnd = (err.findings as { code: string; message: string; overridable: boolean }[]).find((x) => x.code === "safety_credentials")!;
+    expect(fnd.message).toMatch(/Ana Torres: Safety — licence \/ medical renewal until .* \(Licence renewal at DPS\)/);
+    expect(needsSafety(fnd as never)).toBe(true);
+    await expect(plan({ ...a, role: "dispatcher" }, o.legs[0].id, { kind: "truck", truckId: f.t1, driverId: f.d2 }, { override: true, reason: "she'll be back" })).rejects.toThrow(/compliance.override/);
   });
 });

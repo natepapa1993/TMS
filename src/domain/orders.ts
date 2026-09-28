@@ -1220,6 +1220,8 @@ export async function setTruckActive(ctx: Ctx, truckId: string) {
   return db.transaction(async (tx) => {
     const [truck] = await tx.select().from(s.trucks).where(and(eq(s.trucks.tenantId, ctx.tenantId), eq(s.trucks.id, truckId))).limit(1);
     if (!truck) throw new NotFoundError("truck", truckId);
+    // an out-of-service order from a roadside inspection lifts only with the repair signed off on it (396.9(d))
+    if (truck.oosInspectionId) throw new ValidationError(`${truck.unitNumber} was put out of service at a roadside inspection — Safety signs off the repair on the inspection to put it back in service`);
     await tx.update(s.trucks).set({ status: "active", oosReason: null, oosUntil: null, updatedAt: new Date(), updatedBy: ctx.userId }).where(eq(s.trucks.id, truckId));
     await writeAudit(tx, ctx, "truck", truckId, "update", { status: { from: truck.status, to: "active" } });
   });
