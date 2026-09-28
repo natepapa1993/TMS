@@ -24,7 +24,7 @@ export function DriverAppCard({ driverId, url, whatsapp, phone, canEdit }: { dri
   return (
     <div className="card p-4" data-testid="driver-app-card">
       <div className="eyebrow mb-2">Driver app</div>
-      <div className="text-[12px] mono break-all select-all bg-ground rounded p-2 border border-line" data-testid="driver-app-url">
+      <div className="text-footnote mono break-all select-all bg-ground rounded p-2 border border-line" data-testid="driver-app-url">
         {url}
       </div>
       <div className="flex gap-2 mt-2 flex-wrap">

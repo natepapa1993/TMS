@@ -6,7 +6,7 @@ export const metadata: Metadata = {
   title: { default: "Crossline TMS", template: "%s · Crossline" },
   description: "Cross-border carrier TMS",
 };
-export const viewport: Viewport = { width: "device-width", initialScale: 1, themeColor: "#0f172a" };
+export const viewport: Viewport = { width: "device-width", initialScale: 1, themeColor: "#f5f5f7" };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {
   return (

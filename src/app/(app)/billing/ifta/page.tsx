@@ -29,7 +29,7 @@ export default async function IftaPage({ searchParams }: PageProps<"/billing/ift
         The quarterly fuel-tax return: miles by state and province from GPS (ELD or the driver app) or, where a load has none, its route between the stops; fuel from purchases you enter or import from the fuel card. Tax rates come from the IFTA rate matrix each quarter.
       </PageHeader>
       <BillingNav />
-      <div className="px-7 pb-10">
+      <div className="px-gutter pb-10">
         <IftaScreen
           quarter={q}
           quarters={quarters}

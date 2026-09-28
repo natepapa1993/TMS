@@ -28,11 +28,11 @@ export function ImportWizard({ kind, fields, template, listPath }: { kind: Recor
     return (
       <div className="card p-6 max-w-2xl">
         <div className="h2">Import finished</div>
-        <div className="mt-2 text-[14px]">
+        <div className="mt-2 text-body">
           <span className="font-bold text-teal">{done.inserted} added</span>, <span className="font-bold">{done.updated} updated</span>, <span className={`font-bold ${done.errors.length ? "text-amber" : ""}`}>{done.errors.length} skipped</span>.
         </div>
         {done.errors.length > 0 && (
-          <ul className="mt-3 text-[13px] text-muted space-y-1 max-h-60 overflow-auto">
+          <ul className="mt-3 text-callout text-muted space-y-1 max-h-60 overflow-auto">
             {done.errors.map((e) => (
               <li key={e.row}>
                 Row {e.row}: {e.message}
@@ -80,7 +80,7 @@ export function ImportWizard({ kind, fields, template, listPath }: { kind: Recor
                 />
               </label>
             </div>
-            <textarea className="textarea font-mono text-[12.5px]" style={{ minHeight: 240 }} value={text} onChange={(e) => setText(e.target.value)} placeholder={"Unit #,US plate,MX plate,MX plate class\n2117,RC59022,35ES3A,brown"} />
+            <textarea className="textarea font-mono text-callout" style={{ minHeight: 240 }} value={text} onChange={(e) => setText(e.target.value)} placeholder={"Unit #,US plate,MX plate,MX plate class\n2117,RC59022,35ES3A,brown"} />
             {error && <div className="error">{error}</div>}
             <div className="mt-3 flex justify-end">
               <button className="btn btn-primary" disabled={!text.trim() || pending} onClick={() => run()}>
@@ -99,13 +99,13 @@ export function ImportWizard({ kind, fields, template, listPath }: { kind: Recor
               </div>
               <div className="grid grid-cols-2 gap-x-6 gap-y-2 mt-3">
                 {preview.headers.map((h) => (
-                  <div key={h} className="flex items-center gap-2 text-[13px]">
+                  <div key={h} className="flex items-center gap-2 text-callout">
                     <span className="w-40 truncate font-semibold" title={h}>
                       {h}
                     </span>
                     <span className="text-faint">→</span>
                     <select
-                      className="select h-8 text-[13px]"
+                      className="select h-8 text-callout"
                       value={preview.mapping[h] ?? ""}
                       onChange={(e) => {
                         const mapping = { ...preview.mapping, [h]: e.target.value };
@@ -125,7 +125,7 @@ export function ImportWizard({ kind, fields, template, listPath }: { kind: Recor
               </div>
             </div>
             <div className="card overflow-hidden">
-              <div className="px-5 py-3 border-b border-line flex items-center gap-3 text-[13px]">
+              <div className="px-5 py-3 border-b border-line flex items-center gap-3 text-callout">
                 <span className="font-bold">{preview.summary.total} rows</span>
                 <Pill tone="teal">{preview.summary.insert} new</Pill>
                 <Pill tone="blue">{preview.summary.update} update existing</Pill>
@@ -148,7 +148,7 @@ export function ImportWizard({ kind, fields, template, listPath }: { kind: Recor
                         <td className="text-muted mono">{r.row}</td>
                         <td className="font-semibold">{r.label}</td>
                         <td>{r.action === "insert" ? <Pill tone="teal">Add</Pill> : r.action === "update" ? <Pill tone="blue">Update</Pill> : <Pill tone="amber">Skip</Pill>}</td>
-                        <td className="text-[12.5px] text-red">{Object.values(r.errors).join("; ")}</td>
+                        <td className="text-callout text-red">{Object.values(r.errors).join("; ")}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -174,7 +174,7 @@ export function ImportWizard({ kind, fields, template, listPath }: { kind: Recor
           </>
         )}
       </div>
-      <aside className="card p-4 text-[13px] space-y-3">
+      <aside className="card p-4 text-callout space-y-3">
         <div className="font-extrabold">Template</div>
         <p className="text-muted">Headers we recognise, with one example row. Extra columns are ignored; columns can be in any order.</p>
         <a className="btn btn-sm" href={`data:text/csv;charset=utf-8,${encodeURIComponent(template)}`} download={`${kind}-template.csv`}>

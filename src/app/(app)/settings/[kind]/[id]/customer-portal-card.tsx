@@ -21,7 +21,7 @@ export function CustomerPortalCard({ customerId, url, email, canEdit }: { custom
   return (
     <div className="card p-4">
       <div className="eyebrow mb-2">Customer portal</div>
-      <div className="text-[12px] mono break-all select-all bg-ground rounded p-2 border border-line" data-testid="customer-portal-url">
+      <div className="text-footnote mono break-all select-all bg-ground rounded p-2 border border-line" data-testid="customer-portal-url">
         {url}
       </div>
       <div className="flex gap-2 mt-2 flex-wrap">

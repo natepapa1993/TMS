@@ -15,13 +15,13 @@ export function SafetyNav({ role, counts }: { role: string; counts?: Record<stri
     ["/compliance/overrides", "Overrides"],
   ];
   return (
-    <div className="px-7 pb-3 flex items-center gap-1.5 flex-wrap" data-testid="safety-nav">
+    <nav className="subnav" data-testid="safety-nav">
       {tabs.map(([href, label]) => (
-        <Link key={href} href={href} className="stage-tab" data-active={path === href || (href !== "/compliance" && path.startsWith(href))}>
+        <Link key={href} href={href} className="stage-tab" aria-current={path === href || (href !== "/billing" && href !== "/compliance" && path.startsWith(href)) ? "page" : undefined} data-active={path === href || (href !== "/compliance" && path.startsWith(href))}>
           {label}
           {counts?.[href] ? <span className="count">{counts[href]}</span> : null}
         </Link>
       ))}
-    </div>
+    </nav>
   );
 }

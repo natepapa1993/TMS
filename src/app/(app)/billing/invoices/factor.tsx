@@ -22,7 +22,7 @@ export function ToFactor({ factor, rows, schedules }: { factor: string; rows: Ro
       <div className="flex items-center justify-between gap-3 mb-2">
         <div>
           <div className="font-bold">To the factor · {factor}</div>
-          <div className="text-muted text-[12.5px]">Issued, factored invoices not yet on a schedule. They go together: the schedule of accounts, then each invoice with its documents.</div>
+          <div className="text-muted text-callout">Issued, factored invoices not yet on a schedule. They go together: the schedule of accounts, then each invoice with its documents.</div>
         </div>
         <button
           className="btn btn-primary"
@@ -40,7 +40,7 @@ export function ToFactor({ factor, rows, schedules }: { factor: string; rows: Ro
         </button>
       </div>
       {rows.length === 0 ? (
-        <div className="text-faint text-[13px]">Nothing waiting.</div>
+        <div className="text-faint text-callout">Nothing waiting.</div>
       ) : (
         <table className="table">
           <tbody>
@@ -55,7 +55,7 @@ export function ToFactor({ factor, rows, schedules }: { factor: string; rows: Ro
                   </Link>
                 </td>
                 <td>{r.customer}</td>
-                <td className="text-muted text-[12.5px]">{r.issuedAt}</td>
+                <td className="text-muted text-callout">{r.issuedAt}</td>
                 <td className="mono text-right">{formatCents(r.totalCents, r.currency)}</td>
               </tr>
             ))}
@@ -63,7 +63,7 @@ export function ToFactor({ factor, rows, schedules }: { factor: string; rows: Ro
         </table>
       )}
       {schedules.length > 0 && (
-        <div className="mt-3 border-t border-line pt-2 text-[12.5px]">
+        <div className="mt-3 border-t border-line pt-2 text-callout">
           <span className="text-muted">Recent schedules: </span>
           {schedules.map((s, i) => (
             <span key={s.id}>

@@ -66,7 +66,7 @@ export default async function RecordPage({ params }: PageProps<"/settings/[kind]
           </span>
         }
       />
-      <div className="px-7 pb-10 grid lg:grid-cols-[1fr_320px] gap-5 items-start [&>*]:min-w-0">
+      <div className="px-gutter pb-10 grid lg:grid-cols-[1fr_320px] gap-5 items-start [&>*]:min-w-0">
         <div className="card p-5">
           <RecordEditor
             kind={kind}
@@ -97,7 +97,7 @@ export default async function RecordPage({ params }: PageProps<"/settings/[kind]
             return (
               <div className="card p-4" data-testid="safety-file-card">
                 <div className="eyebrow mb-2">Safety file</div>
-                <div className="text-[13px]">
+                <div className="text-callout">
                   Qualification file: {gaps ? <span className="pill pill-amber">{gaps} missing or overdue</span> : <span className="pill pill-green">complete</span>}
                   {hold && <span className="pill pill-red ml-1">safety hold</span>}
                 </div>
@@ -114,13 +114,13 @@ export default async function RecordPage({ params }: PageProps<"/settings/[kind]
           {kind === "ediPartner" && (
             <div className="card p-4">
               <div className="eyebrow mb-2">Inbound URL</div>
-              <div className="text-[12px] mono break-all select-all bg-ground rounded p-2 border border-line">{publicUrl(`/api/edi/inbound/${String(row.inboundToken)}`)}</div>
+              <div className="text-footnote mono break-all select-all bg-ground rounded p-2 border border-line">{publicUrl(`/api/edi/inbound/${String(row.inboundToken)}`)}</div>
               <div className="help mt-1">The partner (or their VAN / AS2 gateway) POSTs X12 here; the 997 comes back in the response. Their ISA sender must be {String(row.theirId)}.</div>
               <div className="eyebrow mt-4 mb-2">Recent messages</div>
               {partnerLog.length === 0 ? (
-                <div className="text-muted text-[13px]">Nothing yet.</div>
+                <div className="text-muted text-callout">Nothing yet.</div>
               ) : (
-                <ul className="space-y-1 text-[12.5px]">
+                <ul className="space-y-1 text-callout">
                   {partnerLog.map((l) => (
                     <li key={l.m.id} className="flex justify-between gap-2">
                       <span className="truncate">
@@ -140,12 +140,12 @@ export default async function RecordPage({ params }: PageProps<"/settings/[kind]
             <div className="card p-4">
               <div className="eyebrow mb-2">Status</div>
               {row.status === "oos" ? (
-                <div className="text-[13px]">
+                <div className="text-callout">
                   <span className="pill pill-red">OOS</span> <span className="ml-1">{String(row.oosReason ?? "")}</span>
                   {row.oosUntil ? <div className="text-muted mt-1">Until {new Date(row.oosUntil as string).toLocaleDateString()}</div> : null}
                 </div>
               ) : (
-                <div className="text-[13px]">
+                <div className="text-callout">
                   <span className="pill pill-green">Active</span>
                 </div>
               )}
@@ -155,11 +155,11 @@ export default async function RecordPage({ params }: PageProps<"/settings/[kind]
           <div className="card p-4">
             <div className="eyebrow mb-2">History</div>
             {hist.length === 0 ? (
-              <div className="text-muted text-[13px]">No changes yet.</div>
+              <div className="text-muted text-callout">No changes yet.</div>
             ) : (
               <ul className="space-y-2.5">
                 {hist.slice(0, 30).map((h) => (
-                  <li key={h.id} className="text-[12.5px]">
+                  <li key={h.id} className="text-callout">
                     <div className="flex justify-between gap-2">
                       <span className="font-bold capitalize">{h.action}</span>
                       <span className="text-faint whitespace-nowrap">{new Date(h.at).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}</span>

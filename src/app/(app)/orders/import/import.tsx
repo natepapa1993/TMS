@@ -40,7 +40,7 @@ export function ImportLoads() {
       <div className="card p-6 flex items-center gap-4 flex-wrap" onDragOver={(e) => e.preventDefault()} onDrop={(e) => { e.preventDefault(); const f = e.dataTransfer.files?.[0]; if (f) read(f); }}>
         <div className="flex-1 min-w-[240px]">
           <div className="font-bold">{file ? file.name : "Drop the sheet here or choose it"}</div>
-          <div className="text-[13px] text-muted mt-0.5">
+          <div className="text-callout text-muted mt-0.5">
             Headers are matched by name (Customer, Rate, PO, Pickup City, Pickup Date, Delivery Name…).{" "}
             <a className="text-teal font-semibold" href={`data:text/csv;charset=utf-8,${encodeURIComponent(EXAMPLE)}`} download="loads-example.csv">
               Download an example
@@ -65,8 +65,8 @@ export function ImportLoads() {
               {preview.loads.length} load{preview.loads.length === 1 ? "" : "s"} found · <span className="text-green">{ok} ready</span>
               {preview.loads.length - ok ? <span className="text-red"> · {preview.loads.length - ok} with problems (skipped)</span> : null}
             </div>
-            <div className="text-[12.5px] text-muted">{preview.layout === "per_stop" ? "one row per stop, grouped by load" : "one row per load"}</div>
-            <label className="ml-auto flex items-center gap-2 text-[13px] cursor-pointer">
+            <div className="text-callout text-muted">{preview.layout === "per_stop" ? "one row per stop, grouped by load" : "one row per load"}</div>
+            <label className="ml-auto flex items-center gap-2 text-callout cursor-pointer">
               <input type="checkbox" className="accent-teal w-4 h-4" checked={book} onChange={(e) => setBook(e.target.checked)} /> Book them (those with a rate)
             </label>
             <button
@@ -105,13 +105,13 @@ export function ImportLoads() {
                   <tr key={l.key} data-testid="import-row" className={l.errors.length ? "bg-red-soft/40" : ""}>
                     <td className="mono">{l.key}</td>
                     <td>{l.customer || <span className="text-faint">—</span>}</td>
-                    <td className="text-[13px]">
+                    <td className="text-callout">
                       {l.stops.length ? `${place(l.stops[0])} → ${place(l.stops[l.stops.length - 1])}` : "—"}
                       {l.stops.length > 2 ? <span className="text-muted"> · {l.stops.length} stops</span> : null}
                     </td>
-                    <td className="text-[12.5px] text-muted">{l.stops[0]?.at ? new Date(l.stops[0].at).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) : "—"}</td>
+                    <td className="text-callout text-muted">{l.stops[0]?.at ? new Date(l.stops[0].at).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) : "—"}</td>
                     <td className="tabular-nums">{l.rateCents == null ? <span className="text-faint">TBD</span> : new Intl.NumberFormat("en-US", { style: "currency", currency: l.currency }).format(l.rateCents / 100)}</td>
-                    <td className="text-[12.5px] text-red">{l.errors.join("; ")}</td>
+                    <td className="text-callout text-red">{l.errors.join("; ")}</td>
                   </tr>
                 ))}
               </tbody>
@@ -122,10 +122,10 @@ export function ImportLoads() {
 
       {done && (
         <div className="card p-6" data-testid="import-done">
-          <div className="font-bold text-[15px]">
+          <div className="font-bold text-headline">
             {done.created.length} load{done.created.length === 1 ? "" : "s"} created{done.skipped.length ? `, ${done.skipped.length} skipped` : ""}
           </div>
-          <div className="text-[13px] mt-2 flex flex-wrap gap-2">
+          <div className="text-callout mt-2 flex flex-wrap gap-2">
             {done.created.map((c) => (
               <Link key={c.orderId} href={`/orders/${c.orderId}`} className="mono text-teal font-semibold">
                 {c.orderNumber}
@@ -133,7 +133,7 @@ export function ImportLoads() {
             ))}
           </div>
           {done.skipped.length > 0 && (
-            <ul className="mt-3 text-[12.5px] text-red space-y-1">
+            <ul className="mt-3 text-callout text-red space-y-1">
               {done.skipped.map((x) => (
                 <li key={x.key}>
                   {x.key}: {x.errors.join("; ")}

@@ -41,7 +41,7 @@ export function CloseButton() {
           </>
         }
       >
-        <div className="text-[13px] text-muted mb-3">Nothing dated on or before this day can be issued, voided or credited afterwards. This cannot be undone from here.</div>
+        <div className="text-callout text-muted mb-3">Nothing dated on or before this day can be issued, voided or credited afterwards. This cannot be undone from here.</div>
         <label className="label">Close through</label>
         <input type="date" className="input" value={through} onChange={(e) => setThrough(e.target.value)} />
       </Modal>

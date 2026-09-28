@@ -6,7 +6,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import type { MapUnit } from "@/domain/asset-map";
 
-const LiveMap = dynamic(() => import("./live-map").then((m) => m.LiveMap), { ssr: false, loading: () => <div className="h-full grid place-items-center text-muted text-[13px]">Loading the map…</div> });
+const LiveMap = dynamic(() => import("./live-map").then((m) => m.LiveMap), { ssr: false, loading: () => <div className="h-full grid place-items-center text-muted text-callout">Loading the map…</div> });
 
 export const STATUS_LABEL: Record<MapUnit["status"], string> = { moving: "Moving", stopped: "Stopped", stale: "No recent position", oos: "Out of service" };
 export const STATUS_COLOR: Record<MapUnit["status"], string> = { moving: "#15803d", stopped: "#1d4ed8", stale: "#94a3b8", oos: "#b91c1c" };
@@ -39,20 +39,20 @@ export function MapScreen({ data }: { data: { units: MapUnit[]; unplaced: { id: 
       <div className="px-5 md:px-8 pt-6 pb-4 flex items-end justify-between gap-4 flex-wrap">
         <div>
           <div className="eyebrow mb-1">Fleet</div>
-          <h1 className="text-[24px] font-extrabold tracking-tight">Map</h1>
-          <div className="text-muted text-[13px] mt-0.5">Last known position of every truck, and partner carriers on your loads while they are tracked. Refreshes every minute.</div>
+          <h1 className="text-title2 font-extrabold tracking-tight">Map</h1>
+          <div className="text-muted text-callout mt-0.5">Last known position of every truck, and partner carriers on your loads while they are tracked. Refreshes every minute.</div>
         </div>
-        <div className="inline-flex rounded-lg border border-line bg-white p-0.5">
-          <Link href="/fleet" className="px-3.5 h-8 grid place-items-center rounded-md text-[13px] font-semibold text-muted hover:text-ink">
+        <div className="segmented" role="group" aria-label="View">
+          <Link href="/fleet">
             Units
           </Link>
-          <span className="px-3.5 h-8 grid place-items-center rounded-md text-[13px] font-semibold bg-navy text-white">Map</span>
+          <span aria-current="page">Map</span>
         </div>
       </div>
       <div className="flex-1 min-h-0 px-5 md:px-8 pb-6 grid lg:grid-cols-[340px_minmax(0,1fr)] gap-4">
         <aside className="card flex flex-col min-h-0 overflow-hidden order-2 lg:order-1">
           <div className="p-3 border-b border-line">
-            <input className="input h-8 text-[13px]" placeholder="Search unit, driver, load, place" value={q} onChange={(e) => setQ(e.target.value)} aria-label="Search units" />
+            <input className="input h-8 text-callout" placeholder="Search unit, driver, load, place" value={q} onChange={(e) => setQ(e.target.value)} aria-label="Search units" />
             <div className="flex gap-1 mt-2 flex-wrap">
               {[
                 ["all", "All"],
@@ -74,20 +74,20 @@ export function MapScreen({ data }: { data: { units: MapUnit[]; unplaced: { id: 
                 <button type="button" className={`w-full text-left px-3 py-2.5 border-b border-line hover:bg-ground ${focus === u.id ? "bg-teal-soft" : ""}`} onClick={() => setFocus(u.id)} data-testid="map-unit">
                   <div className="flex items-center gap-2">
                     <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ background: u.kind === "carrier" ? "#7c3aed" : STATUS_COLOR[u.status] }} />
-                    <span className="font-bold text-[13.5px] truncate">{u.kind === "truck" ? `Unit ${u.label}` : u.label}</span>
-                    <span className="ml-auto text-[11.5px] text-muted whitespace-nowrap">{ago(u.at)}</span>
+                    <span className="font-bold text-body truncate">{u.kind === "truck" ? `Unit ${u.label}` : u.label}</span>
+                    <span className="ml-auto text-footnote text-muted whitespace-nowrap">{ago(u.at)}</span>
                   </div>
-                  <div className="text-[12.5px] text-muted mt-0.5 truncate">
+                  <div className="text-callout text-muted mt-0.5 truncate">
                     {u.driver ?? (u.kind === "carrier" ? "partner carrier" : "no driver")}
                     {u.load ? ` · ${u.load.orderNumber}${u.load.next ? ` → ${u.load.next}` : ""}` : ""}
                   </div>
                 </button>
               </li>
             ))}
-            {units.length === 0 && <li className="p-8 text-center text-muted text-[13px]">{data.units.length ? "Nothing matches." : "No positions yet. They come from the ELD, the driver app and verified steps."}</li>}
+            {units.length === 0 && <li className="p-8 text-center text-muted text-callout">{data.units.length ? "Nothing matches." : "No positions yet. They come from the ELD, the driver app and verified steps."}</li>}
           </ul>
           {data.unplaced.length > 0 && (
-            <div className="border-t border-line px-3 py-2.5 text-[12px] text-muted">
+            <div className="border-t border-line px-3 py-2.5 text-footnote text-muted">
               No position: {data.unplaced.map((u) => u.label).join(", ")}
             </div>
           )}

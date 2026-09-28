@@ -124,3 +124,9 @@ export function localDay(offsetDays = 0, now = new Date()) {
   const d = new Date(now.getTime() + offsetDays * 86400_000);
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
+
+/** A calendar date the way people read it: "Sep 27, 2026". */
+export function shortDate(d: Date | string | null | undefined) {
+  if (!d) return "—";
+  return new Date(d).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: "UTC" });
+}

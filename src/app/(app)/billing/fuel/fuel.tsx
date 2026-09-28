@@ -56,22 +56,22 @@ export function FuelScreen({ tables, prices, today, thisWeek, current, now, canE
     <div className="grid gap-6 lg:grid-cols-[1fr_360px] items-start">
       <section className="space-y-4">
         <div className="flex items-center justify-between">
-          <h2 className="text-[15px] font-bold">Surcharge tables</h2>
+          <h2 className="text-headline font-bold">Surcharge tables</h2>
           {canEdit && (
             <button className="btn btn-primary" onClick={() => { setErr(null); setDraft(toDraft()); }}>
               + New table
             </button>
           )}
         </div>
-        {!tables.length && <div className="card p-6 text-muted text-[13.5px]">No fuel tables yet. Add the one your customers bill against (most follow the DOE weekly diesel average: a surcharge band for every 5¢ the price moves).</div>}
+        {!tables.length && <div className="card p-6 text-muted text-body">No fuel tables yet. Add the one your customers bill against (most follow the DOE weekly diesel average: a surcharge band for every 5¢ the price moves).</div>}
         {tables.map((tb) => (
           <div key={tb.id} className="card p-5" data-testid="fuel-table">
             <div className="flex items-start justify-between gap-3">
               <div>
-                <div className="font-bold text-[15px] flex items-center gap-2">
+                <div className="font-bold text-headline flex items-center gap-2">
                   {tb.name} {tb.isDefault && <Pill tone="teal">Default</Pill>}
                 </div>
-                <div className="text-muted text-[13px]">{tb.method === "per_mile" ? "Cents per mile" : "Percent of line haul"} · {tb.bands.length} band{tb.bands.length === 1 ? "" : "s"}</div>
+                <div className="text-muted text-callout">{tb.method === "per_mile" ? "Cents per mile" : "Percent of line haul"} · {tb.bands.length} band{tb.bands.length === 1 ? "" : "s"}</div>
               </div>
               {canEdit && (
                 <button className="btn btn-sm" onClick={() => { setErr(null); setDraft(toDraft(tb)); }}>
@@ -79,7 +79,7 @@ export function FuelScreen({ tables, prices, today, thisWeek, current, now, canE
                 </button>
               )}
             </div>
-            <table className="w-full mt-3 text-[13px]">
+            <table className="w-full mt-3 text-callout">
               <thead>
                 <tr className="text-left text-faint">
                   <th className="font-semibold py-1">Diesel from</th>
@@ -107,13 +107,13 @@ export function FuelScreen({ tables, prices, today, thisWeek, current, now, canE
       <aside className="card p-5 space-y-4" data-testid="fuel-prices">
         <div>
           <div className="eyebrow">This week ({thisWeek})</div>
-          <div className="text-[26px] font-extrabold tabular-nums" data-testid="fuel-current">{current ? `${gal(current.priceCents)}/gal` : "No price"}</div>
-          <div className="text-muted text-[13px]">{now ? `${now.table}: ${surcharge(now.method, now.value)} surcharge` : current ? "Set a default table to see the surcharge" : "Enter the week's diesel price below"}</div>
-          {current && current.weekOf !== thisWeek && <div className="text-amber-700 text-[12.5px] mt-1">Using the week of {current.weekOf} — enter this week&apos;s price.</div>}
+          <div className="text-title1 font-extrabold tabular-nums" data-testid="fuel-current">{current ? `${gal(current.priceCents)}/gal` : "No price"}</div>
+          <div className="text-muted text-callout">{now ? `${now.table}: ${surcharge(now.method, now.value)} surcharge` : current ? "Set a default table to see the surcharge" : "Enter the week's diesel price below"}</div>
+          {current && current.weekOf !== thisWeek && <div className="text-amber-700 text-callout mt-1">Using the week of {current.weekOf} — enter this week&apos;s price.</div>}
         </div>
         {canEdit && (
           <div className="border-t border-line pt-4 space-y-2">
-            <div className="font-semibold text-[13.5px]">Enter a weekly diesel price</div>
+            <div className="font-semibold text-body">Enter a weekly diesel price</div>
             <div className="grid grid-cols-2 gap-2">
               <div>
                 <label className="label" htmlFor="fp-date">Week of</label>
@@ -130,9 +130,9 @@ export function FuelScreen({ tables, prices, today, thisWeek, current, now, canE
           </div>
         )}
         <div className="border-t border-line pt-3">
-          <div className="font-semibold text-[13.5px] mb-1">History</div>
-          {!prices.length && <div className="text-faint text-[13px]">No prices yet.</div>}
-          <ul className="text-[13px] divide-y divide-line">
+          <div className="font-semibold text-body mb-1">History</div>
+          {!prices.length && <div className="text-faint text-callout">No prices yet.</div>}
+          <ul className="text-callout divide-y divide-line">
             {prices.map((p) => (
               <li key={p.weekOf} className="flex justify-between py-1.5" data-testid="fuel-price-row">
                 <span>Week of {p.weekOf}</span>
@@ -177,7 +177,7 @@ export function FuelScreen({ tables, prices, today, thisWeek, current, now, canE
       >
         {draft && (
           <div className="space-y-4">
-            {err && <div className="text-red-700 text-[13px]" role="alert">{err}</div>}
+            {err && <div className="text-red-700 text-callout" role="alert">{err}</div>}
             <div className="grid sm:grid-cols-2 gap-3">
               <div>
                 <label className="label" htmlFor="ft-name">Name</label>
@@ -191,11 +191,11 @@ export function FuelScreen({ tables, prices, today, thisWeek, current, now, canE
                 </select>
               </div>
             </div>
-            <label className="flex items-center gap-2 text-[13px]">
+            <label className="flex items-center gap-2 text-callout">
               <input type="checkbox" className="accent-teal w-4 h-4" checked={draft.isDefault} onChange={(e) => setDraft({ ...draft, isDefault: e.target.checked })} /> Default table (used by lane rates set to &quot;fuel table&quot;)
             </label>
             <div>
-              <div className="grid grid-cols-[1fr_1fr_1fr_32px] gap-2 text-faint text-[12px] font-semibold mb-1">
+              <div className="grid grid-cols-[1fr_1fr_1fr_32px] gap-2 text-faint text-footnote font-semibold mb-1">
                 <span>Diesel from ($/gal)</span>
                 <span>Up to ($/gal, blank = and up)</span>
                 <span>Surcharge ({draft.method === "per_mile" ? "¢/mi" : "%"})</span>

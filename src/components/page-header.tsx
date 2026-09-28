@@ -1,14 +1,15 @@
 import type { ReactNode } from "react";
 
+/** The top of every page: breadcrumb or eyebrow, a big title, a short subtitle, and the actions on the right (one primary). */
 export function PageHeader({ eyebrow, title, actions, children }: { eyebrow?: ReactNode; title: ReactNode; actions?: ReactNode; children?: ReactNode }) {
   return (
-    <div className="px-7 pt-6 pb-4 flex items-end justify-between gap-4 flex-wrap">
-      <div>
-        {eyebrow && <div className="eyebrow mb-1">{eyebrow}</div>}
-        <div className="h1">{title}</div>
-        {children && <div className="text-muted mt-1 text-[13.5px]">{children}</div>}
+    <div className="page-header">
+      <div className="min-w-0 flex-1">
+        {eyebrow && <div className="eyebrow mb-1.5">{eyebrow}</div>}
+        <h1 className="h1">{title}</h1>
+        {children && <div className="subtitle">{children}</div>}
       </div>
-      {actions && <div className="flex items-center gap-2 flex-wrap">{actions}</div>}
+      {actions && <div className="page-actions">{actions}</div>}
     </div>
   );
 }

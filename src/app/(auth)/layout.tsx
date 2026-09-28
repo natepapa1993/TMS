@@ -9,8 +9,8 @@ export default function AuthLayout({ children }: { children: React.ReactNode }) 
           <span className="font-extrabold tracking-tight text-lg">Crossline</span>
         </div>
         <div>
-          <div className="text-[34px] leading-tight font-extrabold tracking-tight max-w-md">The TMS built for the border.</div>
-          <p className="text-slate-300 mt-4 max-w-md text-[15px]">Mexican leg, crossing, US leg — one order, one screen, every rule enforced before a truck moves.</p>
+          <div className="text-display leading-tight font-extrabold tracking-tight max-w-md">The TMS built for the border.</div>
+          <p className="text-slate-300 mt-4 max-w-md text-headline">Mexican leg, crossing, US leg — one order, one screen, every rule enforced before a truck moves.</p>
         </div>
         <div className="text-slate-400 text-xs">Dispatch · Crossing · Compliance · Billing</div>
       </div>

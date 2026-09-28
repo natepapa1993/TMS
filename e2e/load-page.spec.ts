@@ -1,6 +1,6 @@
 // Features: F-20.2
 import { test, expect } from "@playwright/test";
-import { signupFresh, quickAdd, buildLoad } from "./helpers";
+import { signupFresh, quickAdd, buildLoad, loadMenu } from "./helpers";
 
 test("load page: facts header, tabs, per-mile rate, people and priority, notes, lock, TONU to billing", async ({ page }) => {
   test.setTimeout(120_000);
@@ -52,15 +52,18 @@ test("load page: facts header, tabs, per-mile rate, people and priority, notes, 
   await expect(page.locator("main")).toContainText("Pinned notes");
 
   // lock: no edits until unlocked
+  await loadMenu(page);
   await page.click("button:has-text('Lock')");
   await expect(page.getByRole("status").filter({ hasText: "Locked" })).toBeVisible();
   await expect(header).toContainText("locked");
   await page.getByTestId("tab-stops").click();
   await expect(page.locator("main")).toContainText("Unlock the load to change its stops");
+  await loadMenu(page);
   await page.click("button:has-text('Unlock')");
   await expect(page.getByRole("status").filter({ hasText: "Unlocked" })).toBeVisible();
 
   // TONU → billing, no POD needed
+  await loadMenu(page);
   await page.click("button:has-text('TONU')");
   const d = page.getByRole("dialog");
   await d.locator("#tonu-amount").fill("250");

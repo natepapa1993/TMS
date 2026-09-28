@@ -25,7 +25,7 @@ export default async function ExportsPage() {
         ; customer and vendor names on each record.
       </PageHeader>
       <BillingNav />
-      <div className="px-7 pb-10">
+      <div className="px-gutter pb-10">
         <Exports runs={JSON.parse(JSON.stringify(runs))} defaults={{ from: first, to: today }} role={ctx.role} />
       </div>
     </div>

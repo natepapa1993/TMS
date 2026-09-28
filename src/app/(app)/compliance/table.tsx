@@ -32,7 +32,7 @@ export function ComplianceTable({ kind, path, columns, rows, role }: { kind: Sub
               <th key={c.key} title={c.blocks ? "blocks dispatch" : ""}>
                 {c.label}
                 {c.blocks ? " •" : ""}
-                {c.sub && <div className="normal-case tracking-normal font-semibold text-[10px] text-faint">{c.sub}</div>}
+                {c.sub && <div className="normal-case tracking-normal font-semibold text-caption text-faint">{c.sub}</div>}
               </th>
             ))}
           </tr>
@@ -44,7 +44,7 @@ export function ComplianceTable({ kind, path, columns, rows, role }: { kind: Sub
                 <Link href={`/settings/${path}/${r.id}#documents`} className="font-bold hover:text-teal whitespace-nowrap">
                   {r.label}
                 </Link>
-                <div className="text-[12px] text-muted">{r.sub}</div>
+                <div className="text-footnote text-muted">{r.sub}</div>
               </td>
               <td>
                 {r.st ? (
@@ -60,7 +60,7 @@ export function ComplianceTable({ kind, path, columns, rows, role }: { kind: Sub
                     <div>
                       <span className="pill pill-red">blocked</span>
                       {canEdit && (
-                        <button className="btn btn-ghost btn-sm ml-1 text-[11.5px]" onClick={() => setOverrideFor(r)}>
+                        <button className="btn btn-ghost btn-sm ml-1 text-footnote" onClick={() => setOverrideFor(r)}>
                           24h override
                         </button>
                       )}
@@ -85,12 +85,12 @@ export function ComplianceTable({ kind, path, columns, rows, role }: { kind: Sub
                           {it.expiresAt ? new Date(it.expiresAt).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }) : it.status === "na" ? "not on file" : it.status}
                         </Link>
                         {canEdit && it.status === "snoozed" && (
-                          <button className="btn btn-ghost btn-sm text-[11px] px-1" title={`Snoozed until ${it.snoozedUntil?.slice(0, 10)} (${it.snoozeReason ?? ""}) — end the snooze`} onClick={async () => { const res = await unsnoozeAction(kind, r.id, it.key); if (res.ok) { t.ok("Snooze ended"); router.refresh(); } else t.err(res.error); }}>
+                          <button className="btn btn-ghost btn-sm text-caption px-1" title={`Snoozed until ${it.snoozedUntil?.slice(0, 10)} (${it.snoozeReason ?? ""}) — end the snooze`} onClick={async () => { const res = await unsnoozeAction(kind, r.id, it.key); if (res.ok) { t.ok("Snooze ended"); router.refresh(); } else t.err(res.error); }}>
                             wake
                           </button>
                         )}
                         {canEdit && (it.status === "expiring" || it.status === "missing" || it.status === "expired") && (
-                          <button className="btn btn-ghost btn-sm text-[11px] px-1" title="Snooze this alert" onClick={() => setSnoozeFor({ id: r.id, key: it.key, label: `${r.label} · ${it.label}` })}>
+                          <button className="btn btn-ghost btn-sm text-caption px-1" title="Snooze this alert" onClick={() => setSnoozeFor({ id: r.id, key: it.key, label: `${r.label} · ${it.label}` })}>
                             zz
                           </button>
                         )}

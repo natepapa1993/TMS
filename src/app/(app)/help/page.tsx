@@ -105,8 +105,8 @@ export default async function HelpPage() {
       <PageHeader eyebrow="Crossline" title="How it works">
         The screens, in the order a day runs, and the rules the product enforces so nobody has to remember them.
       </PageHeader>
-      <div className="px-7 pb-10 grid lg:grid-cols-[220px_1fr] gap-6 items-start">
-        <nav className="card p-3 lg:sticky lg:top-5 text-[13px]">
+      <div className="px-gutter pb-10 grid lg:grid-cols-[220px_1fr] gap-6 items-start">
+        <nav className="card p-3 lg:sticky lg:top-5 text-callout">
           {SECTIONS.map((s) => (
             <a key={s.id} href={`#${s.id}`} className="block px-2 py-1.5 rounded hover:bg-ground font-semibold">
               {s.title.split(":")[0]}
@@ -118,16 +118,16 @@ export default async function HelpPage() {
             <section key={s.id} id={s.id} className="card p-5">
               <div className="flex items-baseline justify-between gap-3">
                 <div className="h2">{s.title}</div>
-                <Link href={s.href} className="text-teal text-[13px] font-semibold whitespace-nowrap">
+                <Link href={s.href} className="text-teal text-callout font-semibold whitespace-nowrap">
                   Open →
                 </Link>
               </div>
-              <div className="mt-2 space-y-2 text-[13.5px] leading-relaxed">
+              <div className="mt-2 space-y-2 text-body leading-relaxed">
                 {s.body.map((b, i) =>
                   typeof b === "string" ? (
                     <p key={i}>{b}</p>
                   ) : (
-                    <p key={i} className="rounded-lg border border-teal/30 bg-teal-soft/40 px-3 py-2 text-[13px]">
+                    <p key={i} className="rounded-lg border border-teal/30 bg-teal-soft/40 px-3 py-2 text-callout">
                       <b>Rule.</b> {b.rule}
                     </p>
                   ),

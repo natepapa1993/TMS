@@ -6,7 +6,7 @@ export default function PublicLayout({ children }: { children: React.ReactNode }
     <div className="min-h-screen bg-ground">
       <div className="max-w-[560px] mx-auto px-4 py-5">
         {children}
-        <div className="mt-10 flex items-center justify-center gap-1.5 text-[11.5px] text-faint">
+        <div className="mt-10 flex items-center justify-center gap-1.5 text-footnote text-faint">
           <Mark size={14} /> Crossline
         </div>
       </div>

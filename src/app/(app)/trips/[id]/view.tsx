@@ -42,16 +42,16 @@ export function TripView({ tripId, state, stops, shipments, capacity, customers,
           <div className="flex items-center justify-between gap-3 flex-wrap">
             <div>
               <div className="h2">Load plan</div>
-              <div className="text-muted text-[12.5px]">Capacity from {capacity.capacity.source}: {capacity.capacity.linearFt} ft · {capacity.capacity.weightLbs.toLocaleString()} lb{capacity.capacity.cubeFt ? ` · ${capacity.capacity.cubeFt.toLocaleString()} cu ft` : ""}. Loaded LIFO: what comes off last goes in first.</div>
+              <div className="text-muted text-callout">Capacity from {capacity.capacity.source}: {capacity.capacity.linearFt} ft · {capacity.capacity.weightLbs.toLocaleString()} lb{capacity.capacity.cubeFt ? ` · ${capacity.capacity.cubeFt.toLocaleString()} cu ft` : ""}. Loaded LIFO: what comes off last goes in first.</div>
             </div>
             <div className="text-right">
-              <div className={`text-[22px] font-extrabold mono ${capacity.overWith.length ? "text-red" : ""}`}>{capacity.fillPct}%</div>
-              <div className="text-[11.5px] text-muted">
+              <div className={`text-title2 font-extrabold mono ${capacity.overWith.length ? "text-red" : ""}`}>{capacity.fillPct}%</div>
+              <div className="text-footnote text-muted">
                 peak {capacity.peak.linearFt} ft · {capacity.peak.weightLbs.toLocaleString()} lb · {capacity.spaceLeft.linearFt} ft left
               </div>
             </div>
           </div>
-          {capacity.overWith.length > 0 && <div className="mt-2 text-red text-[13px] font-semibold">Over capacity: {capacity.overWith.join(", ")}</div>}
+          {capacity.overWith.length > 0 && <div className="mt-2 text-red text-callout font-semibold">Over capacity: {capacity.overWith.join(", ")}</div>}
           <Trailer stops={stops} shipments={live} capacity={capacity} />
           <div className="-mx-5 mt-4 overflow-x-auto">
             <table className="table">
@@ -75,16 +75,16 @@ export function TripView({ tripId, state, stops, shipments, capacity, customers,
                       <td className="mono">{st.seq}</td>
                       <td>
                         <div className="font-bold">{stop.name}</div>
-                        <div className="text-muted text-[12px]">
+                        <div className="text-muted text-footnote">
                           {stop.type.replace("_", " ")} · {[stop.address?.city, stop.address?.state].filter(Boolean).join(", ")} {stop.country}
                         </div>
                       </td>
-                      <td className="text-[12.5px]">{st.off.map((id) => shipments.find((s) => s.id === id)?.orderNumber).join(", ") || <span className="text-faint">—</span>}</td>
-                      <td className="text-[12.5px]">{st.on.map((id) => shipments.find((s) => s.id === id)?.orderNumber).join(", ") || <span className="text-faint">—</span>}</td>
+                      <td className="text-callout">{st.off.map((id) => shipments.find((s) => s.id === id)?.orderNumber).join(", ") || <span className="text-faint">—</span>}</td>
+                      <td className="text-callout">{st.on.map((id) => shipments.find((s) => s.id === id)?.orderNumber).join(", ") || <span className="text-faint">—</span>}</td>
                       <td className="text-right mono">{st.afterWeightLbs.toLocaleString()}</td>
                       <td className="text-right mono">{st.afterLinearFt}</td>
                       <td className="text-right mono">{st.afterPieces}</td>
-                      <td className="text-[12px] text-muted whitespace-nowrap">
+                      <td className="text-footnote text-muted whitespace-nowrap">
                         {stop.arrivedAt ? `in ${new Date(stop.arrivedAt).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })}` : ""}
                         {stop.departedAt ? ` · out ${new Date(stop.departedAt).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })}` : ""}
                       </td>
@@ -101,7 +101,7 @@ export function TripView({ tripId, state, stops, shipments, capacity, customers,
           <div className="flex items-center justify-between mb-3">
             <div>
               <div className="h2">Shipments</div>
-              <div className="text-muted text-[12.5px]">
+              <div className="text-muted text-callout">
                 {live.length} on the trip · {formatCents(revenue)} revenue · each keeps its own customer, references, documents, POD and invoice.
               </div>
             </div>
@@ -137,14 +137,14 @@ export function TripView({ tripId, state, stops, shipments, capacity, customers,
                         <Link href={`/orders/${s.id}`} className="font-extrabold mono hover:text-teal whitespace-nowrap">
                           {s.orderNumber}
                         </Link>
-                        <div className="text-[12px] text-muted">{Object.values(s.refs).join(" · ")}</div>
+                        <div className="text-footnote text-muted">{Object.values(s.refs).join(" · ")}</div>
                         {s.hazmat && <Pill tone="red">HAZMAT</Pill>}
                       </td>
                       <td>{s.customerName}</td>
-                      <td className="text-[12.5px]">
+                      <td className="text-callout">
                         {stopName(stops, s.pickupStopId)} → {stopName(stops, s.deliveryStopId)}
                       </td>
-                      <td className="text-right mono text-[12.5px] whitespace-nowrap">
+                      <td className="text-right mono text-callout whitespace-nowrap">
                         {s.pieces ?? "—"} · {(s.weightLbs ?? 0).toLocaleString()} · {s.linearFt ?? "—"}
                       </td>
                       <td className="text-right mono font-semibold">{s.rateTbd || s.rateCents == null ? <span className="text-faint">TBD</span> : formatCents(s.rateCents)}</td>
@@ -152,7 +152,7 @@ export function TripView({ tripId, state, stops, shipments, capacity, customers,
                         <Pill tone={TONE[s.state]} title={s.holdReason ?? undefined}>
                           {LABEL[s.state]}
                         </Pill>
-                        {s.holdReason && <div className="text-[11.5px] text-red">{s.holdReason}</div>}
+                        {s.holdReason && <div className="text-footnote text-red">{s.holdReason}</div>}
                       </td>
                       <td className="space-x-1">
                         <Pill tone={s.pod ? "green" : "slate"}>POD</Pill>
@@ -199,7 +199,7 @@ export function TripView({ tripId, state, stops, shipments, capacity, customers,
               <div className="help mt-1">Books every shipment with it. Then assign and send the legs from Dispatch like any order.</div>
             </>
           ) : (
-            <div className="text-[13px]">
+            <div className="text-callout">
               Assign, send and advance the trip&apos;s legs from{" "}
               <Link href="/dispatch" className="text-teal font-semibold">
                 Dispatch
@@ -210,8 +210,8 @@ export function TripView({ tripId, state, stops, shipments, capacity, customers,
         </div>
         <div className="card p-4">
           <div className="eyebrow mb-2">Cost split</div>
-          <div className="text-[12.5px] text-muted mb-2">Trip costs (unit, carriers, fuel) reach each shipment&apos;s P&amp;L by its share — weight by default (Settings → Company).</div>
-          <ul className="space-y-1 text-[12.5px]">
+          <div className="text-callout text-muted mb-2">Trip costs (unit, carriers, fuel) reach each shipment&apos;s P&amp;L by its share — weight by default (Settings → Company).</div>
+          <ul className="space-y-1 text-callout">
             {live.map((s) => (
               <li key={s.id} className="flex justify-between">
                 <span className="mono">{s.orderNumber}</span>
@@ -241,13 +241,13 @@ function Trailer({ stops, shipments, capacity }: { stops: Stop[]; shipments: Shi
       <div className="flex items-stretch h-16 rounded-lg border-2 border-line overflow-hidden bg-ground" title="Peak load, nose to tail" data-testid="trailer">
         <div className="w-3 bg-navy/80" title="nose" />
         {ordered.map((s) => (
-          <div key={s.id} className={`flex flex-col justify-center px-1.5 border-r border-white/70 text-[10.5px] leading-tight overflow-hidden ${s.hazmat ? "bg-red/20" : s.state === "exception" ? "bg-amber/30" : "bg-teal-soft"}`} style={{ width: `${Math.max(((s.linearFt ?? 0) / total) * 100, 3)}%` }} title={`${s.orderNumber} · ${s.customerName} · ${s.linearFt ?? "?"} ft · off at stop ${seqOf(s.deliveryStopId)}`}>
+          <div key={s.id} className={`flex flex-col justify-center px-1.5 border-r border-white/70 text-caption leading-tight overflow-hidden ${s.hazmat ? "bg-red/20" : s.state === "exception" ? "bg-amber/30" : "bg-teal-soft"}`} style={{ width: `${Math.max(((s.linearFt ?? 0) / total) * 100, 3)}%` }} title={`${s.orderNumber} · ${s.customerName} · ${s.linearFt ?? "?"} ft · off at stop ${seqOf(s.deliveryStopId)}`}>
             <div className="font-bold mono truncate">{s.orderNumber.slice(-5)}</div>
             <div className="truncate text-muted">{s.customerName}</div>
             <div className="text-faint">off @{seqOf(s.deliveryStopId)}</div>
           </div>
         ))}
-        <div className="flex-1 flex items-center justify-center text-[11px] text-faint">{Math.max(total - used, 0)} ft free</div>
+        <div className="flex-1 flex items-center justify-center text-caption text-faint">{Math.max(total - used, 0)} ft free</div>
       </div>
     </div>
   );
@@ -288,7 +288,7 @@ function AddShipment({ tripId, stops, customers, onClose, onDone }: { tripId: st
         <div>
           <label className="label">Rate (USD)</label>
           <input className="input" inputMode="decimal" value={f.rate} onChange={(e) => setF({ ...f, rate: e.target.value })} disabled={f.rateTbd} aria-label="Rate" />
-          <label className="flex items-center gap-2 mt-1 text-[12.5px] cursor-pointer">
+          <label className="flex items-center gap-2 mt-1 text-callout cursor-pointer">
             <input type="checkbox" className="accent-teal" checked={f.rateTbd} onChange={(e) => setF({ ...f, rateTbd: e.target.checked })} /> TBD
           </label>
         </div>
@@ -339,14 +339,14 @@ function AddShipment({ tripId, stops, customers, onClose, onDone }: { tripId: st
           <label className="label">Cube (cu ft)</label>
           <input className="input" inputMode="numeric" value={f.cubeFt} onChange={(e) => setF({ ...f, cubeFt: e.target.value })} aria-label="Cube" />
         </div>
-        <label className="flex items-center gap-2 text-[13px] cursor-pointer mt-6">
+        <label className="flex items-center gap-2 text-callout cursor-pointer mt-6">
           <input type="checkbox" className="accent-teal" checked={f.stackable} onChange={(e) => setF({ ...f, stackable: e.target.checked })} /> Stackable
         </label>
-        <label className="flex items-center gap-2 text-[13px] cursor-pointer mt-6">
+        <label className="flex items-center gap-2 text-callout cursor-pointer mt-6">
           <input type="checkbox" className="accent-teal" checked={f.hazmat} onChange={(e) => setF({ ...f, hazmat: e.target.checked })} /> Hazmat
         </label>
       </div>
-      {fit && <div className={`mt-3 text-[13px] font-semibold ${fit.ok ? "text-teal" : "text-red"}`} data-testid="fit">{fit.text}</div>}
+      {fit && <div className={`mt-3 text-callout font-semibold ${fit.ok ? "text-teal" : "text-red"}`} data-testid="fit">{fit.text}</div>}
       {err && <div className="error mt-2">{err}</div>}
     </Modal>
   );

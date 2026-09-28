@@ -84,7 +84,7 @@ test("EDI day: partner in four fields, a 204 arrives over HTTP and becomes a dra
   await expect(page.getByRole("status")).toContainText("Saved");
   await page.request.post(new URL(url).pathname, { data: tender("RC-778813", "000000124") });
   await page.goto("/dispatch");
-  await page.click("a:has-text('EDI · 1 waiting')");
+  await page.click("a:has-text('EDI'):has(.badge:has-text('1'))");
   await page.waitForURL("**/edi", { waitUntil: "commit" });
   const card = page.locator(".card", { hasText: "RC-778813" });
   await expect(card).toContainText("Laredo Yard (Laredo, TX) → Toyota San Antonio (San Antonio, TX) · $1,800.00");

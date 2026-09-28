@@ -31,11 +31,11 @@ export function MailboxCard({ partnerId, mailbox, delivery, canEdit }: { partner
         <div className="eyebrow m-0">VAN mailbox (SFTP)</div>
         {mailbox?.enabled ? <Pill tone={mailbox.lastError ? "red" : "green"}>{mailbox.lastError ? "Problem" : mailbox.lastPollAt ? `Polled ${when(mailbox.lastPollAt)}` : "On · not polled yet"}</Pill> : <Pill tone="slate">Off</Pill>}
       </div>
-      <div className="text-[12.5px] text-muted mb-3">
+      <div className="text-callout text-muted mb-3">
         Their VAN drops 204s in the inbox; we pull every five minutes and answer with a 997. {delivery === "sftp" ? "Our 214 / 210 / 990 go to the outbox." : "Outbound delivery is set to " + (delivery === "email" ? "email" : "pickup") + " — switch it to VAN mailbox above for our files to go here too."}
       </div>
-      {mailbox?.lastError && <div className="text-[12.5px] text-red font-semibold mb-2 break-words">{mailbox.lastError}</div>}
-      {mailbox?.lastPollAt && !mailbox.lastError && <div className="text-[12px] text-muted mb-2">Last poll: {mailbox.lastPulled ?? 0} pulled · {mailbox.lastPushed ?? 0} pushed</div>}
+      {mailbox?.lastError && <div className="text-callout text-red font-semibold mb-2 break-words">{mailbox.lastError}</div>}
+      {mailbox?.lastPollAt && !mailbox.lastError && <div className="text-footnote text-muted mb-2">Last poll: {mailbox.lastPulled ?? 0} pulled · {mailbox.lastPushed ?? 0} pushed</div>}
       <fieldset disabled={!canEdit || pending} className="grid grid-cols-2 gap-2">
         <div className="col-span-2">
           <label className="label">Host</label>
@@ -55,7 +55,7 @@ export function MailboxCard({ partnerId, mailbox, delivery, canEdit }: { partner
         </div>
         <div className="col-span-2">
           <label className="label">Private key (instead of a password)</label>
-          <textarea id="mb-key" className="input h-16 font-mono text-[11px]" value={f.privateKey} onChange={set("privateKey")} placeholder={mailbox?.hasPrivateKey ? "saved · leave blank to keep" : "-----BEGIN OPENSSH PRIVATE KEY-----"} />
+          <textarea id="mb-key" className="input h-16 font-mono text-caption" value={f.privateKey} onChange={set("privateKey")} placeholder={mailbox?.hasPrivateKey ? "saved · leave blank to keep" : "-----BEGIN OPENSSH PRIVATE KEY-----"} />
         </div>
         <div>
           <label className="label">Inbox (theirs → us)</label>
@@ -69,7 +69,7 @@ export function MailboxCard({ partnerId, mailbox, delivery, canEdit }: { partner
           <label className="label">File suffix</label>
           <input id="mb-ext" className="input" value={f.extension} onChange={set("extension")} placeholder=".edi" />
         </div>
-        <label className="flex items-end gap-2 pb-2 text-[13px] cursor-pointer">
+        <label className="flex items-end gap-2 pb-2 text-callout cursor-pointer">
           <input id="mb-enabled" type="checkbox" className="accent-teal" checked={f.enabled} onChange={set("enabled")} /> Enabled
         </label>
       </fieldset>

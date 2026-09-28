@@ -76,8 +76,8 @@ test("WhatsApp day: connect the number, a tender goes by WhatsApp, Meta verifies
   expect(posted.status()).toBe(200);
   expect(await posted.json()).toEqual({ statuses: 0, messages: 1, attached: 1 });
   await page.goto("/dispatch");
-  await expect(page.locator("a:has-text('Messages · 1')")).toBeVisible();
-  await page.click("a:has-text('Messages · 1')");
+  await expect(page.locator("a:has-text('Messages'):has(.badge:has-text('1'))")).toBeVisible();
+  await page.click("a:has-text('Messages'):has(.badge:has-text('1'))");
   await page.waitForURL("**/messages", { waitUntil: "commit" });
   const row = page.locator("tr", { hasText: "en el patio, cargando" });
   await expect(row).toContainText("Daniel Reyes");

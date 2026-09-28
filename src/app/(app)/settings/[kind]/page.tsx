@@ -39,7 +39,7 @@ export default async function KindListPage({ params, searchParams }: PageProps<"
       >
         {meta.blurb}. {rows.length} {showArchived ? "archived" : "active"}.
       </PageHeader>
-      <div className="px-7 pb-10">
+      <div className="px-gutter pb-10">
         <div className="flex items-center gap-2 mb-3 flex-wrap">
           <form className="flex gap-2">
             <input name="q" defaultValue={q} className="input w-64" placeholder={`Search ${meta.plural.toLowerCase()}…`} />
@@ -56,7 +56,7 @@ export default async function KindListPage({ params, searchParams }: PageProps<"
           {filtered.length === 0 ? (
             <div className="py-14 text-center">
               <div className="font-bold">{q ? "Nothing matches" : `No ${meta.plural.toLowerCase()} yet`}</div>
-              <div className="text-muted text-[13px] mt-1">{q ? "Try another search." : "Add one with the button above, or import a CSV."}</div>
+              <div className="text-muted text-callout mt-1">{q ? "Try another search." : "Add one with the button above, or import a CSV."}</div>
             </div>
           ) : (
             <table className="table">

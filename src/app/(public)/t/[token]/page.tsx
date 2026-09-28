@@ -33,17 +33,17 @@ export default async function TenderPage({ params }: PageProps<"/t/[token]">) {
     <div>
       <div className="eyebrow">{tenant?.name} · load offer</div>
       <div className="h1 mt-1">
-        {order.orderNumber} <span className="text-muted font-semibold text-[16px]">· {LEG_TYPE_LABEL[leg.type] ?? leg.type}</span>
+        {order.orderNumber} <span className="text-muted font-semibold text-headline">· {LEG_TYPE_LABEL[leg.type] ?? leg.type}</span>
       </div>
       <div className="mt-1">
         {open ? <Pill tone="teal">Open until {fmt(tender.expiresAt)}</Pill> : <Pill tone={tender.state === "accepted" ? "green" : "slate"}>{tender.state === "accepted" ? "Accepted" : tender.state === "declined" ? "Declined" : tender.state === "expired" ? "Expired" : "Withdrawn"}</Pill>}
       </div>
 
       <div className="card p-5 mt-4 space-y-4">
-        <div className="text-[28px] font-extrabold tracking-tight">{rate}</div>
+        <div className="text-title1 font-extrabold tracking-tight">{rate}</div>
         <Stop label="Pickup" name={fromName} addr={fromAddr} when={fmt(from?.windowStart) ?? "ASAP"} />
         <Stop label="Delivery" name={toName} addr={toAddr} when={to?.windowEnd ? `by ${fmt(to.windowEnd)}` : null} />
-        <div className="grid grid-cols-2 gap-3 text-[13px] pt-2 border-t border-line">
+        <div className="grid grid-cols-2 gap-3 text-callout pt-2 border-t border-line">
           <div>
             <div className="text-muted">Equipment</div>
             <div className="font-semibold capitalize">{order.equipment.replace("_", " ")}</div>
@@ -75,7 +75,7 @@ export default async function TenderPage({ params }: PageProps<"/t/[token]">) {
         ) : tender.state === "accepted" ? (
           <div>
             <div className="h2">Thank you — it&apos;s yours.</div>
-            <p className="text-muted mt-1 text-[13.5px]">
+            <p className="text-muted mt-1 text-body">
               Accepted by {tender.respondedBy} on {fmt(tender.respondedAt)}. Driver {tender.driverName}
               {tender.unitNumber ? `, unit ${tender.unitNumber}` : ""}. Dispatch will send pickup details.
             </p>
@@ -83,7 +83,7 @@ export default async function TenderPage({ params }: PageProps<"/t/[token]">) {
         ) : (
           <div>
             <div className="h2">This offer is closed.</div>
-            <p className="text-muted mt-1 text-[13.5px]">{tender.state === "expired" ? "The deadline passed. Call dispatch if you can still cover it." : tender.state === "declined" ? `Declined by ${tender.respondedBy}.` : "Dispatch withdrew it."}</p>
+            <p className="text-muted mt-1 text-body">{tender.state === "expired" ? "The deadline passed. Call dispatch if you can still cover it." : tender.state === "declined" ? `Declined by ${tender.respondedBy}.` : "Dispatch withdrew it."}</p>
           </div>
         )}
       </div>
@@ -94,11 +94,11 @@ export default async function TenderPage({ params }: PageProps<"/t/[token]">) {
 function Stop({ label, name, addr, when }: { label: string; name: string; addr: string; when: string | null }) {
   return (
     <div className="flex gap-3">
-      <div className="w-16 text-[11px] font-bold tracking-wider uppercase text-faint pt-1">{label}</div>
+      <div className="w-16 text-caption font-bold text-faint pt-1">{label}</div>
       <div>
         <div className="font-bold">{name}</div>
-        {addr && <div className="text-muted text-[13px]">{addr}</div>}
-        {when && <div className="text-[13px] font-semibold text-teal">{when}</div>}
+        {addr && <div className="text-muted text-callout">{addr}</div>}
+        {when && <div className="text-callout font-semibold text-teal">{when}</div>}
       </div>
     </div>
   );

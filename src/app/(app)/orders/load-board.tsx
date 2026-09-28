@@ -176,7 +176,7 @@ export function LoadBoard({ rows, views, role }: { rows: LoadRow[]; views: GridV
         empty={
           <div>
             <div className="font-bold">No loads yet</div>
-            <div className="text-muted text-[13px] mt-1">
+            <div className="text-muted text-callout mt-1">
               <Link href="/orders/new" className="text-teal font-semibold">
                 Build the first one
               </Link>{" "}
@@ -191,7 +191,7 @@ export function LoadBoard({ rows, views, role }: { rows: LoadRow[]; views: GridV
                 return (
                   <button
                     type="button"
-                    className="font-semibold text-[12.5px] hover:underline disabled:opacity-40"
+                    className="font-semibold text-callout hover:underline disabled:opacity-40"
                     disabled={!drafts.length || pending}
                     onClick={() =>
                       start(async () => {

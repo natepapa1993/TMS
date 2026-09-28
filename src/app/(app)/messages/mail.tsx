@@ -56,14 +56,14 @@ export function MailCards({ rows, customers, canAct }: { rows: Row[]; customers:
     <div className="mb-6" data-testid="mail-cards">
       <div className="flex items-center justify-between mb-2">
         <div className="h2">
-          Email <span className="text-muted font-normal text-[13px]">· {rows.filter((r) => r.state === "proposed").length} waiting for a tap</span>
+          Email <span className="text-muted font-normal text-callout">· {rows.filter((r) => r.state === "proposed").length} waiting for a tap</span>
         </div>
-        <label className="flex items-center gap-2 text-[13px] cursor-pointer">
+        <label className="flex items-center gap-2 text-callout cursor-pointer">
           <input type="checkbox" className="accent-teal" checked={showAll} onChange={(e) => setShowAll(e.target.checked)} /> Show handled
         </label>
       </div>
       {shown.length === 0 ? (
-        <div className="card p-5 text-[13px] text-muted">
+        <div className="card p-5 text-callout text-muted">
           {rows.length ? "Nothing waiting." : "Nothing yet. Connect the dispatch mailbox (or forward it to the inbound URL) under Settings → Integrations and every email becomes a card here: what it is, what it says, what the agent will do — on your tap."}
         </div>
       ) : (
@@ -74,26 +74,26 @@ export function MailCards({ rows, customers, canAct }: { rows: Row[]; customers:
                 <div className="min-w-0">
                   <div className="flex items-center gap-2 flex-wrap">
                     <Pill tone={TONE[r.kind]}>{KIND[r.kind]}</Pill>
-                    <span className="text-[12px] text-faint" title={`${r.classifier} · ${r.confidence}% sure`}>
+                    <span className="text-footnote text-faint" title={`${r.classifier} · ${r.confidence}% sure`}>
                       {r.confidence}%{r.classifier === "rules" ? " · rules" : ""}
                     </span>
                     {r.orderId && (
-                      <Link href={`/orders/${r.orderId}`} className="font-bold mono text-teal text-[13px]">
+                      <Link href={`/orders/${r.orderId}`} className="font-bold mono text-teal text-callout">
                         {"orderNumber" in r.proposal ? r.proposal.orderNumber : "order"}
                       </Link>
                     )}
                     {r.state !== "proposed" && <Pill tone={r.state === "executed" ? "green" : r.state === "failed" ? "red" : "slate"}>{r.state}</Pill>}
                   </div>
-                  <div className="font-bold text-[14px] mt-1 truncate">{r.subject || "(no subject)"}</div>
-                  <div className="text-[12.5px] text-muted">
+                  <div className="font-bold text-body mt-1 truncate">{r.subject || "(no subject)"}</div>
+                  <div className="text-callout text-muted">
                     {r.fromName ? `${r.fromName} · ` : ""}
                     {r.from} · {when(r.receivedAt)}
                     {r.attachments.length ? ` · ${r.attachments.map((a) => a.fileName).join(", ")}` : ""}
                   </div>
-                  <div className="text-[13px] mt-1.5">
+                  <div className="text-callout mt-1.5">
                     <span className="font-semibold">{ACTION[r.proposal.action]}:</span> {r.proposal.summary}
                   </div>
-                  {r.result && <div className={`text-[12.5px] mt-1 ${r.state === "failed" ? "text-red" : "text-muted"}`}>{r.result}</div>}
+                  {r.result && <div className={`text-callout mt-1 ${r.state === "failed" ? "text-red" : "text-muted"}`}>{r.result}</div>}
                 </div>
                 <div className="flex gap-1.5 shrink-0">
                   <button className="btn btn-sm" onClick={() => openCard(r)}>
@@ -145,7 +145,7 @@ export function MailCards({ rows, customers, canAct }: { rows: Row[]; customers:
         }
       >
         {open && (
-          <div className="space-y-3 text-[13px]">
+          <div className="space-y-3 text-callout">
             <div className="rounded-lg border border-line p-3">
               <div className="eyebrow mb-1">What it will do</div>
               <div>{open.proposal.summary}</div>
@@ -167,7 +167,7 @@ export function MailCards({ rows, customers, canAct }: { rows: Row[]; customers:
                     <label className="label">Rate (blank = TBD)</label>
                     <input className="input" value={edit.rate} onChange={(e) => setEdit({ ...edit, rate: e.target.value })} aria-label="Rate" />
                   </div>
-                  <div className="col-span-2 text-muted text-[12.5px]">
+                  <div className="col-span-2 text-muted text-callout">
                     {open.proposal.stops.map((st) => `${st.name} (${st.country})`).join(" → ")}
                     {open.proposal.equipment ? ` · ${open.proposal.equipment.replace("_", " ")}` : ""}
                     {Object.entries(open.proposal.refs).map(([k, v]) => ` · ${k.toUpperCase()} ${v}`)}
@@ -209,7 +209,7 @@ export function MailCards({ rows, customers, canAct }: { rows: Row[]; customers:
                 The email · {open.fromName ? `${open.fromName} · ` : ""}
                 {open.from} · {when(open.receivedAt)}
               </div>
-              <pre className="whitespace-pre-wrap text-[12.5px] bg-ground rounded-lg p-3 max-h-64 overflow-y-auto font-sans">{open.text || "(no text)"}</pre>
+              <pre className="whitespace-pre-wrap text-callout bg-ground rounded-lg p-3 max-h-64 overflow-y-auto font-sans">{open.text || "(no text)"}</pre>
               {open.attachments.length > 0 && (
                 <div className="flex gap-1.5 mt-2 flex-wrap">
                   {open.attachments.map((a) => (

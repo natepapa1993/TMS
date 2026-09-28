@@ -56,7 +56,7 @@ export default async function CrossingPage({ params }: PageProps<"/crossing/[id]
         {p.truck ? ` · unit ${p.truck.unitNumber} (${p.truck.mxPlateClass ?? "no MX"} plates)` : " · no crossing truck yet"}
         {p.driver ? ` · ${p.driver.name}${p.coDriver ? ` / ${p.coDriver.name}` : ""}` : ""}
       </PageHeader>
-      <div className="px-7 pb-10">
+      <div className="px-gutter pb-10">
         <CrossingWorkbench
           data={JSON.parse(
             JSON.stringify({

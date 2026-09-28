@@ -51,7 +51,7 @@ export function FleetBoard({ units, drivers }: { units: Unit[]; drivers: Driver[
         {shown.length === 0 ? (
           <div className="py-14 text-center">
             <div className="font-bold">{units.length ? "Nothing here" : "No trucks yet"}</div>
-            <div className="text-muted text-[13px] mt-1">{units.length ? "" : "Add a truck: unit number and plates are enough to start."}</div>
+            <div className="text-muted text-callout mt-1">{units.length ? "" : "Add a truck: unit number and plates are enough to start."}</div>
           </div>
         ) : (
           <table className="table">
@@ -72,9 +72,9 @@ export function FleetBoard({ units, drivers }: { units: Unit[]; drivers: Driver[
                     <Link href={`/settings/trucks/${u.id}`} className="font-extrabold mono hover:text-teal">
                       {u.unitNumber}
                     </Link>
-                    <div className="text-muted text-[12px] capitalize">{u.equipmentType.replace("_", " ")}</div>
+                    <div className="text-muted text-footnote capitalize">{u.equipmentType.replace("_", " ")}</div>
                   </td>
-                  <td className="text-[12.5px]">
+                  <td className="text-callout">
                     <div>
                       <span className="text-faint">US</span> {u.usPlate ?? "—"} {expired(u.usPlateExpires) ? <Pill tone="red">expired</Pill> : soon(u.usPlateExpires) ? <Pill tone="amber">renew</Pill> : null}
                     </div>
@@ -85,12 +85,12 @@ export function FleetBoard({ units, drivers }: { units: Unit[]; drivers: Driver[
                   <td>
                     {u.drivers.length ? (
                       u.drivers.map((d) => (
-                        <div key={d.id} className="text-[13px]">
+                        <div key={d.id} className="text-callout">
                           <Link href={`/settings/drivers/${d.id}`} className="font-semibold hover:text-teal">
                             {d.name}
                           </Link>{" "}
                           <span className="text-faint">{d.driverType}</span>
-                          <button className="btn btn-ghost btn-sm ml-1 text-teal" onClick={() => appLink(d.id)} title="Copy this driver's app link">
+                          <button className="btn btn-plain btn-sm ml-1" onClick={() => appLink(d.id)} title="Copy this driver's app link">
                             {copied === d.id ? "Copied" : "App link"}
                           </button>
                         </div>
@@ -98,11 +98,11 @@ export function FleetBoard({ units, drivers }: { units: Unit[]; drivers: Driver[
                     ) : (
                       <span className="text-faint">no driver</span>
                     )}
-                    <button className="btn btn-ghost btn-sm -ml-2 mt-0.5 text-teal" onClick={() => setAssign(u)}>
+                    <button className="btn btn-plain btn-sm -ml-2 mt-0.5" onClick={() => setAssign(u)}>
                       {u.drivers.length ? "Change" : "Add driver"}
                     </button>
                   </td>
-                  <td className="text-[12.5px]">
+                  <td className="text-callout">
                     {u.loads.length ? (
                       u.loads.map((l) => (
                         <div key={l.orderId}>
@@ -120,7 +120,7 @@ export function FleetBoard({ units, drivers }: { units: Unit[]; drivers: Driver[
                     {u.status === "oos" ? (
                       <div>
                         <Pill tone="red">OOS</Pill>
-                        <div className="text-[12px] text-muted mt-0.5">{u.oosReason}</div>
+                        <div className="text-footnote text-muted mt-0.5">{u.oosReason}</div>
                       </div>
                     ) : expired(u.dotInspectionExpires) ? (
                       <Pill tone="amber" title="Annual inspection expired">
@@ -136,7 +136,7 @@ export function FleetBoard({ units, drivers }: { units: Unit[]; drivers: Driver[
                         Back in service
                       </button>
                     ) : (
-                      <button className="btn btn-sm btn-danger" onClick={() => setOos(u)}>
+                      <button className="btn btn-sm btn-plain text-muted hover:text-red" onClick={() => setOos(u)} title="Take the unit out of service">
                         Unit OOS
                       </button>
                     )}
@@ -210,7 +210,7 @@ function AssignDriver({ unit, drivers, onClose, onDone, onErr }: { unit: Unit; d
         </>
       }
     >
-      <div className="text-[13px] text-muted mb-2">Pick one driver, or two for a team. A driver moves off their old unit.</div>
+      <div className="text-callout text-muted mb-2">Pick one driver, or two for a team. A driver moves off their old unit.</div>
       <div className="max-h-80 overflow-auto -mx-1">
         {drivers.map((d) => {
           const on = sel.includes(d.id);
@@ -218,13 +218,13 @@ function AssignDriver({ unit, drivers, onClose, onDone, onErr }: { unit: Unit; d
             <label key={d.id} className={`flex items-center gap-3 px-3 py-2 rounded-lg cursor-pointer ${on ? "bg-teal-soft" : "hover:bg-ground"}`}>
               <input type="checkbox" className="accent-teal" checked={on} onChange={() => toggle(d.id)} />
               <span className="font-semibold">{d.name}</span>
-              <span className="text-faint text-[12px]">{d.driverType}</span>
-              {d.currentTruckId && d.currentTruckId !== unit.id && <span className="ml-auto text-[12px] text-muted">on another unit</span>}
+              <span className="text-faint text-footnote">{d.driverType}</span>
+              {d.currentTruckId && d.currentTruckId !== unit.id && <span className="ml-auto text-footnote text-muted">on another unit</span>}
             </label>
           );
         })}
         {drivers.length === 0 && (
-          <div className="text-muted text-[13px] px-3 py-4">
+          <div className="text-muted text-callout px-3 py-4">
             No drivers yet.{" "}
             <Link href="/settings/drivers?add=1" className="text-teal font-semibold">
               Add one

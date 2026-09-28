@@ -74,26 +74,26 @@ export function BillingRun({ orderIds, onClose, onDone }: { orderIds: string[]; 
               {plan.invoices.map((i) => (
                 <tr key={i.key} data-testid="batch-invoice">
                   <td className="font-semibold">{i.customerName}</td>
-                  <td className="mono text-[12.5px]">{i.orderNumbers.join(", ")}</td>
-                  <td>{i.mode === "summary" && i.orderIds.length > 1 ? <Pill tone="blue">Summary · {i.orderIds.length} loads</Pill> : <span className="text-muted text-[12.5px]">Per load</span>}</td>
-                  <td className="text-[12.5px]">
+                  <td className="mono text-callout">{i.orderNumbers.join(", ")}</td>
+                  <td>{i.mode === "summary" && i.orderIds.length > 1 ? <Pill tone="blue">Summary · {i.orderIds.length} loads</Pill> : <span className="text-muted text-callout">Per load</span>}</td>
+                  <td className="text-callout">
                     {METHOD[i.method]}
                     {i.sendTo && <div className="text-faint">{i.sendTo}</div>}
-                    {!i.sendTo && (i.method === "email" || i.method === "factor") && <div className="text-red text-[12px]">no address on file</div>}
+                    {!i.sendTo && (i.method === "email" || i.method === "factor") && <div className="text-red text-footnote">no address on file</div>}
                   </td>
                   <td className="mono font-semibold text-right">{formatCents(i.totalCents, i.currency)}</td>
                 </tr>
               ))}
             </tbody>
           </table>
-          <div className="flex justify-between text-[13px]">
+          <div className="flex justify-between text-callout">
             <span className="text-muted">
               {plan.invoices.length} invoice{plan.invoices.length === 1 ? "" : "s"} from {orderIds.length - plan.skipped.length} load{orderIds.length - plan.skipped.length === 1 ? "" : "s"}
             </span>
             <span className="font-bold">{[...totals].map(([c, v]) => formatCents(v, c)).join(" + ")}</span>
           </div>
           {!!plan.skipped.length && (
-            <div className="rounded-md bg-amber/10 p-3 text-[13px]">
+            <div className="rounded-md bg-amber/10 p-3 text-callout">
               <div className="font-semibold mb-1">Left out</div>
               {plan.skipped.map((x) => (
                 <div key={x.orderId}>
@@ -102,7 +102,7 @@ export function BillingRun({ orderIds, onClose, onDone }: { orderIds: string[]; 
               ))}
             </div>
           )}
-          <div className="flex flex-wrap gap-5 text-[13.5px]">
+          <div className="flex flex-wrap gap-5 text-body">
             <label className="flex items-center gap-2">
               <input type="checkbox" className="accent-teal w-4 h-4" checked={opts.issue} onChange={(e) => setOpts({ ...opts, issue: e.target.checked, send: e.target.checked && opts.send })} /> Issue now (numbers them, locks them)
             </label>
@@ -136,13 +136,13 @@ export function BillingRun({ orderIds, onClose, onDone }: { orderIds: string[]; 
                   <td>
                     <Pill tone={!r.ok ? "red" : r.state === "sent" ? "teal" : r.state === "issued" ? "blue" : "slate"}>{r.ok ? r.state : "failed"}</Pill>
                   </td>
-                  <td className="text-[12.5px] text-muted">{r.note ?? (r.state === "sent" ? METHOD[r.method] : "")}</td>
+                  <td className="text-callout text-muted">{r.note ?? (r.state === "sent" ? METHOD[r.method] : "")}</td>
                 </tr>
               ))}
             </tbody>
           </table>
           {result.schedule && (
-            <div className="text-[13px]">
+            <div className="text-callout">
               Schedule #{result.schedule.number} with {result.schedule.count} invoice{result.schedule.count === 1 ? "" : "s"} sent to the factor.{" "}
               <a className="text-teal font-semibold" href={`/api/invoice-batches/${result.schedule.id}`} target="_blank" rel="noreferrer">
                 Open the schedule

@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { shortDate } from "@/lib/time";
 import { requireCtx } from "@/lib/auth";
 import { listInvoices, type InvoiceFilter } from "@/domain/billing";
 import { list } from "@/data/records";
@@ -38,7 +39,7 @@ export default async function InvoicesPage({ searchParams }: PageProps<"/billing
         Numbers come from the billing entity and are never reused. An issued invoice is a locked snapshot.
       </PageHeader>
       <BillingNav />
-      <div className="px-7 pb-10">
+      <div className="px-gutter pb-10">
         {factors.map((e) => (
           <ToFactor
             key={String(e.id)}
@@ -101,17 +102,17 @@ export default async function InvoicesPage({ searchParams }: PageProps<"/billing
             ["unsent", "Issued, not sent"],
             ["factored", "Factored"],
           ].map(([v, l]) => (
-            <Link key={v} href={`/billing/invoices${qs({ view: v, state: "" })}`} className="stage-tab h-8 text-[12.5px]" data-active={!state && (f.view ?? "") === v}>
+            <Link key={v} href={`/billing/invoices${qs({ view: v, state: "" })}`} className="stage-tab h-8 text-callout" data-active={!state && (f.view ?? "") === v}>
               {l}
             </Link>
           ))}
           <span className="mx-2 text-faint">|</span>
           {["draft", "issued", "sent", "partially_paid", "paid", "disputed", "void"].map((st) => (
-            <Link key={st} href={`/billing/invoices${qs({ state: state === st ? "" : st, view: "" })}`} className="stage-tab h-8 text-[12.5px]" data-active={state === st}>
+            <Link key={st} href={`/billing/invoices${qs({ state: state === st ? "" : st, view: "" })}`} className="stage-tab h-8 text-callout" data-active={state === st}>
               {st.replace("_", " ")}
             </Link>
           ))}
-          <span className="ml-auto text-[12.5px] text-muted" data-testid="invoice-count">
+          <span className="ml-auto text-callout text-muted" data-testid="invoice-count">
             {rows.length} invoice{rows.length === 1 ? "" : "s"}
             {openSum ? ` · ${formatCents(openSum)} open` : ""}
           </span>
@@ -140,12 +141,12 @@ export default async function InvoicesPage({ searchParams }: PageProps<"/billing
                       <Link href={`/billing/invoices/${i.id}`} className="hover:text-teal">
                         {i.number ?? "draft"}
                       </Link>
-                      {i.kind !== "standard" && <div className="text-[11px] font-semibold text-muted font-sans">{i.kind}</div>}
+                      {i.kind !== "standard" && <div className="text-caption font-semibold text-muted font-sans">{i.kind}</div>}
                     </td>
                     <td>{cn.get(i.customerId)}</td>
-                    <td className="text-muted text-[12.5px]">{i.orderIds.length}</td>
-                    <td className="text-[12.5px]">{i.issuedAt ? i.issuedAt.toISOString().slice(0, 10) : "—"}</td>
-                    <td className={`text-[12.5px] ${i.dueAt && i.dueAt < new Date() && !["paid", "void"].includes(i.state) ? "text-red font-semibold" : ""}`}>{i.dueAt ? i.dueAt.toISOString().slice(0, 10) : "—"}</td>
+                    <td className="text-muted text-callout">{i.orderIds.length}</td>
+                    <td className="text-callout">{i.issuedAt ? shortDate(i.issuedAt) : "—"}</td>
+                    <td className={`text-callout ${i.dueAt && i.dueAt < new Date() && !["paid", "void"].includes(i.state) ? "text-red font-semibold" : ""}`}>{i.dueAt ? shortDate(i.dueAt) : "—"}</td>
                     <td className="mono">{formatCents(i.totalCents, i.currency)}</td>
                     <td className="mono font-semibold">{["paid", "void"].includes(i.state) ? "—" : formatCents(i.totalCents - i.creditedCents - i.paidCents, i.currency)}</td>
                     <td>

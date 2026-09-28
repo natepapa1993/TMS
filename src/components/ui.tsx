@@ -1,11 +1,13 @@
 "use client";
 
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useId, useState, type ReactNode } from "react";
+import { MoreHorizontal, X } from "lucide-react";
 import { createPortal } from "react-dom";
 
 /** Small, dependency-free primitives. Everything the screens need to feel like one product. */
 
 export function Modal({ open, onClose, title, children, wide, footer }: { open: boolean; onClose: () => void; title: ReactNode; children: ReactNode; wide?: boolean; footer?: ReactNode }) {
+  const titleId = useId();
   useEffect(() => {
     if (!open) return;
     const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
@@ -15,15 +17,17 @@ export function Modal({ open, onClose, title, children, wide, footer }: { open: 
   if (!open || typeof document === "undefined") return null;
   return createPortal(
     <div className="overlay" onMouseDown={(e) => e.target === e.currentTarget && onClose()} role="presentation">
-      <div className={`modal ${wide ? "modal-wide" : ""}`} role="dialog" aria-modal="true" aria-label={typeof title === "string" ? title : undefined}>
-        <div className="flex items-center justify-between px-5 pt-4 pb-3 border-b border-line">
-          <div className="h2">{title}</div>
-          <button className="btn btn-ghost btn-sm" onClick={onClose} aria-label="Close">
-            ✕
+      <div className={`modal ${wide ? "modal-wide" : ""}`} role="dialog" aria-modal="true" aria-label={typeof title === "string" ? title : undefined} aria-labelledby={typeof title === "string" ? undefined : titleId}>
+        <div className="modal-head">
+          <div className="h2" id={titleId}>
+            {title}
+          </div>
+          <button className="modal-close shrink-0" onClick={onClose} aria-label="Close">
+            <X size={18} aria-hidden />
           </button>
         </div>
-        <div className="px-5 py-4">{children}</div>
-        {footer && <div className="px-5 py-3 border-t border-line flex justify-end gap-2">{footer}</div>}
+        <div className="modal-body">{children}</div>
+        {footer && <div className="modal-foot">{footer}</div>}
       </div>
     </div>,
     document.body,
@@ -38,12 +42,13 @@ export function Pill({ tone = "slate", children, title }: { tone?: "slate" | "te
   );
 }
 
-export function Empty({ title, hint, action }: { title: string; hint?: string; action?: ReactNode }) {
+export function Empty({ title, hint, action, icon }: { title: string; hint?: string; action?: ReactNode; icon?: ReactNode }) {
   return (
-    <div className="py-14 text-center">
-      <div className="font-bold text-ink">{title}</div>
-      {hint && <div className="text-muted mt-1 text-[13px]">{hint}</div>}
-      {action && <div className="mt-4 flex justify-center">{action}</div>}
+    <div className="empty">
+      {icon && <div className="empty-icon">{icon}</div>}
+      <div className="empty-title">{title}</div>
+      {hint && <div className="empty-hint">{hint}</div>}
+      {action && <div className="mt-5 flex justify-center">{action}</div>}
     </div>
   );
 }
@@ -56,7 +61,7 @@ export function Toast({ message, tone = "ok", onDone }: { message: string | null
   }, [message, tone, onDone]);
   if (!message) return null;
   return (
-    <div className={`fixed bottom-5 left-1/2 -translate-x-1/2 z-[60] px-4 py-2.5 rounded-lg shadow-lg text-[13px] font-semibold ${tone === "err" ? "bg-red text-white" : "bg-navy text-white"}`} role="status">
+    <div className={`toast ${tone === "err" ? "toast-err" : ""}`} role="status">
       {message}
     </div>
   );
@@ -91,7 +96,7 @@ export function Confirm({ open, onClose, onConfirm, title, body, confirmLabel = 
             Cancel
           </button>
           <button
-            className={`btn ${danger ? "btn-danger" : "btn-primary"}`}
+            className={`btn ${danger ? "btn-danger-fill" : "btn-primary"}`}
             disabled={busy || (!!needReason && !reason.trim())}
             onClick={async () => {
               setBusy(true);
@@ -108,11 +113,11 @@ export function Confirm({ open, onClose, onConfirm, title, body, confirmLabel = 
         </>
       }
     >
-      {body && <div className="text-[13.5px] text-muted mb-3">{body}</div>}
+      {body && <div className="text-body text-muted mb-3">{body}</div>}
       {needReason && (
         <div>
           <label className="label">{needReason}</label>
-          <input className="input" autoFocus value={reason} onChange={(e) => setReason(e.target.value)} onKeyDown={(e) => e.key === "Enter" && reason.trim() && onConfirm(reason.trim())} />
+          <input className="input w-full" autoFocus value={reason} onChange={(e) => setReason(e.target.value)} onKeyDown={(e) => e.key === "Enter" && reason.trim() && onConfirm(reason.trim())} />
         </div>
       )}
     </Modal>
@@ -120,14 +125,52 @@ export function Confirm({ open, onClose, onConfirm, title, body, confirmLabel = 
 }
 
 export function Spinner() {
-  return <span className="inline-block w-3.5 h-3.5 border-2 border-line border-t-teal rounded-full animate-spin align-middle" aria-hidden />;
+  return <span className="inline-block w-4 h-4 border-2 border-line border-t-teal rounded-full animate-spin align-middle" aria-hidden />;
 }
 
 export function KV({ k, v }: { k: string; v: ReactNode }) {
   return (
-    <div className="flex justify-between gap-4 py-1.5 text-[13px]">
+    <div className="flex justify-between gap-4 py-1.5 text-callout">
       <span className="text-muted">{k}</span>
       <span className="font-semibold text-right">{v || <span className="text-faint">—</span>}</span>
+    </div>
+  );
+}
+
+/** Apple-style segmented control for switching views or filters (links or buttons as children get the look). */
+export function Segmented({ children, label, className = "" }: { children: ReactNode; label?: string; className?: string }) {
+  return (
+    <div className={`segmented ${className}`} role="group" aria-label={label}>
+      {children}
+    </div>
+  );
+}
+
+/** "•••" menu for secondary actions: keeps one obvious primary on screen and the rest a tap away. */
+export function MoreMenu({ children, label = "More actions" }: { children: ReactNode; label?: string }) {
+  const [open, setOpen] = useState(false);
+  useEffect(() => {
+    if (!open) return;
+    const close = (e: MouseEvent | KeyboardEvent) => {
+      if (e instanceof KeyboardEvent ? e.key === "Escape" : !(e.target as HTMLElement).closest?.("[data-more-menu]")) setOpen(false);
+    };
+    window.addEventListener("mousedown", close);
+    window.addEventListener("keydown", close);
+    return () => {
+      window.removeEventListener("mousedown", close);
+      window.removeEventListener("keydown", close);
+    };
+  }, [open]);
+  return (
+    <div className="relative" data-more-menu>
+      <button className="btn btn-icon" aria-label={label} aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen((o) => !o)}>
+        <MoreHorizontal size={20} aria-hidden />
+      </button>
+      {open && (
+        <div className="menu absolute right-0 top-[calc(100%+6px)] z-40 min-w-[220px]" role="menu" onClick={() => setOpen(false)}>
+          {children}
+        </div>
+      )}
     </div>
   );
 }

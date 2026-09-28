@@ -28,25 +28,25 @@ export default async function InspectionsPage() {
         Every inspection with its violations, the BASICs they fall in, out-of-service rates by country, and who picks up the points. The measures follow FMCSA&rsquo;s SMS method (24 months, time-weighted, severity-weighted) on your US inspections; your official percentiles need the national peer group — check them on the FMCSA SMS site.
       </PageHeader>
       <SafetyNav role={ctx.role} />
-      <div className="px-7 pb-10 space-y-5">
+      <div className="px-gutter pb-10 space-y-5">
         <section data-testid="basics">
           <div className="grid sm:grid-cols-2 xl:grid-cols-4 gap-3">
             {b.measures.map((m) => (
               <div key={m.key} className="card p-4">
                 <div className="eyebrow">{m.label}</div>
                 <div className="flex items-baseline gap-2 mt-1">
-                  <div className={`text-[24px] font-extrabold ${m.measure ? "text-ink" : "text-faint"}`}>{m.measure.toFixed(2)}</div>
-                  <div className="text-[12px] text-muted">measure</div>
+                  <div className={`text-title2 font-extrabold ${m.measure ? "text-ink" : "text-faint"}`}>{m.measure.toFixed(2)}</div>
+                  <div className="text-footnote text-muted">measure</div>
                 </div>
                 <div className="h-1.5 rounded bg-ground mt-2 overflow-hidden">
                   <div className="h-full bg-amber" style={{ width: `${(m.measure / maxMeasure) * 100}%` }} />
                 </div>
-                <div className="text-[12px] text-muted mt-2">
+                <div className="text-footnote text-muted mt-2">
                   {m.key === "crash" ? `${m.inspections} recordable crash${m.inspections === 1 ? "" : "es"} · per ${b.powerUnits} power unit${b.powerUnits === 1 ? "" : "s"}` : `${m.withViolations} of ${m.inspections} relevant inspections with violations${m.oos ? ` · ${m.oos} OOS` : ""}`}
                 </div>
               </div>
             ))}
-            <div className="card p-4 text-[12px] text-muted">
+            <div className="card p-4 text-footnote text-muted">
               <div className="eyebrow mb-1">How it&rsquo;s counted</div>
               Severity per inspection per BASIC = the violation weights, +2 each when out of service, capped at 30; × 3 (last 6 months), 2 (6–12) or 1 (12–24); ÷ time-weighted relevant inspections, or ÷ power units for Unsafe Driving and Crash. Crashes you marked not preventable are left out.
             </div>
@@ -73,10 +73,10 @@ export default async function InspectionsPage() {
                     <td>{o.inspections}</td>
                     <td>{o.clean}</td>
                     <td>
-                      {pct(o.driver.rate)} <span className="text-faint text-[12px]">({o.driver.oos}/{o.driver.inspections})</span>
+                      {pct(o.driver.rate)} <span className="text-faint text-footnote">({o.driver.oos}/{o.driver.inspections})</span>
                     </td>
                     <td>
-                      {pct(o.vehicle.rate)} <span className="text-faint text-[12px]">({o.vehicle.oos}/{o.vehicle.inspections})</span>
+                      {pct(o.vehicle.rate)} <span className="text-faint text-footnote">({o.vehicle.oos}/{o.vehicle.inspections})</span>
                     </td>
                   </tr>
                 ))}
@@ -86,7 +86,7 @@ export default async function InspectionsPage() {
           <section className="card overflow-auto" data-testid="driver-points">
             <div className="px-5 py-4 border-b border-line h2">Drivers by points · 24 months</div>
             {b.drivers.length === 0 ? (
-              <div className="px-5 py-6 text-muted text-[13px]">No driver inspections yet.</div>
+              <div className="px-5 py-6 text-muted text-callout">No driver inspections yet.</div>
             ) : (
               <table className="table">
                 <thead>
@@ -123,7 +123,7 @@ export default async function InspectionsPage() {
           {b.list.length === 0 ? (
             <div className="py-12 text-center">
               <div className="font-bold">No inspections logged</div>
-              <div className="text-muted text-[13px] mt-1">Log each one the day it happens — clean ones too: they bring the measures down.</div>
+              <div className="text-muted text-callout mt-1">Log each one the day it happens — clean ones too: they bring the measures down.</div>
             </div>
           ) : (
             <table className="table" data-testid="inspections-table">
@@ -144,7 +144,7 @@ export default async function InspectionsPage() {
                     <td className="whitespace-nowrap">
                       {i.jurisdiction ?? i.country} · L{i.level}
                       {i.hazmat ? " · HM" : ""}
-                      <div className="text-[12px] text-muted">{i.reportNumber ?? ""}</div>
+                      <div className="text-footnote text-muted">{i.reportNumber ?? ""}</div>
                     </td>
                     <td>
                       {i.driverId ? (
@@ -159,7 +159,7 @@ export default async function InspectionsPage() {
                       {i.violations.length === 0 ? (
                         <span className="pill pill-green">clean</span>
                       ) : (
-                        <ul className="text-[12.5px] space-y-0.5">
+                        <ul className="text-callout space-y-0.5">
                           {i.violations.map((v, k) => (
                             <li key={k} className={v.removed ? "line-through text-faint" : ""}>
                               <span className="mono">{v.code}</span> {v.description} <span className="text-muted">· {BASICS.find((x) => x.key === v.basic)?.label} · wt {v.severity}</span> {v.oos && <span className="pill pill-red">OOS</span>}

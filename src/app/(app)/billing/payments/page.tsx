@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { shortDate } from "@/lib/time";
 import { requireCtx } from "@/lib/auth";
 import { listPayments, openItems } from "@/domain/cash";
 import { list } from "@/data/records";
@@ -26,11 +27,11 @@ export default async function PaymentsPage({ searchParams }: PageProps<"/billing
         Each check or ACH as it came in, the invoices it paid, and what&rsquo;s left on account. {onAccount ? <b>{formatCents(onAccount)} on account.</b> : null}
       </PageHeader>
       <BillingNav />
-      <div className="px-7 pb-10">
+      <div className="px-gutter pb-10">
         {pays.length === 0 ? (
           <div className="card py-14 text-center">
             <div className="font-bold">No payments recorded</div>
-            <div className="text-muted text-[13px] mt-1">Record a check or ACH once and split it over the invoices it pays.</div>
+            <div className="text-muted text-callout mt-1">Record a check or ACH once and split it over the invoices it pays.</div>
           </div>
         ) : (
           <div className="card overflow-auto">
@@ -48,7 +49,7 @@ export default async function PaymentsPage({ searchParams }: PageProps<"/billing
               <tbody>
                 {pays.map((p) => (
                   <tr key={p.id}>
-                    <td className="whitespace-nowrap">{p.receivedAt.toISOString().slice(0, 10)}</td>
+                    <td className="whitespace-nowrap">{shortDate(p.receivedAt)}</td>
                     <td>
                       <Link href={`/billing/payments?customer=${p.customerId}`} className="font-semibold hover:text-teal">
                         {p.customer}
@@ -59,7 +60,7 @@ export default async function PaymentsPage({ searchParams }: PageProps<"/billing
                       {p.reference ? <span className="mono text-muted"> · {p.reference}</span> : null}
                     </td>
                     <td className="mono font-semibold">{formatCents(p.amountCents, p.currency)}</td>
-                    <td className="text-[12.5px]">
+                    <td className="text-callout">
                       {p.applications.map((a) => (
                         <div key={a.invoiceId}>
                           <Link href={`/billing/invoices/${a.invoiceId}`} className="mono text-teal">

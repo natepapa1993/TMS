@@ -14,8 +14,8 @@ export default async function ImportPage() {
         </Link>{" "}
         / Import
       </div>
-      <h1 className="text-[24px] font-extrabold tracking-tight">Import loads</h1>
-      <div className="text-muted text-[13px] mt-0.5 mb-6">An Excel (.xlsx) or CSV sheet: one row per load with pickup and delivery columns, or one row per stop with a Load column to group them. You see every load and what is wrong with it before anything is created.</div>
+      <h1 className="text-title2 font-extrabold tracking-tight">Import loads</h1>
+      <div className="text-muted text-callout mt-0.5 mb-6">An Excel (.xlsx) or CSV sheet: one row per load with pickup and delivery columns, or one row per stop with a Load column to group them. You see every load and what is wrong with it before anything is created.</div>
       <ImportLoads />
     </div>
   );

@@ -37,8 +37,8 @@ export function InvoiceActions({ inv, role }: { inv: Inv; role: string }) {
   return (
     <aside className="card p-4 space-y-2 sticky top-5">
       <div className="eyebrow mb-1">Actions</div>
-      {s === "paid" && <div className="text-[13px] text-muted">Paid in full. Nothing left to do here.</div>}
-      {s === "void" && <div className="text-[13px] text-muted">Voided. It stays for the record; nothing can be done to it.</div>}
+      {s === "paid" && <div className="text-callout text-muted">Paid in full. Nothing left to do here.</div>}
+      {s === "void" && <div className="text-callout text-muted">Voided. It stays for the record; nothing can be done to it.</div>}
       {s === "draft" && (
         <button className="btn btn-primary w-full justify-center" disabled={pending} onClick={() => (inv.currency === "MXN" ? openPopup("issue") : run("Issued", () => issueInvoiceAction(inv.id)))}>
           Issue invoice
@@ -69,7 +69,7 @@ export function InvoiceActions({ inv, role }: { inv: Inv; role: string }) {
           Rebill
         </button>
       )}
-      {!canVoid && ["issued", "sent", "partially_paid", "disputed"].includes(s) && <div className="text-[12px] text-muted pt-1">Credit memos and voids need the owner.</div>}
+      {!canVoid && ["issued", "sent", "partially_paid", "disputed"].includes(s) && <div className="text-footnote text-muted pt-1">Credit memos and voids need the owner.</div>}
       {canVoid && ["issued", "sent", "draft", "disputed"].includes(s) && (
         <button className="btn btn-danger w-full justify-center" onClick={() => openPopup("void")}>
           Void
@@ -86,7 +86,7 @@ export function InvoiceActions({ inv, role }: { inv: Inv; role: string }) {
           </div>
         </div>
       )}
-      {inv.payWhenPaid && <div className="text-[12px] text-amber">Pay-when-paid: carrier bills on these orders wait for this invoice.</div>}
+      {inv.payWhenPaid && <div className="text-footnote text-amber">Pay-when-paid: carrier bills on these orders wait for this invoice.</div>}
 
       <Modal open={popup === "receipt"} onClose={() => setPopup(null)} title="Record receipt" footer={<><button className="btn" onClick={() => setPopup(null)}>Cancel</button><button className="btn btn-primary" disabled={pending} onClick={() => run("Receipt recorded", () => receiptAction(inv.id, f))}>Record</button></>}>
         <div className="grid grid-cols-2 gap-2">

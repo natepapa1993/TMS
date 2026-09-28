@@ -81,7 +81,7 @@ export function Settlements({ rows, drivers, defaultWeek, role }: { rows: Row[];
       )}
       {can && sel.length > 0 && (
         <div className="flex items-center gap-2 mb-3" data-testid="settlement-bulk">
-          <span className="text-[13px] font-semibold">
+          <span className="text-callout font-semibold">
             {sel.length} selected · net {formatCents(selRows.reduce((a, r) => a + r.st.netCents, 0))}
           </span>
           <button className="btn btn-sm" disabled={pending || !selRows.some((r) => r.st.state === "open" || r.st.state === "reviewed")} onClick={() => start(async () => { const r = await approveSettlementsAction(sel); if (!r.ok) return t.err(r.error); t.ok(`${r.data.approved} approved${r.data.skipped.length ? ` · ${r.data.skipped.length} skipped (${r.data.skipped.map((x) => x.reason).join("; ")})` : ""}`); setSel([]); router.refresh(); })}>
@@ -121,7 +121,7 @@ export function Settlements({ rows, drivers, defaultWeek, role }: { rows: Row[];
                     </td>
                   )}
                   <td className="font-bold">{r.driverName}</td>
-                  <td className="text-[12.5px]">{r.st.periodStart.slice(0, 10)}</td>
+                  <td className="text-callout">{r.st.periodStart.slice(0, 10)}</td>
                   <td className="text-muted">
                     {r.st.lines.length}
                     {r.st.lines.some((l) => l.disputed) && <Pill tone="red">dispute</Pill>}
@@ -184,9 +184,9 @@ export function Settlements({ rows, drivers, defaultWeek, role }: { rows: Row[];
                   <tr key={l.id}>
                     <td>
                       <span className="font-semibold">{l.description}</span>
-                      {l.disputed && <div className="text-[12px] text-red">Driver disputes: {l.disputed}</div>}
+                      {l.disputed && <div className="text-footnote text-red">Driver disputes: {l.disputed}</div>}
                     </td>
-                    <td className="text-muted text-[12.5px]">{l.source}</td>
+                    <td className="text-muted text-callout">{l.source}</td>
                     <td className={`mono text-right font-semibold ${l.amountCents < 0 ? "text-red" : ""}`}>{formatCents(l.amountCents)}</td>
                   </tr>
                 ))}
@@ -194,7 +194,7 @@ export function Settlements({ rows, drivers, defaultWeek, role }: { rows: Row[];
                   <td colSpan={2} className="text-right font-extrabold">
                     Net pay
                   </td>
-                  <td className="mono text-right font-extrabold text-[15px]">{formatCents(cur.st.netCents)}</td>
+                  <td className="mono text-right font-extrabold text-headline">{formatCents(cur.st.netCents)}</td>
                 </tr>
               </tbody>
             </table>
@@ -258,7 +258,7 @@ export function Settlements({ rows, drivers, defaultWeek, role }: { rows: Row[];
             <div />
           )}
           {(item.kind === "deduction" || item.kind === "reimbursement") && (
-            <label className="col-span-2 flex items-center gap-2 text-[13px]">
+            <label className="col-span-2 flex items-center gap-2 text-callout">
               <input type="checkbox" className="accent-teal" checked={item.recurring} onChange={(e) => setItem({ ...item, recurring: e.target.checked })} /> Recurring every statement
             </label>
           )}

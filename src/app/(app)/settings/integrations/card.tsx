@@ -22,9 +22,9 @@ export function IntegrationCard({ provider, title, blurb, enabled, fields, statu
           <div className="h2 flex items-center gap-2">
             {title} {enabled ? <Pill tone="green">On</Pill> : <Pill tone="slate">Off</Pill>}
           </div>
-          <p className="text-muted text-[13px] mt-0.5 max-w-xl">{blurb}</p>
+          <p className="text-muted text-callout mt-0.5 max-w-xl">{blurb}</p>
         </div>
-        <label className="flex items-center gap-2 text-[13px] cursor-pointer whitespace-nowrap">
+        <label className="flex items-center gap-2 text-callout cursor-pointer whitespace-nowrap">
           <input type="checkbox" className="accent-teal w-4 h-4" checked={on} onChange={(e) => setOn(e.target.checked)} /> Enabled
         </label>
       </div>
@@ -39,14 +39,14 @@ export function IntegrationCard({ provider, title, blurb, enabled, fields, statu
         ))}
       </div>
       {status && (
-        <div className="mt-3 text-[12.5px] text-muted">
+        <div className="mt-3 text-callout text-muted">
           {status.lastRunAt ? `Last run ${new Date(status.lastRunAt).toLocaleString()}` : "Never run"}
           {status.lastResult ? ` · ${status.lastResult}` : ""}
           {status.lastError ? <span className="text-red"> · {status.lastError}</span> : null}
         </div>
       )}
       {extra}
-      {result && <div className="mt-2 text-[12.5px] font-semibold text-teal">{result}</div>}
+      {result && <div className="mt-2 text-callout font-semibold text-teal">{result}</div>}
       <div className="flex justify-end gap-2 mt-4">
         {provider === "whatsapp" && (
           <>

@@ -96,7 +96,7 @@ export function RecordForm({
   return (
     <form onSubmit={submit} noValidate>
       {top && (
-        <div className="mb-3 px-3 py-2 rounded-lg bg-red-soft text-red text-[13px] font-semibold" role="alert">
+        <div className="mb-3 px-3 py-2 rounded-lg bg-red-soft text-red text-callout font-semibold" role="alert">
           {top}
         </div>
       )}
@@ -162,7 +162,7 @@ export function FieldInput({ f, value, onChange, error, refs, span, autoFocus }:
       input = (
         <label className="flex items-center gap-2 h-9 cursor-pointer select-none">
           <input id={id} type="checkbox" className="w-4 h-4 accent-teal" checked={value === "true"} onChange={(e) => onChange(e.target.checked ? "true" : "")} />
-          <span className="text-[13.5px]">{f.help ?? "Yes"}</span>
+          <span className="text-body">{f.help ?? "Yes"}</span>
         </label>
       );
       break;
@@ -184,7 +184,7 @@ export function FieldInput({ f, value, onChange, error, refs, span, autoFocus }:
       );
       break;
     case "contacts":
-      input = <textarea {...common} className="input h-24 font-mono text-[12px]" value={value} onChange={(e) => onChange(e.target.value)} placeholder={"Ana Ruiz | ops | ana@example.com | +52 844 000 0000 | +52 844 000 0000"} />;
+      input = <textarea {...common} className="input h-24 font-mono text-footnote" value={value} onChange={(e) => onChange(e.target.value)} placeholder={"Ana Ruiz | ops | ana@example.com | +52 844 000 0000 | +52 844 000 0000"} />;
       break;
     case "password":
       input = <input {...common} type="password" autoComplete="new-password" className="input" value={value} onChange={(e) => onChange(e.target.value)} placeholder="at least 10 characters" />;

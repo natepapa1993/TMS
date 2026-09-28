@@ -9,14 +9,14 @@ export function ForgotForm() {
     return (
       <div className="card p-5" role="status">
         <div className="font-bold">Check your email</div>
-        <p className="text-muted text-[13.5px] mt-1">If {state.fields?.email} has an account, a reset link is on its way. It works for an hour and once.</p>
+        <p className="text-muted text-body mt-1">If {state.fields?.email} has an account, a reset link is on its way. It works for an hour and once.</p>
       </div>
     );
   if (state.done === "no_sender")
     return (
       <div className="card p-5" role="status">
         <div className="font-bold">Ask your company owner</div>
-        <p className="text-muted text-[13.5px] mt-1">This company has no email sender connected yet, so no link can go out. The owner can set a new password for you on your user record (Settings → Users).</p>
+        <p className="text-muted text-body mt-1">This company has no email sender connected yet, so no link can go out. The owner can set a new password for you on your user record (Settings → Users).</p>
       </div>
     );
   return (

@@ -75,7 +75,7 @@ export function ReportsView({ dash, rows, by, preset, period, entityId, entities
             </button>
           </div>
         )}
-        <div className="text-[12.5px] text-muted mono">
+        <div className="text-callout text-muted mono">
           {period.from} → {period.to}
         </div>
         {entities.length > 1 && (
@@ -94,13 +94,13 @@ export function ReportsView({ dash, rows, by, preset, period, entityId, entities
         {cards.map((c) => (
           <Link key={c.label} href={c.href.startsWith("?") ? `/reports?range=${preset}&by=${c.href.slice(4)}${entityId ? `&entity=${entityId}` : ""}` : c.href} className="card p-4 hover:border-teal transition-colors">
             <div className="eyebrow">{c.label}</div>
-            <div className={`text-[24px] font-extrabold mono mt-1 ${c.tone === "red" ? "text-red" : c.tone === "amber" ? "text-amber" : ""}`}>{c.value}</div>
-            <div className="text-[12px] text-muted mt-1 leading-snug">{c.sub}</div>
+            <div className={`text-title2 font-extrabold mono mt-1 ${c.tone === "red" ? "text-red" : c.tone === "amber" ? "text-amber" : ""}`}>{c.value}</div>
+            <div className="text-footnote text-muted mt-1 leading-snug">{c.sub}</div>
           </Link>
         ))}
       </div>
       {dash.arOpenCents > 0 && (
-        <div className="text-[13px] text-muted mb-4">
+        <div className="text-callout text-muted mb-4">
           Receivables open {formatCents(dash.arOpenCents)}
           {dash.arOverdueCents > 0 && (
             <>
@@ -199,7 +199,7 @@ export function ReportsView({ dash, rows, by, preset, period, entityId, entities
                         {d.orderNumber}
                       </Link>
                     </td>
-                    <td className="text-muted text-[12.5px]">{d.deliveredAt ? new Date(d.deliveredAt).toLocaleDateString() : "—"}</td>
+                    <td className="text-muted text-callout">{d.deliveredAt ? new Date(d.deliveredAt).toLocaleDateString() : "—"}</td>
                     <td className="text-right mono">{formatCents(d.revenue)}</td>
                     <td className="text-right mono text-muted">{d.carrierCost ? formatCents(d.carrierCost) : "—"}</td>
                     <td className="text-right mono text-muted">{d.driverPay ? formatCents(d.driverPay) : "—"}</td>

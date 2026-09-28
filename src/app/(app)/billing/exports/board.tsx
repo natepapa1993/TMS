@@ -57,7 +57,7 @@ export function Exports({ runs, defaults, role }: { runs: Run[]; defaults: { fro
             <label className="label">To</label>
             <input type="date" className="input" value={f.to} onChange={(e) => setF({ ...f, to: e.target.value })} />
           </div>
-          <label className="flex items-center gap-2 text-[13px] h-9 cursor-pointer">
+          <label className="flex items-center gap-2 text-callout h-9 cursor-pointer">
             <input type="checkbox" className="accent-teal" checked={f.onlyNew} onChange={(e) => setF({ ...f, onlyNew: e.target.checked })} /> Only what has not been exported yet
           </label>
           {can && (
@@ -66,7 +66,7 @@ export function Exports({ runs, defaults, role }: { runs: Run[]; defaults: { fro
             </button>
           )}
         </div>
-        <div className="mt-3 text-[13px]" data-testid="export-preview">
+        <div className="mt-3 text-callout" data-testid="export-preview">
           {err ? (
             <span className="error m-0">{err}</span>
           ) : !preview ? (
@@ -99,16 +99,16 @@ export function Exports({ runs, defaults, role }: { runs: Run[]; defaults: { fro
             <tbody>
               {runs.map((r) => (
                 <tr key={r.id}>
-                  <td className="text-muted text-[12.5px] whitespace-nowrap">{new Date(r.createdAt).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}</td>
+                  <td className="text-muted text-callout whitespace-nowrap">{new Date(r.createdAt).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}</td>
                   <td>
                     <Pill tone={r.format === "iif" ? "navy" : "teal"}>{r.format === "iif" ? "Desktop IIF" : "Online CSV"}</Pill>
                     {r.reopenedAt && <Pill tone="amber">reopened</Pill>}
                   </td>
-                  <td className="mono text-[12.5px]">
+                  <td className="mono text-callout">
                     {r.fromDate} → {r.toDate}
                     {!r.onlyNew && <span className="text-faint"> (everything)</span>}
                   </td>
-                  <td className="text-[12.5px]">
+                  <td className="text-callout">
                     {n(r.counts.invoices, "invoice")} · {n(r.counts.receipts, "receipt")} · {n(r.counts.carrierBills, "carrier bill")} · {n(r.counts.settlements, "settlement")}
                   </td>
                   <td className="space-x-1">

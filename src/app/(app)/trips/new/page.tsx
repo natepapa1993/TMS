@@ -20,7 +20,7 @@ export default async function NewTripPage() {
       >
         Stops in driving order. A US yard followed by a Mexican border yard makes the crossing; every run of stops in one country becomes one leg. Shipments come next, on the trip page.
       </PageHeader>
-      <div className="px-7 pb-10 max-w-3xl">
+      <div className="px-gutter pb-10 max-w-3xl">
         <TripBuilder />
       </div>
     </div>

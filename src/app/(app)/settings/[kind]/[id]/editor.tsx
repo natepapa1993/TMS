@@ -16,7 +16,7 @@ export function RecordEditor({ kind, id, fields, refs, initial, archived, blocke
   return (
     <div>
       {archived && (
-        <div className="mb-4 px-3 py-2 rounded-lg bg-amber-soft text-amber text-[13px] font-semibold flex items-center justify-between">
+        <div className="mb-4 px-3 py-2 rounded-lg bg-amber-soft text-amber text-callout font-semibold flex items-center justify-between">
           <span>This record is archived and read-only.</span>
           <button
             className="btn btn-sm"
@@ -49,7 +49,7 @@ export function RecordEditor({ kind, id, fields, refs, initial, archived, blocke
           }}
           extra={
             !archived && (
-              <div className="mt-6 pt-4 border-t border-line flex items-center justify-between text-[13px]">
+              <div className="mt-6 pt-4 border-t border-line flex items-center justify-between text-callout">
                 <div className="text-muted">
                   {blockers.length ? (
                     <span>

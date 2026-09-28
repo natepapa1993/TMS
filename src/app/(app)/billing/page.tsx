@@ -16,7 +16,7 @@ export default async function BillingPage() {
         Delivered orders. Green docs and a rate-con match = one click to an invoice. Nothing issues without the required documents.
       </PageHeader>
       <BillingNav counts={{ "/billing": rows.length }} />
-      <div className="px-7 pb-10">
+      <div className="px-gutter pb-10">
         <Queue rows={JSON.parse(JSON.stringify(rows))} role={ctx.role} />
       </div>
     </div>

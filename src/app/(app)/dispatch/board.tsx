@@ -215,28 +215,29 @@ export function DispatchBoard({ data, initialOrder }: { data: BoardData; initial
 
   return (
     <div className="min-h-screen">
-      <div className="min-w-0">
-        <div className="px-7 pt-6 pb-3 flex items-end justify-between gap-4 flex-wrap">
+      {/* on wide screens the side panel sits beside the board (like an inspector) instead of covering its tabs */}
+      <div className={`min-w-0 transition-[padding] ${selected ? "lg:pr-[420px]" : ""}`}>
+        <div className="px-gutter pt-6 pb-3 flex items-end justify-between gap-4 flex-wrap">
           <div>
             <div className="eyebrow mb-1">{new Date().toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" })}</div>
             <div className="h1">Dispatch</div>
           </div>
           <div className="flex items-center gap-2 flex-wrap">
             <input id="board-search" className="input w-60 max-w-full" placeholder="Search order, customer, unit…  /" value={q} onChange={(e) => setQ(e.target.value)} />
-            <Link href="/messages" className={`btn ${data.messages ? "border-amber text-amber font-bold" : ""}`} title="What drivers and carriers wrote to the company WhatsApp">
-              Messages{data.messages ? ` · ${data.messages}` : ""}
+            <Link href="/messages" className="btn" title="What drivers and carriers wrote to the company WhatsApp">
+              Messages{data.messages ? <span className="badge">{data.messages}</span> : null}
             </Link>
             {data.requests > 0 && (
               <button className="btn border-amber text-amber font-bold" title="Load requests from the customer portal: price, confirm, book" onClick={() => setBucket("drafts")}>
                 Requests · {data.requests}
               </button>
             )}
-            <Link href="/edi" className={`btn ${data.ediInbox ? "border-amber text-amber font-bold" : ""}`} title="EDI tenders, 214 status and 210 invoices">
-              EDI{data.ediInbox ? ` · ${data.ediInbox} waiting` : ""}
+            <Link href="/edi" className="btn" title="EDI tenders, 214 status and 210 invoices">
+              EDI{data.ediInbox ? <span className="badge">{data.ediInbox}</span> : null}
             </Link>
-            <span className="inline-flex rounded-lg border border-line bg-white p-0.5">
-              <span className="px-3 h-8 grid place-items-center rounded-md text-[13px] font-semibold bg-navy text-white">Board</span>
-              <Link href="/dispatch/planner" className="px-3 h-8 grid place-items-center rounded-md text-[13px] font-semibold text-muted hover:text-ink">
+            <span className="segmented" role="group" aria-label="View">
+              <span aria-current="page">Board</span>
+              <Link href="/dispatch/planner">
                 Planner
               </Link>
             </span>
@@ -247,14 +248,14 @@ export function DispatchBoard({ data, initialOrder }: { data: BoardData; initial
             )}
           </div>
         </div>
-        <div className="px-7 pb-2 flex items-center gap-1.5 flex-wrap" role="tablist" aria-label="Board buckets">
+        <div className="px-gutter pb-2 flex items-center gap-1.5 flex-wrap" role="tablist" aria-label="Board buckets">
           {BUCKETS.map((s) => (
             <button key={s.key} role="tab" aria-selected={bucket === s.key} className="stage-tab" data-active={bucket === s.key} onClick={() => setBucket(s.key)} title={s.hint}>
               {s.label} <span className="count">{counts[s.key]}</span>
             </button>
           ))}
         </div>
-        <div className="px-7 pb-3 flex items-center gap-1.5 flex-wrap" data-testid="board-chips">
+        <div className="px-gutter pb-3 flex items-center gap-1.5 flex-wrap" data-testid="board-chips">
           {ALERTS.map((c) => {
             const on = chips.has(c.key);
             const n = alertCounts[c.key];
@@ -282,11 +283,11 @@ export function DispatchBoard({ data, initialOrder }: { data: BoardData; initial
               Clear
             </button>
           )}
-          <label className="ml-auto flex items-center gap-1.5 text-[12.5px] text-muted cursor-pointer">
+          <label className="ml-auto flex items-center gap-1.5 text-callout text-muted cursor-pointer">
             <input type="checkbox" className="accent-teal" checked={compact} onChange={(e) => setCompact(e.target.checked)} /> Compact
           </label>
         </div>
-        <div className="px-7 pb-10">
+        <div className="px-gutter pb-10">
           <div className={`card overflow-x-auto trip-board ${compact ? "trip-compact" : ""}`} data-testid="trip-board">
             <div className="row trip-row trip-head" role="row">
               <div>Load</div>
@@ -301,13 +302,13 @@ export function DispatchBoard({ data, initialOrder }: { data: BoardData; initial
             {rows.length === 0 ? (
               <div className="py-14 text-center border-t border-line">
                 <div className="font-bold">{q || chips.size ? "Nothing matches" : bucket === "needs" ? "Every leg is covered" : `Nothing in ${BUCKETS.find((b) => b.key === bucket)?.label}`}</div>
-                <div className="text-muted text-[13px] mt-1">{bucket === "all" && !q ? "New loads land here. Press n to build one." : " "}</div>
+                <div className="text-muted text-callout mt-1">{bucket === "all" && !q ? "New loads land here. Press n to build one." : " "}</div>
               </div>
             ) : (
               rows.map(({ r, a }) => <BoardRow key={r.order.id} r={r} alerts={a} data={data} now={now} selected={r.order.id === selectedId} onClick={() => setSelectedId(r.order.id)} />)
             )}
           </div>
-          <div className="mt-3 text-[12px] text-faint flex gap-4 flex-wrap">
+          <div className="mt-3 text-footnote text-faint flex gap-4 flex-wrap">
             <span>{rows.length} load{rows.length === 1 ? "" : "s"} · most urgent first</span>
             <span>
               <span className="kbd">n</span> new load
@@ -439,7 +440,7 @@ function BoardRow({ r, alerts, data, now, selected, onClick }: { r: Row; alerts:
       <div className="min-w-0">
         {ns && cur && r.stage !== "delivered" ? (
           <>
-            <div className="truncate text-[12.5px]" title={place(ns)}>
+            <div className="truncate text-callout" title={place(ns)}>
               {ns.id === first?.id ? "Pickup" : ns.id === last?.id ? "Delivery" : ns.name}
             </div>
             <div className={`sub truncate ${etaTone === "late" ? "text-red font-bold" : etaTone === "risk" ? "text-amber font-semibold" : etaTone === "ok" ? "text-teal font-semibold" : ""}`} data-testid={eta ? "row-eta" : undefined}>
@@ -476,7 +477,7 @@ function BoardRow({ r, alerts, data, now, selected, onClick }: { r: Row; alerts:
         )}
         {needing.length > 0 && cur && !["unassigned", "declined"].includes(cur.state) && <div className="sub text-red truncate">{needing.map((l) => LEG_TYPE_LABEL[l.type]).join(", ")} leg needs truck</div>}
       </div>
-      <div className={`text-[12.5px] tabular-nums ${pingTone}`} title={ping ? `Last position ${new Date(ping).toLocaleString()}` : rolling ? "No GPS position" : ""}>
+      <div className={`text-callout tabular-nums ${pingTone}`} title={ping ? `Last position ${new Date(ping).toLocaleString()}` : rolling ? "No GPS position" : ""}>
         {rolling ? (pingAge ?? "none") : "—"}
       </div>
       <div className="text-right min-w-0">
@@ -528,20 +529,20 @@ function SidePanel({ r, data, busy, canDispatch, onClose, onPopup, run, onToast 
               {hold && <Pill tone="amber">On hold</Pill>}
               {closed && <Pill tone="slate">Cancelled</Pill>}
             </div>
-            <div className="text-muted text-[13px]">{r.order.kind === "trip" ? `Tailgate trip · ${r.shipments} shipment${r.shipments === 1 ? "" : "s"}` : `${r.customerName ?? "No customer"} · ${money(r.order.rateCents, r.order.currency)}`}</div>
+            <div className="text-muted text-callout">{r.order.kind === "trip" ? `Tailgate trip · ${r.shipments} shipment${r.shipments === 1 ? "" : "s"}` : `${r.customerName ?? "No customer"} · ${money(r.order.rateCents, r.order.currency)}`}</div>
           </div>
           <button className="btn btn-ghost btn-sm" onClick={onClose} aria-label="Close panel">
             ✕
           </button>
         </div>
         {customerNote && (
-          <div className="mx-4 mb-3 rounded-lg border border-teal/30 bg-teal-soft/40 px-3 py-2 text-[12.5px] whitespace-pre-wrap" data-testid="customer-note">
+          <div className="mx-4 mb-3 rounded-lg border border-teal/30 bg-teal-soft/40 px-3 py-2 text-callout whitespace-pre-wrap" data-testid="customer-note">
             <b>{r.customerName}:</b> {customerNote}
           </div>
         )}
-        {hold && r.order.holdReason && <div className="mt-2 text-[12.5px] px-2.5 py-1.5 rounded-md bg-amber-soft text-amber font-semibold">Hold: {r.order.holdReason}</div>}
+        {hold && r.order.holdReason && <div className="mt-2 text-callout px-2.5 py-1.5 rounded-md bg-amber-soft text-amber font-semibold">Hold: {r.order.holdReason}</div>}
         {r.openFlags.map((f) => (
-          <div key={f.id} className={`mt-2 text-[12.5px] px-2.5 py-1.5 rounded-md font-semibold ${f.level === "red" ? "bg-red-soft text-red" : "bg-amber-soft text-amber"}`}>
+          <div key={f.id} className={`mt-2 text-callout px-2.5 py-1.5 rounded-md font-semibold ${f.level === "red" ? "bg-red-soft text-red" : "bg-amber-soft text-amber"}`}>
             {f.title}
             {f.detail ? <span className="font-normal"> — {f.detail}</span> : null}
           </div>
@@ -553,10 +554,10 @@ function SidePanel({ r, data, busy, canDispatch, onClose, onPopup, run, onToast 
         )}
         {confirming && nl && confirming.legId === nl.id && (
           <div className="mt-4 rounded-lg border border-teal/40 bg-teal-soft/30 p-3 space-y-2" data-testid="stamp-confirm">
-            <label className="flex items-center gap-2 text-[13px] font-semibold">
+            <label className="flex items-center gap-2 text-callout font-semibold">
               {confirming.label} at
               <input id="stamp-when" type="datetime-local" className="input h-9 flex-1" value={confirming.when} onChange={(e) => setConfirming({ ...confirming, when: e.target.value })} />
-              <span className="text-muted font-normal text-[12px]">{zoneAbbrev(zoneOfLeg(nl))}</span>
+              <span className="text-muted font-normal text-footnote">{zoneAbbrev(zoneOfLeg(nl))}</span>
             </label>
             <div className="flex gap-2">
               <button
@@ -601,12 +602,12 @@ function SidePanel({ r, data, busy, canDispatch, onClose, onPopup, run, onToast 
               return (
                 <div key={l.id} className={`rounded-lg border p-3 ${isNext ? "border-teal bg-teal-soft/40" : "border-line"}`}>
                   <div className="flex items-center justify-between gap-2">
-                    <div className="font-bold text-[13px]">
+                    <div className="font-bold text-callout">
                       {l.seq}. {LEG_TYPE_LABEL[l.type]} <span className="text-muted font-normal">{from?.name} → {to?.name}</span>
                     </div>
                     <Pill tone={legTone(l.state)}>{LEG_LABEL[l.state]}</Pill>
                   </div>
-                  <div className="text-[12.5px] text-muted mt-1">
+                  <div className="text-callout text-muted mt-1">
                     {l.assigneeKind === "truck" ? (
                       <>
                         Unit <b className="text-ink">{l.truckUnit}</b>
@@ -640,7 +641,7 @@ function SidePanel({ r, data, busy, canDispatch, onClose, onPopup, run, onToast 
                       if (!tn) return null;
                       const mins = Math.round((new Date(tn.expiresAt).getTime() - Date.now()) / 60000);
                       return tn.state === "sent" ? (
-                        <div className="mt-1 text-[12px]">
+                        <div className="mt-1 text-footnote">
                           <span className="pill pill-amber">Tender out</span> {tn.channel} to {tn.sentTo ?? tn.carrierName} · {mins > 0 ? `${mins < 90 ? `${mins} min` : `${Math.round(mins / 60)} h`} left` : "expiring"}
                           {tn.delivery && (
                             <span className={`ml-1 pill ${tn.delivery.state === "failed" ? "pill-red" : tn.delivery.state === "queued" ? "pill-amber" : tn.delivery.state === "logged" ? "pill-slate" : "pill-green"}`} title={tn.delivery.error ?? (tn.delivery.state === "logged" ? "no sending provider connected — share the link yourself" : undefined)}>
@@ -657,7 +658,7 @@ function SidePanel({ r, data, busy, canDispatch, onClose, onPopup, run, onToast 
                           )}
                         </div>
                       ) : (
-                        <div className="mt-1 text-[12px] text-green">
+                        <div className="mt-1 text-footnote text-green">
                           ✓ {tn.respondedBy} accepted{tn.driverName ? ` · driver ${tn.driverName}${tn.driverPhone ? ` ${tn.driverPhone}` : ""}${tn.unitNumber ? ` · unit ${tn.unitNumber}` : ""}` : ""}
                         </div>
                       );
@@ -736,13 +737,13 @@ function SidePanel({ r, data, busy, canDispatch, onClose, onPopup, run, onToast 
           </summary>
           <ol className="pb-3 space-y-2">
             {r.stops.map((s) => (
-              <li key={s.id} className="flex gap-3 text-[13px]">
+              <li key={s.id} className="flex gap-3 text-callout">
                 <span className={`timeline-dot mt-1.5 ${s.departedAt ? "done" : s.arrivedAt ? "now" : ""}`} />
                 <div className="min-w-0">
                   <div className="font-semibold truncate">
                     {place(s)} <span className="text-faint font-normal">· {s.country}</span>
                   </div>
-                  <div className="text-muted text-[12px]">
+                  <div className="text-muted text-footnote">
                     {s.type.replace("_", " ")}
                     {s.windowStart ? ` · ${stopAt(s.windowStart, s)}${s.windowEnd ? `–${stopAt(s.windowEnd, s)}` : ""}` : ""}
                     {s.arrivedAt ? ` · in ${stopAt(s.arrivedAt, s)}` : ""}
@@ -781,7 +782,7 @@ function SidePanel({ r, data, busy, canDispatch, onClose, onPopup, run, onToast 
 
 function QuickBtn({ label, onClick, disabled, hint }: { label: string; onClick?: () => void; disabled?: boolean; hint?: string }) {
   return (
-    <button className="btn btn-sm justify-center px-1 text-[11.5px]" onClick={onClick} disabled={disabled} title={hint}>
+    <button className="btn btn-sm justify-center px-1 text-footnote" onClick={onClick} disabled={disabled} title={hint}>
       {label}
     </button>
   );
@@ -857,7 +858,7 @@ function AssignModal({ leg, order, data, onClose, onDone }: { leg: Leg; order: O
       }
       footer={
         <>
-          <label className="mr-auto flex items-center gap-2 text-[13px] cursor-pointer">
+          <label className="mr-auto flex items-center gap-2 text-callout cursor-pointer">
             <input type="checkbox" className="accent-teal" checked={sendNow} onChange={(e) => setSendNow(e.target.checked)} /> Send right away
           </label>
           <button className="btn" onClick={onClose}>
@@ -898,15 +899,15 @@ function AssignModal({ leg, order, data, onClose, onDone }: { leg: Leg; order: O
                   <span className={`w-2.5 h-2.5 rounded-full flex-none ${c.hardBlocked ? "bg-red" : c.ok ? (c.busy.length ? "bg-amber" : "bg-green") : "bg-amber"}`} />
                   <div className="w-16 font-extrabold mono">{c.unitNumber}</div>
                   <div className="flex-1 min-w-0">
-                    <div className="text-[13px] truncate">
+                    <div className="text-callout truncate">
                       {c.driverName ?? <span className="text-faint">no driver</span>}
-                      <span className="text-muted text-[12px]">
+                      <span className="text-muted text-footnote">
                         {c.freeAt && new Date(c.freeAt).getTime() > openedAt + 15 * 60_000 ? ` · free ${new Date(c.freeAt).toLocaleString("en-US", { weekday: "short", hour: "numeric", minute: "2-digit" })}` : " · free now"}
                         {c.freeWhere ? ` at ${c.freeWhere}` : ""}
                         {c.deadheadMi != null ? ` · ${c.deadheadMi} mi empty` : ""}
                       </span>
                     </div>
-                    <div className={`text-[12px] truncate ${c.hardBlocked || (c.safetySignoff && !canSafetyOverride) ? "text-red" : c.ok ? "text-muted" : "text-amber"}`} title={c.findings.map((f) => f.message).join("\n")}>
+                    <div className={`text-footnote truncate ${c.hardBlocked || (c.safetySignoff && !canSafetyOverride) ? "text-red" : c.ok ? "text-muted" : "text-amber"}`} title={c.findings.map((f) => f.message).join("\n")}>
                       {c.safetySignoff && !canSafetyOverride && !c.hardBlocked ? `needs Safety: ${c.reason.replace(/^needs override: /, "")}` : c.reason}
                     </div>
                   </div>
@@ -972,13 +973,13 @@ function AssignModal({ leg, order, data, onClose, onDone }: { leg: Leg; order: O
               ))}
             </select>
             {celig && celig.findings.some((f) => f.level === "red") && (
-              <div className={`mt-1.5 text-[12.5px] rounded-lg px-3 py-2 font-semibold ${celig.hardBlocked ? "bg-red-soft text-red" : "bg-amber-soft text-amber"}`} data-testid="carrier-elig">
+              <div className={`mt-1.5 text-callout rounded-lg px-3 py-2 font-semibold ${celig.hardBlocked ? "bg-red-soft text-red" : "bg-amber-soft text-amber"}`} data-testid="carrier-elig">
                 {celig.hardBlocked ? "Can't run this leg: " : "Needs Safety's sign-off: "}
                 {celig.findings.filter((f) => f.level === "red").map((f) => f.message).join("; ")}
               </div>
             )}
             {cscore && (
-              <div className={`mt-1.5 text-[12.5px] rounded-lg border px-3 py-2 ${cscore.dispatchable ? "border-line bg-ground" : "border-red/40 bg-red-soft/40"}`} data-testid="carrier-pick">
+              <div className={`mt-1.5 text-callout rounded-lg border px-3 py-2 ${cscore.dispatchable ? "border-line bg-ground" : "border-red/40 bg-red-soft/40"}`} data-testid="carrier-pick">
                 <span className="font-semibold">Last {cscore.score.days} days:</span> {cscore.score.loads} load{cscore.score.loads === 1 ? "" : "s"}
                 {cscore.score.acceptancePct != null ? ` · ${cscore.score.acceptancePct}% of ${cscore.score.answered} offers accepted` : " · no offers answered yet"}
                 {cscore.score.onTimePct != null ? ` · ${cscore.score.onTimePct}% on time` : ""}
@@ -1059,7 +1060,7 @@ function AssignModal({ leg, order, data, onClose, onDone }: { leg: Leg; order: O
         </div>
       )}
       {needsOverride && (
-        <div className={`mt-3 px-3 py-2 rounded-lg text-[13px] ${needsOverride.hard ? "bg-red-soft text-red" : "bg-amber-soft text-amber"}`}>
+        <div className={`mt-3 px-3 py-2 rounded-lg text-callout ${needsOverride.hard ? "bg-red-soft text-red" : "bg-amber-soft text-amber"}`}>
           <div className="font-bold">{needsOverride.hard ? (needsOverride.safety && !canSafetyOverride ? "Blocked — needs Safety's sign-off (Safety or the owner can override it)." : "Blocked — no override exists for this.") : needsOverride.safety ? "Needs a safety override" : "Schedule conflict — confirm with a reason"}</div>
           <div>{needsOverride.message}</div>
           {!needsOverride.hard && <input className="input mt-2" placeholder={needsOverride.safety ? "Reason for the override (goes on the driver's and the load's record)" : "Why it still works (e.g. finishes early, relay)"} value={override} onChange={(e) => setOverride(e.target.value)} />}
@@ -1165,7 +1166,7 @@ function SplitModal({ leg, stops, onClose, onDone }: { leg: Leg; stops: Stop[]; 
         </>
       }
     >
-      <div className="text-[13px] text-muted mb-3">
+      <div className="text-callout text-muted mb-3">
         {from?.name} → <b className="text-ink">new stop</b> → {to?.name}. The first half keeps {leg.truckUnit ? `unit ${leg.truckUnit}` : leg.carrierName ?? "its assignment"}; the second half needs a truck.
       </div>
       <div className="grid grid-cols-[1fr_110px_88px] gap-2">
@@ -1234,11 +1235,11 @@ function TrackModal({ r, onClose }: { r: Row; onClose: () => void }) {
       <div className="space-y-4">
         <div>
           <div className="label">Customer tracking link</div>
-          <div className="text-[12.5px] text-muted mb-1.5">Stops, progress, last position. No rates, no phones. Same link for the life of the order.</div>
+          <div className="text-callout text-muted mb-1.5">Stops, progress, last position. No rates, no phones. Same link for the life of the order.</div>
           {link ? (
             <>
               <div className="flex gap-2">
-                <input className="input mono text-[12.5px]" readOnly value={link} onFocus={(e) => e.currentTarget.select()} />
+                <input className="input mono text-callout" readOnly value={link} onFocus={(e) => e.currentTarget.select()} />
                 <button className="btn" onClick={() => copy(link, "tracking")}>
                   {copied === "tracking" ? "Copied" : "Copy"}
                 </button>
@@ -1259,13 +1260,13 @@ function TrackModal({ r, onClose }: { r: Row; onClose: () => void }) {
         </div>
         <div>
           <div className="label">Driver app</div>
-          <div className="text-[12.5px] text-muted mb-1.5">Send the driver their link once; it stays theirs. One button per step, GPS with every press.</div>
+          <div className="text-callout text-muted mb-1.5">Send the driver their link once; it stays theirs. One button per step, GPS with every press.</div>
           {driverLinks.length === 0 ? (
-            <div className="text-[13px] text-muted">No driver on this order yet.</div>
+            <div className="text-callout text-muted">No driver on this order yet.</div>
           ) : (
             driverLinks.map((d) => (
               <div key={d.url} className="flex items-center gap-2 mb-1.5">
-                <span className="w-36 font-semibold truncate text-[13px]">{d.name}</span>
+                <span className="w-36 font-semibold truncate text-callout">{d.name}</span>
                 <button className="btn btn-sm" onClick={() => copy(d.url, d.url)}>
                   {copied === d.url ? "Copied" : "Copy link"}
                 </button>
@@ -1289,10 +1290,10 @@ function TrackModal({ r, onClose }: { r: Row; onClose: () => void }) {
         {carrierLinks.length > 0 && (
           <div data-testid="carrier-driver-links">
             <div className="label">Partner carrier&apos;s driver</div>
-            <div className="text-[12.5px] text-muted mb-1.5">No ELD to read, so their phone is the tracking: one link per leg with one button per step and GPS while it is open. The carrier can send it from their portal too.</div>
+            <div className="text-callout text-muted mb-1.5">No ELD to read, so their phone is the tracking: one link per leg with one button per step and GPS while it is open. The carrier can send it from their portal too.</div>
             {carrierLinks.map((c) => (
               <div key={c.legId} className="flex items-center gap-2 mb-1.5 flex-wrap">
-                <span className="w-36 font-semibold truncate text-[13px]">
+                <span className="w-36 font-semibold truncate text-callout">
                   {c.driverName ?? <span className="text-amber">driver not named</span>} <span className="text-faint font-normal">· {c.legLabel}</span>
                 </span>
                 <button className="btn btn-sm" onClick={() => copy(c.url, c.url)}>
@@ -1314,7 +1315,7 @@ function TrackModal({ r, onClose }: { r: Row; onClose: () => void }) {
             ))}
           </div>
         )}
-        {sent && <div className={`text-[12.5px] font-semibold ${sent.startsWith("✗") ? "text-red" : "text-teal"}`}>{sent}</div>}
+        {sent && <div className={`text-callout font-semibold ${sent.startsWith("✗") ? "text-red" : "text-teal"}`}>{sent}</div>}
       </div>
     </Modal>
   );

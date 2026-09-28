@@ -103,8 +103,8 @@ export default async function OrderPage({ params }: PageProps<"/orders/[id]">) {
   const legsTable = (
     <div className="card overflow-hidden">
       <div className="px-5 pt-4 pb-3 flex items-center justify-between">
-        <div className="text-[15px] font-extrabold">Legs</div>
-        <Link href={`/dispatch?order=${order.id}`} className="text-[13px] text-teal font-semibold">
+        <div className="text-headline font-extrabold">Legs</div>
+        <Link href={`/dispatch?order=${order.id}`} className="text-callout text-teal font-semibold">
           Assign on Dispatch →
         </Link>
       </div>
@@ -137,8 +137,8 @@ export default async function OrderPage({ params }: PageProps<"/orders/[id]">) {
                 <td>
                   <LegMiles legId={l.id} miles={l.plannedMiles} locked={closed || ["invoiced", "paid"].includes(order.state)} />
                 </td>
-                <td className="text-muted text-[12.5px]">{l.dispatchedAt ? when(l.dispatchedAt) : "—"}</td>
-                <td className="text-muted text-[12.5px]">{l.completedAt ? when(l.completedAt) : "—"}</td>
+                <td className="text-muted text-callout">{l.dispatchedAt ? when(l.dispatchedAt) : "—"}</td>
+                <td className="text-muted text-callout">{l.completedAt ? when(l.completedAt) : "—"}</td>
               </tr>
             ))}
           </tbody>
@@ -149,15 +149,15 @@ export default async function OrderPage({ params }: PageProps<"/orders/[id]">) {
 
   const timeline = (
     <div className="card p-5">
-      <div className="text-[15px] font-extrabold mb-3">Timeline</div>
+      <div className="text-headline font-extrabold mb-3">Timeline</div>
       {tl.events.length === 0 ? (
-        <div className="text-muted text-[13px]">Nothing has moved yet.</div>
+        <div className="text-muted text-callout">Nothing has moved yet.</div>
       ) : (
         <ul className="space-y-2.5">
           {tl.events.map((e) => {
             const leg = legs.find((l) => l.id === e.legId);
             return (
-              <li key={e.id} className="text-[13px] flex gap-2.5">
+              <li key={e.id} className="text-callout flex gap-2.5">
                 <span className={`timeline-dot mt-1.5 ${e.verified ? "done" : ""}`} title={e.verified ? "Verified (GPS/app)" : "Reported"} />
                 <div>
                   <div>
@@ -180,10 +180,10 @@ export default async function OrderPage({ params }: PageProps<"/orders/[id]">) {
 
   const history = (
     <div className="card p-5">
-      <div className="text-[15px] font-extrabold mb-3">History</div>
+      <div className="text-headline font-extrabold mb-3">History</div>
       <ul className="space-y-2.5">
         {tl.audits.map((h) => (
-          <li key={h.id} className="text-[13px]">
+          <li key={h.id} className="text-callout">
             <div className="flex justify-between gap-2">
               <span className="font-bold capitalize">{h.action}</span>
               <span className="text-faint whitespace-nowrap">{when(h.at)}</span>
@@ -212,7 +212,7 @@ export default async function OrderPage({ params }: PageProps<"/orders/[id]">) {
         <div className="flex items-start justify-between gap-4 flex-wrap">
           <div className="min-w-0">
             <div className="flex items-center gap-2.5 flex-wrap">
-              <h1 className="mono text-[26px] font-extrabold tracking-tight">{order.orderNumber}</h1>
+              <h1 className="mono text-title1 font-extrabold tracking-tight">{order.orderNumber}</h1>
               <Pill tone={order.state === "exception" ? "amber" : order.state === "cancelled" ? "slate" : ["delivered", "ready_to_bill"].includes(order.state) ? "green" : "teal"}>{order.tonu ? "TONU" : STATE_LABEL[order.state]}</Pill>
               {order.priority !== "none" && <Pill tone={order.priority === "high" ? "red" : order.priority === "medium" ? "amber" : "slate"}>{order.priority} priority</Pill>}
               {order.lockedAt && (
@@ -231,7 +231,7 @@ export default async function OrderPage({ params }: PageProps<"/orders/[id]">) {
                 </Link>
               )}
             </div>
-            <div className="text-muted text-[14px] mt-1">
+            <div className="text-muted text-body mt-1">
               <span className="font-semibold text-ink">{cName.get(order.customerId ?? "") ?? cName.get(order.brokerId ?? "") ?? "No customer"}</span>
               {" · "}
               {place(pickup)} → {place(delivery)}
@@ -248,9 +248,9 @@ export default async function OrderPage({ params }: PageProps<"/orders/[id]">) {
         <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 mt-5 rounded-xl border border-line overflow-hidden" data-testid="load-facts">
           {facts.map(([k, v, sub]) => (
             <div key={k} className="px-4 py-3 border-r border-b xl:border-b-0 border-line last:border-r-0 bg-white">
-              <div className="text-[11px] font-bold uppercase tracking-[0.05em] text-faint">{k}</div>
-              <div className="text-[16px] font-extrabold tabular-nums mt-0.5 truncate">{v}</div>
-              {sub && <div className="text-[12px] text-muted truncate">{sub}</div>}
+              <div className="text-caption font-bold text-faint">{k}</div>
+              <div className="text-headline font-extrabold tabular-nums mt-0.5 truncate">{v}</div>
+              {sub && <div className="text-footnote text-muted truncate">{sub}</div>}
             </div>
           ))}
         </div>
@@ -266,7 +266,7 @@ export default async function OrderPage({ params }: PageProps<"/orders/[id]">) {
                 <div className="space-y-6 min-w-0">
                   {legsTable}
                   <div className="card p-5">
-                    <div className="text-[15px] font-extrabold mb-4">Load details</div>
+                    <div className="text-headline font-extrabold mb-4">Load details</div>
                     <OrderEditor order={J(order)} customers={customers.map((c) => ({ id: c.id, name: String(c.name), kind: String(c.kind) }))} entities={entities.map((e) => ({ id: e.id, name: String(e.legalName) }))} readOnly={readOnly} />
                   </div>
                 </div>
@@ -274,12 +274,12 @@ export default async function OrderPage({ params }: PageProps<"/orders/[id]">) {
                   {liveLeg && tracking && (
                     <div className="card p-5" data-testid="tracking-card">
                       <div className="flex items-center justify-between mb-2">
-                        <div className="text-[15px] font-extrabold">Where it is</div>
-                        <Link href="/fleet/map" className="text-[12.5px] text-teal font-semibold">
+                        <div className="text-headline font-extrabold">Where it is</div>
+                        <Link href="/fleet/map" className="text-callout text-teal font-semibold">
                           Map →
                         </Link>
                       </div>
-                      <div className="text-[13px] space-y-1 mb-3">
+                      <div className="text-callout space-y-1 mb-3">
                         <div>
                           <span className="text-muted">Last position </span>
                           {tracking.seen ? (
@@ -302,10 +302,10 @@ export default async function OrderPage({ params }: PageProps<"/orders/[id]">) {
                   <PeopleCard order={J({ id: order.id, salesAgentId: order.salesAgentId, csrId: order.csrId, dispatcherId: order.dispatcherId, priority: order.priority, updatedAt: order.updatedAt })} people={people.filter((p) => !p.archivedAt || [order.salesAgentId, order.csrId, order.dispatcherId].includes(p.id)).map((p) => ({ id: p.id, name: p.name }))} readOnly={readOnly} />
                   {flagsOpen.length > 0 && (
                     <div className="card p-5">
-                      <div className="text-[14px] font-extrabold mb-3">Flags</div>
+                      <div className="text-body font-extrabold mb-3">Flags</div>
                       <ul className="space-y-2.5">
                         {flagsOpen.map((f) => (
-                          <li key={f.id} className="text-[13px]">
+                          <li key={f.id} className="text-callout">
                             <span className={`pill ${f.level === "red" ? "pill-red" : "pill-amber"}`}>{f.code}</span> <span className="font-semibold">{f.title}</span>
                             {f.detail && <div className="text-muted">{f.detail}</div>}
                           </li>
@@ -315,11 +315,11 @@ export default async function OrderPage({ params }: PageProps<"/orders/[id]">) {
                   )}
                   {pinned.length > 0 && (
                     <div className="card p-5">
-                      <div className="text-[14px] font-extrabold mb-3">Pinned notes</div>
+                      <div className="text-body font-extrabold mb-3">Pinned notes</div>
                       <ul className="space-y-3">
                         {pinned.map((n) => (
-                          <li key={n.id} className="text-[13px]">
-                            <div className="text-[11px] font-bold uppercase text-faint">{NOTE_LABEL[n.kind] ?? n.kind}</div>
+                          <li key={n.id} className="text-callout">
+                            <div className="text-caption font-bold text-faint">{NOTE_LABEL[n.kind] ?? n.kind}</div>
                             <div className="whitespace-pre-wrap">{n.body}</div>
                           </li>
                         ))}
@@ -337,7 +337,7 @@ export default async function OrderPage({ params }: PageProps<"/orders/[id]">) {
             content: (
               <div className="max-w-5xl">
                 <div className="flex items-center justify-between mb-4">
-                  <div className="text-muted text-[13.5px]">{restructure ? "Add, move or remove stops; the legs are re-cut from them." : order.lockedAt ? "Unlock the load to change its stops." : "The stops of a delivered or closed load are final."}</div>
+                  <div className="text-muted text-body">{restructure ? "Add, move or remove stops; the legs are re-cut from them." : order.lockedAt ? "Unlock the load to change its stops." : "The stops of a delivered or closed load are final."}</div>
                   {restructure && <AddStop orderId={order.id} stops={stops.map((s) => ({ id: s.id, name: s.name }))} firstOpen={lastReached + 1} zone={companyZone} locations={locations.map((l) => ({ id: l.id, name: String(l.name), country: String(l.country), kind: String(l.kind), address: (l.address ?? null) as Loc["address"] }))} />}
                 </div>
                 <div className="space-y-2 card p-4" data-testid="stops-card">

@@ -36,7 +36,7 @@ export default async function ReportsPage({ searchParams }: PageProps<"/reports"
       <PageHeader eyebrow="Owner" title="Reports">
         The six numbers, from the same loads, charges, bills and pay the operation runs on. Delivered orders by delivered date, in {tz.replace("_", " ")}.
       </PageHeader>
-      <div className="px-7 pb-10">
+      <div className="px-gutter pb-10">
         <ReportsView dash={JSON.parse(JSON.stringify(dash))} rows={JSON.parse(JSON.stringify(rows))} by={by} preset={preset} period={period} entityId={entityId} entities={entities.map((e) => ({ id: e.id, name: String(e.legalName) }))} />
       </div>
     </div>

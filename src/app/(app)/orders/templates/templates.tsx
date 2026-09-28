@@ -33,7 +33,7 @@ export function Templates({ rows }: { rows: Row[] }) {
     return (
       <div className="card p-14 text-center">
         <div className="font-bold">No templates yet</div>
-        <div className="text-muted text-[13px] mt-1">
+        <div className="text-muted text-callout mt-1">
           In the{" "}
           <Link href="/orders/new" className="text-teal font-semibold">
             load builder
@@ -61,7 +61,7 @@ export function Templates({ rows }: { rows: Row[] }) {
               <tr key={r.id} data-testid="template-row">
                 <td className="font-bold">{r.name}</td>
                 <td>{r.customer ?? <span className="text-faint">—</span>}</td>
-                <td className="text-[13px]">
+                <td className="text-callout">
                   {place(r.stops[0])} → {place(r.stops[r.stops.length - 1])}
                   <span className="text-muted">
                     {r.stops.length > 2 ? ` · ${r.stops.length} stops` : ""}
@@ -69,7 +69,7 @@ export function Templates({ rows }: { rows: Row[] }) {
                   </span>
                 </td>
                 <td className="tabular-nums">{r.rateCents == null ? <span className="text-faint">TBD</span> : new Intl.NumberFormat("en-US", { style: "currency", currency: r.currency }).format(r.rateCents / 100)}</td>
-                <td className="text-muted text-[12.5px]">{r.timesUsed ? `${r.timesUsed}× · last ${new Date(r.lastUsedAt!).toLocaleDateString("en-US", { month: "short", day: "numeric" })}` : "never"}</td>
+                <td className="text-muted text-callout">{r.timesUsed ? `${r.timesUsed}× · last ${new Date(r.lastUsedAt!).toLocaleDateString("en-US", { month: "short", day: "numeric" })}` : "never"}</td>
                 <td className="text-right whitespace-nowrap">
                   <button type="button" className="btn btn-sm btn-primary" onClick={() => setBulk(r)}>
                     Create loads
@@ -149,16 +149,16 @@ export function Templates({ rows }: { rows: Row[] }) {
             <div className="label">On</div>
             <div className="flex gap-1" role="group" aria-label="Weekdays">
               {WEEKDAYS.map((w, i) => (
-                <button key={w} type="button" aria-pressed={f.days.includes(i)} className={`flex-1 h-9 rounded-md border text-[13px] font-semibold ${f.days.includes(i) ? "bg-navy text-white border-navy" : "bg-white border-line text-muted"}`} onClick={() => setF({ ...f, days: f.days.includes(i) ? f.days.filter((x) => x !== i) : [...f.days, i] })}>
+                <button key={w} type="button" aria-pressed={f.days.includes(i)} className={`flex-1 h-9 rounded-md border text-callout font-semibold ${f.days.includes(i) ? "bg-navy text-white border-navy" : "bg-white border-line text-muted"}`} onClick={() => setF({ ...f, days: f.days.includes(i) ? f.days.filter((x) => x !== i) : [...f.days, i] })}>
                   {w}
                 </button>
               ))}
             </div>
           </div>
-          <label className="col-span-2 flex items-center gap-2 text-[13px] cursor-pointer">
+          <label className="col-span-2 flex items-center gap-2 text-callout cursor-pointer">
             <input type="checkbox" className="accent-teal w-4 h-4" checked={f.book} onChange={(e) => setF({ ...f, book: e.target.checked })} /> Book them (unticked: drafts)
           </label>
-          <div className="col-span-2 text-[12.5px] text-muted" data-testid="bulk-dates">
+          <div className="col-span-2 text-callout text-muted" data-testid="bulk-dates">
             {dates.length ? `${dates.length} load${dates.length === 1 ? "" : "s"}: ${dates.map((d) => new Date(`${d}T12:00:00Z`).toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric", timeZone: "UTC" })).join(", ")}` : "No dates — pick at least one weekday."}
           </div>
         </div>

@@ -1,12 +1,13 @@
 // Features: F-26.1 F-26.2 F-26.3
 import { test, expect, type Page } from "@playwright/test";
-import { signupFresh, quickAdd, buildLoad } from "./helpers";
+import { signupFresh, quickAdd, buildLoad, loadMenu } from "./helpers";
 
 /** A booked load for Acme, TONU'd so it bills with no paperwork. */
 async function tonuLoad(page: Page, amount: string) {
   const num = await buildLoad(page, { customer: "Acme Foods", rate: "1000", stops: [{ type: "pickup", name: "Shipper Canton", country: "US" }, { type: "delivery", name: "DC Columbus", country: "US" }] });
   const id = new URL(page.url()).searchParams.get("order");
   await page.goto(`/orders/${id}`);
+  await loadMenu(page);
   await page.click("button:has-text('TONU')");
   const d = page.getByRole("dialog");
   await d.locator("#tonu-amount").fill(amount);

@@ -26,7 +26,7 @@ export default async function EdiPage() {
       >
         Tenders (204) arrive here and become draft orders; every milestone goes back as a 214 and every issued invoice as a 210. Nothing leaves without a row in the log.
       </PageHeader>
-      <div className="px-7 pb-10">
+      <div className="px-gutter pb-10">
         <EdiBoard inbox={JSON.parse(JSON.stringify(inboxRows))} log={JSON.parse(JSON.stringify(log.map((l) => ({ ...l, customer: custName.get(l.customerId) ?? l.theirId }))))} partners={partners.map((p) => ({ id: p.id, label: `${custName.get(String(p.customerId)) ?? "?"} · ${String(p.theirId)}` }))} role={ctx.role} />
       </div>
     </div>

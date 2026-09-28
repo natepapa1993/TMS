@@ -10,7 +10,7 @@ export function Trailers({ rows }: { rows: Row[] }) {
     return (
       <div className="card p-8 text-center">
         <div className="font-bold">No trailers yet</div>
-        <div className="text-muted text-[13px] mt-1">Add one above; the crossing workbench and the assign popup will offer it.</div>
+        <div className="text-muted text-callout mt-1">Add one above; the crossing workbench and the assign popup will offer it.</div>
       </div>
     );
   return (
@@ -32,9 +32,9 @@ export function Trailers({ rows }: { rows: Row[] }) {
             <tr key={r.id}>
               <td>
                 <div className="font-bold mono">{r.unitNumber}</div>
-                <div className="text-[11.5px] text-muted">{r.usPlate ?? ""}</div>
+                <div className="text-footnote text-muted">{r.usPlate ?? ""}</div>
               </td>
-              <td className="text-[12.5px]">
+              <td className="text-callout">
                 {r.kind.replace("_", " ")}
                 {r.lengthFt ? ` · ${r.lengthFt} ft` : ""}
               </td>
@@ -44,18 +44,18 @@ export function Trailers({ rows }: { rows: Row[] }) {
                     <Link href={`/orders/${r.now.orderId}`} className="font-bold mono hover:text-teal">
                       {r.now.orderNumber}
                     </Link>
-                    <span className="text-muted text-[12.5px]"> · {r.now.legType} · {r.now.state}</span>
-                    <div className="text-[12px] text-muted">{r.now.route}</div>
+                    <span className="text-muted text-callout"> · {r.now.legType} · {r.now.state}</span>
+                    <div className="text-footnote text-muted">{r.now.route}</div>
                   </div>
                 ) : (
                   <span className="text-muted">free</span>
                 )}
               </td>
-              <td className="text-[12.5px]">
+              <td className="text-callout">
                 {r.last ? (
                   <>
                     <div>{r.last.where ?? "—"}</div>
-                    <div className="text-muted text-[11.5px]">
+                    <div className="text-muted text-footnote">
                       {r.last.orderNumber} · {when(r.last.at)}
                     </div>
                   </>

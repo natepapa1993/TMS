@@ -20,13 +20,13 @@ const TABS = [
 export function BillingNav({ counts }: { counts?: Record<string, number> }) {
   const path = usePathname();
   return (
-    <div className="px-7 pb-3 flex items-center gap-1.5 flex-wrap">
+    <nav className="subnav">
       {TABS.map(([href, label]) => (
-        <Link key={href} href={href} className="stage-tab" data-active={path === href || (href !== "/billing" && path.startsWith(href))}>
+        <Link key={href} href={href} className="stage-tab" aria-current={path === href || (href !== "/billing" && href !== "/compliance" && path.startsWith(href)) ? "page" : undefined} data-active={path === href || (href !== "/billing" && path.startsWith(href))}>
           {label}
           {counts?.[href] != null && <span className="count">{counts[href]}</span>}
         </Link>
       ))}
-    </div>
+    </nav>
   );
 }

@@ -14,8 +14,8 @@ export default async function FactoringPage() {
   const tile = (label: string, v: number, tone = "", sub?: string) => (
     <div className="card p-4 flex-1 min-w-[160px]">
       <div className="eyebrow">{label}</div>
-      <div className={`text-[22px] font-extrabold mono ${v ? tone : "text-faint"}`}>{formatCents(v)}</div>
-      {sub && <div className="text-[12px] text-muted">{sub}</div>}
+      <div className={`text-title2 font-extrabold mono ${v ? tone : "text-faint"}`}>{formatCents(v)}</div>
+      {sub && <div className="text-footnote text-muted">{sub}</div>}
     </div>
   );
   return (
@@ -24,7 +24,7 @@ export default async function FactoringPage() {
         Invoices sold to your factor: what&rsquo;s waiting for funding, what was advanced, the fee, the reserve the factor holds, and what could come back as a chargeback. {l.entities.map((e) => `${e.name}: ${e.advanceBp / 100}% advance, ${e.feeBp / 100}% fee, ${e.recourseDays ? `${e.recourseDays}-day recourse` : "non-recourse"}`).join(" · ")}
       </PageHeader>
       <BillingNav />
-      <div className="px-7 pb-10">
+      <div className="px-gutter pb-10">
         <div className="flex gap-3 flex-wrap mb-4" data-testid="factor-tiles">
           {tile("Waiting for funding", l.totals.toFund, "text-amber")}
           {tile("Reserve held", l.totals.reserveHeld, "")}

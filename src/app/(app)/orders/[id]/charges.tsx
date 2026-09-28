@@ -58,7 +58,7 @@ export function Charges({ orderId, orderNumber, charges, docs, requiredDocs, req
         </div>
       </div>
       {waiting.length > 0 && (
-        <div className="rounded-lg border border-amber/50 bg-amber-soft/40 px-3 py-2 mb-3 text-[13px] flex items-center justify-between gap-3" data-testid="charges-waiting">
+        <div className="rounded-lg border border-amber/50 bg-amber-soft/40 px-3 py-2 mb-3 text-callout flex items-center justify-between gap-3" data-testid="charges-waiting">
           <span>
             <b>{waiting.length} extra{waiting.length === 1 ? "" : "s"}</b> ({formatCents(waiting.reduce((a, c) => a + c.amountCents, 0), currency)}) waiting for the customer&rsquo;s approval — {invoiced ? "once approved they go on a supplemental invoice" : "they stay off the invoice until approved"}.
           </span>
@@ -69,9 +69,9 @@ export function Charges({ orderId, orderNumber, charges, docs, requiredDocs, req
           )}
         </div>
       )}
-      {invoiced && !waiting.length && <div className="text-[12.5px] text-muted mb-2">Invoiced. A charge added now (detention approved later, a lumper receipt) goes on a supplemental invoice.</div>}
+      {invoiced && !waiting.length && <div className="text-callout text-muted mb-2">Invoiced. A charge added now (detention approved later, a lumper receipt) goes on a supplemental invoice.</div>}
       {charges.length === 0 ? (
-        <div className="text-muted text-[13px]">Line haul appears from the rate when the order delivers.</div>
+        <div className="text-muted text-callout">Line haul appears from the rate when the order delivers.</div>
       ) : (
         <div className="-mx-5 overflow-x-auto">
           <table className="table">
@@ -80,17 +80,17 @@ export function Charges({ orderId, orderNumber, charges, docs, requiredDocs, req
                 <tr key={c.id}>
                   <td className="font-semibold">
                     {c.description}
-                    <span className="text-faint text-[12px]"> · {c.source.replace("_", " ")}</span>
+                    <span className="text-faint text-footnote"> · {c.source.replace("_", " ")}</span>
                     {!c.billable && c.approvalState !== "rejected" && <Pill tone="slate">not billable</Pill>}
                     {c.approvalState === "pending" && (
                       <span className="ml-1">
                         <Pill tone="amber">waiting for the customer&rsquo;s OK</Pill>
                       </span>
                     )}
-                    {c.approvalState === "approved" && <div className="text-[12px] text-muted font-normal">approved by {c.approvedBy}{c.approvalRef ? ` · ${c.approvalRef}` : ""}</div>}
-                    {c.approvalState === "rejected" && <div className="text-[12px] text-red font-normal">rejected: {c.rejectedReason}</div>}
+                    {c.approvalState === "approved" && <div className="text-footnote text-muted font-normal">approved by {c.approvedBy}{c.approvalRef ? ` · ${c.approvalRef}` : ""}</div>}
+                    {c.approvalState === "rejected" && <div className="text-footnote text-red font-normal">rejected: {c.rejectedReason}</div>}
                   </td>
-                  <td className="text-muted text-[12.5px]">{c.unit === "flat" ? "" : `${c.unit === "h" ? (c.qty / 100).toFixed(2) : c.qty} ${c.unit} × ${formatCents(c.rateCents, c.currency)}`}</td>
+                  <td className="text-muted text-callout">{c.unit === "flat" ? "" : `${c.unit === "h" ? (c.qty / 100).toFixed(2) : c.qty} ${c.unit} × ${formatCents(c.rateCents, c.currency)}`}</td>
                   <td className="mono font-semibold text-right">{formatCents(c.amountCents, c.currency)}</td>
                   <td className="text-right">{can && !c.invoiceId && <button className="btn btn-ghost btn-sm text-red" onClick={() => run("Removed", () => removeChargeAction(orderId, c.id))}>×</button>}{c.invoiceId && <Pill tone="teal">invoiced</Pill>}</td>
                 </tr>
@@ -148,17 +148,17 @@ export function Charges({ orderId, orderNumber, charges, docs, requiredDocs, req
         </div>
       )}
       {pnl && (
-        <div className="mt-4 pt-3 border-t border-line grid grid-cols-6 gap-2 text-[13px]">
+        <div className="mt-4 pt-3 border-t border-line grid grid-cols-6 gap-2 text-callout">
           {[["Revenue", pnl.revenue], ["Carrier cost", pnl.carrierCost], ["Driver pay", pnl.driverPay], [`Fuel est. (${pnl.miles} mi)`, pnl.fuel], ["Tolls & fees", pnl.extra]].map(([l, v]) => (
             <div key={String(l)}>
-              <div className="text-muted text-[11.5px]">{l}</div>
+              <div className="text-muted text-footnote">{l}</div>
               <div className="mono font-semibold">{formatCents(Number(v), currency)}</div>
             </div>
           ))}
           <div>
-            <div className="text-muted text-[11.5px]">Margin</div>
+            <div className="text-muted text-footnote">Margin</div>
             <div className={`mono font-extrabold ${pnl.margin < 0 ? "text-red" : "text-green"}`}>
-              {formatCents(pnl.margin, currency)} <span className="text-[11px] font-semibold">{pnl.marginPct}%</span>
+              {formatCents(pnl.margin, currency)} <span className="text-caption font-semibold">{pnl.marginPct}%</span>
             </div>
           </div>
         </div>

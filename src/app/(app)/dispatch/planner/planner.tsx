@@ -100,14 +100,14 @@ export function Planner({ data, canPlan }: { data: { legs: PlannerLeg[]; drivers
       <div className="flex items-end justify-between gap-4 flex-wrap mb-5">
         <div>
           <div className="eyebrow mb-1">Dispatch</div>
-          <h1 className="text-[24px] font-extrabold tracking-tight">Planner</h1>
-          <div className="text-muted text-[13px] mt-0.5">Pick a load on the left; the drivers on the right rank for it — who can run it, and how far they are from the pickup.</div>
+          <h1 className="text-title2 font-extrabold tracking-tight">Planner</h1>
+          <div className="text-muted text-callout mt-0.5">Pick a load on the left; the drivers on the right rank for it — who can run it, and how far they are from the pickup.</div>
         </div>
-        <div className="inline-flex rounded-lg border border-line bg-white p-0.5">
-          <Link href="/dispatch" className="px-3.5 h-8 grid place-items-center rounded-md text-[13px] font-semibold text-muted hover:text-ink">
+        <div className="segmented" role="group" aria-label="View">
+          <Link href="/dispatch">
             Board
           </Link>
-          <span className="px-3.5 h-8 grid place-items-center rounded-md text-[13px] font-semibold bg-navy text-white">Planner</span>
+          <span aria-current="page">Planner</span>
         </div>
       </div>
 
@@ -116,10 +116,10 @@ export function Planner({ data, canPlan }: { data: { legs: PlannerLeg[]; drivers
         <section className="card overflow-hidden" aria-label="Loads to cover">
           <div className="px-4 pt-4 pb-3 border-b border-line">
             <div className="flex items-center justify-between gap-3">
-              <div className="text-[15px] font-extrabold">
+              <div className="text-headline font-extrabold">
                 Loads to cover <span className="text-muted font-semibold">{data.legs.length}</span>
               </div>
-              <input className="input h-8 w-52 text-[13px]" placeholder="Search load, customer, city" value={legQ} onChange={(e) => setLegQ(e.target.value)} aria-label="Search loads" />
+              <input className="input h-8 w-52 text-callout" placeholder="Search load, customer, city" value={legQ} onChange={(e) => setLegQ(e.target.value)} aria-label="Search loads" />
             </div>
             <div className="flex gap-1 mt-3 flex-wrap">
               {[
@@ -136,7 +136,7 @@ export function Planner({ data, canPlan }: { data: { legs: PlannerLeg[]; drivers
             </div>
           </div>
           {plannedPicked.length > 0 && canPlan && (
-            <div className="flex items-center gap-3 px-4 py-2 bg-navy text-white text-[13px]" data-testid="planner-bulk">
+            <div className="flex items-center gap-3 px-4 py-2 bg-navy text-white text-callout" data-testid="planner-bulk">
               <span className="font-semibold">{plannedPicked.length} planned selected</span>
               <button
                 type="button"
@@ -162,7 +162,7 @@ export function Planner({ data, canPlan }: { data: { legs: PlannerLeg[]; drivers
           )}
           <div className="max-h-[calc(100vh-270px)] overflow-auto">
             {legs.length === 0 ? (
-              <div className="p-12 text-center text-muted text-[13.5px]">{data.legs.length ? "Nothing matches." : "Every load has a truck."}</div>
+              <div className="p-12 text-center text-muted text-body">{data.legs.length ? "Nothing matches." : "Every load has a truck."}</div>
             ) : (
               <ul>
                 {legs.map((l) => (
@@ -171,29 +171,29 @@ export function Planner({ data, canPlan }: { data: { legs: PlannerLeg[]; drivers
                       {l.state === "planned" ? <input type="checkbox" className="accent-teal mt-1" checked={picked.has(l.legId)} onClick={(e) => e.stopPropagation()} onChange={(e) => setPicked((s) => { const n = new Set(s); if (e.target.checked) n.add(l.legId); else n.delete(l.legId); return n; })} aria-label={`Select ${l.orderNumber}`} /> : <span className="w-[13px]" />}
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-2 flex-wrap">
-                          <span className="mono font-bold text-[13.5px]">{l.orderNumber}</span>
-                          <span className="text-[12px] text-muted">
+                          <span className="mono font-bold text-body">{l.orderNumber}</span>
+                          <span className="text-footnote text-muted">
                             {LEG_LABEL[l.type] ?? l.type}
                             {l.legCount > 1 ? ` · leg ${l.legSeq}/${l.legCount}` : ""}
                           </span>
                           {l.priority !== "none" && <Pill tone={l.priority === "high" ? "red" : l.priority === "medium" ? "amber" : "slate"}>{l.priority}</Pill>}
                           {l.state === "planned" ? <Pill tone="blue">{l.assigned}</Pill> : l.state === "declined" ? <Pill tone="red">declined</Pill> : null}
-                          <span className="ml-auto text-[12.5px] text-muted tabular-nums">
+                          <span className="ml-auto text-callout text-muted tabular-nums">
                             {l.miles != null ? `${l.miles.toLocaleString("en-US")} mi · ` : ""}
                             {money(l.rateCents, l.currency)}
                           </span>
                         </div>
-                        <div className="grid grid-cols-2 gap-3 mt-1.5 text-[13px]">
+                        <div className="grid grid-cols-2 gap-3 mt-1.5 text-callout">
                           <div className="min-w-0">
                             <div className="font-semibold truncate">{city(l.from)}</div>
-                            <div className="text-muted text-[12px] truncate">{shortWhen(l.from.at) || "no time"}</div>
+                            <div className="text-muted text-footnote truncate">{shortWhen(l.from.at) || "no time"}</div>
                           </div>
                           <div className="min-w-0">
                             <div className="font-semibold truncate">→ {city(l.to)}</div>
-                            <div className="text-muted text-[12px] truncate">{shortWhen(l.to.at) || "no time"}</div>
+                            <div className="text-muted text-footnote truncate">{shortWhen(l.to.at) || "no time"}</div>
                           </div>
                         </div>
-                        {l.customer && <div className="text-[12px] text-muted mt-1 truncate">{l.customer}</div>}
+                        {l.customer && <div className="text-footnote text-muted mt-1 truncate">{l.customer}</div>}
                       </div>
                     </div>
                   </li>
@@ -207,10 +207,10 @@ export function Planner({ data, canPlan }: { data: { legs: PlannerLeg[]; drivers
         <section className="card overflow-hidden" aria-label="Drivers">
           <div className="px-4 pt-4 pb-3 border-b border-line">
             <div className="flex items-center justify-between gap-3">
-              <div className="text-[15px] font-extrabold min-w-0 truncate">
+              <div className="text-headline font-extrabold min-w-0 truncate">
                 {leg ? (
                   <>
-                    Drivers for <span className="mono">{leg.orderNumber}</span> <span className="text-muted font-semibold text-[13px]">{city(leg.from)} → {city(leg.to)}</span>
+                    Drivers for <span className="mono">{leg.orderNumber}</span> <span className="text-muted font-semibold text-callout">{city(leg.from)} → {city(leg.to)}</span>
                   </>
                 ) : (
                   <>
@@ -218,7 +218,7 @@ export function Planner({ data, canPlan }: { data: { legs: PlannerLeg[]; drivers
                   </>
                 )}
               </div>
-              <input className="input h-8 w-48 text-[13px]" placeholder="Search driver, unit, city" value={drvQ} onChange={(e) => setDrvQ(e.target.value)} aria-label="Search drivers" />
+              <input className="input h-8 w-48 text-callout" placeholder="Search driver, unit, city" value={drvQ} onChange={(e) => setDrvQ(e.target.value)} aria-label="Search drivers" />
             </div>
             <div className="flex gap-1 mt-3 flex-wrap items-center">
               {[
@@ -234,7 +234,7 @@ export function Planner({ data, canPlan }: { data: { legs: PlannerLeg[]; drivers
                 </button>
               ))}
               {leg && (
-                <button type="button" className="ml-auto text-[12.5px] text-teal font-semibold" onClick={() => setSel(null)}>
+                <button type="button" className="ml-auto text-callout text-teal font-semibold" onClick={() => setSel(null)}>
                   Clear selection
                 </button>
               )}
@@ -242,7 +242,7 @@ export function Planner({ data, canPlan }: { data: { legs: PlannerLeg[]; drivers
           </div>
           <div className="max-h-[calc(100vh-270px)] overflow-auto">
             {drivers.length === 0 ? (
-              <div className="p-12 text-center text-muted text-[13.5px]">{data.drivers.length ? "Nothing matches." : "No drivers yet — add them under Settings → Drivers."}</div>
+              <div className="p-12 text-center text-muted text-body">{data.drivers.length ? "Nothing matches." : "No drivers yet — add them under Settings → Drivers."}</div>
             ) : (
               <table className="planner-table">
                 <thead>
@@ -264,16 +264,16 @@ export function Planner({ data, canPlan }: { data: { legs: PlannerLeg[]; drivers
                       <tr key={d.driverId} data-testid="planner-driver">
                         <td>
                           <div className="font-bold">{d.name}</div>
-                          <div className="text-[12px] text-muted">
+                          <div className="text-footnote text-muted">
                             {d.unit ? `Unit ${d.unit}` : "no truck"} · {d.driverType}
                             {d.dispatcher ? ` · ${d.dispatcher}` : ""}
                           </div>
                         </td>
                         <td>
                           <Pill tone={tone}>{label}</Pill>
-                          {d.current && <div className="text-[12px] text-muted mt-0.5">{d.current.orderNumber} → {d.current.to}</div>}
+                          {d.current && <div className="text-footnote text-muted mt-0.5">{d.current.orderNumber} → {d.current.to}</div>}
                           {d.events.slice(0, 2).map((e) => (
-                            <div key={e.id} className="text-[12px] mt-0.5 flex items-center gap-1">
+                            <div key={e.id} className="text-footnote mt-0.5 flex items-center gap-1">
                               <span className={e.hard ? "text-red font-semibold" : "text-amber font-semibold"}>{e.label}</span>
                               <span className="text-muted">
                                 {shortWhen(e.startsAt)} – {shortWhen(e.endsAt)}
@@ -288,16 +288,16 @@ export function Planner({ data, canPlan }: { data: { legs: PlannerLeg[]; drivers
                         </td>
                         <td>
                           <div className="font-semibold">{d.status === "available" && !d.events.some((e) => e.hard && new Date(e.startsAt) <= new Date()) ? "Now" : when(d.availableAt)}</div>
-                          <div className="text-[12px] text-muted">{d.availableIn ?? "—"}</div>
+                          <div className="text-footnote text-muted">{d.availableIn ?? "—"}</div>
                         </td>
-                        <td className="text-[12.5px]">{d.next ? `${d.next.orderNumber} · ${shortWhen(d.next.at)}` : <span className="text-faint">—</span>}</td>
-                        <td className="text-right tabular-nums text-[12.5px]" title={d.hos?.at ? `from the ELD ${when(d.hos.at)}` : "no ELD hours yet"}>
+                        <td className="text-callout">{d.next ? `${d.next.orderNumber} · ${shortWhen(d.next.at)}` : <span className="text-faint">—</span>}</td>
+                        <td className="text-right tabular-nums text-callout" title={d.hos?.at ? `from the ELD ${when(d.hos.at)}` : "no ELD hours yet"}>
                           {d.hos ? `${hrs(d.hos.driveMin)} / ${hrs(d.hos.cycleMin)}` : <span className="text-faint">—</span>}
                         </td>
                         {leg && <td className="text-right tabular-nums">{dh != null ? `${dh.toLocaleString("en-US")} mi` : <span className="text-faint">—</span>}</td>}
                         {leg && (
                           <td className="max-w-[240px]">
-                            {!c ? <span className="text-faint text-[12.5px]">{pending && !cands ? "…" : d.truckId ? "—" : "no truck"}</span> : <span className={`text-[12.5px] font-semibold ${c.hardBlocked ? "text-red" : !c.ok ? "text-amber" : "text-green"}`} title={c.reason}>{c.hardBlocked ? "Blocked: " : !c.ok ? "Override: " : ""}{c.ok && c.reason.startsWith("free") ? "Ready" : c.reason}</span>}
+                            {!c ? <span className="text-faint text-callout">{pending && !cands ? "…" : d.truckId ? "—" : "no truck"}</span> : <span className={`text-callout font-semibold ${c.hardBlocked ? "text-red" : !c.ok ? "text-amber" : "text-green"}`} title={c.reason}>{c.hardBlocked ? "Blocked: " : !c.ok ? "Override: " : ""}{c.ok && c.reason.startsWith("free") ? "Ready" : c.reason}</span>}
                           </td>
                         )}
                         <td className="text-right whitespace-nowrap">
@@ -350,7 +350,7 @@ export function Planner({ data, canPlan }: { data: { legs: PlannerLeg[]; drivers
           </>
         }
       >
-        <p className="text-[13.5px] mb-3">{override?.message}</p>
+        <p className="text-body mb-3">{override?.message}</p>
         <label className="label" htmlFor="ov-why">
           Why is it OK? (kept on the record)
         </label>
@@ -431,7 +431,7 @@ function EventModal({ driver, onClose, onDone }: { driver: PlannerDriver; onClos
           </label>
           <input id="ev-note" className="input" value={f.note} onChange={(e) => setF({ ...f, note: e.target.value })} />
         </div>
-        <label className="col-span-2 flex items-center gap-2 text-[13px] cursor-pointer">
+        <label className="col-span-2 flex items-center gap-2 text-callout cursor-pointer">
           <input type="checkbox" className="accent-teal w-4 h-4" checked={f.hard} onChange={(e) => setF({ ...f, hard: e.target.checked })} /> Blocks assignment (untick to only warn)
         </label>
         {err && (

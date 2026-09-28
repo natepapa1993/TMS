@@ -47,7 +47,7 @@ export function Queue({ rows, role }: { rows: Row[]; role: string }) {
         {rows.length === 0 ? (
           <div className="py-14 text-center">
             <div className="font-bold">Nothing to bill</div>
-            <div className="text-muted text-[13px] mt-1">Delivered orders land here.</div>
+            <div className="text-muted text-callout mt-1">Delivered orders land here.</div>
           </div>
         ) : (
           <table className="table">
@@ -81,7 +81,7 @@ export function Queue({ rows, role }: { rows: Row[]; role: string }) {
                       )}
                     </td>
                     <td>{r.customerName ?? <span className="text-faint">—</span>}</td>
-                    <td className="text-muted text-[12.5px]">{r.entityName ?? "—"}</td>
+                    <td className="text-muted text-callout">{r.entityName ?? "—"}</td>
                     <td className="mono font-semibold">
                       {formatCents(r.chargesCents, r.order.currency)}
                       {r.pending.count > 0 && (
@@ -103,7 +103,7 @@ export function Queue({ rows, role }: { rows: Row[]; role: string }) {
                         <Pill tone="green">{formatCents(r.rateConCents, r.order.currency)}</Pill>
                       )}
                       {r.paperSays && (
-                        <div className="text-[11.5px] text-amber font-semibold mt-0.5 max-w-[220px]" title="Read from the uploaded rate confirmation by the AI extractor">
+                        <div className="text-footnote text-amber font-semibold mt-0.5 max-w-[220px]" title="Read from the uploaded rate confirmation by the AI extractor">
                           {r.paperSays}
                         </div>
                       )}

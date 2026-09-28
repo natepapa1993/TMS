@@ -41,7 +41,7 @@ export function TripBuilder() {
       <div className="space-y-2">
         {stops.map((s, i) => (
           <div key={i} className="grid grid-cols-[28px_150px_1fr_110px_80px_90px_auto] gap-2 items-center" data-testid="stop-row">
-            <div className="mono text-muted text-[12.5px]">{i + 1}</div>
+            <div className="mono text-muted text-callout">{i + 1}</div>
             <select className="select" value={s.type} onChange={(e) => set(i, { type: e.target.value as StopType })} aria-label="Stop type">
               {TYPES.map(([v, l]) => (
                 <option key={v} value={v}>

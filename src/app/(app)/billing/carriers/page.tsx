@@ -18,7 +18,7 @@ export default async function CarrierBillsPage() {
         Every completed carrier leg expects a bill at the accepted tender rate. Three-way check before approval: tender = invoice, POD on file.
       </PageHeader>
       <BillingNav />
-      <div className="px-7 pb-10">
+      <div className="px-gutter pb-10">
         <CarrierBills rows={JSON.parse(JSON.stringify(rows.map((r, i) => ({ ...r, check: checks[i] }))))} role={ctx.role} totals1099={JSON.parse(JSON.stringify(y))} />
       </div>
     </div>

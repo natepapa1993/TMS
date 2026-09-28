@@ -71,7 +71,7 @@ export function ApplyPaymentButton({ customers, customerId, role, label = "Recor
               </button>
             ) : (
               <>
-                <span className={`mr-auto text-[13px] font-semibold ${left < 0 ? "text-red" : ""}`} data-testid="payment-balance">
+                <span className={`mr-auto text-callout font-semibold ${left < 0 ? "text-red" : ""}`} data-testid="payment-balance">
                   Applied {formatCents(applied, cur)} of {formatCents(cents(f.amount), cur)}
                   {left > 0 ? ` · ${formatCents(left, cur)} goes on account` : left < 0 ? " · more than received" : ""}
                 </span>
@@ -97,7 +97,7 @@ export function ApplyPaymentButton({ customers, customerId, role, label = "Recor
           }
         >
           {result ? (
-            <div className="text-[13.5px] space-y-1" data-testid="payment-result">
+            <div className="text-body space-y-1" data-testid="payment-result">
               {result.applied.map((a) => (
                 <div key={a.number}>
                   <b className="mono">{a.number}</b> {formatCents(a.appliedCents, cur)} — {a.after}
@@ -174,9 +174,9 @@ export function ApplyPaymentButton({ customers, customerId, role, label = "Recor
                 </button>
               </div>
               {!f.customerId ? (
-                <div className="text-muted text-[13px]">Pick who paid.</div>
+                <div className="text-muted text-callout">Pick who paid.</div>
               ) : !invs.length ? (
-                <div className="text-muted text-[13px]">{pending ? "Loading…" : "Nothing open for this customer — the whole payment goes on account."}</div>
+                <div className="text-muted text-callout">{pending ? "Loading…" : "Nothing open for this customer — the whole payment goes on account."}</div>
               ) : (
                 <div className="max-h-[340px] overflow-auto -mx-5">
                   <table className="table" data-testid="apply-table">
@@ -197,8 +197,8 @@ export function ApplyPaymentButton({ customers, customerId, role, label = "Recor
                         return (
                           <tr key={i.id} data-testid="apply-row">
                             <td className="mono font-bold">{i.number}</td>
-                            <td className="text-[12px] text-muted">{i.loads.map((x) => x.orderNumber).join(", ")}</td>
-                            <td className={`text-[12.5px] ${i.dueAt && new Date(i.dueAt) < new Date() ? "text-red font-semibold" : ""}`}>{i.dueAt?.slice(0, 10) ?? "—"}</td>
+                            <td className="text-footnote text-muted">{i.loads.map((x) => x.orderNumber).join(", ")}</td>
+                            <td className={`text-callout ${i.dueAt && new Date(i.dueAt) < new Date() ? "text-red font-semibold" : ""}`}>{i.dueAt?.slice(0, 10) ?? "—"}</td>
                             <td className="mono">{formatCents(i.openCents, i.currency)}</td>
                             <td>
                               <input className="input w-28" inputMode="decimal" aria-label={`Apply to ${i.number}`} value={l?.amount ?? ""} onChange={(e) => set(i.id, { amount: e.target.value })} />
@@ -237,10 +237,10 @@ export function UseOnAccount({ paymentId, unappliedCents, currency, invoices }: 
   const t = useToast();
   const [inv, setInv] = useState("");
   const [pending, start] = useTransition();
-  if (!invoices.length) return <span className="text-[12px] text-muted">no open invoice to use it on</span>;
+  if (!invoices.length) return <span className="text-footnote text-muted">no open invoice to use it on</span>;
   return (
     <span className="inline-flex gap-1 items-center">
-      <select className="select h-8 text-[12.5px] w-40" value={inv} onChange={(e) => setInv(e.target.value)} aria-label="Use on invoice">
+      <select className="select h-8 text-callout w-40" value={inv} onChange={(e) => setInv(e.target.value)} aria-label="Use on invoice">
         <option value="">Use on…</option>
         {invoices.map((i) => (
           <option key={i.id} value={i.id}>

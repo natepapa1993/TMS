@@ -45,7 +45,7 @@ export default async function TripPage({ params }: PageProps<"/trips/[id]">) {
       >
         {p.stops[0]?.name} → {p.stops[p.stops.length - 1]?.name} · {p.order.equipment.replace("_", " ")} · legs: {p.legs.map((l) => `${LEG_TYPE_LABEL[l.type]} (${LEG_LABEL[l.state]})`).join(", ")}
       </PageHeader>
-      <div className="px-7 pb-10">
+      <div className="px-gutter pb-10">
         <TripView
           tripId={id}
           state={p.order.state}

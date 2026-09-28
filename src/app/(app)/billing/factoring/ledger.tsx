@@ -36,7 +36,7 @@ export function FactorLedger({ rows, canEdit, terms }: { rows: LedgerRow[]; canE
         {rows.length === 0 ? (
           <div className="py-14 text-center">
             <div className="font-bold">No factored invoices</div>
-            <div className="text-muted text-[13px] mt-1">Invoices from a billing entity with a factor (Settings → Billing entities → Factoring) show here once issued.</div>
+            <div className="text-muted text-callout mt-1">Invoices from a billing entity with a factor (Settings → Billing entities → Factoring) show here once issued.</div>
           </div>
         ) : (
           <table className="table" data-testid="factor-ledger">
@@ -61,7 +61,7 @@ export function FactorLedger({ rows, canEdit, terms }: { rows: LedgerRow[]; canE
                     <Link href={`/billing/invoices/${r.invoiceId}`} className="hover:text-teal">
                       {r.number}
                     </Link>
-                    <div className="text-[11.5px] text-muted font-sans">{r.entity}</div>
+                    <div className="text-footnote text-muted font-sans">{r.entity}</div>
                   </td>
                   <td>{r.customer}</td>
                   <td className="mono">{formatCents(r.totalCents, r.currency)}</td>
@@ -71,7 +71,7 @@ export function FactorLedger({ rows, canEdit, terms }: { rows: LedgerRow[]; canE
                   <td>
                     <Pill tone={STATUS[r.status][1]}>{STATUS[r.status][0]}</Pill>
                     {r.status === "funded" && r.ageDays != null && (
-                      <div className={`text-[11.5px] mt-0.5 ${r.atRisk ? "text-red font-semibold" : "text-muted"}`}>
+                      <div className={`text-footnote mt-0.5 ${r.atRisk ? "text-red font-semibold" : "text-muted"}`}>
                         {r.ageDays} d{r.recourseDays ? ` of ${r.recourseDays} recourse` : " · non-recourse"}
                       </div>
                     )}

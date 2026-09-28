@@ -4,7 +4,7 @@ import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { updateOrderAction, updateStopAction, addStopAction, removeStopAction, moveStopAction, lockAction, tonuAction, templateFromOrderAction } from "../actions";
 import { bookAction, cancelAction, holdAction, releaseAction, setLegMilesAction, copyOrderAction } from "../../dispatch/actions";
-import { Confirm, Modal, Toast, useToast } from "@/components/ui";
+import { Confirm, Modal, MoreMenu, Toast, useToast } from "@/components/ui";
 import { StopFields, blankStop, stopPayload, STOP_LABEL, COUNTRIES, type Loc, type StopDraft } from "@/components/stop-fields";
 import { stopZone, toZoneInput, fromZoneInput, fmtIn } from "@/lib/time";
 
@@ -140,12 +140,12 @@ export function StopEditor({ orderId, index, count, stop, readOnly, restructure,
   return (
     <div className="rounded-lg border border-line">
       <div className="flex items-center gap-3 px-3 py-2.5 cursor-pointer" onClick={() => setOpen(!open)}>
-        <span className={`w-6 h-6 rounded-full grid place-items-center text-[11px] font-extrabold ${done ? "bg-teal text-white" : stop.arrivedAt ? "bg-teal-soft text-teal" : "bg-line text-muted"}`}>{index + 1}</span>
+        <span className={`w-6 h-6 rounded-full grid place-items-center text-caption font-extrabold ${done ? "bg-teal text-white" : stop.arrivedAt ? "bg-teal-soft text-teal" : "bg-line text-muted"}`}>{index + 1}</span>
         <div className="flex-1 min-w-0">
           <div className="font-bold truncate">
             {stop.name} <span className="text-faint font-normal">· {STOP_LABEL[stop.type] ?? stop.type.replace("_", " ")} · {stop.country}</span>
           </div>
-          <div className="text-muted text-[12.5px] truncate">
+          <div className="text-muted text-callout truncate">
             {fmtAddr(stop.address) || "no address"}
             {stop.windowStart ? ` · ${fmtIn(stop.windowStart, zone, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}` : ""}
             {stop.arrivedAt ? ` · in ${fmtIn(stop.arrivedAt, zone, { hour: "numeric", minute: "2-digit", month: undefined, day: undefined })}` : ""}
@@ -190,7 +190,7 @@ export function StopEditor({ orderId, index, count, stop, readOnly, restructure,
               <label className="label">to</label>
               <input type="datetime-local" className="input" value={f.windowEnd} onChange={(e) => setF({ ...f, windowEnd: e.target.value })} />
             </div>
-            <label className="flex items-end gap-2 pb-2 text-[12.5px] cursor-pointer whitespace-nowrap">
+            <label className="flex items-end gap-2 pb-2 text-callout cursor-pointer whitespace-nowrap">
               <input type="checkbox" className="accent-teal" checked={f.appointment} onChange={(e) => setF({ ...f, appointment: e.target.checked })} /> Appt
             </label>
             <div>
@@ -279,19 +279,6 @@ export function OrderActions({ order }: { order: Order }) {
           Book again
         </button>
       )}
-      {(order.kind ?? "order") === "order" && (
-        <button
-          className="btn"
-          disabled={pending}
-          title="Save this lane as a template: stops, times of day, rate and freight"
-          onClick={() => {
-            const name = window.prompt("Name the template (e.g. Canton → Toronto, Acme)")?.trim();
-            if (name) run(`Saved as template “${name}”`, () => templateFromOrderAction(order.id, name));
-          }}
-        >
-          Save as template
-        </button>
-      )}
       {["dispatched", "in_transit"].includes(order.state) && (
         <button className="btn" onClick={() => setHold(true)}>
           Hold
@@ -302,21 +289,40 @@ export function OrderActions({ order }: { order: Order }) {
           Release hold
         </button>
       )}
-      {(order.kind ?? "order") === "order" && ["booked", "dispatched", "in_transit", "exception"].includes(order.state) && (
-        <button className="btn" onClick={() => setTonu(true)} title="Truck ordered, not used: cancel and bill the TONU fee">
-          TONU
-        </button>
-      )}
-      {!["paid", "cancelled"].includes(order.state) && (
-        <button className="btn" disabled={pending} onClick={() => run(order.lockedAt ? "Unlocked" : "Locked — no edits until unlocked", () => lockAction(order.id, !order.lockedAt))}>
-          {order.lockedAt ? "Unlock" : "Lock"}
-        </button>
-      )}
-      {["draft", "booked", "dispatched", "in_transit", "exception"].includes(order.state) && (
-        <button className="btn btn-danger" onClick={() => setCancel(true)}>
-          Cancel order
-        </button>
-      )}
+      <MoreMenu label="More actions for this load">
+        {(order.kind ?? "order") === "order" && (
+          <button
+            className="menu-item"
+            role="menuitem"
+            disabled={pending}
+            title="Save this lane as a template: stops, times of day, rate and freight"
+            onClick={() => {
+              const name = window.prompt("Name the template (e.g. Canton → Toronto, Acme)")?.trim();
+              if (name) run(`Saved as template “${name}”`, () => templateFromOrderAction(order.id, name));
+            }}
+          >
+            Save as template
+          </button>
+        )}
+        {(order.kind ?? "order") === "order" && ["booked", "dispatched", "in_transit", "exception"].includes(order.state) && (
+          <button className="menu-item" role="menuitem" onClick={() => setTonu(true)} title="Truck ordered, not used: cancel and bill the TONU fee">
+            TONU — truck ordered, not used
+          </button>
+        )}
+        {!["paid", "cancelled"].includes(order.state) && (
+          <button className="menu-item" role="menuitem" disabled={pending} onClick={() => run(order.lockedAt ? "Unlocked" : "Locked — no edits until unlocked", () => lockAction(order.id, !order.lockedAt))}>
+            {order.lockedAt ? "Unlock" : "Lock"}
+          </button>
+        )}
+        {["draft", "booked", "dispatched", "in_transit", "exception"].includes(order.state) && (
+          <>
+            <div className="menu-sep" />
+            <button className="menu-item danger" role="menuitem" onClick={() => setCancel(true)}>
+              Cancel order
+            </button>
+          </>
+        )}
+      </MoreMenu>
       <Modal
         open={tonu}
         onClose={() => setTonu(false)}
@@ -345,7 +351,7 @@ export function OrderActions({ order }: { order: Order }) {
           </>
         }
       >
-        <p className="text-[13.5px] text-muted mb-4">The open legs are cancelled and the load is billed the TONU fee instead of the line haul. It goes to billing without a POD or BOL.</p>
+        <p className="text-body text-muted mb-4">The open legs are cancelled and the load is billed the TONU fee instead of the line haul. It goes to billing without a POD or BOL.</p>
         <div className="grid grid-cols-[160px_1fr] gap-3">
           <div>
             <label className="label" htmlFor="tonu-amount">
@@ -391,8 +397,8 @@ export function LegMiles({ legId, miles, locked }: { legId: string; miles: numbe
   return (
     <span className="inline-flex items-center gap-1">
       <input className="input w-20 h-7 px-2 mono" inputMode="numeric" value={v} aria-label="Planned miles" onChange={(e) => setV(e.target.value)} onBlur={save} onKeyDown={(e) => e.key === "Enter" && (e.target as HTMLInputElement).blur()} placeholder="mi" aria-invalid={state === "error"} />
-      {state === "saved" && <span className="text-teal text-[11px] font-bold">✓</span>}
-      {msg && <span className="error m-0 text-[11px]">{msg}</span>}
+      {state === "saved" && <span className="text-teal text-caption font-bold">✓</span>}
+      {msg && <span className="error m-0 text-caption">{msg}</span>}
     </span>
   );
 }

@@ -63,7 +63,7 @@ export function CompanyForm({ initial, canEdit }: { initial: { name: string; tim
           <input id="c-dispatch" className="input" placeholder="+1 313 555 0100" value={f.dispatchPhone} onChange={(e) => setF({ ...f, dispatchPhone: e.target.value })} aria-invalid={err?.field === "dispatchPhone"} />
           <div className="help">Drivers and partner carriers&apos; drivers get a Call / WhatsApp button to this number in their app.</div>
         </div>
-        <div className="col-span-2 text-[13px] text-muted">
+        <div className="col-span-2 text-callout text-muted">
           Books closed through: <b className="text-ink">{initial.closedThrough ?? "not closed yet"}</b> — set from Billing → Invoices → Close period.
         </div>
         <div className="col-span-2 eyebrow mt-3">QuickBooks account names</div>

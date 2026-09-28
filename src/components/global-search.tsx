@@ -59,7 +59,7 @@ export function GlobalSearch() {
   return (
     <>
       <button className="global-search-btn" onClick={() => setOpen(true)} aria-label="Search everything" data-testid="global-search-open">
-        <Search size={14} aria-hidden /> Search <span className="ml-auto text-[10.5px] opacity-70">⌘K</span>
+        <Search size={14} aria-hidden /> Search <span className="ml-auto text-caption opacity-70">⌘K</span>
       </button>
       {open && (
         <div className="overlay fixed inset-0 z-50 bg-navy/40 flex items-start justify-center pt-[12vh] px-4" onClick={close}>
@@ -69,7 +69,7 @@ export function GlobalSearch() {
               <input
                 ref={input}
                 id="global-search"
-                className="flex-1 h-12 outline-none text-[15px] bg-transparent"
+                className="flex-1 h-12 outline-none text-headline bg-transparent"
                 placeholder="Load #, PO, BOL, customer ref, unit, trailer, driver, customer, carrier…"
                 value={q}
                 onChange={(e) => setQ(e.target.value)}
@@ -86,22 +86,22 @@ export function GlobalSearch() {
                   if (e.key === "Enter" && shown[i]) go(shown[i]);
                 }}
               />
-              {busy && <span className="text-[12px] text-faint">searching…</span>}
+              {busy && <span className="text-footnote text-faint">searching…</span>}
             </div>
             <ul className="max-h-[420px] overflow-y-auto" data-testid="global-search-results">
               {shown.map((h, k) => (
                 <li key={`${h.kind}-${h.id}`}>
                   <button className={`w-full text-left px-4 py-2.5 flex items-center gap-3 ${k === i ? "bg-teal-soft" : "hover:bg-ground"}`} onMouseEnter={() => setI(k)} onClick={() => go(h)}>
-                    <span className="text-[10.5px] uppercase tracking-wider font-bold text-faint w-16 shrink-0">{KIND[h.kind]}</span>
+                    <span className="text-caption font-bold text-faint w-16 shrink-0">{KIND[h.kind]}</span>
                     <span className="min-w-0">
                       <span className={`block font-semibold ${h.kind === "load" ? "mono" : ""}`}>{h.title}</span>
-                      <span className="block text-[12px] text-muted truncate">{h.sub}</span>
+                      <span className="block text-footnote text-muted truncate">{h.sub}</span>
                     </span>
                   </button>
                 </li>
               ))}
-              {q.trim().length >= 2 && !busy && !shown.length && <li className="px-4 py-6 text-center text-muted text-[13px]">Nothing found for “{q}”.</li>}
-              {q.trim().length < 2 && <li className="px-4 py-5 text-[12.5px] text-muted">Type at least two characters. ↑ ↓ to move, Enter to open, Esc to close.</li>}
+              {q.trim().length >= 2 && !busy && !shown.length && <li className="px-4 py-6 text-center text-muted text-callout">Nothing found for “{q}”.</li>}
+              {q.trim().length < 2 && <li className="px-4 py-5 text-callout text-muted">Type at least two characters. ↑ ↓ to move, Enter to open, Esc to close.</li>}
             </ul>
           </div>
         </div>

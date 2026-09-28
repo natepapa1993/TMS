@@ -26,17 +26,17 @@ export default async function SettingsPage({ searchParams }: PageProps<"/setting
       <PageHeader eyebrow="Setup" title={sp.welcome ? `Welcome, ${ctx.name.split(" ")[0]}` : "Settings"}>
         Company, master data and connections.
       </PageHeader>
-      <div className="px-7 pb-10 space-y-8">
+      <div className="px-gutter pb-10 space-y-8">
         {todo.length > 0 && (
           <div className="card p-5">
             <div className="h2">Getting started</div>
-            <p className="text-muted text-[13px] mt-0.5 mb-3">Five things and you can dispatch. Each takes a minute; import a CSV if you have one.</p>
+            <p className="text-muted text-callout mt-0.5 mb-3">Five things and you can dispatch. Each takes a minute; import a CSV if you have one.</p>
             <ol className="space-y-2">
               {setupSteps.map((s, i) => {
                 const done = c[s.kind] > 0;
                 return (
-                  <li key={s.kind} className="flex items-center gap-3 text-[13.5px]">
-                    <span className={`w-6 h-6 rounded-full grid place-items-center text-[12px] font-extrabold ${done ? "bg-teal text-white" : "bg-line text-muted"}`}>{done ? "✓" : i + 1}</span>
+                  <li key={s.kind} className="flex items-center gap-3 text-body">
+                    <span className={`w-6 h-6 rounded-full grid place-items-center text-footnote font-extrabold ${done ? "bg-teal text-white" : "bg-line text-muted"}`}>{done ? "✓" : i + 1}</span>
                     <Link href={`/settings/${KIND_META[s.kind].path}${done ? "" : "?add=1"}`} className={`font-bold ${done ? "text-muted line-through" : "text-teal"}`}>
                       Add {KIND_META[s.kind].plural.toLowerCase()}
                     </Link>
@@ -53,13 +53,13 @@ export default async function SettingsPage({ searchParams }: PageProps<"/setting
             <Link href="/settings/company" className="card p-4 hover:border-teal transition-colors flex items-start justify-between gap-3">
               <div>
                 <div className="font-extrabold">Company</div>
-                <div className="text-muted text-[12.5px] mt-0.5">Name, time zone, fuel cost per mile</div>
+                <div className="text-muted text-callout mt-0.5">Name, time zone, fuel cost per mile</div>
               </div>
             </Link>
             <Link href="/settings/integrations" className="card p-4 hover:border-teal transition-colors flex items-start justify-between gap-3">
               <div>
                 <div className="font-extrabold">Integrations</div>
-                <div className="text-muted text-[12.5px] mt-0.5">Motive ELD tracking, email sending</div>
+                <div className="text-muted text-callout mt-0.5">Motive ELD tracking, email sending</div>
               </div>
             </Link>
           </div>
@@ -74,7 +74,7 @@ export default async function SettingsPage({ searchParams }: PageProps<"/setting
                   <Link key={k} href={`/settings/${KIND_META[k].path}`} className="card p-4 hover:border-teal transition-colors flex items-start justify-between gap-3">
                     <div>
                       <div className="font-extrabold">{KIND_META[k].plural}</div>
-                      <div className="text-muted text-[12.5px] mt-0.5">{KIND_META[k].blurb}</div>
+                      <div className="text-muted text-callout mt-0.5">{KIND_META[k].blurb}</div>
                     </div>
                     <span className="count">{c[k]}</span>
                   </Link>

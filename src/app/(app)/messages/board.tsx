@@ -20,7 +20,7 @@ export function MessagesBoard({ rows }: { rows: Row[] }) {
   return (
     <>
       <div className="flex items-center gap-3 mb-3">
-        <label className="flex items-center gap-2 text-[13px] cursor-pointer">
+        <label className="flex items-center gap-2 text-callout cursor-pointer">
           <input type="checkbox" className="accent-teal" checked={showHandled} onChange={(e) => setShowHandled(e.target.checked)} /> Show handled
         </label>
       </div>
@@ -41,7 +41,7 @@ export function MessagesBoard({ rows }: { rows: Row[] }) {
             <tbody>
               {shown.map((r) => (
                 <tr key={r.m.id} className={r.m.handledAt ? "opacity-60" : ""}>
-                  <td className="text-muted text-[12.5px] whitespace-nowrap">{new Date(r.m.receivedAt).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}</td>
+                  <td className="text-muted text-callout whitespace-nowrap">{new Date(r.m.receivedAt).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}</td>
                   <td>
                     {r.driverName ? (
                       <Link href={`/settings/drivers/${r.m.driverId}`} className="font-bold hover:text-teal">
@@ -56,9 +56,9 @@ export function MessagesBoard({ rows }: { rows: Row[] }) {
                         <span className="font-bold">{r.m.fromName ?? "Unknown"}</span> <Pill tone="amber">not on file</Pill>
                       </span>
                     )}
-                    <div className="mono text-[12px] text-muted">{r.m.channel === "driver_app" ? "driver app" : `+${r.m.from}`}</div>
+                    <div className="mono text-footnote text-muted">{r.m.channel === "driver_app" ? "driver app" : `+${r.m.from}`}</div>
                   </td>
-                  <td className="text-[13px] max-w-md">{r.m.body}</td>
+                  <td className="text-callout max-w-md">{r.m.body}</td>
                   <td>
                     {r.orderNumber ? (
                       <Link href={`/orders/${r.m.orderId}`} className="font-bold mono text-teal">
@@ -114,7 +114,7 @@ export function MessagesBoard({ rows }: { rows: Row[] }) {
       >
         {reply && (
           <div className="space-y-2">
-            <div className="rounded-lg bg-ground px-3 py-2 text-[13px]">{reply.m.body}</div>
+            <div className="rounded-lg bg-ground px-3 py-2 text-callout">{reply.m.body}</div>
             <textarea className="w-full" rows={3} placeholder="Your answer. It shows in their app; on WhatsApp too when the number is connected." value={text} onChange={(e) => setText(e.target.value)} autoFocus aria-label="Reply" />
             {err && <div className="error">{err}</div>}
           </div>

@@ -108,15 +108,15 @@ function SelectFilter({ options, value, onChange, label }: { options: string[]; 
       </button>
       {open && (
         <div className="absolute z-40 mt-1 w-56 max-h-72 overflow-auto rounded-lg border border-line bg-white shadow-[var(--shadow-pop)] p-1.5">
-          {options.length === 0 && <div className="px-2 py-1.5 text-[12.5px] text-muted">Nothing to filter</div>}
+          {options.length === 0 && <div className="px-2 py-1.5 text-callout text-muted">Nothing to filter</div>}
           {options.map((o) => (
-            <label key={o} className="flex items-center gap-2 px-2 py-1.5 rounded-md hover:bg-ground text-[12.5px] cursor-pointer">
+            <label key={o} className="flex items-center gap-2 px-2 py-1.5 rounded-md hover:bg-ground text-callout cursor-pointer">
               <input type="checkbox" className="accent-teal" checked={value.includes(o)} onChange={(e) => onChange(e.target.checked ? [...value, o] : value.filter((x) => x !== o))} />
               <span className="truncate">{o || "(blank)"}</span>
             </label>
           ))}
           {value.length > 0 && (
-            <button type="button" className="w-full text-left px-2 py-1.5 text-[12.5px] text-teal font-semibold" onClick={() => onChange([])}>
+            <button type="button" className="w-full text-left px-2 py-1.5 text-callout text-teal font-semibold" onClick={() => onChange([])}>
               Clear
             </button>
           )}
@@ -319,14 +319,14 @@ export function DataGrid<T extends { id: string }>({
           {views.map((v) => (
             <div key={v.id} className="flex items-center gap-1">
               <button type="button" className={`menu-item flex-1 ${viewId === v.id ? "font-semibold" : ""}`} onClick={() => (setViewId(v.id), apply(v.config))}>
-                {v.name} {v.shared && <span className="text-faint text-[11px]">· shared</span>}
+                {v.name} {v.shared && <span className="text-faint text-caption">· shared</span>}
               </button>
               {v.mine && (
                 <>
-                  <button type="button" className="text-[11px] text-muted hover:text-ink px-1.5" onClick={() => toggleShare(v)} title={v.shared ? "Make private" : "Share with the company"}>
+                  <button type="button" className="text-caption text-muted hover:text-ink px-1.5" onClick={() => toggleShare(v)} title={v.shared ? "Make private" : "Share with the company"}>
                     {v.shared ? "Unshare" : "Share"}
                   </button>
-                  <button type="button" className="text-[11px] text-red px-1.5" onClick={() => remove(v)} aria-label={`Delete view ${v.name}`}>
+                  <button type="button" className="text-caption text-red px-1.5" onClick={() => remove(v)} aria-label={`Delete view ${v.name}`}>
                     ✕
                   </button>
                 </>
@@ -358,7 +358,7 @@ export function DataGrid<T extends { id: string }>({
         </div>
 
         <div className="ml-auto flex items-center gap-2">
-          <input className="input h-8 w-60 text-[13px]" placeholder={searchPlaceholder} value={search} onChange={(e) => (setSearch(e.target.value), setPagination((p) => ({ ...p, pageIndex: 0 })))} aria-label="Search the list" />
+          <input className="input h-8 w-60 text-callout" placeholder={searchPlaceholder} value={search} onChange={(e) => (setSearch(e.target.value), setPagination((p) => ({ ...p, pageIndex: 0 })))} aria-label="Search the list" />
           <button type="button" className="btn btn-sm" data-active={showFilters} onClick={() => setShowFilters((f) => !f)} aria-pressed={showFilters}>
             Filters{filterCount ? ` · ${filterCount}` : ""}
           </button>
@@ -371,14 +371,14 @@ export function DataGrid<T extends { id: string }>({
                   if (!col) return null;
                   return (
                     <div key={id} className="flex items-center gap-1 px-1">
-                      <label className="flex items-center gap-2 flex-1 px-1.5 py-1.5 rounded-md hover:bg-ground text-[12.5px] cursor-pointer">
+                      <label className="flex items-center gap-2 flex-1 px-1.5 py-1.5 rounded-md hover:bg-ground text-callout cursor-pointer">
                         <input type="checkbox" className="accent-teal" checked={col.getIsVisible()} onChange={col.getToggleVisibilityHandler()} />
                         {col.columnDef.meta?.label ?? id}
                       </label>
-                      <button type="button" className="text-muted hover:text-ink px-1 text-[12px]" onClick={() => moveCol(id, -1)} aria-label={`Move ${col.columnDef.meta?.label} left`}>
+                      <button type="button" className="text-muted hover:text-ink px-1 text-footnote" onClick={() => moveCol(id, -1)} aria-label={`Move ${col.columnDef.meta?.label} left`}>
                         ↑
                       </button>
-                      <button type="button" className="text-muted hover:text-ink px-1 text-[12px]" onClick={() => moveCol(id, 1)} aria-label={`Move ${col.columnDef.meta?.label} right`}>
+                      <button type="button" className="text-muted hover:text-ink px-1 text-footnote" onClick={() => moveCol(id, 1)} aria-label={`Move ${col.columnDef.meta?.label} right`}>
                         ↓
                       </button>
                     </div>
@@ -399,14 +399,14 @@ export function DataGrid<T extends { id: string }>({
       {totals && <div className="grid-totals">{totals(filtered)}</div>}
 
       {selected.length > 0 && bulk && (
-        <div className="flex items-center gap-3 px-3 py-2 mb-2 rounded-lg bg-navy text-white text-[13px]" data-testid="bulk-bar">
+        <div className="flex items-center gap-3 px-3 py-2 mb-2 rounded-lg bg-navy text-white text-callout" data-testid="bulk-bar">
           <span className="font-semibold">{selected.length} selected</span>
           <span className="h-4 w-px bg-white/25" />
           {bulk(selected, () => setSelection({}))}
-          <button type="button" className="text-white/80 hover:text-white text-[12.5px]" onClick={() => exportCsv(selected)}>
+          <button type="button" className="text-white/80 hover:text-white text-callout" onClick={() => exportCsv(selected)}>
             Export selected
           </button>
-          <button type="button" className="ml-auto text-white/70 hover:text-white text-[12.5px]" onClick={() => setSelection({})}>
+          <button type="button" className="ml-auto text-white/70 hover:text-white text-callout" onClick={() => setSelection({})}>
             Clear
           </button>
         </div>
@@ -426,8 +426,8 @@ export function DataGrid<T extends { id: string }>({
                       {h.isPlaceholder ? null : h.column.getCanSort() ? (
                         <button type="button" className={`inline-flex items-center gap-1 ${meta?.align === "right" ? "flex-row-reverse" : ""}`} onClick={h.column.getToggleSortingHandler()} title="Sort (shift-click to add)">
                           {flexRender(h.column.columnDef.header, h.getContext())}
-                          <span className={`text-[10px] ${sorted ? "text-teal" : "text-transparent"}`}>{sorted === "desc" ? "▼" : "▲"}</span>
-                          {sortIndex >= 0 && <span className="text-[10px] text-teal">{sortIndex + 1}</span>}
+                          <span className={`text-caption ${sorted ? "text-teal" : "text-transparent"}`}>{sorted === "desc" ? "▼" : "▲"}</span>
+                          {sortIndex >= 0 && <span className="text-caption text-teal">{sortIndex + 1}</span>}
                         </button>
                       ) : (
                         flexRender(h.column.columnDef.header, h.getContext())
@@ -498,13 +498,13 @@ export function DataGrid<T extends { id: string }>({
       </div>
 
       {/* pages */}
-      <div className="flex items-center justify-between gap-3 mt-3 text-[12.5px] text-muted flex-wrap">
+      <div className="flex items-center justify-between gap-3 mt-3 text-callout text-muted flex-wrap">
         <div>
           {total === 0 ? "0 rows" : `${pageIndex * pageSize + 1}–${Math.min(total, (pageIndex + 1) * pageSize)} of ${total}`}
           {total !== data.length ? ` (filtered from ${data.length})` : ""}
         </div>
         <div className="flex items-center gap-2">
-          <select className="select h-8 w-auto text-[12.5px]" value={pageSize} onChange={(e) => setPagination({ pageIndex: 0, pageSize: Number(e.target.value) })} aria-label="Rows per page">
+          <select className="select h-8 w-auto text-callout" value={pageSize} onChange={(e) => setPagination({ pageIndex: 0, pageSize: Number(e.target.value) })} aria-label="Rows per page">
             {[25, 50, 100, 250, 500].map((n) => (
               <option key={n} value={n}>
                 {n} per page

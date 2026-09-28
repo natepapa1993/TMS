@@ -27,12 +27,12 @@ export default async function ArPage() {
         ) : null}
       </PageHeader>
       <BillingNav />
-      <div className="px-7 pb-10">
+      <div className="px-gutter pb-10">
         <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-3 mb-4">
           {[["Total open", totals.total, ""], ...cols.map(([k, l]) => [l, totals[k], k === "current" ? "" : k === "1_30" ? "text-amber" : "text-red"])].map(([l, v, cls]) => (
             <div key={String(l)} className="card p-4">
               <div className="eyebrow">{l}</div>
-              <div className={`text-[22px] font-extrabold mono ${v ? cls : "text-faint"}`}>{formatCents(Number(v))}</div>
+              <div className={`text-title2 font-extrabold mono ${v ? cls : "text-faint"}`}>{formatCents(Number(v))}</div>
             </div>
           ))}
         </div>
@@ -59,7 +59,7 @@ export default async function ArPage() {
                       <Link href={`/billing/invoices?customer=${r.customerId}`} className="hover:text-teal">
                         {r.name}
                       </Link>
-                      <div className="text-[12px] text-muted">{r.invoices.length} invoice(s)</div>
+                      <div className="text-footnote text-muted">{r.invoices.length} invoice(s)</div>
                     </td>
                     {cols.map(([k]) => (
                       <td key={k} className={`mono ${r.buckets[k] ? (k === "current" ? "" : k === "1_30" ? "text-amber font-semibold" : "text-red font-semibold") : "text-faint"}`}>

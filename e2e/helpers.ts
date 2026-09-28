@@ -90,3 +90,8 @@ export async function step(panel: import("@playwright/test").Locator) {
   await panel.locator("button.btn-primary.btn-lg").first().click();
   await confirmStamp(panel);
 }
+
+/** The load page keeps one action on screen; the rest (template, TONU, lock, cancel) are in its "•••" menu. */
+export async function loadMenu(page: Page) {
+  await page.click("button[aria-label='More actions for this load']");
+}

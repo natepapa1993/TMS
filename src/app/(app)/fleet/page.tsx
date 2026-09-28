@@ -57,9 +57,9 @@ export default async function FleetPage() {
         title="Units"
         actions={
           <>
-            <span className="inline-flex rounded-lg border border-line bg-white p-0.5">
-              <span className="px-3.5 h-8 grid place-items-center rounded-md text-[13px] font-semibold bg-navy text-white">Units</span>
-              <Link href="/fleet/map" className="px-3.5 h-8 grid place-items-center rounded-md text-[13px] font-semibold text-muted hover:text-ink">
+            <span className="segmented" role="group" aria-label="View">
+              <span aria-current="page">Units</span>
+              <Link href="/fleet/map">
                 Map
               </Link>
             </span>
@@ -70,13 +70,13 @@ export default async function FleetPage() {
       >
         {units.length} units · {units.filter((u) => u.status === "oos").length} out of service · {drivers.length} drivers · {trailers.length} trailers
       </PageHeader>
-      <div className="px-7 pb-10">
+      <div className="px-gutter pb-10">
         <FleetBoard units={units} drivers={drivers.map((d) => ({ id: d.id, name: String(d.name), driverType: String(d.driverType), currentTruckId: (d.currentTruckId as string | null) ?? null }))} />
         <div className="flex items-end justify-between mt-10 mb-3">
           <div>
             <div className="eyebrow">Trailers · cajas</div>
             <div className="h2">Trailers</div>
-            <div className="text-muted text-[13px]">On a load now, or where it was last dropped and for how long. Dispatch names the caja on the crossing; a leg can name it too.</div>
+            <div className="text-muted text-callout">On a load now, or where it was last dropped and for how long. Dispatch names the caja on the crossing; a leg can name it too.</div>
           </div>
           <QuickAdd kind="trailer" fields={FIELDS.trailer} refs={trailerRefs.options} label="Add trailer" buttonClass="btn" />
         </div>

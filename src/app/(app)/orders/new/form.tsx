@@ -47,10 +47,10 @@ function Section({ id, n, title, hint, action, children }: { id: string; n: numb
     <section id={id} className="card p-6 md:p-8 scroll-mt-28">
       <div className="flex items-start justify-between gap-4 mb-6">
         <div className="flex items-start gap-3">
-          <span className="w-7 h-7 shrink-0 rounded-full bg-navy text-white grid place-items-center text-[12px] font-extrabold mt-0.5">{n}</span>
+          <span className="w-7 h-7 shrink-0 rounded-full bg-navy text-white grid place-items-center text-footnote font-extrabold mt-0.5">{n}</span>
           <div>
-            <h2 className="text-[18px] font-extrabold tracking-tight">{title}</h2>
-            {hint && <p className="text-muted text-[13.5px] mt-1 max-w-[62ch]">{hint}</p>}
+            <h2 className="text-title3 font-extrabold tracking-tight">{title}</h2>
+            {hint && <p className="text-muted text-body mt-1 max-w-[62ch]">{hint}</p>}
           </div>
         </div>
         {action}
@@ -234,13 +234,13 @@ export function OrderForm({ customers, entities, locations, templates = [], zone
           </Link>{" "}
           / New load
         </div>
-        <h1 className="text-[28px] font-extrabold tracking-tight leading-tight">New load</h1>
-        <p className="text-muted text-[14.5px] mt-2 max-w-[70ch]">Who pays, every stop in the order the truck runs them, the freight and the references. The load is split into legs wherever the trailer changes hands.</p>
+        <h1 className="text-title1 font-extrabold tracking-tight leading-tight">New load</h1>
+        <p className="text-muted text-body mt-2 max-w-[70ch]">Who pays, every stop in the order the truck runs them, the freight and the references. The load is split into legs wherever the trailer changes hands.</p>
         {templates.length > 0 && (
           <div className="mt-5 flex items-center gap-3 flex-wrap rounded-xl border border-line bg-white px-5 py-4" data-testid="template-strip">
             <div className="flex-1 min-w-[200px]">
-              <div className="font-bold text-[14.5px]">Start from a template</div>
-              <div className="text-muted text-[13px] mt-0.5">{tplMsg ?? "A lane you run often: pick it and the pickup date; everything fills in."}</div>
+              <div className="font-bold text-body">Start from a template</div>
+              <div className="text-muted text-callout mt-0.5">{tplMsg ?? "A lane you run often: pick it and the pickup date; everything fills in."}</div>
             </div>
             <select className="select w-64" value={tpl.id} onChange={(e) => setTpl({ ...tpl, id: e.target.value })} aria-label="Template">
               <option value="">Choose a template…</option>
@@ -259,10 +259,10 @@ export function OrderForm({ customers, entities, locations, templates = [], zone
         )}
         <div className="mt-5 flex items-center gap-4 flex-wrap rounded-xl border border-dashed border-line bg-white px-5 py-4" data-testid="ratecon-drop" onDragOver={(e) => e.preventDefault()} onDrop={(e) => { e.preventDefault(); const file = e.dataTransfer.files?.[0]; if (file) readRateCon(file); }}>
           <div className="flex-1 min-w-[240px]">
-            <div className="font-bold text-[14.5px]">{rateCon ? `Filled from ${rateCon.fileName}` : "Have the rate con? Start from it."}</div>
-            <div className="text-muted text-[13px] mt-0.5">{rateCon ? "Check every field below before booking; the rate con goes on the load." : "Drop the PDF here or choose it — the customer, rate, references, freight and every stop fill in."}</div>
+            <div className="font-bold text-body">{rateCon ? `Filled from ${rateCon.fileName}` : "Have the rate con? Start from it."}</div>
+            <div className="text-muted text-callout mt-0.5">{rateCon ? "Check every field below before booking; the rate con goes on the load." : "Drop the PDF here or choose it — the customer, rate, references, freight and every stop fill in."}</div>
             {rateCon?.warnings.map((w) => (
-              <div key={w} className="text-amber text-[12.5px] mt-1 font-semibold">
+              <div key={w} className="text-amber text-callout mt-1 font-semibold">
                 {w}
               </div>
             ))}
@@ -287,9 +287,9 @@ export function OrderForm({ customers, entities, locations, templates = [], zone
               key={id}
               href={`#${id}`}
               onClick={() => setActive(id)}
-              className={`flex items-center gap-2.5 px-4 h-14 shrink-0 border-b-2 text-[14px] font-semibold transition-colors ${active === id ? "border-teal text-ink" : "border-transparent text-muted hover:text-ink"}`}
+              className={`flex items-center gap-2.5 px-4 h-14 shrink-0 border-b-2 text-body font-semibold transition-colors ${active === id ? "border-teal text-ink" : "border-transparent text-muted hover:text-ink"}`}
             >
-              <span className={`w-6 h-6 rounded-full grid place-items-center text-[11px] font-extrabold ${done[id] ? "bg-teal text-white" : active === id ? "bg-navy text-white" : "bg-line text-muted"}`}>{done[id] ? "✓" : i + 1}</span>
+              <span className={`w-6 h-6 rounded-full grid place-items-center text-caption font-extrabold ${done[id] ? "bg-teal text-white" : active === id ? "bg-navy text-white" : "bg-line text-muted"}`}>{done[id] ? "✓" : i + 1}</span>
               {label}
             </a>
           ))}
@@ -351,11 +351,11 @@ export function OrderForm({ customers, entities, locations, templates = [], zone
                     <option>CAD</option>
                   </select>
                 </div>
-                <label className="flex items-center gap-2 mt-2.5 text-[13px] cursor-pointer text-muted">
+                <label className="flex items-center gap-2 mt-2.5 text-callout cursor-pointer text-muted">
                   <input type="checkbox" className="accent-teal w-4 h-4" checked={f.rateTbd} onChange={(e) => setF({ ...f, rateTbd: e.target.checked })} /> Rate to be confirmed
                 </label>
                 {offer && (
-                  <div className="mt-3 rounded-lg border border-teal/30 bg-teal/5 px-3.5 py-3 text-[13px]" data-testid="contract-rate">
+                  <div className="mt-3 rounded-lg border border-teal/30 bg-teal/5 px-3.5 py-3 text-callout" data-testid="contract-rate">
                     <div className="flex items-start justify-between gap-3">
                       <div>
                         <div className="font-semibold">Contract rate · {offer.lane}</div>
@@ -408,7 +408,7 @@ export function OrderForm({ customers, entities, locations, templates = [], zone
           </Section>
 
           {/* 2 — stops */}
-          <Section id="sec-stops" n={2} title="Stops" hint="In the order the truck runs them. Add a yard, border yard, transload or terminal wherever the trailer changes hands — the load splits into legs there." action={<span className="text-[13px] text-muted whitespace-nowrap mt-1">{stops.length} stops</span>}>
+          <Section id="sec-stops" n={2} title="Stops" hint="In the order the truck runs them. Add a yard, border yard, transload or terminal wherever the trailer changes hands — the load splits into legs there." action={<span className="text-callout text-muted whitespace-nowrap mt-1">{stops.length} stops</span>}>
             <ol className="relative" data-testid="stops">
               {stops.map((st, i) => {
                 const isOpen = open.has(st.key);
@@ -419,17 +419,17 @@ export function OrderForm({ customers, entities, locations, templates = [], zone
                   <li key={st.key} className="relative pl-12 md:pl-14">
                     {/* the route line */}
                     {i < stops.length - 1 && <span className="absolute left-[15px] md:left-[19px] top-10 -bottom-2 w-0.5 bg-line" aria-hidden />}
-                    <span className={`absolute left-0 top-4 w-8 h-8 md:w-10 md:h-10 rounded-full grid place-items-center text-[12px] md:text-[13px] font-extrabold ring-4 ring-white ${st.name.trim() ? "bg-navy text-white" : "bg-white text-muted border-2 border-line"}`}>{i + 1}</span>
+                    <span className={`absolute left-0 top-4 w-8 h-8 md:w-10 md:h-10 rounded-full grid place-items-center text-footnote md:text-callout font-extrabold ring-4 ring-white ${st.name.trim() ? "bg-navy text-white" : "bg-white text-muted border-2 border-line"}`}>{i + 1}</span>
 
                     <div className={`rounded-xl border bg-white transition-shadow ${isOpen ? "border-line shadow-[var(--shadow-card)]" : "border-line hover:border-faint"} ${missing ? "border-red" : ""}`} data-testid="stop">
                       <div className="flex items-center gap-3 px-4 md:px-5 py-4">
                         <button type="button" className="flex-1 min-w-0 text-left" onClick={() => toggle(st.key)} aria-expanded={isOpen} aria-label={`${isOpen ? "Fold" : "Edit"} stop ${i + 1}`}>
                           <div className="flex items-center gap-2 flex-wrap">
                             <span className={`pill pill-${STOP_TONE[st.type] ?? "slate"}`}>{STOP_LABEL[st.type] ?? st.type}</span>
-                            <span className={`font-bold text-[15px] truncate ${st.name.trim() ? "" : "text-faint font-semibold"}`}>{st.name.trim() || "Location not set"}</span>
+                            <span className={`font-bold text-headline truncate ${st.name.trim() ? "" : "text-faint font-semibold"}`}>{st.name.trim() || "Location not set"}</span>
                           </div>
                           {(place || when) && (
-                            <div className="text-muted text-[13px] mt-1 truncate">
+                            <div className="text-muted text-callout mt-1 truncate">
                               {place}
                               {place && when ? " · " : ""}
                               {when}
@@ -460,7 +460,7 @@ export function OrderForm({ customers, entities, locations, templates = [], zone
 
                     <div className="h-10 flex items-center">
                       {i < stops.length - 1 && (
-                        <button type="button" className="text-[12.5px] text-teal font-semibold px-2 py-1 rounded-md hover:bg-teal-soft" onClick={() => insertAt(i + 1)} aria-label={`Insert a stop after stop ${i + 1}`}>
+                        <button type="button" className="text-callout text-teal font-semibold px-2 py-1 rounded-md hover:bg-teal-soft" onClick={() => insertAt(i + 1)} aria-label={`Insert a stop after stop ${i + 1}`}>
                           + Insert stop here
                         </button>
                       )}
@@ -469,7 +469,7 @@ export function OrderForm({ customers, entities, locations, templates = [], zone
                 );
               })}
             </ol>
-            <button type="button" className="w-full h-14 rounded-xl border-2 border-dashed border-line text-teal font-bold text-[14px] hover:border-teal hover:bg-teal-soft transition-colors" onClick={() => insertAt(stops.length)}>
+            <button type="button" className="w-full h-14 rounded-xl border-2 border-dashed border-line text-teal font-bold text-body hover:border-teal hover:bg-teal-soft transition-colors" onClick={() => insertAt(stops.length)}>
               + Add stop
             </button>
           </Section>
@@ -500,7 +500,7 @@ export function OrderForm({ customers, entities, locations, templates = [], zone
                   <input className="input" placeholder="Pieces" inputMode="numeric" value={l.pieces} onChange={(e) => setFreight((x) => x.map((y, j) => (j === i ? { ...y, pieces: e.target.value } : y)))} aria-label={`Freight ${i + 1} pieces`} />
                   <input className="input" placeholder="Pallets, boxes…" value={l.packaging} onChange={(e) => setFreight((x) => x.map((y, j) => (j === i ? { ...y, packaging: e.target.value } : y)))} aria-label={`Freight ${i + 1} packaging`} />
                   <input className="input" placeholder="lb" inputMode="numeric" value={l.weightLb} onChange={(e) => setFreight((x) => x.map((y, j) => (j === i ? { ...y, weightLb: e.target.value } : y)))} aria-label={`Freight ${i + 1} weight`} />
-                  <label className="flex items-center gap-2 text-[13px] cursor-pointer">
+                  <label className="flex items-center gap-2 text-callout cursor-pointer">
                     <input type="checkbox" className="accent-teal w-4 h-4" checked={l.hazmat} onChange={(e) => setFreight((x) => x.map((y, j) => (j === i ? { ...y, hazmat: e.target.checked } : y)))} /> <span className="md:sr-only">Hazmat</span>
                   </label>
                   <button type="button" className="btn btn-ghost btn-sm text-red justify-self-end" disabled={freight.length === 1} onClick={() => setFreight((x) => x.filter((_, j) => j !== i))} aria-label={`Remove freight ${i + 1}`}>
@@ -535,8 +535,8 @@ export function OrderForm({ customers, entities, locations, templates = [], zone
         {/* summary */}
         <aside data-testid="load-summary" className="lg:sticky lg:top-[88px] space-y-4">
           <div className="card p-6">
-            <div className="text-[16px] font-extrabold tracking-tight">Summary</div>
-            <dl className="mt-4 space-y-3 text-[13.5px]">
+            <div className="text-headline font-extrabold tracking-tight">Summary</div>
+            <dl className="mt-4 space-y-3 text-body">
               {(
                 [
                   ["Bill to", customer?.name ?? "—"],
@@ -554,18 +554,18 @@ export function OrderForm({ customers, entities, locations, templates = [], zone
 
             <div className="h-px bg-line my-5" />
             <div className="flex items-baseline justify-between">
-              <div className="text-[13px] font-bold">Legs</div>
-              <div className="text-[12px] text-muted">
+              <div className="text-callout font-bold">Legs</div>
+              <div className="text-footnote text-muted">
                 {legs.length} leg{legs.length === 1 ? "" : "s"} · {stops.length} stops
               </div>
             </div>
             <ol className="mt-3 space-y-2" data-testid="legs-preview">
               {legs.map((l, k) => (
                 <li key={k} className="rounded-lg bg-ground px-3.5 py-3">
-                  <div className="text-[13px] font-bold">
+                  <div className="text-callout font-bold">
                     Leg {k + 1} · {LEG_TYPE_LABEL[l.type] ?? l.type}
                   </div>
-                  <div className="text-muted text-[12.5px] mt-0.5 truncate">
+                  <div className="text-muted text-callout mt-0.5 truncate">
                     {name(l.from)} → {name(l.to)}
                     {l.to - l.from > 1 ? ` · ${l.to - l.from - 1} stop${l.to - l.from - 1 === 1 ? "" : "s"} on the way` : ""}
                   </div>
@@ -574,32 +574,32 @@ export function OrderForm({ customers, entities, locations, templates = [], zone
             </ol>
 
             <div className="h-px bg-line my-5" />
-            <div className="text-[13px] font-bold mb-2.5">Before booking</div>
-            <ul className="space-y-2 text-[13px]">
+            <div className="text-callout font-bold mb-2.5">Before booking</div>
+            <ul className="space-y-2 text-callout">
               {checks.map((c) => (
                 <li key={c.label} className={`flex items-center gap-2.5 ${c.ok ? "text-ink" : "text-muted"}`}>
-                  <span className={`w-5 h-5 rounded-full grid place-items-center text-[11px] font-extrabold ${c.ok ? "bg-teal text-white" : "border-2 border-line"}`}>{c.ok ? "✓" : ""}</span>
+                  <span className={`w-5 h-5 rounded-full grid place-items-center text-caption font-extrabold ${c.ok ? "bg-teal text-white" : "border-2 border-line"}`}>{c.ok ? "✓" : ""}</span>
                   {c.label}
                 </li>
               ))}
             </ul>
 
             {err && (
-              <div className="error mt-5 rounded-lg bg-red-soft px-3 py-2.5 text-[13px]" role="alert">
+              <div className="error mt-5 rounded-lg bg-red-soft px-3 py-2.5 text-callout" role="alert">
                 {err.message}
               </div>
             )}
-            <button className="btn btn-primary btn-lg w-full justify-center mt-6 h-12 text-[15px]" disabled={pending} onClick={() => submit(true)}>
+            <button className="btn btn-primary btn-lg w-full justify-center mt-6 h-12 text-headline" disabled={pending} onClick={() => submit(true)}>
               {pending ? "Creating…" : "Create & book"}
             </button>
             <button className="btn w-full justify-center mt-2.5 h-10" disabled={pending} onClick={() => submit(false)}>
               Save as draft
             </button>
-            <button type="button" className="w-full mt-2.5 text-[12.5px] text-teal font-semibold hover:underline" disabled={pending} onClick={saveAsTemplate}>
+            <button type="button" className="w-full mt-2.5 text-callout text-teal font-semibold hover:underline" disabled={pending} onClick={saveAsTemplate}>
               Save as a template for next time
             </button>
-            {tplMsg && templates.length === 0 && <div className="text-[12px] text-muted mt-1 text-center">{tplMsg}</div>}
-            <p className="mt-4 text-[12px] text-muted leading-relaxed">A booked load goes to Pending on Dispatch, ready to assign leg by leg.</p>
+            {tplMsg && templates.length === 0 && <div className="text-footnote text-muted mt-1 text-center">{tplMsg}</div>}
+            <p className="mt-4 text-footnote text-muted leading-relaxed">A booked load goes to Pending on Dispatch, ready to assign leg by leg.</p>
           </div>
         </aside>
       </div>

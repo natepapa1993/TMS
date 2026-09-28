@@ -91,8 +91,8 @@ export function CarrierDriverApp({ token, data }: { token: string; data: Data })
       <div className="card mt-4 overflow-hidden">
         <div className="px-5 pt-4 pb-3 border-b border-line flex items-center justify-between">
           <div>
-            <div className="font-extrabold mono text-[15px]">{data.order.orderNumber}</div>
-            <div className="text-muted text-[12.5px]">
+            <div className="font-extrabold mono text-headline">{data.order.orderNumber}</div>
+            <div className="text-muted text-callout">
               {data.leg.type} leg{data.order.equipment ? ` · ${data.order.equipment.replace("_", " ")}` : ""}
             </div>
           </div>
@@ -104,25 +104,25 @@ export function CarrierDriverApp({ token, data }: { token: string; data: Data })
             <Place key={m.id} label={`Stop ${i + 2} · Parada ${i + 2}${m.departedAt ? " · done" : ""}`} s={m} active={st === "en_route" && !m.departedAt && !data.mids.slice(0, i).some((p) => !p.departedAt)} when={when} />
           ))}
           <Place label="Deliver · Entregar" s={data.to} active={["loaded", "at_delivery"].includes(st) || (st === "en_route" && !data.mids.some((m) => !m.departedAt))} when={when} />
-          {data.order.cargoNote && <div className="text-[13px] text-muted">📦 {data.order.cargoNote}</div>}
+          {data.order.cargoNote && <div className="text-callout text-muted">📦 {data.order.cargoNote}</div>}
         </div>
         <div className="px-5 pb-5">
           {atDelivery && <PodButton token={token} done={data.podOnFile} onDone={() => router.refresh()} />}
           {sealAsk && (
             <div className="mb-3" data-testid="seal">
               <input className="input mono" placeholder={`${sealAsk.label} # · ${sealAsk.es}`} value={seal} onChange={(e) => setSeal(e.target.value)} aria-label={sealAsk.label} />
-              {sealAsk.label === "Seal found" && data.sealExpected && <div className="text-[12px] text-muted mt-1">Should be {data.sealExpected} · Debe ser {data.sealExpected}</div>}
+              {sealAsk.label === "Seal found" && data.sealExpected && <div className="text-footnote text-muted mt-1">Should be {data.sealExpected} · Debe ser {data.sealExpected}</div>}
             </div>
           )}
           {data.next ? (
             <button className="btn btn-primary w-full justify-center flex-col gap-0" style={{ height: 72, fontSize: 18 }} onClick={step} disabled={pending}>
               {pending ? "…" : data.next.en}
-              {!pending && <span className="text-[12.5px] font-semibold opacity-80">{data.next.es}</span>}
+              {!pending && <span className="text-callout font-semibold opacity-80">{data.next.es}</span>}
             </button>
           ) : (
             <div className="text-center text-muted">{data.leg.done ? "Done — thank you · Listo, gracias" : "Waiting for dispatch · Esperando a despacho"}</div>
           )}
-          {st === "at_delivery" && !data.podOnFile && <div className="text-[12.5px] text-amber font-semibold text-center mt-2">Take the POD photo before you leave. · Toma la foto del POD antes de salir.</div>}
+          {st === "at_delivery" && !data.podOnFile && <div className="text-callout text-amber font-semibold text-center mt-2">Take the POD photo before you leave. · Toma la foto del POD antes de salir.</div>}
           {err && (
             <div className="error mt-2" role="alert">
               {err}
@@ -134,12 +134,12 @@ export function CarrierDriverApp({ token, data }: { token: string; data: Data })
         <div className="card mt-4 p-4 flex items-center justify-between gap-2">
           <div>
             <div className="eyebrow">{data.company} dispatch · Despacho</div>
-            <div className="text-[12.5px] text-muted">Problem at the dock, a hold, anything: one tap. · Cualquier problema, un toque.</div>
+            <div className="text-callout text-muted">Problem at the dock, a hold, anything: one tap. · Cualquier problema, un toque.</div>
           </div>
           <DispatchLinks phone={data.dispatchPhone} />
         </div>
       )}
-      {live && <div className="mt-5 text-center text-[12px] text-faint">Keep this page open while driving so {data.company} can see you. · Deja esta página abierta.</div>}
+      {live && <div className="mt-5 text-center text-footnote text-faint">Keep this page open while driving so {data.company} can see you. · Deja esta página abierta.</div>}
     </div>
   );
 }
@@ -147,17 +147,17 @@ export function CarrierDriverApp({ token, data }: { token: string; data: Data })
 function Place({ label, s, active, when }: { label: string; s: Stop | null; active: boolean; when: (d: string | Date | null | undefined) => string | null }) {
   return (
     <div className={`rounded-lg border p-3 ${active ? "border-teal bg-teal-soft/40" : "border-line"}`}>
-      <div className="text-[11px] font-bold tracking-wider uppercase text-faint">{label}</div>
-      <div className="font-extrabold text-[15px] mt-0.5">{s?.name ?? "—"}</div>
-      {s && addr(s) && <div className="text-[13px] text-muted">{addr(s)}</div>}
+      <div className="text-caption font-bold text-faint">{label}</div>
+      <div className="font-extrabold text-headline mt-0.5">{s?.name ?? "—"}</div>
+      {s && addr(s) && <div className="text-callout text-muted">{addr(s)}</div>}
       {s?.windowStart && (
-        <div className="text-[13px] font-semibold text-teal">
+        <div className="text-callout font-semibold text-teal">
           {when(s.windowStart)}
           {s.windowEnd ? ` – ${when(s.windowEnd)}` : ""}
         </div>
       )}
-      {s?.notes && <div className="text-[13px] mt-1">📝 {s.notes}</div>}
-      {s?.contact && <div className="text-[13px] text-muted">☎ {s.contact}</div>}
+      {s?.notes && <div className="text-callout mt-1">📝 {s.notes}</div>}
+      {s?.contact && <div className="text-callout text-muted">☎ {s.contact}</div>}
       {s && (
         <a className="btn btn-sm mt-2" href={mapsHref(s)} target="_blank" rel="noreferrer">
           Navigate · Ir

@@ -49,7 +49,7 @@ export default async function CompliancePage({ searchParams }: PageProps<"/compl
   const tile = (key: string, label: string, n: number, tone: string) => (
     <Link href={`/compliance?tab=${kind}${filter === key ? "" : `&f=${key}`}`} className={`card p-4 flex-1 ${filter === key ? "border-teal" : ""}`}>
       <div className="eyebrow">{label}</div>
-      <div className={`text-[26px] font-extrabold ${n ? tone : "text-faint"}`}>{n}</div>
+      <div className={`text-title1 font-extrabold ${n ? tone : "text-faint"}`}>{n}</div>
     </Link>
   );
   return (
@@ -71,9 +71,9 @@ export default async function CompliancePage({ searchParams }: PageProps<"/compl
         Every driver, truck, trailer and carrier against your document rules. Last run {d.tiles.lastRun ? d.tiles.lastRun.toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) : "never"} · re-runs on every save and every hour.
       </PageHeader>
       <SafetyNav role={ctx.role} />
-      <div className="px-7 pb-10">
+      <div className="px-gutter pb-10">
         {pending.length > 0 && (
-          <div className="rounded-lg border border-teal/40 bg-teal-soft/40 px-4 py-3 mb-4 text-[13px]" data-testid="pending-uploads">
+          <div className="rounded-lg border border-teal/40 bg-teal-soft/40 px-4 py-3 mb-4 text-callout" data-testid="pending-uploads">
             <b>
               {pending.length} document{pending.length === 1 ? "" : "s"} sent from the driver app
             </b>{" "}
@@ -89,7 +89,7 @@ export default async function CompliancePage({ searchParams }: PageProps<"/compl
           </div>
         )}
         {(blankText || blanks.on) && (
-          <div className={`rounded-lg border px-4 py-3 mb-4 text-[13px] flex items-center gap-3 ${blanks.on ? "border-line bg-surface" : "border-amber/50 bg-amber-soft/40"}`} data-testid="missing-dates">
+          <div className={`rounded-lg border px-4 py-3 mb-4 text-callout flex items-center gap-3 ${blanks.on ? "border-line bg-surface" : "border-amber/50 bg-amber-soft/40"}`} data-testid="missing-dates">
             <div className="flex-1">
               {blanks.on ? (
                 <>
@@ -111,7 +111,7 @@ export default async function CompliancePage({ searchParams }: PageProps<"/compl
           {tile("missing", "Missing", d.tiles.missing, "text-amber")}
           <Link href="/compliance/drivers" className="card p-4 flex-1" data-testid="tile-dq">
             <div className="eyebrow">Driver files incomplete</div>
-            <div className={`text-[26px] font-extrabold ${d.tiles.dq ? "text-amber" : "text-faint"}`}>{d.tiles.dq}</div>
+            <div className={`text-title1 font-extrabold ${d.tiles.dq ? "text-amber" : "text-faint"}`}>{d.tiles.dq}</div>
           </Link>
         </div>
         <div className="flex items-center gap-1.5 mb-3">
@@ -126,7 +126,7 @@ export default async function CompliancePage({ searchParams }: PageProps<"/compl
             </Link>
           )}
           {types.length === 0 && (
-            <span className="ml-auto text-[12.5px] text-muted">
+            <span className="ml-auto text-callout text-muted">
               No document rules for {kind}s yet —{" "}
               <Link href="/settings/document-types?add=1" className="text-teal font-semibold">
                 add one
@@ -141,7 +141,7 @@ export default async function CompliancePage({ searchParams }: PageProps<"/compl
             <div className="font-bold">{filter ? "Nothing matches" : `No ${kind}s yet`}</div>
           </div>
         )}
-        <div className="mt-3 text-[12px] text-faint flex gap-3">
+        <div className="mt-3 text-footnote text-faint flex gap-3">
           <Pill tone="green">ok</Pill> <Pill tone="amber">expiring</Pill> <Pill tone="red">expired</Pill> <Pill tone="amber">missing</Pill> <Pill tone="slate">snoozed</Pill> <Pill tone="slate">not on file</Pill> · ● = the rule blocks dispatch: an expired (or missing) item on it makes the subject unassignable · a snooze quiets the reminder, it never lifts a block
         </div>
       </div>

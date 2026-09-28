@@ -45,7 +45,7 @@ export function LiveMap({ units, focus }: { units: MapUnit[]; focus: string | nu
               {u.driver && <div>{u.driver}</div>}
               {u.load && (
                 <div style={{ marginTop: 4 }}>
-                  <a href={`/orders/${u.load.orderId}`} style={{ color: "#0f766e", fontWeight: 700 }}>
+                  <a href={`/orders/${u.load.orderId}`} style={{ color: "#0066cc", fontWeight: 700 }}>
                     {u.load.orderNumber}
                   </a>
                   {u.load.next ? ` → ${u.load.next}` : ""}

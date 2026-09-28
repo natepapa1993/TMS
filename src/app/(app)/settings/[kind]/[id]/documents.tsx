@@ -51,7 +51,7 @@ export function SubjectDocuments({ kind, subjectId, docs, types, status, canEdit
       {status && status.items.length > 0 && (
         <ul className="mt-2 space-y-1">
           {status.items.map((i) => (
-            <li key={i.key} className="flex items-center justify-between text-[12.5px]">
+            <li key={i.key} className="flex items-center justify-between text-callout">
               <span className={i.status === "expired" || (i.status === "missing" && i.blocksDispatch) ? "text-red font-semibold" : ""}>
                 {i.label}
                 {i.blocksDispatch ? " •" : ""}
@@ -59,7 +59,7 @@ export function SubjectDocuments({ kind, subjectId, docs, types, status, canEdit
               <span className="flex items-center gap-1">
                 <Pill tone={tone[i.status]}>{i.expiresAt ? new Date(i.expiresAt).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }) : i.status === "na" ? "not on file" : i.status}</Pill>
                 {canEdit && !i.key.startsWith("field:") && (
-                  <button className="btn btn-ghost btn-sm text-[11px] px-1 text-teal" onClick={() => setOpen(i.key)}>
+                  <button className="btn btn-ghost btn-sm text-caption px-1 text-teal" onClick={() => setOpen(i.key)}>
                     {i.documentId ? "renew" : "upload"}
                   </button>
                 )}
@@ -68,7 +68,7 @@ export function SubjectDocuments({ kind, subjectId, docs, types, status, canEdit
           ))}
         </ul>
       )}
-      {status && !status.items.length && <div className="text-muted text-[12.5px] mt-1">No rules apply yet.</div>}
+      {status && !status.items.length && <div className="text-muted text-callout mt-1">No rules apply yet.</div>}
       {pendingDocs.length > 0 && (
         <div className="mt-4" data-testid="pending-docs">
           <div className="eyebrow mb-1">From the driver app — check and confirm</div>
@@ -81,11 +81,11 @@ export function SubjectDocuments({ kind, subjectId, docs, types, status, canEdit
       )}
       <div className="eyebrow mt-4 mb-1">Documents on file</div>
       {active.length === 0 ? (
-        <div className="text-muted text-[12.5px]">Nothing uploaded yet.</div>
+        <div className="text-muted text-callout">Nothing uploaded yet.</div>
       ) : (
         <ul className="space-y-1.5">
           {active.map((d) => (
-            <li key={d.id} className="text-[12.5px] flex items-center justify-between gap-2">
+            <li key={d.id} className="text-callout flex items-center justify-between gap-2">
               <a href={`/api/files/${d.id}`} target="_blank" rel="noreferrer" className="font-semibold hover:text-teal truncate">
                 {typeName(d.documentTypeId)} <span className="text-faint font-normal">· {d.fileName}</span>
               </a>
@@ -156,7 +156,7 @@ export function SubjectDocuments({ kind, subjectId, docs, types, status, canEdit
                 <button type="button" className="btn btn-sm" disabled={reading} onClick={readWithAi}>
                   {reading ? <Spinner /> : "Read with AI"}
                 </button>
-                {read && <span className={`text-[12.5px] ${read.err ? "text-red" : "text-teal"}`} data-testid="ai-read">{read.note}</span>}
+                {read && <span className={`text-callout ${read.err ? "text-red" : "text-teal"}`} data-testid="ai-read">{read.note}</span>}
               </div>
             )}
             <div className="grid grid-cols-3 gap-2">
@@ -192,7 +192,7 @@ function PendingDoc({ doc, typeName, tracksExpiry, canEdit, onDone }: { doc: Doc
   const [err, setErr] = useState<string | null>(null);
   const [pending, start] = useTransition();
   return (
-    <li className="rounded-lg border border-teal/40 bg-teal-soft/30 p-3 text-[12.5px]">
+    <li className="rounded-lg border border-teal/40 bg-teal-soft/30 p-3 text-callout">
       <div className="flex items-center justify-between gap-2">
         <a href={`/api/files/${doc.id}`} target="_blank" rel="noreferrer" className="font-semibold hover:text-teal truncate">
           {typeName} <span className="text-faint font-normal">· {doc.fileName}</span>

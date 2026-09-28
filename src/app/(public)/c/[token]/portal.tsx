@@ -53,12 +53,12 @@ function CarrierPortalBody({ token, data }: { token: string; data: Data }) {
         <div>
           <div className="eyebrow">{data.company} · carrier portal</div>
           <div className="h1">{data.carrier.name}</div>
-          <div className="text-[12.5px] text-muted mt-0.5">Your loads with {data.company}. Keep this link — it is yours. · Tus cargas con {data.company}. Guarda este enlace.</div>
+          <div className="text-callout text-muted mt-0.5">Your loads with {data.company}. Keep this link — it is yours. · Tus cargas con {data.company}. Guarda este enlace.</div>
         </div>
         {data.compliance && <Pill tone={!data.compliance.dispatchable ? "red" : counts.docs ? "amber" : "green"}>{!data.compliance.dispatchable ? "Documents needed" : counts.docs ? `${counts.docs} document${counts.docs === 1 ? "" : "s"} to update` : "Documents OK"}</Pill>}
       </div>
-      {data.carrier.doNotUse && <div className="mt-3 rounded-lg border border-red/40 bg-red/5 p-3 text-[13px] text-red font-semibold">This account is on hold with {data.company}. Call dispatch. · Cuenta en pausa; llama a despacho.</div>}
-      {msg && <div className={`mt-3 rounded-lg p-3 text-[13px] font-semibold ${msg.err ? "bg-red/10 text-red" : "bg-teal-soft text-teal"}`}>{msg.text}</div>}
+      {data.carrier.doNotUse && <div className="mt-3 rounded-lg border border-red/40 bg-red/5 p-3 text-callout text-red font-semibold">This account is on hold with {data.company}. Call dispatch. · Cuenta en pausa; llama a despacho.</div>}
+      {msg && <div className={`mt-3 rounded-lg p-3 text-callout font-semibold ${msg.err ? "bg-red/10 text-red" : "bg-teal-soft text-teal"}`}>{msg.text}</div>}
 
       <div className="flex gap-1.5 mt-4 flex-wrap">
         {(
@@ -108,16 +108,16 @@ function CarrierPortalBody({ token, data }: { token: string; data: Data }) {
         <div className="eyebrow mb-1">Your score · Tu puntaje (last {data.score.days} days)</div>
         <div className="grid grid-cols-3 gap-2 text-center">
           <div>
-            <div className="text-[20px] font-extrabold mono">{data.score.acceptancePct == null ? "—" : `${data.score.acceptancePct}%`}</div>
-            <div className="text-[11.5px] text-muted">accepted · {data.score.accepted}/{data.score.answered} answered</div>
+            <div className="text-title3 font-extrabold mono">{data.score.acceptancePct == null ? "—" : `${data.score.acceptancePct}%`}</div>
+            <div className="text-footnote text-muted">accepted · {data.score.accepted}/{data.score.answered} answered</div>
           </div>
           <div>
-            <div className="text-[20px] font-extrabold mono">{data.score.onTimePct == null ? "—" : `${data.score.onTimePct}%`}</div>
-            <div className="text-[11.5px] text-muted">on time · of {data.score.onTimeOf} with a window</div>
+            <div className="text-title3 font-extrabold mono">{data.score.onTimePct == null ? "—" : `${data.score.onTimePct}%`}</div>
+            <div className="text-footnote text-muted">on time · of {data.score.onTimeOf} with a window</div>
           </div>
           <div>
-            <div className="text-[20px] font-extrabold mono">{data.score.trackedPct == null ? "—" : `${data.score.trackedPct}%`}</div>
-            <div className="text-[11.5px] text-muted">tracked · {data.score.loads} loads</div>
+            <div className="text-title3 font-extrabold mono">{data.score.trackedPct == null ? "—" : `${data.score.trackedPct}%`}</div>
+            <div className="text-footnote text-muted">tracked · {data.score.loads} loads</div>
           </div>
         </div>
       </div>
@@ -143,23 +143,23 @@ function OfferCard({ token, o, onDone }: { token: string; o: Offer; onDone: (t: 
     <div className="card p-4">
       <div className="flex items-center justify-between gap-2">
         <div>
-          <span className="font-extrabold mono">{o.orderNumber}</span> <span className="text-muted text-[12.5px]">{o.type} leg</span>
+          <span className="font-extrabold mono">{o.orderNumber}</span> <span className="text-muted text-callout">{o.type} leg</span>
         </div>
-        <div className="text-[18px] font-extrabold mono">{money(o.rateCents, o.currency)}</div>
+        <div className="text-title3 font-extrabold mono">{money(o.rateCents, o.currency)}</div>
       </div>
-      <div className="mt-2 grid grid-cols-2 gap-2 text-[13px]">
+      <div className="mt-2 grid grid-cols-2 gap-2 text-callout">
         <div>
           <div className="eyebrow">Pickup · Carga</div>
           <div className="font-semibold">{place(o.from)}</div>
-          <div className="text-muted text-[12px]">{when(o.from?.windowStart) ?? "ASAP"}</div>
+          <div className="text-muted text-footnote">{when(o.from?.windowStart) ?? "ASAP"}</div>
         </div>
         <div>
           <div className="eyebrow">Delivery · Entrega</div>
           <div className="font-semibold">{place(o.to)}</div>
-          <div className="text-muted text-[12px]">{o.to?.windowEnd ? `by ${when(o.to.windowEnd)}` : ""}</div>
+          <div className="text-muted text-footnote">{o.to?.windowEnd ? `by ${when(o.to.windowEnd)}` : ""}</div>
         </div>
       </div>
-      <div className="text-[12.5px] text-muted mt-2">
+      <div className="text-callout text-muted mt-2">
         {o.equipment?.replace("_", " ")}
         {o.cargoNote ? ` · ${o.cargoNote}` : ""}
         {o.message ? ` · ${o.message}` : ""} · answer within {mins > 90 ? `${Math.round(mins / 60)} h` : `${Math.max(mins, 0)} min`}
@@ -214,32 +214,32 @@ function LegCard({ token, l, onDone }: { token: string; l: Leg; onDone: (t: stri
     <div className="card p-4">
       <div className="flex items-center justify-between gap-2">
         <div>
-          <span className="font-extrabold mono">{l.orderNumber}</span> <span className="text-muted text-[12.5px]">{l.type} leg</span>
+          <span className="font-extrabold mono">{l.orderNumber}</span> <span className="text-muted text-callout">{l.type} leg</span>
         </div>
         <Pill tone={l.state === "accepted" || l.state === "dispatched" ? "blue" : "teal"}>{l.stateLabel}</Pill>
       </div>
-      <div className="mt-2 grid grid-cols-2 gap-2 text-[13px]">
+      <div className="mt-2 grid grid-cols-2 gap-2 text-callout">
         <div>
           <div className="eyebrow">Pickup · Carga</div>
           <div className="font-semibold">{place(l.from)}</div>
-          <div className="text-muted text-[12px]">{when(l.from?.windowStart) ?? ""}</div>
-          {l.from?.contact && <div className="text-muted text-[12px]">{l.from.contact}</div>}
+          <div className="text-muted text-footnote">{when(l.from?.windowStart) ?? ""}</div>
+          {l.from?.contact && <div className="text-muted text-footnote">{l.from.contact}</div>}
         </div>
         <div>
           <div className="eyebrow">Delivery · Entrega</div>
           <div className="font-semibold">{place(l.to)}</div>
-          <div className="text-muted text-[12px]">{l.to?.windowEnd ? `by ${when(l.to.windowEnd)}` : ""}</div>
-          {l.to?.contact && <div className="text-muted text-[12px]">{l.to.contact}</div>}
+          <div className="text-muted text-footnote">{l.to?.windowEnd ? `by ${when(l.to.windowEnd)}` : ""}</div>
+          {l.to?.contact && <div className="text-muted text-footnote">{l.to.contact}</div>}
         </div>
       </div>
-      <div className="text-[12.5px] text-muted mt-2">
+      <div className="text-callout text-muted mt-2">
         {l.equipment?.replace("_", " ")}
         {l.cargoNote ? ` · ${l.cargoNote}` : ""} · {money(l.rateCents)} ·{" "}
         <a className="text-teal font-semibold" href={`/c/${token}/ratecon/${l.id}`} target="_blank" rel="noreferrer">
           Rate confirmation PDF
         </a>
       </div>
-      <div className="mt-2 text-[13px] flex items-center justify-between gap-2">
+      <div className="mt-2 text-callout flex items-center justify-between gap-2">
         <span>
           <span className="eyebrow mr-1">Driver · Operador</span>
           {l.driverName ? (
@@ -258,7 +258,7 @@ function LegCard({ token, l, onDone }: { token: string; l: Leg; onDone: (t: stri
         </button>
       </div>
       {l.driverLink && (
-        <div className="mt-2 text-[12.5px] flex items-center gap-2 flex-wrap" data-testid="driver-link">
+        <div className="mt-2 text-callout flex items-center gap-2 flex-wrap" data-testid="driver-link">
           <span className="text-muted">Your driver&apos;s link · El enlace de tu operador:</span>
           <button
             className="btn btn-sm"
@@ -328,21 +328,21 @@ function PayCard({ token, l, onDone }: { token: string; l: Leg; onDone: (t: stri
     <div className="card p-4">
       <div className="flex items-center justify-between gap-2">
         <div>
-          <span className="font-extrabold mono">{l.orderNumber}</span> <span className="text-muted text-[12.5px]">{l.type} leg · delivered {l.completedAt ? new Date(l.completedAt).toLocaleDateString() : ""}</span>
+          <span className="font-extrabold mono">{l.orderNumber}</span> <span className="text-muted text-callout">{l.type} leg · delivered {l.completedAt ? new Date(l.completedAt).toLocaleDateString() : ""}</span>
         </div>
-        <div className="text-[16px] font-extrabold mono">{money(b?.paidCents ?? b?.approvedCents ?? b?.expectedCents ?? l.rateCents)}</div>
+        <div className="text-headline font-extrabold mono">{money(b?.paidCents ?? b?.approvedCents ?? b?.expectedCents ?? l.rateCents)}</div>
       </div>
-      <div className="text-[13px] mt-1">
+      <div className="text-callout mt-1">
         {place(l.from)} → {place(l.to)}
       </div>
       {b && (
-        <div className="mt-2 flex items-center justify-between gap-2 text-[13px]">
+        <div className="mt-2 flex items-center justify-between gap-2 text-callout">
           <span>
             <Pill tone={b.state === "paid" ? "green" : b.state === "approved" || b.state === "scheduled" ? "teal" : b.state === "disputed" ? "red" : "amber"}>{BILL_LABEL[b.state] ?? b.state}</Pill>
             {b.carrierInvoiceNumber && <span className="text-muted ml-1">#{b.carrierInvoiceNumber}</span>}
             {b.payDate && !b.paidAt && <span className="text-muted ml-1">· pay date {new Date(b.payDate).toLocaleDateString()}</span>}
             {b.paidAt && <span className="text-muted ml-1">· paid {new Date(b.paidAt).toLocaleDateString()}</span>}
-            {b.shortPayNote && <div className="text-amber text-[12px]">{b.shortPayNote}</div>}
+            {b.shortPayNote && <div className="text-amber text-footnote">{b.shortPayNote}</div>}
           </span>
           {(b.state === "expected" || b.state === "received" || b.state === "disputed") && (
             <button className="btn btn-sm btn-primary" onClick={() => setOpen(true)}>
@@ -351,14 +351,14 @@ function PayCard({ token, l, onDone }: { token: string; l: Leg; onDone: (t: stri
           )}
         </div>
       )}
-      <a className="text-teal font-semibold text-[12.5px]" href={`/c/${token}/ratecon/${l.id}`} target="_blank" rel="noreferrer">
+      <a className="text-teal font-semibold text-callout" href={`/c/${token}/ratecon/${l.id}`} target="_blank" rel="noreferrer">
         Rate confirmation PDF
       </a>
       <PodButton token={token} leg={l} onDone={onDone} />
       {open && (
         <Modal open onClose={() => setOpen(false)} title={`Invoice for ${l.orderNumber} · Factura`} footer={<><button className="btn" onClick={() => setOpen(false)}>Cancel</button><button className="btn btn-primary" disabled={pending} onClick={() => start(async () => { setErr(null); const r = await call(() => portalInvoiceAction(token, l.id, new FormData(ref.current!))); if (r.ok) { setOpen(false); onDone("Invoice received — we check it against the rate confirmation and the POD. · Factura recibida."); } else setErr(r.error); })}>Send · Enviar</button></>}>
           <form ref={ref} className="space-y-2" onSubmit={(e) => e.preventDefault()}>
-            <div className="text-[12.5px] text-muted">Agreed rate · Tarifa acordada: <b>{money(b?.expectedCents ?? l.rateCents)}</b>. Bill the agreed amount plus any accessorials we approved.</div>
+            <div className="text-callout text-muted">Agreed rate · Tarifa acordada: <b>{money(b?.expectedCents ?? l.rateCents)}</b>. Bill the agreed amount plus any accessorials we approved.</div>
             <div className="grid grid-cols-2 gap-2">
               <div>
                 <label className="label">Amount (USD) · Monto</label>
@@ -371,9 +371,9 @@ function PayCard({ token, l, onDone }: { token: string; l: Leg; onDone: (t: stri
             </div>
             <label className="block border-2 border-dashed border-line rounded-lg p-4 text-center cursor-pointer hover:border-teal">
               <input name="file" type="file" accept="application/pdf,image/jpeg,image/png" className="hidden" />
-              <div className="font-semibold text-[13px]">Attach the invoice PDF (optional) · Adjunta la factura</div>
+              <div className="font-semibold text-callout">Attach the invoice PDF (optional) · Adjunta la factura</div>
             </label>
-            {!l.podOnFile && <div className="text-[12.5px] text-amber font-semibold">No POD on file for this load yet — we pay on a clean POD; send it from the card behind this. · Falta el POD.</div>}
+            {!l.podOnFile && <div className="text-callout text-amber font-semibold">No POD on file for this load yet — we pay on a clean POD; send it from the card behind this. · Falta el POD.</div>}
             {err && <div className="error">{err}</div>}
           </form>
         </Modal>
@@ -393,7 +393,7 @@ function DocsPanel({ token, data, onDone }: { token: string; data: Data; onDone:
       {data.compliance && (
         <div className="card p-4">
           <div className="eyebrow mb-1">What {data.company} needs from you · Lo que necesita {data.company}</div>
-          <ul className="space-y-1 text-[13px]">
+          <ul className="space-y-1 text-callout">
             {data.compliance.items.map((i) => (
               <li key={i.key} className="flex justify-between gap-2">
                 <span>{i.label}</span>
@@ -416,7 +416,7 @@ function DocsPanel({ token, data, onDone }: { token: string; data: Data; onDone:
           </select>
           <label className="block border-2 border-dashed border-line rounded-lg p-4 text-center cursor-pointer hover:border-teal">
             <input name="file" type="file" accept="application/pdf,image/jpeg,image/png" className="hidden" />
-            <div className="font-semibold text-[13px]">Choose a PDF or photo · Elige PDF o foto</div>
+            <div className="font-semibold text-callout">Choose a PDF or photo · Elige PDF o foto</div>
           </label>
           <div className="grid grid-cols-2 gap-2">
             {type?.tracksExpiry && (
@@ -439,7 +439,7 @@ function DocsPanel({ token, data, onDone }: { token: string; data: Data; onDone:
       {data.docs.length > 0 && (
         <div className="card p-4">
           <div className="eyebrow mb-1">On file · En expediente</div>
-          <ul className="space-y-1 text-[13px]">
+          <ul className="space-y-1 text-callout">
             {data.docs.map((d) => (
               <li key={d.id} className="flex justify-between gap-2">
                 <span>

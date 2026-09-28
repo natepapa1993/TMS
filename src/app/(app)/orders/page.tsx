@@ -24,8 +24,8 @@ export default async function OrdersPage({ searchParams }: PageProps<"/orders">)
       <div className="flex items-end justify-between gap-4 flex-wrap mb-5">
         <div>
           <div className="eyebrow mb-1">Orders</div>
-          <h1 className="text-[24px] font-extrabold tracking-tight">Loads</h1>
-          <div className="text-muted text-[13px] mt-0.5">
+          <h1 className="text-title2 font-extrabold tracking-tight">Loads</h1>
+          <div className="text-muted text-callout mt-0.5">
             Every open load, plus everything created in the last{" "}
             <span className="inline-flex gap-1 align-middle">
               {RANGES.map(([d, l]) => (

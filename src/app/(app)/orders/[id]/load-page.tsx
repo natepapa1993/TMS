@@ -27,9 +27,9 @@ export function LoadTabs({ tabs }: { tabs: TabDef[] }) {
       <nav className="sticky top-12 lg:top-0 z-20 bg-ground/90 backdrop-blur border-b border-line" aria-label="Load sections">
         <div className="px-5 md:px-8 flex gap-1 overflow-x-auto" role="tablist">
           {tabs.map((t) => (
-            <button key={t.id} type="button" role="tab" aria-selected={tab === t.id} data-testid={`tab-${t.id}`} onClick={() => pick(t.id)} className={`h-12 px-3.5 shrink-0 border-b-2 text-[13.5px] font-semibold transition-colors ${tab === t.id ? "border-teal text-ink" : "border-transparent text-muted hover:text-ink"}`}>
+            <button key={t.id} type="button" role="tab" aria-selected={tab === t.id} data-testid={`tab-${t.id}`} onClick={() => pick(t.id)} className={`h-12 px-3.5 shrink-0 border-b-2 text-body font-semibold transition-colors ${tab === t.id ? "border-teal text-ink" : "border-transparent text-muted hover:text-ink"}`}>
               {t.label}
-              {t.count ? <span className="ml-1.5 text-[11px] text-faint tabular-nums">{t.count}</span> : null}
+              {t.count ? <span className="ml-1.5 text-caption text-faint tabular-nums">{t.count}</span> : null}
             </button>
           ))}
         </div>
@@ -78,8 +78,8 @@ export function MoneyBox({ order, readOnly, suggestedMiles, weightLb }: { order:
   return (
     <fieldset disabled={readOnly} className="card p-6" data-testid="money-box">
       <div className="flex items-baseline justify-between mb-5">
-        <div className="text-[16px] font-extrabold tracking-tight">Line haul</div>
-        <div className="text-[13px] text-muted">What the customer pays for the move; extras go in Charges below.</div>
+        <div className="text-headline font-extrabold tracking-tight">Line haul</div>
+        <div className="text-callout text-muted">What the customer pays for the move; extras go in Charges below.</div>
       </div>
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4 form-roomy">
         <div>
@@ -111,7 +111,7 @@ export function MoneyBox({ order, readOnly, suggestedMiles, weightLb }: { order:
             </div>
             <div>
               <div className="label">Line haul</div>
-              <div className="h-[42px] flex items-center text-[18px] font-extrabold tabular-nums">{figured != null ? fmt(figured) : <span className="text-faint text-[14px] font-semibold">rate × {qtyLabel.toLowerCase()}</span>}</div>
+              <div className="h-[42px] flex items-center text-title3 font-extrabold tabular-nums">{figured != null ? fmt(figured) : <span className="text-faint text-body font-semibold">rate × {qtyLabel.toLowerCase()}</span>}</div>
             </div>
           </>
         ) : (
@@ -120,7 +120,7 @@ export function MoneyBox({ order, readOnly, suggestedMiles, weightLb }: { order:
               Rate
             </label>
             <input id="m-rate" className="input" inputMode="decimal" aria-label="Rate" value={f.rate} disabled={f.rateTbd || readOnly} onChange={(e) => setF({ ...f, rate: e.target.value })} placeholder="0.00" />
-            <label className="flex items-center gap-2 mt-2 text-[13px] cursor-pointer text-muted">
+            <label className="flex items-center gap-2 mt-2 text-callout cursor-pointer text-muted">
               <input type="checkbox" className="accent-teal w-4 h-4" checked={f.rateTbd} onChange={(e) => setF({ ...f, rateTbd: e.target.checked })} /> Rate TBD
             </label>
           </div>
@@ -210,14 +210,14 @@ export function PeopleCard({ order, people, readOnly }: { order: { id: string; s
   ];
   return (
     <fieldset disabled={readOnly || pending} className="card p-5">
-      <div className="text-[14px] font-extrabold mb-3">People &amp; priority</div>
+      <div className="text-body font-extrabold mb-3">People &amp; priority</div>
       <div className="space-y-3">
         {rows.map(([k, l]) => (
           <div key={k} className="grid grid-cols-[110px_minmax(0,1fr)] items-center gap-3">
-            <label className="text-[13px] text-muted" htmlFor={`p-${k}`}>
+            <label className="text-callout text-muted" htmlFor={`p-${k}`}>
               {l}
             </label>
-            <select id={`p-${k}`} className="select h-9 text-[13px]" value={order[k] ?? ""} onChange={(e) => set(k, e.target.value)}>
+            <select id={`p-${k}`} className="select h-9 text-callout" value={order[k] ?? ""} onChange={(e) => set(k, e.target.value)}>
               <option value="">—</option>
               {people.map((p) => (
                 <option key={p.id} value={p.id}>
@@ -228,10 +228,10 @@ export function PeopleCard({ order, people, readOnly }: { order: { id: string; s
           </div>
         ))}
         <div>
-          <span className="text-[13px] text-muted block mb-1.5">Priority</span>
+          <span className="text-callout text-muted block mb-1.5">Priority</span>
           <div className="flex w-full rounded-lg border border-line bg-ground p-0.5" role="group" aria-label="Priority">
             {PRIORITIES.map(([v, l]) => (
-              <button key={v} type="button" aria-pressed={order.priority === v} onClick={() => set("priority", v)} className={`flex-1 min-w-0 px-1.5 h-8 rounded-md text-[12.5px] font-semibold ${order.priority === v ? (v === "high" ? "bg-red text-white" : v === "medium" ? "bg-amber text-white" : "bg-white text-ink shadow-sm") : "text-muted hover:text-ink"}`}>
+              <button key={v} type="button" aria-pressed={order.priority === v} onClick={() => set("priority", v)} className={`flex-1 min-w-0 px-1.5 h-8 rounded-md text-callout font-semibold ${order.priority === v ? (v === "high" ? "bg-red text-white" : v === "medium" ? "bg-amber text-white" : "bg-white text-ink shadow-sm") : "text-muted hover:text-ink"}`}>
                 {l}
               </button>
             ))}
@@ -279,19 +279,19 @@ export function NotesPanel({ orderId, notes, me, isOwner }: { orderId: string; n
           ))}
         </div>
         {shown.length === 0 ? (
-          <div className="card p-10 text-center text-muted text-[13.5px]">No notes{filter !== "all" ? ` of this type` : ""} yet.</div>
+          <div className="card p-10 text-center text-muted text-body">No notes{filter !== "all" ? ` of this type` : ""} yet.</div>
         ) : (
           shown.map((n) => (
             <div key={n.id} className={`card p-4 ${n.pinned ? "border-teal" : ""}`} data-testid="note">
               <div className="flex items-center gap-2 mb-1.5">
                 <span className={`pill pill-${NOTE_TONE[n.kind] ?? "slate"}`}>{NOTE_LABEL[n.kind] ?? n.kind}</span>
-                {n.pinned && <span className="text-[11.5px] font-bold text-teal">Pinned</span>}
-                <span className="text-[12px] text-muted ml-auto">
+                {n.pinned && <span className="text-footnote font-bold text-teal">Pinned</span>}
+                <span className="text-footnote text-muted ml-auto">
                   {n.author ?? "someone"} · {new Date(n.createdAt).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}
                 </span>
               </div>
-              <div className="text-[14px] whitespace-pre-wrap">{n.body}</div>
-              <div className="flex gap-3 mt-2 text-[12px]">
+              <div className="text-body whitespace-pre-wrap">{n.body}</div>
+              <div className="flex gap-3 mt-2 text-footnote">
                 <button type="button" className="text-muted hover:text-ink font-semibold" disabled={pending} onClick={() => run(() => pinNoteAction(orderId, n.id, !n.pinned), n.pinned ? "Unpinned" : "Pinned")}>
                   {n.pinned ? "Unpin" : "Pin"}
                 </button>
@@ -306,7 +306,7 @@ export function NotesPanel({ orderId, notes, me, isOwner }: { orderId: string; n
         )}
       </div>
       <div className="card p-5 lg:sticky lg:top-16">
-        <div className="text-[14px] font-extrabold mb-3">Add a note</div>
+        <div className="text-body font-extrabold mb-3">Add a note</div>
         <label className="label" htmlFor="n-kind">
           Type
         </label>
@@ -321,7 +321,7 @@ export function NotesPanel({ orderId, notes, me, isOwner }: { orderId: string; n
           Note
         </label>
         <textarea id="n-body" className="textarea" rows={4} value={body} onChange={(e) => setBody(e.target.value)} />
-        <label className="flex items-center gap-2 mt-2 text-[13px] cursor-pointer text-muted">
+        <label className="flex items-center gap-2 mt-2 text-callout cursor-pointer text-muted">
           <input type="checkbox" className="accent-teal w-4 h-4" checked={pinned} onChange={(e) => setPinned(e.target.checked)} /> Pin to the top
         </label>
         <button type="button" className="btn btn-primary w-full justify-center mt-4" disabled={pending || !body.trim()} onClick={() => run(() => addNoteAction(orderId, kind, body, pinned), "Note added", () => (setBody(""), setPinned(false)))}>
@@ -355,7 +355,7 @@ export function DocumentsPanel({ orderId, docs, required, canUpload }: { orderId
     <div className="grid lg:grid-cols-[1fr_320px] gap-6 items-start">
       <div className="card overflow-hidden">
         {docs.length === 0 ? (
-          <div className="p-10 text-center text-muted text-[13.5px]">No documents on this load yet.</div>
+          <div className="p-10 text-center text-muted text-body">No documents on this load yet.</div>
         ) : (
           <table className="table">
             <thead>
@@ -376,8 +376,8 @@ export function DocumentsPanel({ orderId, docs, required, canUpload }: { orderId
                       {d.fileName}
                     </a>
                   </td>
-                  <td className="text-muted text-[12.5px]">{d.author ?? d.source.replace(/_/g, " ")}</td>
-                  <td className="text-muted text-[12.5px]">{new Date(d.createdAt).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}</td>
+                  <td className="text-muted text-callout">{d.author ?? d.source.replace(/_/g, " ")}</td>
+                  <td className="text-muted text-callout">{new Date(d.createdAt).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}</td>
                   <td>
                     <span className={`pill ${d.status === "verified" ? "pill-green" : d.status === "pending" ? "pill-amber" : "pill-slate"}`}>{d.status}</span>
                   </td>
@@ -389,16 +389,16 @@ export function DocumentsPanel({ orderId, docs, required, canUpload }: { orderId
       </div>
       <div className="space-y-4">
         <div className="card p-5">
-          <div className="text-[14px] font-extrabold mb-3">Needed to bill</div>
-          <ul className="space-y-2 text-[13px]">
+          <div className="text-body font-extrabold mb-3">Needed to bill</div>
+          <ul className="space-y-2 text-callout">
             {required.map((c) => {
               const has = docs.some((d) => d.code === c && d.status !== "pending");
               return (
                 <li key={c} className="flex items-center gap-2.5">
-                  <span className={`w-5 h-5 rounded-full grid place-items-center text-[11px] font-extrabold ${has ? "bg-teal text-white" : "border-2 border-line"}`}>{has ? "✓" : ""}</span>
+                  <span className={`w-5 h-5 rounded-full grid place-items-center text-caption font-extrabold ${has ? "bg-teal text-white" : "border-2 border-line"}`}>{has ? "✓" : ""}</span>
                   <span className={has ? "" : "text-muted"}>{label(c)}</span>
                   {!has && canUpload && (
-                    <button type="button" className="ml-auto text-teal font-semibold text-[12.5px]" onClick={() => setUploadFor(c)}>
+                    <button type="button" className="ml-auto text-teal font-semibold text-callout" onClick={() => setUploadFor(c)}>
                       Upload
                     </button>
                   )}
@@ -410,7 +410,7 @@ export function DocumentsPanel({ orderId, docs, required, canUpload }: { orderId
         </div>
         {canUpload && (
           <div className="card p-5">
-            <div className="text-[14px] font-extrabold mb-3">Add a document</div>
+            <div className="text-body font-extrabold mb-3">Add a document</div>
             <select className="select mb-3" value={code} onChange={(e) => setCode(e.target.value)} aria-label="Document type">
               {DOC_CODES.map(([v, l]) => (
                 <option key={v} value={v}>

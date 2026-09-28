@@ -36,7 +36,7 @@ export function IncidentsBoard({ rows, drivers, trucks, trailers, role }: { rows
         {rows.length === 0 ? (
           <div className="py-14 text-center">
             <div className="font-bold">No incidents logged</div>
-            <div className="text-muted text-[13px] mt-1">Good. When something happens, log it here the same day.</div>
+            <div className="text-muted text-callout mt-1">Good. When something happens, log it here the same day.</div>
           </div>
         ) : (
           <table className="table">
@@ -64,7 +64,7 @@ export function IncidentsBoard({ rows, drivers, trucks, trailers, role }: { rows
                       {r.location ? <span className="text-muted"> — {r.location}</span> : null}
                     </div>
                     {r.postAccident && (
-                      <div className="text-[12px] text-amber mt-0.5" data-testid="post-accident">
+                      <div className="text-footnote text-amber mt-0.5" data-testid="post-accident">
                         Post-accident testing ({r.postAccident.why}): alcohol by {when(r.postAccident.alcoholBy)}, drug by {when(r.postAccident.drugBy)}
                         {r.tests && ` · ${r.tests.alcohol ? "alcohol ✓" : "alcohol not recorded"}, ${r.tests.drug ? "drug ✓" : "drug not recorded"}`}
                       </div>
@@ -187,7 +187,7 @@ export function IncidentsBoard({ rows, drivers, trucks, trailers, role }: { rows
                 </select>
               </div>
             )}
-            <div className="col-span-3 flex gap-5 flex-wrap text-[13px]">
+            <div className="col-span-3 flex gap-5 flex-wrap text-callout">
               {(
                 [
                   ["dotRecordable", "DOT recordable"],

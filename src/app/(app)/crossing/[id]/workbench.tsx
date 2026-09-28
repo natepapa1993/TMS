@@ -97,7 +97,7 @@ export function CrossingWorkbench({ data }: { data: Data }) {
             ))}
           </datalist>
         </div>
-        <div className="text-[12.5px] text-muted">
+        <div className="text-callout text-muted">
           {c.departedYardAt ? `Left the yard ${fmt(c.departedYardAt)}${c.arrivedYardAt ? ` (there since ${fmt(c.arrivedYardAt)})` : ""}` : c.arrivedYardAt ? `At the yard since ${fmt(c.arrivedYardAt)}` : "Not at the border yard yet"}
           {c.fromCountry !== "MX" && c.toCountry !== "MX" ? "" : data.broker ? ` · MX broker ${data.broker.name}${data.broker.patente ? ` (patente ${data.broker.patente})` : ""}` : " · customer has no MX broker on file"}
         </div>
@@ -117,13 +117,13 @@ export function CrossingWorkbench({ data }: { data: Data }) {
       {(data.port?.knowledgeMd || data.customer?.knowledgeMd) && (
         <div className="grid md:grid-cols-2 gap-3 mb-4" data-testid="knowledge">
           {data.port?.knowledgeMd && (
-            <div className="rounded-lg border border-teal/30 bg-teal-soft/40 px-3 py-2 text-[13px] whitespace-pre-wrap">
+            <div className="rounded-lg border border-teal/30 bg-teal-soft/40 px-3 py-2 text-callout whitespace-pre-wrap">
               <div className="eyebrow mb-0.5">{data.port.name} · what to know</div>
               {data.port.knowledgeMd}
             </div>
           )}
           {data.customer?.knowledgeMd && (
-            <div className="rounded-lg border border-teal/30 bg-teal-soft/40 px-3 py-2 text-[13px] whitespace-pre-wrap">
+            <div className="rounded-lg border border-teal/30 bg-teal-soft/40 px-3 py-2 text-callout whitespace-pre-wrap">
               <div className="eyebrow mb-0.5">{data.customer.name} · what to know</div>
               {data.customer.knowledgeMd}
             </div>
@@ -136,7 +136,7 @@ export function CrossingWorkbench({ data }: { data: Data }) {
         <div className="card">
           <div className="px-4 pt-3 pb-2 border-b border-line flex items-center justify-between">
             <div className="h2">Packet</div>
-            <span className="text-[12px] text-muted">
+            <span className="text-footnote text-muted">
               {presentCount}/{required.length}
             </span>
           </div>
@@ -147,10 +147,10 @@ export function CrossingWorkbench({ data }: { data: Data }) {
               return (
                 <li key={r.code} className={`px-4 py-2.5 cursor-pointer ${active ? "bg-teal-soft/50" : "hover:bg-ground"}`} onClick={() => setSelCode(r.code)}>
                   <div className="flex items-center justify-between gap-2">
-                    <div className="font-semibold text-[13px] truncate">{r.label}</div>
+                    <div className="font-semibold text-callout truncate">{r.label}</div>
                     <Pill tone={r.status === "verified" ? "green" : r.status === "present" ? "blue" : r.status === "na" ? "slate" : "amber"}>{r.status === "na" ? "n/a" : r.status}</Pill>
                   </div>
-                  <div className="text-[12px] text-muted flex items-center justify-between gap-2 mt-0.5">
+                  <div className="text-footnote text-muted flex items-center justify-between gap-2 mt-0.5">
                     <span className="truncate">
                       {doc ? `${doc.fileName} · v${doc.version} · ${doc.source}` : r.status === "na" ? (r.naReason === "optional" ? "not required" : r.naReason) : `from ${r.providedBy.replace("_", " ")}`}
                     </span>
@@ -184,7 +184,7 @@ export function CrossingWorkbench({ data }: { data: Data }) {
           </ul>
           {c.state === "returned" && canEdit && (
             <div className="p-3 border-t border-line">
-              <div className="text-[12.5px] text-red font-semibold mb-2">Returned: {c.returnedReason}</div>
+              <div className="text-callout text-red font-semibold mb-2">Returned: {c.returnedReason}</div>
               <button className="btn btn-primary w-full justify-center" onClick={() => run("Re-verifying", () => A.reverifyAction(c.id))}>
                 Docs fixed — re-verify
               </button>
@@ -199,7 +199,7 @@ export function CrossingWorkbench({ data }: { data: Data }) {
               <div className="px-4 pt-3 pb-2 border-b border-line flex items-center justify-between gap-2">
                 <div className="min-w-0">
                   <div className="h2 truncate">{c.requirements.find((r) => r.code === selDoc.code)?.label ?? selDoc.code}</div>
-                  <div className="text-[12px] text-muted">
+                  <div className="text-footnote text-muted">
                     {selDoc.fileName} · v{selDoc.version} · {selDoc.source} · {fmt(selDoc.createdAt)}
                   </div>
                 </div>
@@ -216,7 +216,7 @@ export function CrossingWorkbench({ data }: { data: Data }) {
             <div className="flex-1 grid place-items-center text-center p-8">
               <div>
                 <div className="font-bold">{selCode ? "Nothing uploaded for this yet" : "Pick a document on the left"}</div>
-                <div className="text-muted text-[13px] mt-1">Upload a PDF or photo; type the numbers the checks compare (trailer, seal, plates…). The system reads what it can; you can always type.</div>
+                <div className="text-muted text-callout mt-1">Upload a PDF or photo; type the numbers the checks compare (trailer, seal, plates…). The system reads what it can; you can always type.</div>
                 {selCode && canEdit && beforePacket && selCode !== "carta_retiro" && (
                   <button className="btn btn-primary mt-4" onClick={() => setUploadFor(selCode)}>
                     Upload {c.requirements.find((r) => r.code === selCode)?.label}
@@ -237,7 +237,7 @@ export function CrossingWorkbench({ data }: { data: Data }) {
           <div className="card">
             <div className="px-4 pt-3 pb-2 border-b border-line flex items-center justify-between">
               <div className="h2">Cross-checks</div>
-              <span className={`text-[12px] font-bold ${failing.length ? "text-red" : data.checks.some((k) => k.state === "pass") ? "text-green" : "text-muted"}`}>{failing.length ? `${failing.length} failing` : data.checks.some((k) => k.state === "pass") ? "all clear" : "not checked yet"}</span>
+              <span className={`text-footnote font-bold ${failing.length ? "text-red" : data.checks.some((k) => k.state === "pass") ? "text-green" : "text-muted"}`}>{failing.length ? `${failing.length} failing` : data.checks.some((k) => k.state === "pass") ? "all clear" : "not checked yet"}</span>
             </div>
             <ul className="divide-y divide-line max-h-[360px] overflow-auto">
               {data.checks
@@ -248,10 +248,10 @@ export function CrossingWorkbench({ data }: { data: Data }) {
                     <div className="flex items-start gap-2">
                       <span className={`w-2 h-2 rounded-full mt-1.5 flex-none ${k.state === "pass" ? "bg-green" : k.state === "fail" ? "bg-red" : k.state === "overridden" ? "bg-amber" : "bg-line"}`} />
                       <div className="min-w-0 flex-1">
-                        <div className="text-[13px] font-semibold">{data.checkLabel[k.code] ?? k.code}</div>
-                        <div className={`text-[12px] ${k.state === "fail" ? "text-red" : "text-muted"}`}>{k.message}</div>
+                        <div className="text-callout font-semibold">{data.checkLabel[k.code] ?? k.code}</div>
+                        <div className={`text-footnote ${k.state === "fail" ? "text-red" : "text-muted"}`}>{k.message}</div>
                         {k.state === "overridden" && (
-                          <div className="text-[12px] text-amber">
+                          <div className="text-footnote text-amber">
                             overridden{k.overrideBy ? ` by ${data.people[k.overrideBy] ?? "someone"}` : ""}: {k.overrideReason}
                           </div>
                         )}
@@ -272,17 +272,17 @@ export function CrossingWorkbench({ data }: { data: Data }) {
               <div className="h2">Eligibility</div>
               {c.eligibility && <Pill tone={c.eligibility.ok ? "green" : c.eligibility.hardBlocked ? "red" : c.eligibilityOverride ? "amber" : "red"}>{c.eligibility.ok ? "Green" : c.eligibility.hardBlocked ? "Blocked" : c.eligibilityOverride ? "Overridden" : "Red"}</Pill>}
             </div>
-            <div className="text-[12.5px] text-muted mt-1">
+            <div className="text-callout text-muted mt-1">
               {data.truck ? `Unit ${data.truck.unitNumber} · ${data.truck.mxPlateClass ?? "no MX"} plates` : "No crossing truck"} · {data.driver ? data.driver.name : "no driver"}
               {data.coDriver ? ` / ${data.coDriver.name}` : ""}
             </div>
             {c.eligibility?.findings.map((f) => (
-              <div key={f.code} className={`text-[12.5px] mt-1 ${f.level === "red" ? "text-red" : "text-amber"}`}>
+              <div key={f.code} className={`text-callout mt-1 ${f.level === "red" ? "text-red" : "text-amber"}`}>
                 {f.message}
                 {!f.overridable ? " — no override" : ""}
               </div>
             ))}
-            {c.eligibilityOverride && <div className="text-[12.5px] text-amber mt-1">Override: {c.eligibilityOverride.reason}</div>}
+            {c.eligibilityOverride && <div className="text-callout text-amber mt-1">Override: {c.eligibilityOverride.reason}</div>}
             {c.eligibility && !c.eligibility.ok && !c.eligibility.hardBlocked && !c.eligibilityOverride && canOverride && (
               <button className="btn btn-sm mt-2" onClick={() => setEligOverride(true)}>
                 Override
@@ -295,7 +295,7 @@ export function CrossingWorkbench({ data }: { data: Data }) {
             <div className="h2">Packet</div>
             {beforePacket ? (
               <div className="mt-2 space-y-2">
-                <div className="text-[12.5px] text-muted">
+                <div className="text-callout text-muted">
                   {c.state === "ready_to_cross" ? "Built and ready. Send it to the driver." : c.state === "eligibility_checked" ? "Everything checks out. Build the packet." : c.state === "docs_verified" ? "Docs verified; eligibility is not green." : c.state === "docs_complete" ? "All docs in; a cross-check is failing." : `${required.length - presentCount} document(s) still missing.`}
                 </div>
                 {canEdit && (
@@ -309,13 +309,13 @@ export function CrossingWorkbench({ data }: { data: Data }) {
                   </div>
                 )}
                 {c.packetBuiltAt && c.packetToken && (
-                  <a className="text-[12.5px] text-teal font-semibold" href={`/p/${c.packetToken}`} target="_blank" rel="noreferrer">
+                  <a className="text-callout text-teal font-semibold" href={`/p/${c.packetToken}`} target="_blank" rel="noreferrer">
                     Preview packet (built {fmt(c.packetBuiltAt)})
                   </a>
                 )}
               </div>
             ) : (
-              <div className="mt-2 text-[12.5px]">
+              <div className="mt-2 text-callout">
                 <div>
                   Sent {fmt(c.packetSentAt)} · {c.packetAckAt ? <span className="text-green font-semibold">opened {fmt(c.packetAckAt)}</span> : <span className="text-amber font-semibold">not opened yet</span>}
                 </div>
@@ -336,11 +336,11 @@ export function CrossingWorkbench({ data }: { data: Data }) {
                 const done = idx >= i && c.state !== "held" && c.state !== "returned";
                 const ev = data.events.find((e) => e.kind === "transition" && e.toState === st);
                 return (
-                  <li key={st} className="flex items-center gap-2 text-[13px]">
+                  <li key={st} className="flex items-center gap-2 text-callout">
                     <span className={`timeline-dot ${done ? "done" : ""} ${c.state === st ? "now" : ""}`} />
                     <span className={done ? "font-semibold" : "text-muted"}>{data.stateLabel[st]}</span>
                     {ev && (
-                      <span className="text-faint text-[12px] ml-auto">
+                      <span className="text-faint text-footnote ml-auto">
                         {fmt(ev.at)} · {ev.source.replace("_", " ")}
                         {ev.verified ? " · GPS" : ""}
                       </span>
@@ -375,7 +375,7 @@ export function CrossingWorkbench({ data }: { data: Data }) {
                 )}
               </div>
             )}
-            {c.state === "held" && <div className="text-[12.5px] text-red mt-2">Held: {c.heldReason}</div>}
+            {c.state === "held" && <div className="text-callout text-red mt-2">Held: {c.heldReason}</div>}
           </div>
         </div>
       </div>
@@ -385,7 +385,7 @@ export function CrossingWorkbench({ data }: { data: Data }) {
         <div className="h2 mb-2">Timeline</div>
         <ul className="space-y-1 max-h-[420px] overflow-y-auto">
           {data.events.map((e) => (
-            <li key={e.id} className="text-[12.5px] flex gap-2">
+            <li key={e.id} className="text-callout flex gap-2">
               <span className="text-faint whitespace-nowrap w-28">{fmt(e.at)}</span>
               <span>
                 {e.kind === "transition" ? (
@@ -445,7 +445,7 @@ function FieldsPanel({ doc, fields, canEdit, onSave, onExtract }: { doc: Doc; fi
         <div className="eyebrow">Fields</div>
         <Pill tone={doc.status === "verified" ? "green" : "blue"}>{doc.status}</Pill>
       </div>
-      {fields.length === 0 && <div className="text-muted text-[12.5px]">No fields to compare on this document.</div>}
+      {fields.length === 0 && <div className="text-muted text-callout">No fields to compare on this document.</div>}
       <div className="space-y-2">
         {fields.map((f) => {
           const conf = doc.extracted?.[f.key]?.confidence;
@@ -456,7 +456,7 @@ function FieldsPanel({ doc, fields, canEdit, onSave, onExtract }: { doc: Doc; fi
                 {doc.extracted?.[f.key]?.source === "ai" && conf != null && <span className={`normal-case font-semibold ${conf < 0.8 ? "text-amber" : "text-teal"}`}>AI {Math.round(conf * 100)}%{conf < 0.8 ? " · check" : ""}</span>}
                 {doc.extracted?.[f.key]?.source !== "ai" && conf != null && conf >= 1 && <span className="normal-case text-faint">typed</span>}
               </label>
-              <input className={`input h-8 text-[13px] ${f.kind === "number" ? "mono" : ""}`} type={f.kind === "datetime" ? "datetime-local" : "text"} value={f.kind === "datetime" && vals[f.key] ? vals[f.key].slice(0, 16) : vals[f.key]} onChange={(e) => setVals({ ...vals, [f.key]: e.target.value })} disabled={!canEdit} />
+              <input className={`input h-8 text-callout ${f.kind === "number" ? "mono" : ""}`} type={f.kind === "datetime" ? "datetime-local" : "text"} value={f.kind === "datetime" && vals[f.key] ? vals[f.key].slice(0, 16) : vals[f.key]} onChange={(e) => setVals({ ...vals, [f.key]: e.target.value })} disabled={!canEdit} />
             </div>
           );
         })}
@@ -474,7 +474,7 @@ function FieldsPanel({ doc, fields, canEdit, onSave, onExtract }: { doc: Doc; fi
           </button>
         </div>
       )}
-      {doc.extractionNote && <div className={`text-[11.5px] mt-1 ${doc.extractionNote.startsWith("failed") ? "text-red" : "text-faint"}`}>{doc.extractionNote}</div>}
+      {doc.extractionNote && <div className={`text-footnote mt-1 ${doc.extractionNote.startsWith("failed") ? "text-red" : "text-faint"}`}>{doc.extractionNote}</div>}
       <div className="help mt-2">Confirm = a human read the document and these values are right. AI values never count until confirmed.</div>
     </div>
   );
@@ -524,7 +524,7 @@ function UploadModal({ crossingId, code, label, fields, onClose, onDone }: { cro
         <label className="block border-2 border-dashed border-line rounded-lg p-5 text-center cursor-pointer hover:border-teal">
           <input type="file" name="file" accept="application/pdf,image/jpeg,image/png" className="hidden" onChange={(e) => setName(e.target.files?.[0]?.name ?? null)} />
           <div className="font-semibold">{name ?? "Choose a PDF or photo"}</div>
-          <div className="text-[12px] text-muted">From NAD, Viatpro, email or the yard. Up to 15 MB.</div>
+          <div className="text-footnote text-muted">From NAD, Viatpro, email or the yard. Up to 15 MB.</div>
         </label>
         <input type="hidden" name="source" value="upload" />
         {fields.length > 0 && (
@@ -534,7 +534,7 @@ function UploadModal({ crossingId, code, label, fields, onClose, onDone }: { cro
               {fields.map((f) => (
                 <div key={f.key}>
                   <label className="label">{f.label}</label>
-                  <input name={`f_${f.key}`} className="input h-8 text-[13px]" type={f.kind === "datetime" ? "datetime-local" : "text"} />
+                  <input name={`f_${f.key}`} className="input h-8 text-callout" type={f.kind === "datetime" ? "datetime-local" : "text"} />
                 </div>
               ))}
             </div>
@@ -577,7 +577,7 @@ function RetiroModal({ crossingId, trailer, onClose, onDone }: { crossingId: str
         </>
       }
     >
-      <div className="text-[13px] text-muted mb-3">
+      <div className="text-callout text-muted mb-3">
         We are the transfer: the letter asks the yard to release caja <b className="text-ink mono">{trailer || "—"}</b> to our unit and operadores, on our letterhead. Trailer, unit, plates and drivers come from the assignment.
       </div>
       <div className="grid grid-cols-2 gap-2">

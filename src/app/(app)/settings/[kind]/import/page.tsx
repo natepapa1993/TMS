@@ -26,7 +26,7 @@ export default async function ImportPage({ params }: PageProps<"/settings/[kind]
       >
         Paste or upload a CSV. We match the columns, show every row with its problems, and only then write.
       </PageHeader>
-      <div className="px-7 pb-10">
+      <div className="px-gutter pb-10">
         <ImportWizard kind={kind} fields={FIELDS[kind].map((f) => ({ name: f.name, label: f.label, required: !!f.required }))} template={csvTemplate(kind)} listPath={`/settings/${path}`} />
       </div>
     </div>

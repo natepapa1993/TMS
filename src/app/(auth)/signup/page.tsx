@@ -9,7 +9,7 @@ export default function SignupPage() {
       <div className="h1">Set up your company</div>
       <p className="text-muted mt-1 mb-6">You&apos;ll be the owner. Add your team, trucks and customers after.</p>
       <SignupForm />
-      <p className="text-[13px] text-muted mt-6">
+      <p className="text-callout text-muted mt-6">
         Already set up?{" "}
         <Link href="/login" className="font-semibold text-teal">
           Sign in

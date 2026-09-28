@@ -26,12 +26,12 @@ export default async function TripsPage() {
       >
         Many shipments on one trip. Each shipment keeps its own customer, rate, references, documents, POD and invoice; the trip carries the unit, the stops, the capacity and the crossing.
       </PageHeader>
-      <div className="px-7 pb-10">
+      <div className="px-gutter pb-10">
         <div className="card overflow-hidden">
           {rows.length === 0 ? (
             <div className="py-14 text-center">
               <div className="font-bold">No trips yet</div>
-              <div className="text-muted text-[13px] mt-1">Build one: stops first, then the shipments that ride between them.</div>
+              <div className="text-muted text-callout mt-1">Build one: stops first, then the shipments that ride between them.</div>
             </div>
           ) : (
             <table className="table">

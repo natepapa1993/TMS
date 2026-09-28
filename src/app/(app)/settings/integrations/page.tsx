@@ -31,7 +31,7 @@ export default async function IntegrationsPage() {
       >
         Keys are stored per company and never shown back once saved. Leave a secret blank to keep the one on file.
       </PageHeader>
-      <div className="px-7 pb-10 grid gap-4 max-w-3xl">
+      <div className="px-gutter pb-10 grid gap-4 max-w-3xl">
         <IntegrationCard
           provider="motive"
           title="Motive (ELD)"
@@ -70,7 +70,7 @@ export default async function IntegrationsPage() {
           status={wa ? { lastRunAt: wa.lastRunAt?.toISOString() ?? null, lastError: wa.lastError, lastResult: wa.lastResult } : null}
           extra={
             wa?.config.webhookToken ? (
-              <div className="mt-3 text-[12.5px]">
+              <div className="mt-3 text-callout">
                 <div className="eyebrow mb-1">Webhook (paste into Meta → WhatsApp → Configuration)</div>
                 <div className="mono break-all select-all bg-ground rounded p-2 border border-line">{publicUrl(`/api/whatsapp/${wa.config.webhookToken}`)}</div>
                 <div className="mt-1">
@@ -108,7 +108,7 @@ export default async function IntegrationsPage() {
           status={mb ? { lastRunAt: mb.lastRunAt?.toISOString() ?? null, lastError: mb.lastError, lastResult: mb.lastResult } : null}
           extra={
             mb?.config.inboundToken ? (
-              <div className="mt-3 text-[12.5px]">
+              <div className="mt-3 text-callout">
                 <div className="eyebrow mb-1">Inbound URL (forward dispatch@ here instead of, or as well as, IMAP)</div>
                 <div className="mono break-all select-all bg-ground rounded p-2 border border-line" data-testid="inbound-url">{publicUrl(`/api/mail/inbound/${mb.config.inboundToken}`)}</div>
                 <div className="mt-1">Cloudflare Email Routing (a Worker that POSTs the raw message), Mailgun routes (&quot;forward to URL&quot;), Postmark or SES inbound all deliver here; the raw message as the body, a multipart field, or JSON <span className="mono">{"{raw}"}</span>. With the AI reader connected above, the model classifies and reads the fields; without it, rules do what rules can.</div>
@@ -118,7 +118,7 @@ export default async function IntegrationsPage() {
             )
           }
         />
-        <div className="card p-4 text-[13px] text-muted">Waiting on outside access: Sylectus Virtual Fleet and DAT / Truckstop posting (API access), NAD and Viatpro crossing documents (credentials), native AS2 (the VAN&rsquo;s certificates). The EDI VAN mailbox over SFTP lives on each EDI partner&rsquo;s record.</div>
+        <div className="card p-4 text-callout text-muted">Waiting on outside access: Sylectus Virtual Fleet and DAT / Truckstop posting (API access), NAD and Viatpro crossing documents (credentials), native AS2 (the VAN&rsquo;s certificates). The EDI VAN mailbox over SFTP lives on each EDI partner&rsquo;s record.</div>
       </div>
     </div>
   );

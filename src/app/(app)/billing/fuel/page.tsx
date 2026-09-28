@@ -24,7 +24,7 @@ export default async function FuelPage() {
         Fuel surcharge tables (the diesel price bands a customer&apos;s surcharge moves with) and the weekly diesel price. A customer lane rate set to &quot;fuel table&quot; takes its surcharge from the default table at the week&apos;s price when the load is built.
       </PageHeader>
       <BillingNav />
-      <div className="px-7 pb-10">
+      <div className="px-gutter pb-10">
         <FuelScreen
           tables={tables.map((t) => ({ id: t.id, name: t.name, method: t.method, bands: t.bands, isDefault: t.isDefault }))}
           prices={prices.map((p) => ({ weekOf: p.weekOf, priceCents: p.priceCents, source: p.source }))}

@@ -27,7 +27,7 @@ export default async function MessagesPage() {
       >
         Every email to dispatch@ as one card the agent proposes and you tap; what drivers write from their app and what drivers and carriers write to the company WhatsApp number, with a Reply that reaches them; and everything we sent them. Replies from someone on a leg also show on that order&apos;s timeline.
       </PageHeader>
-      <div className="px-7 pb-10">
+      <div className="px-gutter pb-10">
         <MailCards rows={JSON.parse(JSON.stringify(mail))} customers={customers.map((c) => ({ id: c.id, name: String(c.name), kind: String(c.kind) })).sort((p, q) => p.name.localeCompare(q.name))} canAct={["owner", "dispatcher", "billing", "mx_office"].includes(ctx.role)} />
         <div className="h2 mb-2">WhatsApp and the driver app</div>
         <MessagesBoard rows={JSON.parse(JSON.stringify(rows))} />

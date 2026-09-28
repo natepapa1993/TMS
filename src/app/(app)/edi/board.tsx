@@ -76,24 +76,24 @@ export function EdiBoard({ inbox, log, partners, role }: { inbox: InboxRow[]; lo
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2">
                     <span className="font-extrabold">{r.customer}</span>
-                    <span className="mono text-[12.5px] text-muted">{r.tender?.theirRef ?? r.m.summary}</span>
+                    <span className="mono text-callout text-muted">{r.tender?.theirRef ?? r.m.summary}</span>
                     <Pill tone={r.m.state === "error" ? "red" : r.m.summary.startsWith("CHANGE") ? "amber" : r.m.summary.startsWith("DUPLICATE") ? "slate" : "teal"}>{r.m.summary.split(" ")[0].toLowerCase()}</Pill>
                     {r.orderNumber && (
-                      <Link href={`/orders/${r.m.orderId}`} className="text-teal font-bold text-[12.5px]">
+                      <Link href={`/orders/${r.m.orderId}`} className="text-teal font-bold text-callout">
                         {r.orderNumber}
                       </Link>
                     )}
                   </div>
                   {r.tender ? (
-                    <div className="text-[13px] mt-1">
+                    <div className="text-callout mt-1">
                       {r.tender.stops.map((s) => `${s.party?.name ?? s.type}${s.party?.city ? ` (${s.party.city}${s.party.state ? `, ${s.party.state}` : ""})` : ""}`).join(" → ")} · {money(r.tender.rateCents)}
                       {r.tender.stops[0]?.earliestLocal && <span className="text-muted"> · pickup {local(r.tender.stops[0].earliestLocal)} local</span>}
                     </div>
                   ) : (
-                    <div className="text-[13px] mt-1 text-red">{r.m.error ?? "could not be read"}</div>
+                    <div className="text-callout mt-1 text-red">{r.m.error ?? "could not be read"}</div>
                   )}
-                  {r.m.error && r.tender && <div className="text-[12.5px] text-red mt-0.5">{r.m.error}</div>}
-                  <div className="text-[12px] text-faint mt-0.5">received {when(r.m.createdAt)}</div>
+                  {r.m.error && r.tender && <div className="text-callout text-red mt-0.5">{r.m.error}</div>}
+                  <div className="text-footnote text-faint mt-0.5">received {when(r.m.createdAt)}</div>
                 </div>
                 <div className="flex gap-2 flex-none">
                   <button className="btn btn-sm" onClick={() => setOpen(r)}>
@@ -135,13 +135,13 @@ export function EdiBoard({ inbox, log, partners, role }: { inbox: InboxRow[]; lo
             <tbody>
               {log.map((r) => (
                 <tr key={r.m.id}>
-                  <td className="text-muted text-[12.5px] whitespace-nowrap">{when(r.m.createdAt)}</td>
+                  <td className="text-muted text-callout whitespace-nowrap">{when(r.m.createdAt)}</td>
                   <td className="text-faint">{r.m.direction === "in" ? "⇦ in" : "⇨ out"}</td>
                   <td className="font-extrabold mono">{r.m.type}</td>
                   <td>{r.customer}</td>
-                  <td className="text-[13px]">
+                  <td className="text-callout">
                     {r.m.summary}
-                    {r.m.error && <div className="text-red text-[12px]">{r.m.error}</div>}
+                    {r.m.error && <div className="text-red text-footnote">{r.m.error}</div>}
                   </td>
                   <td>
                     {r.orderNumber && (
@@ -172,7 +172,7 @@ export function EdiBoard({ inbox, log, partners, role }: { inbox: InboxRow[]; lo
       {open && (
         <Modal open onClose={() => setOpen(null)} wide title={`Tender ${open.tender?.theirRef ?? ""} · ${open.customer}`} footer={<><button className="btn" onClick={() => setOpen(null)}>Close</button>{can && open.tender && !open.m.summary.startsWith("CHANGE") && <button className="btn btn-primary" disabled={pending} onClick={() => accept(open)}>Accept — create the order</button>}</>}>
           {open.tender ? (
-            <div className="space-y-3 text-[13px]">
+            <div className="space-y-3 text-callout">
               <div className="grid grid-cols-4 gap-2">
                 <div>
                   <div className="eyebrow">Rate</div>
@@ -188,7 +188,7 @@ export function EdiBoard({ inbox, log, partners, role }: { inbox: InboxRow[]; lo
                 </div>
                 <div>
                   <div className="eyebrow">References</div>
-                  <div className="mono text-[12px]">{Object.entries(open.tender.refs).map(([k, v]) => `${k}: ${v}`).join(" · ") || "—"}</div>
+                  <div className="mono text-footnote">{Object.entries(open.tender.refs).map(([k, v]) => `${k}: ${v}`).join(" · ") || "—"}</div>
                 </div>
               </div>
               <table className="table">
@@ -208,15 +208,15 @@ export function EdiBoard({ inbox, log, partners, role }: { inbox: InboxRow[]; lo
                       <td className="font-bold capitalize">{s.type}</td>
                       <td>
                         {s.party?.name}
-                        <div className="text-muted text-[12px]">{[s.party?.line1, s.party?.city, s.party?.state, s.party?.postalCode, s.party?.country].filter(Boolean).join(", ")}</div>
+                        <div className="text-muted text-footnote">{[s.party?.line1, s.party?.city, s.party?.state, s.party?.postalCode, s.party?.country].filter(Boolean).join(", ")}</div>
                       </td>
-                      <td className="text-[12.5px]">
+                      <td className="text-callout">
                         {local(s.earliestLocal)}
                         {s.latestLocal ? ` – ${local(s.latestLocal)}` : ""}
                         {(s.earliestLocal || s.latestLocal) && <span className="text-faint"> local</span>}
                         {s.appointment && <Pill tone="teal">appt</Pill>}
                       </td>
-                      <td className="text-[12.5px]">
+                      <td className="text-callout">
                         {[s.commodity, s.pieces && `${s.pieces} pcs`, s.weightLbs && `${s.weightLbs} lb`].filter(Boolean).join(" · ")}
                         {s.notes.length > 0 && <div className="text-muted">{s.notes.join(" · ")}</div>}
                       </td>
@@ -228,7 +228,7 @@ export function EdiBoard({ inbox, log, partners, role }: { inbox: InboxRow[]; lo
               {open.m.summary.startsWith("CHANGE") && <div className="help">This is a change to a load you already have. Apply it on the order, then decline this message with a note so the customer gets a 990.</div>}
             </div>
           ) : (
-            <pre className="text-[12px] whitespace-pre-wrap">{open.m.error}</pre>
+            <pre className="text-footnote whitespace-pre-wrap">{open.m.error}</pre>
           )}
         </Modal>
       )}
@@ -255,7 +255,7 @@ function PasteModal({ partners, onClose, onDone }: { partners: { id: string; lab
         ))}
       </select>
       <label className="label">X12 text (ISA … IEA)</label>
-      <textarea className="textarea mono text-[12px]" rows={12} value={text} onChange={(e) => setText(e.target.value)} placeholder="ISA*00*          *00*          *ZZ*RXO …" />
+      <textarea className="textarea mono text-footnote" rows={12} value={text} onChange={(e) => setText(e.target.value)} placeholder="ISA*00*          *00*          *ZZ*RXO …" />
       {err && <div className="error mt-2">{err}</div>}
       <div className="help mt-2">For go-live the partner POSTs to the inbound URL on their partner record; this box is for testing and for files they email.</div>
     </Modal>

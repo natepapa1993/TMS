@@ -33,8 +33,8 @@ export default async function DrugAlcoholPage({ searchParams }: PageProps<"/comp
         Parts 40 and 382: random draws, every test and its result, holds and return-to-duty, what you owe the Clearinghouse. Confidential — only the owner and Safety see this page.
       </PageHeader>
       <SafetyNav role={ctx.role} />
-      <div className="px-7 pb-10 space-y-5">
-        <div className="flex items-center gap-2 text-[13px]">
+      <div className="px-gutter pb-10 space-y-5">
+        <div className="flex items-center gap-2 text-callout">
           {[year - 1, year, year + 1]
             .filter((y) => y <= now.getUTCFullYear())
             .map((y) => (
@@ -46,29 +46,29 @@ export default async function DrugAlcoholPage({ searchParams }: PageProps<"/comp
         <div className="flex gap-3 flex-wrap" data-testid="da-tiles">
           <div className="card p-4 flex-1 min-w-[150px]">
             <div className="eyebrow">In the pool now</div>
-            <div className="text-[26px] font-extrabold">{p.pool}</div>
-            <div className="text-[12px] text-muted">average {p.required.avgPool ? p.required.avgPool.toFixed(1) : "—"} over {p.draws.length} draw{p.draws.length === 1 ? "" : "s"}</div>
+            <div className="text-title1 font-extrabold">{p.pool}</div>
+            <div className="text-footnote text-muted">average {p.required.avgPool ? p.required.avgPool.toFixed(1) : "—"} over {p.draws.length} draw{p.draws.length === 1 ? "" : "s"}</div>
           </div>
           <div className="card p-4 flex-1 min-w-[150px]">
             <div className="eyebrow">Random drug tests {year}</div>
-            <div className={`text-[26px] font-extrabold ${pace(p.done.drug, p.required.drug)}`}>
-              {p.done.drug} <span className="text-[15px] text-muted font-bold">of {p.required.drug}</span>
+            <div className={`text-title1 font-extrabold ${pace(p.done.drug, p.required.drug)}`}>
+              {p.done.drug} <span className="text-headline text-muted font-bold">of {p.required.drug}</span>
             </div>
-            <div className="text-[12px] text-muted">rate × average pool</div>
+            <div className="text-footnote text-muted">rate × average pool</div>
           </div>
           <div className="card p-4 flex-1 min-w-[150px]">
             <div className="eyebrow">Random alcohol tests {year}</div>
-            <div className={`text-[26px] font-extrabold ${pace(p.done.alcohol, p.required.alcohol)}`}>
-              {p.done.alcohol} <span className="text-[15px] text-muted font-bold">of {p.required.alcohol}</span>
+            <div className={`text-title1 font-extrabold ${pace(p.done.alcohol, p.required.alcohol)}`}>
+              {p.done.alcohol} <span className="text-headline text-muted font-bold">of {p.required.alcohol}</span>
             </div>
           </div>
           <div className="card p-4 flex-1 min-w-[150px]">
             <div className="eyebrow">Waiting on collection / result</div>
-            <div className={`text-[26px] font-extrabold ${p.open ? "text-amber" : "text-faint"}`}>{p.open}</div>
+            <div className={`text-title1 font-extrabold ${p.open ? "text-amber" : "text-faint"}`}>{p.open}</div>
           </div>
           <div className="card p-4 flex-1 min-w-[150px]">
             <div className="eyebrow">On hold</div>
-            <div className={`text-[26px] font-extrabold ${p.holds.some((h) => h.prohibited) ? "text-red" : "text-faint"}`}>{p.holds.filter((h) => h.prohibited).length}</div>
+            <div className={`text-title1 font-extrabold ${p.holds.some((h) => h.prohibited) ? "text-red" : "text-faint"}`}>{p.holds.filter((h) => h.prohibited).length}</div>
           </div>
         </div>
 
@@ -78,7 +78,7 @@ export default async function DrugAlcoholPage({ searchParams }: PageProps<"/comp
             {p.postAccident
               .filter((x) => !x.alcoholDone || !x.drugDone)
               .map((x) => (
-                <div key={x.incidentId} className="flex items-center justify-between gap-3 text-[13px]">
+                <div key={x.incidentId} className="flex items-center justify-between gap-3 text-callout">
                   <span>
                     <b>{x.driver}</b> — post-accident testing after {x.why} on {when(x.occurredAt)}: {!x.alcoholDone && <>alcohol by {when(x.alcoholBy)} </>}
                     {!x.drugDone && <>· drug by {when(x.drugBy)}</>}. If a test can&rsquo;t be done in time, record why.
@@ -87,7 +87,7 @@ export default async function DrugAlcoholPage({ searchParams }: PageProps<"/comp
                 </div>
               ))}
             {p.duties.map((d) => (
-              <div key={d.id} className="flex items-center justify-between gap-3 text-[13px]">
+              <div key={d.id} className="flex items-center justify-between gap-3 text-callout">
                 <span>
                   <b>{d.driver}</b> — {d.duty} (result {day(d.at)}).
                 </span>
@@ -100,7 +100,7 @@ export default async function DrugAlcoholPage({ searchParams }: PageProps<"/comp
         {p.holds.length > 0 && (
           <div className="card p-4" data-testid="da-holds">
             <div className="eyebrow mb-2">Holds and follow-up</div>
-            <ul className="space-y-1.5 text-[13px]">
+            <ul className="space-y-1.5 text-callout">
               {p.holds.map((h) => (
                 <li key={h.id} className="flex justify-between gap-3">
                   <Link href={`/compliance/drivers/${h.id}`} className="font-semibold hover:text-teal">
@@ -119,7 +119,7 @@ export default async function DrugAlcoholPage({ searchParams }: PageProps<"/comp
             <TestButton drivers={opts} incidents={accidents} />
           </div>
           {p.tests.length === 0 ? (
-            <div className="px-5 py-8 text-center text-muted text-[13px]">No tests in {year}. Run the quarter&rsquo;s random draw, and record every pre-employment test before a new driver&rsquo;s first load.</div>
+            <div className="px-5 py-8 text-center text-muted text-callout">No tests in {year}. Run the quarter&rsquo;s random draw, and record every pre-employment test before a new driver&rsquo;s first load.</div>
           ) : (
             <table className="table" data-testid="da-tests">
               <thead>
@@ -157,10 +157,10 @@ export default async function DrugAlcoholPage({ searchParams }: PageProps<"/comp
         <section className="card overflow-hidden">
           <div className="px-5 py-4 border-b border-line">
             <div className="h2">Random draws {year}</div>
-            <div className="text-[12.5px] text-muted">Keep this list for the auditor: who was in the pool, the rates, how many were picked.</div>
+            <div className="text-callout text-muted">Keep this list for the auditor: who was in the pool, the rates, how many were picked.</div>
           </div>
           {p.draws.length === 0 ? (
-            <div className="px-5 py-6 text-muted text-[13px]">No draws yet this year.</div>
+            <div className="px-5 py-6 text-muted text-callout">No draws yet this year.</div>
           ) : (
             <table className="table" data-testid="da-draws">
               <thead>

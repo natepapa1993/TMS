@@ -25,8 +25,8 @@ export default async function DriverFilesPage({ searchParams }: PageProps<"/comp
         What 49 CFR 391.51 asks you to keep for every driver, plus the Clearinghouse queries. Hire prerequisites (●) block dispatch once &ldquo;missing dates block&rdquo; is on; annual items come due 12 months after the last one.
       </PageHeader>
       <SafetyNav role={ctx.role} />
-      <div className="px-7 pb-10">
-        <div className="flex items-center gap-2 mb-3 text-[13px]">
+      <div className="px-gutter pb-10">
+        <div className="flex items-center gap-2 mb-3 text-callout">
           <Link href="/compliance/drivers" className="stage-tab" data-active={!only}>
             All drivers <span className="count">{all.length}</span>
           </Link>
@@ -38,7 +38,7 @@ export default async function DriverFilesPage({ searchParams }: PageProps<"/comp
           <div className="card py-14 text-center">
             <div className="font-bold">{only ? "Every file is complete" : "No drivers yet"}</div>
             {!only && (
-              <div className="text-muted text-[13px] mt-1">
+              <div className="text-muted text-callout mt-1">
                 Add drivers under{" "}
                 <Link href="/settings/drivers" className="text-teal font-semibold">
                   Drivers
@@ -58,7 +58,7 @@ export default async function DriverFilesPage({ searchParams }: PageProps<"/comp
                     <th key={i.key} title={`${i.cite} · ${i.hint}`}>
                       {SHORT[i.key]}
                       {i.blocks ? " ●" : ""}
-                      <div className="normal-case tracking-normal font-semibold text-[10px] text-faint">{i.cite}</div>
+                      <div className="normal-case tracking-normal font-semibold text-caption text-faint">{i.cite}</div>
                     </th>
                   ))}
                 </tr>
@@ -70,7 +70,7 @@ export default async function DriverFilesPage({ searchParams }: PageProps<"/comp
                       <Link href={`/compliance/drivers/${d.id}`} className="font-bold hover:text-teal whitespace-nowrap">
                         {d.name}
                       </Link>
-                      <div className="text-[12px] text-muted">
+                      <div className="text-footnote text-muted">
                         {d.driverType}
                         {d.hireDate ? ` · hired ${day(d.hireDate.toISOString())}` : " · no hire date"}
                       </div>

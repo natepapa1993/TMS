@@ -20,7 +20,7 @@ export default async function SettlementsPage() {
         Weekly statements from completed legs at each driver&apos;s pay rule, plus deductions and reimbursements. open → reviewed → approved → paid; drivers see approved and paid in their app.
       </PageHeader>
       <BillingNav />
-      <div className="px-7 pb-10">
+      <div className="px-gutter pb-10">
         <Settlements rows={JSON.parse(JSON.stringify(rows))} drivers={drivers.map((d) => ({ id: d.id, name: String(d.name), payType: String(d.payType), payRateCents: (d.payRateCents as number | null) ?? null }))} defaultWeek={startDate} role={ctx.role} />
       </div>
     </div>

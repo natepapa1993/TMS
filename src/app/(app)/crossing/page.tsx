@@ -41,16 +41,16 @@ export default async function CrossingBoardPage({ searchParams }: PageProps<"/cr
       <PageHeader eyebrow="Border" title="Crossings">
         One row per crossing leg. Waiting-on tells you the single next thing and who owes it.
       </PageHeader>
-      <div className="px-7 pb-3 flex items-center gap-1.5 flex-wrap">
+      <div className="px-gutter pb-3 flex items-center gap-1.5 flex-wrap">
         {BUCKETS.map((b) => (
           <Link key={b} href={`/crossing?b=${b}`} className="stage-tab" data-active={bucket === b}>
             {BUCKET_LABEL[b]} <span className="count">{counts[b]}</span>
           </Link>
         ))}
       </div>
-      <div className="px-7 pb-10">
+      <div className="px-gutter pb-10">
         <div className="card overflow-hidden">
-          <div className="row text-[11px] font-bold tracking-wider uppercase text-faint border-t-0 cursor-default hover:bg-transparent" style={{ gridTemplateColumns: "150px 110px 1.2fr 1fr 110px 150px" }}>
+          <div className="row text-caption font-bold text-faint border-t-0 cursor-default hover:bg-transparent" style={{ gridTemplateColumns: "150px 110px 1.2fr 1fr 110px 150px" }}>
             <div>Order</div>
             <div>Caja</div>
             <div>Unit · driver</div>
@@ -61,7 +61,7 @@ export default async function CrossingBoardPage({ searchParams }: PageProps<"/cr
           {shown.length === 0 ? (
             <div className="py-16 text-center border-t border-line">
               <div className="font-bold">Nothing here</div>
-              <div className="text-muted text-[13px] mt-1">{bucket === "waiting" ? "Crossings appear as soon as an order with a crossing leg is booked." : ""}</div>
+              <div className="text-muted text-callout mt-1">{bucket === "waiting" ? "Crossings appear as soon as an order with a crossing leg is booked." : ""}</div>
             </div>
           ) : (
             shown.map((r) => {
@@ -71,20 +71,20 @@ export default async function CrossingBoardPage({ searchParams }: PageProps<"/cr
                 <Link key={r.c.id} href={`/crossing/${r.c.id}`} className="row" style={{ gridTemplateColumns: "150px 110px 1.2fr 1fr 110px 150px" }}>
                   <div>
                     <div className="font-extrabold mono">{r.orderNumber}</div>
-                    <div className="text-muted text-[12.5px] truncate">{cn.get(r.customerId ?? "") ?? cn.get(r.brokerId ?? "") ?? "—"}</div>
+                    <div className="text-muted text-callout truncate">{cn.get(r.customerId ?? "") ?? cn.get(r.brokerId ?? "") ?? "—"}</div>
                   </div>
                   <div className="font-semibold mono">{r.c.trailerNumber ?? <span className="text-faint">—</span>}</div>
                   <div className="min-w-0">
                     <div className="font-semibold truncate">{r.truckId ? `Unit ${tn.get(r.truckId)}` : <span className="text-faint">no truck</span>}</div>
-                    <div className="text-muted text-[12.5px] truncate">{r.driverId ? dn.get(r.driverId) : r.c.portId ? pn.get(r.c.portId) : ""}</div>
+                    <div className="text-muted text-callout truncate">{r.driverId ? dn.get(r.driverId) : r.c.portId ? pn.get(r.c.portId) : ""}</div>
                   </div>
-                  <div className="min-w-0 text-[13px]">
+                  <div className="min-w-0 text-callout">
                     {r.c.state === "held" ? (
                       <span className="text-red font-semibold">{r.c.heldReason}</span>
                     ) : waiting ? (
                       <>
                         <span className="font-semibold">{waiting.label}</span>
-                        <div className="text-muted text-[12px]">from {waiting.providedBy.replace("_", " ")}</div>
+                        <div className="text-muted text-footnote">from {waiting.providedBy.replace("_", " ")}</div>
                       </>
                     ) : (
                       <span className="text-muted">—</span>

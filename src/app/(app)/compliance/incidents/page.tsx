@@ -29,7 +29,7 @@ export default async function IncidentsPage() {
         Accidents, injuries, cargo claims, citations. DOT-recordable ones (49 CFR 390.15) are flagged for the register; a fatality, or a citation with an injury or a tow-away, calls for post-accident testing. Roadside inspections have their own page.
       </PageHeader>
       <SafetyNav role={ctx.role} />
-      <div className="px-7 pb-10">
+      <div className="px-gutter pb-10">
         <IncidentsBoard rows={JSON.parse(JSON.stringify(rows))} drivers={drivers.map((d) => ({ id: d.id, name: String(d.name) }))} trucks={trucks.map((t) => ({ id: t.id, name: String(t.unitNumber) }))} trailers={trailers.map((t) => ({ id: t.id, name: String(t.unitNumber) }))} role={ctx.role} />
       </div>
     </div>

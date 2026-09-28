@@ -66,11 +66,11 @@ function CustomerPortalBody({ token, data }: { token: string; data: Data }) {
             {data.company} · {s.portal}
           </div>
           <div className="h1">{data.customer.name}</div>
-          <div className="text-[12.5px] text-muted mt-0.5">{s.intro(data.company)}</div>
+          <div className="text-callout text-muted mt-0.5">{s.intro(data.company)}</div>
         </div>
         <div className="flex flex-col items-end gap-1.5 shrink-0">
           {data.balance.pastDueCents > 0 ? <Pill tone="red">{money(data.balance.pastDueCents, data.balance.currency)} {s.pastDue}</Pill> : data.balance.openCents > 0 ? <Pill tone="amber">{money(data.balance.openCents, data.balance.currency)} {s.open}</Pill> : <Pill tone="green">{s.nothingOwed}</Pill>}
-          <button className="text-[12px] font-semibold text-teal" onClick={() => setLang(lang === "en" ? "es" : "en")} data-testid="lang">
+          <button className="text-footnote font-semibold text-teal" onClick={() => setLang(lang === "en" ? "es" : "en")} data-testid="lang">
             {lang === "en" ? "Español" : "English"}
           </button>
         </div>
@@ -124,8 +124,8 @@ function CustomerPortalBody({ token, data }: { token: string; data: Data }) {
           <div className="card p-4 flex items-center justify-between gap-3 flex-wrap">
             <div>
               <div className="eyebrow">{s.balance}</div>
-              <div className="text-[22px] font-extrabold mono">{money(data.balance.openCents, data.balance.currency)}</div>
-              <div className="text-[12px] text-muted">
+              <div className="text-title2 font-extrabold mono">{money(data.balance.openCents, data.balance.currency)}</div>
+              <div className="text-footnote text-muted">
                 {data.balance.pastDueCents > 0 ? `${money(data.balance.pastDueCents, data.balance.currency)} ${s.ofItPastDue}` : s.nothingPastDue}
                 {data.customer.termsDays ? ` · ${s.terms} ${data.customer.termsDays}` : ""}
               </div>
@@ -154,11 +154,11 @@ function CustomerPortalBody({ token, data }: { token: string; data: Data }) {
                         <div className="font-bold mono">{i.number ?? "—"}</div>
                         <Pill tone={INV_TONE[i.state] ?? "slate"}>{i.state === "partially_paid" ? s.partlyPaid : i.state}</Pill>
                       </td>
-                      <td className="text-[12.5px] mono">{i.orders.join(", ")}</td>
-                      <td className="text-[12.5px]">{day(i.issuedAt)}</td>
-                      <td className="text-[12.5px]">
+                      <td className="text-callout mono">{i.orders.join(", ")}</td>
+                      <td className="text-callout">{day(i.issuedAt)}</td>
+                      <td className="text-callout">
                         {day(i.dueAt)}
-                        {i.pastDueDays > 0 && <div className="text-red text-[11.5px] font-semibold">{i.pastDueDays} {s.dPastDue}</div>}
+                        {i.pastDueDays > 0 && <div className="text-red text-footnote font-semibold">{i.pastDueDays} {s.dPastDue}</div>}
                       </td>
                       <td className="text-right mono">{money(i.totalCents, i.currency)}</td>
                       <td className="text-right mono font-bold">{i.openCents ? money(i.openCents, i.currency) : "—"}</td>
@@ -198,24 +198,24 @@ function LoadCard({ l, token, s }: { l: Load; token: string; s: Strings }) {
           <div className="flex items-center gap-2 flex-wrap">
             <span className="font-extrabold mono">{l.orderNumber}</span>
             <Pill tone={TONE[l.state] ?? "slate"}>{l.stateLabel}</Pill>
-            {l.step && ["dispatched", "in_transit", "exception"].includes(l.state) && <span className="text-[12px] text-muted">{l.step}</span>}
+            {l.step && ["dispatched", "in_transit", "exception"].includes(l.state) && <span className="text-footnote text-muted">{l.step}</span>}
           </div>
-          <div className="font-bold text-[14px] mt-1 truncate">
+          <div className="font-bold text-body mt-1 truncate">
             {first ? placeOf(first) : "—"} → {last ? placeOf(last) : "—"}
           </div>
-          <div className="text-[12.5px] text-muted mt-0.5">
+          <div className="text-callout text-muted mt-0.5">
             {[l.refs.po && `PO ${l.refs.po}`, l.refs.shipment && `Shipment ${l.refs.shipment}`, l.refs.reference && `Ref ${l.refs.reference}`, l.equipment.replace("_", " ")].filter(Boolean).join(" · ")}
           </div>
-          {l.state === "draft" && <div className="text-[12.5px] text-blue mt-1">{s.received}</div>}
+          {l.state === "draft" && <div className="text-callout text-blue mt-1">{s.received}</div>}
           {["booked", "dispatched", "in_transit", "exception"].includes(l.state) && next && (
-            <div className="text-[12.5px] mt-1">
+            <div className="text-callout mt-1">
               {s.nextStop}: <b>{next.name}</b>
               {next.windowStart ? ` · ${when(next.windowStart)}${next.windowEnd ? ` – ${when(next.windowEnd)}` : ""}` : ""}
               {next.arrivedAt ? ` · ${s.arrived} ${when(next.arrivedAt)}` : ""}
               {l.eta && !next.arrivedAt && <span className={`font-semibold ${l.eta.late ? "text-red" : "text-teal"}`}> · {s.etaLabel} {when(l.eta.at)}</span>}
             </div>
           )}
-          {l.deliveredAt && <div className="text-[12.5px] text-green mt-1">{s.deliveredAt} {when(l.deliveredAt)}</div>}
+          {l.deliveredAt && <div className="text-callout text-green mt-1">{s.deliveredAt} {when(l.deliveredAt)}</div>}
         </div>
         <div className="flex flex-col gap-1.5 items-end shrink-0">
           {l.trackingUrl && ["booked", "dispatched", "in_transit", "exception"].includes(l.state) && (
@@ -235,19 +235,19 @@ function LoadCard({ l, token, s }: { l: Load; token: string; s: Strings }) {
           )}
         </div>
       </div>
-      <button className="text-[12px] text-muted mt-2 font-semibold" onClick={() => setOpen(!open)}>
+      <button className="text-footnote text-muted mt-2 font-semibold" onClick={() => setOpen(!open)}>
         {open ? s.hideStops : `${l.stops.length} ${s.stops}`}
       </button>
       {open && (
         <ol className="mt-2 space-y-1.5">
           {l.stops.map((st, i) => (
-            <li key={st.id} className="flex gap-2 text-[13px]">
+            <li key={st.id} className="flex gap-2 text-callout">
               <span className="mono text-faint w-4">{i + 1}</span>
               <div>
                 <div className="font-semibold">
                   {placeOf(st)} <span className="text-faint font-normal">· {st.type.replace("_", " ")}</span>
                 </div>
-                <div className="text-[12px] text-muted">
+                <div className="text-footnote text-muted">
                   {st.windowStart ? `${s.window} ${when(st.windowStart)}${st.windowEnd ? ` – ${when(st.windowEnd)}` : ""}` : ""}
                   {st.arrivedAt ? `${st.windowStart ? " · " : ""}${s.in} ${when(st.arrivedAt)}` : ""}
                   {st.departedAt ? ` · ${s.out} ${when(st.departedAt)}` : ""}
@@ -298,7 +298,7 @@ function RequestForm({ token, company, s, onDone }: { token: string; company: st
   return (
     <div className="card p-5 mt-4">
       <div className="h2">{s.reqTitle}</div>
-      <div className="text-[12.5px] text-muted mt-0.5 mb-3">{s.reqIntro(company)}</div>
+      <div className="text-callout text-muted mt-0.5 mb-3">{s.reqIntro(company)}</div>
       <div className="eyebrow mb-1">{s.pickup}</div>
       <div className="grid grid-cols-2 gap-2">
         <div className="col-span-2">

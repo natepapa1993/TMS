@@ -4,7 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
 import { Mark } from "./mark";
-import { ArrowLeftRight, Banknote, BarChart3, ClipboardCheck, FlaskConical, FolderCheck, ShieldAlert, Building2, Cable, CalendarRange, FileText, HandCoins, Handshake, Landmark, LayoutGrid, Map as MapIcon, MapPin, MessageSquare, Package, Plug, Receipt, Route, Settings, ShieldCheck, SlidersHorizontal, Fuel, Scale, TriangleAlert, Truck, Users, Wallet, type LucideIcon } from "lucide-react";
+import { ArrowLeftRight, Banknote, BarChart3, ClipboardCheck, FolderCheck, Menu, X, Building2, Cable, CalendarRange, FileText, Handshake, Landmark, LayoutGrid, Map as MapIcon, MapPin, MessageSquare, Package, Plug, Receipt, Route, Settings, ShieldCheck, TriangleAlert, Truck, Users, Wallet, type LucideIcon } from "lucide-react";
 import { logoutAction } from "@/app/(auth)/actions";
 import { GlobalSearch } from "./global-search";
 
@@ -33,17 +33,13 @@ const NAV: { section: string; items: NavItem[] }[] = [
     ],
   },
   {
-    section: "Accounting",
+    section: "Money",
     items: [
       { href: "/billing", label: "Billing", icon: Receipt, roles: ["owner", "dispatcher", "billing"] },
       { href: "/billing/invoices", label: "Invoices", icon: FileText, roles: ["owner", "billing"] },
       { href: "/billing/ar", label: "Receivables", icon: Landmark, roles: ["owner", "billing"] },
       { href: "/billing/payments", label: "Payments", icon: Banknote, roles: ["owner", "billing"] },
-      { href: "/billing/carriers", label: "Carrier pay", icon: HandCoins, roles: ["owner", "billing"] },
       { href: "/billing/settlements", label: "Driver pay", icon: Wallet, roles: ["owner", "billing"] },
-      { href: "/billing/pay-plans", label: "Pay plans", icon: SlidersHorizontal, roles: ["owner", "billing"] },
-      { href: "/billing/fuel", label: "Fuel surcharge", icon: Fuel, roles: ["owner", "billing"] },
-      { href: "/billing/ifta", label: "IFTA", icon: Scale, roles: ["owner", "billing"] },
     ],
   },
   {
@@ -51,10 +47,8 @@ const NAV: { section: string; items: NavItem[] }[] = [
     items: [
       { href: "/compliance", label: "Compliance", icon: ShieldCheck },
       { href: "/compliance/drivers", label: "Driver files", icon: FolderCheck },
-      { href: "/compliance/drug-alcohol", label: "Drug & alcohol", icon: FlaskConical, roles: ["owner", "compliance"] },
       { href: "/compliance/inspections", label: "Inspections", icon: ClipboardCheck },
       { href: "/compliance/incidents", label: "Incidents", icon: TriangleAlert },
-      { href: "/compliance/overrides", label: "Overrides", icon: ShieldAlert },
     ],
   },
   {
@@ -83,46 +77,47 @@ export function Shell({ user, children }: { user: { name: string; role: string; 
   }, [open]);
   // the most specific link that matches the path is the current one
   const current = ALL.filter((n) => path === n.href || path.startsWith(n.href + "/")).sort((p, q) => q.href.length - p.href.length)[0];
+  const initials = user.name.split(/\s+/).map((w) => w[0]).slice(0, 2).join("").toUpperCase();
   return (
-    <div className="min-h-screen lg:grid lg:grid-cols-[224px_1fr]">
+    <div className="min-h-screen lg:grid lg:grid-cols-[var(--sidebar-w)_minmax(0,1fr)]">
       {/* phone / tablet top bar */}
-      <header className="lg:hidden sticky top-0 z-30 bg-navy text-white h-12 flex items-center gap-3 px-3">
-        <button className="w-9 h-9 -ml-1 rounded-md hover:bg-white/10 text-xl leading-none" onClick={() => setOpen(true)} aria-label="Open menu" aria-expanded={open}>
-          ☰
+      <header className="topbar lg:hidden sticky top-0 z-30 flex items-center gap-2 px-2">
+        <button className="btn btn-ghost btn-icon" onClick={() => setOpen(true)} aria-label="Open menu" aria-expanded={open}>
+          <Menu size={22} aria-hidden />
         </button>
-        <Mark size={22} />
-        <div className="font-semibold tracking-tight">{current?.label ?? "Crossline"}</div>
-        <div className="ml-auto text-[11px] text-slate-400 truncate max-w-[40%]">{user.tenantName}</div>
+        <Mark size={24} />
+        <div className="font-semibold text-headline tracking-tight truncate">{current?.label ?? "Crossline"}</div>
+        <div className="ml-auto text-footnote text-muted truncate max-w-[40%] pr-2">{user.tenantName}</div>
       </header>
-      {open && <div className="lg:hidden fixed inset-0 z-30 bg-navy/60" onClick={() => setOpen(false)} aria-hidden />}
-      <aside className={`bg-navy text-white flex flex-col fixed lg:sticky top-0 h-screen w-[224px] z-40 transition-transform lg:transition-none ${open ? "translate-x-0" : "-translate-x-full lg:translate-x-0"}`} aria-label="Main navigation">
-        <div className="flex items-center gap-2.5 px-4 h-14">
-          <Mark size={24} />
-          <div className="leading-tight">
-            <div className="font-extrabold tracking-tight">Crossline</div>
-            <div className="text-[11px] text-slate-400 truncate max-w-[140px]">{user.tenantName}</div>
+      {open && <div className="lg:hidden fixed inset-0 z-30 bg-black/30" onClick={() => setOpen(false)} aria-hidden />}
+      <aside className={`sidebar flex flex-col fixed lg:sticky top-0 h-dvh w-[min(300px,85vw)] lg:w-[var(--sidebar-w)] z-40 transition-transform lg:transition-none ${open ? "translate-x-0" : "-translate-x-full lg:translate-x-0"}`} aria-label="Main navigation">
+        <div className="flex items-center gap-3 px-5 h-16 shrink-0">
+          <Mark size={28} />
+          <div className="leading-tight min-w-0">
+            <div className="text-headline font-semibold tracking-tight">Crossline</div>
+            <div className="text-caption text-muted truncate">{user.tenantName}</div>
           </div>
-          <button className="lg:hidden ml-auto w-8 h-8 rounded-md hover:bg-white/10" onClick={() => setOpen(false)} aria-label="Close menu">
-            ×
+          <button className="lg:hidden ml-auto btn btn-ghost btn-icon" onClick={() => setOpen(false)} aria-label="Close menu">
+            <X size={20} aria-hidden />
           </button>
         </div>
-        <div className="px-3 pb-2">
+        <div className="px-4 pb-2 shrink-0">
           <GlobalSearch />
         </div>
-        <nav className="px-2 pb-3 flex-1 overflow-y-auto">
+        <nav className="px-3 pb-4 flex-1 overflow-y-auto">
           {NAV.map((g) => {
             const items = g.items.filter((n) => !n.roles || n.roles.includes(user.role));
             if (!items.length) return null;
             return (
               <div key={g.section}>
                 <div className="rail-section">{g.section}</div>
-                <div className="space-y-px">
+                <div className="space-y-0.5">
                   {items.map((n) => {
                     const active = current?.href === n.href;
                     const Icon = n.icon;
                     return (
                       <Link key={n.href} href={n.href} className="rail-link" aria-current={active ? "page" : undefined} onClick={() => setOpen(false)}>
-                        <Icon size={16} strokeWidth={1.8} className="shrink-0 opacity-90" aria-hidden />
+                        <Icon size={18} strokeWidth={1.8} className="shrink-0" aria-hidden />
                         {n.label}
                       </Link>
                     );
@@ -132,15 +127,20 @@ export function Shell({ user, children }: { user: { name: string; role: string; 
             );
           })}
         </nav>
-        <div className="px-4 py-4 border-t border-white/10">
-          <div className="text-[13px] font-bold truncate">{user.name}</div>
-          <div className="text-[11.5px] text-slate-400">{ROLE_LABEL[user.role] ?? user.role}</div>
-          <div className="mt-2 flex gap-3 text-[12px] font-semibold">
-            <Link href="/help" className="text-slate-300 hover:text-white" onClick={() => setOpen(false)}>
+        <div className="px-4 py-4 border-t border-line shrink-0 flex items-center gap-3">
+          <div className="w-9 h-9 rounded-full bg-fill grid place-items-center text-footnote font-semibold text-ink-2 shrink-0" aria-hidden>
+            {initials}
+          </div>
+          <div className="min-w-0 flex-1">
+            <div className="text-callout font-semibold truncate">{user.name}</div>
+            <div className="text-caption text-muted truncate">{ROLE_LABEL[user.role] ?? user.role}</div>
+          </div>
+          <div className="flex flex-col items-end gap-0.5 text-footnote">
+            <Link href="/help" className="text-teal font-medium" onClick={() => setOpen(false)}>
               Help
             </Link>
             <form action={logoutAction}>
-              <button className="text-slate-300 hover:text-white font-semibold">Sign out</button>
+              <button className="text-muted hover:text-ink font-medium">Sign out</button>
             </form>
           </div>
         </div>

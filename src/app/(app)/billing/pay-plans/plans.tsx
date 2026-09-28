@@ -86,7 +86,7 @@ export function PayPlans({ plans, drivers, customers, canEdit, escrows = [] }: {
   return (
     <div className="space-y-5">
       <div className="flex items-center justify-between">
-        <div className="text-muted text-[13px]">
+        <div className="text-muted text-callout">
           {plans.length} plan{plans.length === 1 ? "" : "s"} · {drivers.filter((d) => d.payPlanId).length} of {drivers.length} drivers on a plan
         </div>
         {canEdit && (
@@ -97,7 +97,7 @@ export function PayPlans({ plans, drivers, customers, canEdit, escrows = [] }: {
       </div>
 
       {plans.length === 0 ? (
-        <div className="card p-12 text-center text-muted text-[13.5px]">No pay plans yet. Drivers are paid by the pay type on their record until you put them on a plan.</div>
+        <div className="card p-12 text-center text-muted text-body">No pay plans yet. Drivers are paid by the pay type on their record until you put them on a plan.</div>
       ) : (
         <div className="grid lg:grid-cols-2 gap-4">
           {plans.map((p) => {
@@ -106,8 +106,8 @@ export function PayPlans({ plans, drivers, customers, canEdit, escrows = [] }: {
               <div key={p.id} className="card p-5" data-testid="pay-plan">
                 <div className="flex items-start justify-between gap-3">
                   <div>
-                    <div className="text-[15px] font-bold">{p.name}</div>
-                    <div className="text-[12.5px] text-muted mt-0.5">
+                    <div className="text-headline font-bold">{p.name}</div>
+                    <div className="text-callout text-muted mt-0.5">
                       Team: {p.teamSplit === "full" ? "each driver full" : "split in half"}
                       {p.perDiemCents ? ` · per diem ${money(p.perDiemCents)}/day` : ""}
                       {p.minimumCents ? ` · minimum ${money(p.minimumCents)}/statement` : ""}
@@ -126,14 +126,14 @@ export function PayPlans({ plans, drivers, customers, canEdit, escrows = [] }: {
                 </div>
                 <ul className="mt-3 space-y-1.5">
                   {p.rules.map((r) => (
-                    <li key={r.id} className="flex items-baseline gap-2 text-[13px]">
+                    <li key={r.id} className="flex items-baseline gap-2 text-callout">
                       <span className="font-semibold tabular-nums w-28 shrink-0">{amountText(r)}</span>
                       <span>{r.label || RULE_LABEL[r.kind]}</span>
-                      <span className="text-muted text-[12px] ml-auto text-right">{whenText(r, customers)}</span>
+                      <span className="text-muted text-footnote ml-auto text-right">{whenText(r, customers)}</span>
                     </li>
                   ))}
                 </ul>
-                <div className="mt-3 pt-3 border-t border-line text-[12.5px] text-muted">{on.length ? on.map((d) => d.name).join(", ") : "No drivers on this plan"}</div>
+                <div className="mt-3 pt-3 border-t border-line text-callout text-muted">{on.length ? on.map((d) => d.name).join(", ") : "No drivers on this plan"}</div>
               </div>
             );
           })}
@@ -142,7 +142,7 @@ export function PayPlans({ plans, drivers, customers, canEdit, escrows = [] }: {
 
       {escrows.length > 0 && (
         <div className="card overflow-hidden" data-testid="escrows">
-          <div className="px-5 pt-4 pb-2 text-[15px] font-bold">Escrow held</div>
+          <div className="px-5 pt-4 pb-2 text-headline font-bold">Escrow held</div>
           <table className="table">
             <thead>
               <tr>
@@ -262,7 +262,7 @@ export function PayPlans({ plans, drivers, customers, canEdit, escrows = [] }: {
 
               <div>
                 <div className="flex items-center justify-between mb-2">
-                  <div className="text-[13px] font-bold">Rules</div>
+                  <div className="text-callout font-bold">Rules</div>
                   <button type="button" className="btn btn-sm" onClick={() => setDraft({ ...draft, rules: [...draft.rules, blankRule()] })}>
                     + Add rule
                   </button>
@@ -294,8 +294,8 @@ export function PayPlans({ plans, drivers, customers, canEdit, escrows = [] }: {
                         </button>
                       </div>
                       <details className="mt-2">
-                        <summary className="text-[12.5px] text-teal font-semibold cursor-pointer">Only when… · {whenText({ ...r, amount: 0 }, customers)}</summary>
-                        <div className="mt-2 space-y-2 text-[12.5px]">
+                        <summary className="text-callout text-teal font-semibold cursor-pointer">Only when… · {whenText({ ...r, amount: 0 }, customers)}</summary>
+                        <div className="mt-2 space-y-2 text-callout">
                           <div className="flex flex-wrap gap-1 items-center">
                             <span className="text-muted w-20">Legs</span>
                             {LEG_TYPES.map(([v, l]) => (
@@ -315,7 +315,7 @@ export function PayPlans({ plans, drivers, customers, canEdit, escrows = [] }: {
                           {customers.length > 0 && (
                             <div className="flex flex-wrap gap-1 items-center">
                               <span className="text-muted w-20">Customers</span>
-                              <select className="select h-8 w-56 text-[12.5px]" value="" onChange={(e) => e.target.value && setRule(i, { when: { ...r.when, customerIds: toggle(r.when?.customerIds, e.target.value) } })} aria-label={`Rule ${i + 1} customer`}>
+                              <select className="select h-8 w-56 text-callout" value="" onChange={(e) => e.target.value && setRule(i, { when: { ...r.when, customerIds: toggle(r.when?.customerIds, e.target.value) } })} aria-label={`Rule ${i + 1} customer`}>
                                 <option value="">Add a customer…</option>
                                 {customers.map((c) => (
                                   <option key={c.id} value={c.id}>
@@ -349,7 +349,7 @@ export function PayPlans({ plans, drivers, customers, canEdit, escrows = [] }: {
               )}
             </div>
 
-            <aside className="rounded-lg bg-ground p-4 text-[13px] space-y-3 self-start" data-testid="pay-preview">
+            <aside className="rounded-lg bg-ground p-4 text-callout space-y-3 self-start" data-testid="pay-preview">
               <div className="font-bold">What it pays</div>
               <div className="grid grid-cols-2 gap-2">
                 {(
@@ -363,14 +363,14 @@ export function PayPlans({ plans, drivers, customers, canEdit, escrows = [] }: {
                     ["days", "Days worked"],
                   ] as const
                 ).map(([k, l]) => (
-                  <label key={k} className="text-[11.5px] text-muted">
+                  <label key={k} className="text-footnote text-muted">
                     {l}
-                    <input className="input h-8 mt-0.5 text-[13px]" inputMode="decimal" value={sample[k]} onChange={(e) => setSample({ ...sample, [k]: e.target.value })} />
+                    <input className="input h-8 mt-0.5 text-callout" inputMode="decimal" value={sample[k]} onChange={(e) => setSample({ ...sample, [k]: e.target.value })} />
                   </label>
                 ))}
-                <label className="text-[11.5px] text-muted">
+                <label className="text-footnote text-muted">
                   Leg
-                  <select className="select h-8 mt-0.5 text-[13px]" value={sample.type} onChange={(e) => setSample({ ...sample, type: e.target.value })}>
+                  <select className="select h-8 mt-0.5 text-callout" value={sample.type} onChange={(e) => setSample({ ...sample, type: e.target.value })}>
                     {LEG_TYPES.map(([v, l]) => (
                       <option key={v} value={v}>
                         {l}
@@ -379,7 +379,7 @@ export function PayPlans({ plans, drivers, customers, canEdit, escrows = [] }: {
                   </select>
                 </label>
               </div>
-              <label className="flex items-center gap-2 text-[12.5px]">
+              <label className="flex items-center gap-2 text-callout">
                 <input type="checkbox" className="accent-teal" checked={sample.team} onChange={(e) => setSample({ ...sample, team: e.target.checked })} /> Team leg
               </label>
               {preview && (
@@ -448,14 +448,14 @@ export function PayPlans({ plans, drivers, customers, canEdit, escrows = [] }: {
           {drivers.map((d) => {
             const other = d.payPlanId && d.payPlanId !== assignFor?.id ? plans.find((p) => p.id === d.payPlanId)?.name : null;
             return (
-              <label key={d.id} className="flex items-center gap-2.5 px-2 py-1.5 rounded-md hover:bg-ground cursor-pointer text-[13.5px]">
+              <label key={d.id} className="flex items-center gap-2.5 px-2 py-1.5 rounded-md hover:bg-ground cursor-pointer text-body">
                 <input type="checkbox" className="accent-teal" checked={picked.has(d.id)} onChange={(e) => setPicked((s) => { const n = new Set(s); if (e.target.checked) n.add(d.id); else n.delete(d.id); return n; })} />
                 {d.name}
-                {other ? <Pill tone="slate">on {other}</Pill> : !d.payPlanId ? <span className="text-[12px] text-muted">own pay: {d.payType.replace("_", " ")}</span> : null}
+                {other ? <Pill tone="slate">on {other}</Pill> : !d.payPlanId ? <span className="text-footnote text-muted">own pay: {d.payType.replace("_", " ")}</span> : null}
               </label>
             );
           })}
-          {drivers.length === 0 && <div className="text-muted text-[13px]">No drivers yet.</div>}
+          {drivers.length === 0 && <div className="text-muted text-callout">No drivers yet.</div>}
         </div>
       </Modal>
       <Toast message={t.toast?.message ?? null} tone={t.toast?.tone} onDone={t.clear} />

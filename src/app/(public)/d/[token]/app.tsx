@@ -118,7 +118,7 @@ export function DriverApp({ token, data }: { token: string; data: Data }) {
   const xActive = x && ["packet_sent", "departed_yard", "at_mx_customs", "in_us_customs", "held"].includes(x.state);
 
   return (
-    <div>
+    <div className="driver-app form-roomy">
       <div className="flex items-center justify-between">
         <div>
           <div className="eyebrow">Driver · Chofer</div>
@@ -136,8 +136,8 @@ export function DriverApp({ token, data }: { token: string; data: Data }) {
         <div className="card mt-4 overflow-hidden">
           <div className="px-5 pt-4 pb-3 border-b border-line flex items-center justify-between">
             <div>
-              <div className="font-extrabold mono text-[15px]">{cur.order.orderNumber}</div>
-              <div className="text-muted text-[12.5px]">
+              <div className="font-extrabold mono text-headline">{cur.order.orderNumber}</div>
+              <div className="text-muted text-callout">
                 {cur.truck ? `Unit ${cur.truck.unitNumber} · ` : ""}
                 {cur.order.equipment.replace("_", " ")}
               </div>
@@ -150,7 +150,7 @@ export function DriverApp({ token, data }: { token: string; data: Data }) {
               <Place key={m.id} label={`Stop ${i + 2} · Parada ${i + 2}${m.departedAt ? " · done" : ""}`} s={m} active={cur.leg.state === "en_route" && !m.departedAt && !(cur.mids ?? []).slice(0, i).some((p) => !p.departedAt)} />
             ))}
             <Place label="Deliver · Entregar" s={cur.to} active={["loaded", "at_delivery"].includes(cur.leg.state) || (cur.leg.state === "en_route" && !(cur.mids ?? []).some((m) => !m.departedAt))} />
-            {cur.order.cargoNote && <div className="text-[13px] text-muted">📦 {cur.order.cargoNote}</div>}
+            {cur.order.cargoNote && <div className="text-callout text-muted">📦 {cur.order.cargoNote}</div>}
           </div>
           <div className="px-5 pb-5">
             {cur.leg.state === "at_pickup" && <PhotoButton token={token} legId={cur.leg.id} code="SEAL_PHOTO" done={cur.docs.seal} label="Seal photo · Foto del sello" onDone={() => router.refresh()} />}
@@ -158,18 +158,18 @@ export function DriverApp({ token, data }: { token: string; data: Data }) {
             {sealAsk && (
               <div className="mb-3" data-testid="seal">
                 <input className="input mono" placeholder={`${sealAsk.label} # · ${sealAsk.es}`} value={seal} onChange={(e) => setSeal(e.target.value)} aria-label={sealAsk.label} />
-                {sealAsk.label === "Seal found" && cur.sealExpected && <div className="text-[12px] text-muted mt-1">Should be {cur.sealExpected} · Debe ser {cur.sealExpected}</div>}
+                {sealAsk.label === "Seal found" && cur.sealExpected && <div className="text-footnote text-muted mt-1">Should be {cur.sealExpected} · Debe ser {cur.sealExpected}</div>}
               </div>
             )}
             {cur.next ? (
               <button className="btn btn-primary w-full justify-center flex-col gap-0" style={{ height: 72, fontSize: 18 }} onClick={() => step(false)} disabled={pending || declining}>
                 {pending ? "…" : cur.next.label}
-                {!pending && <span className="text-[12.5px] font-semibold opacity-80">{cur.next.es}</span>}
+                {!pending && <span className="text-callout font-semibold opacity-80">{cur.next.es}</span>}
               </button>
             ) : (
               <div className="text-center text-muted">Done · Listo</div>
             )}
-            {cur.leg.state === "at_delivery" && !cur.docs.pod && <div className="text-[12.5px] text-amber font-semibold text-center mt-2">No POD photo yet — the office needs it to bill. · Falta la foto del POD.</div>}
+            {cur.leg.state === "at_delivery" && !cur.docs.pod && <div className="text-callout text-amber font-semibold text-center mt-2">No POD photo yet — the office needs it to bill. · Falta la foto del POD.</div>}
             {(cur.leg.state === "dispatched" || cur.leg.state === "accepted") &&
               (declining ? (
                 <div className="mt-3 space-y-2">
@@ -201,8 +201,8 @@ export function DriverApp({ token, data }: { token: string; data: Data }) {
         <div className="card mt-4 overflow-hidden">
           <div className="px-5 pt-4 pb-3 border-b border-line flex items-center justify-between">
             <div>
-              <div className="font-extrabold text-[15px]">Border · Frontera</div>
-              <div className="text-muted text-[12.5px]">{x!.trailerNumber ? `Caja ${x!.trailerNumber}` : ""}</div>
+              <div className="font-extrabold text-headline">Border · Frontera</div>
+              <div className="text-muted text-callout">{x!.trailerNumber ? `Caja ${x!.trailerNumber}` : ""}</div>
             </div>
             <span className={`pill ${x!.state === "held" ? "pill-red" : "pill-amber"}`}>{XLABEL[x!.state] && (!x!.stateLabel || x!.stateLabel === XLABEL_EN[x!.state]) ? XLABEL[x!.state] : (x!.stateLabel ?? x!.state)}</span>
           </div>
@@ -215,7 +215,7 @@ export function DriverApp({ token, data }: { token: string; data: Data }) {
             {x!.state !== "held" && x!.nextStep && (
               <button className="btn btn-primary w-full justify-center flex-col gap-0" style={{ height: 64, fontSize: 17 }} onClick={() => xstep(x!.nextStep)} disabled={pending || holding}>
                 {(x!.steps?.[x!.nextStep] ?? XSTEP[x!.nextStep])?.en}
-                <span className="text-[12.5px] font-semibold opacity-80">{(x!.steps?.[x!.nextStep] ?? XSTEP[x!.nextStep])?.es}</span>
+                <span className="text-callout font-semibold opacity-80">{(x!.steps?.[x!.nextStep] ?? XSTEP[x!.nextStep])?.es}</span>
               </button>
             )}
             {x!.state !== "held" &&
@@ -236,7 +236,7 @@ export function DriverApp({ token, data }: { token: string; data: Data }) {
                   Stopped / secondary · Detenido
                 </button>
               ))}
-            {x!.state === "held" && <div className="text-[13px] text-red text-center">Dispatch knows. Wait for instructions. · Despacho ya sabe. Espera instrucciones.</div>}
+            {x!.state === "held" && <div className="text-callout text-red text-center">Dispatch knows. Wait for instructions. · Despacho ya sabe. Espera instrucciones.</div>}
           </div>
         </div>
       )}
@@ -248,8 +248,8 @@ export function DriverApp({ token, data }: { token: string; data: Data }) {
             {data.items.map((i) => (
               <button key={i.leg.id} className={`w-full text-left px-4 py-3 flex items-center justify-between ${i.leg.id === cur?.leg.id ? "bg-teal-soft" : ""}`} onClick={() => setSel(i.leg.id)}>
                 <div>
-                  <div className="font-bold mono text-[13.5px]">{i.order.orderNumber}</div>
-                  <div className="text-muted text-[12.5px] truncate">
+                  <div className="font-bold mono text-body">{i.order.orderNumber}</div>
+                  <div className="text-muted text-callout truncate">
                     {i.from?.name} → {i.to?.name}
                   </div>
                 </div>
@@ -262,7 +262,7 @@ export function DriverApp({ token, data }: { token: string; data: Data }) {
       {data.own.length > 0 && (
         <div className="card mt-5 p-4" data-testid="own-docs">
           <div className="eyebrow mb-1">Your documents · Tus documentos</div>
-          <ul className="space-y-2 text-[13px]">
+          <ul className="space-y-2 text-callout">
             {data.own.map((i) => (
               <OwnDoc key={i.key} token={token} item={i} onDone={() => router.refresh()} />
             ))}
@@ -281,7 +281,7 @@ export function DriverApp({ token, data }: { token: string; data: Data }) {
           </div>
         </div>
       )}
-      <div className="mt-5 text-center text-[12px] text-faint">Keep this page open while driving so dispatch can see you. · Deja esta página abierta.</div>
+      <div className="mt-5 text-center text-footnote text-faint">Keep this page open while driving so dispatch can see you. · Deja esta página abierta.</div>
     </div>
   );
 }
@@ -289,17 +289,17 @@ export function DriverApp({ token, data }: { token: string; data: Data }) {
 function Place({ label, s, active }: { label: string; s: Stop | null; active: boolean }) {
   return (
     <div className={`rounded-lg border p-3 ${active ? "border-teal bg-teal-soft/40" : "border-line"}`}>
-      <div className="text-[11px] font-bold tracking-wider uppercase text-faint">{label}</div>
-      <div className="font-extrabold text-[15px] mt-0.5">{s?.name ?? "—"}</div>
-      {s && addr(s) && <div className="text-[13px] text-muted">{addr(s)}</div>}
+      <div className="text-caption font-bold text-faint">{label}</div>
+      <div className="font-extrabold text-headline mt-0.5">{s?.name ?? "—"}</div>
+      {s && addr(s) && <div className="text-callout text-muted">{addr(s)}</div>}
       {s?.windowStart && (
-        <div className="text-[13px] font-semibold text-teal">
+        <div className="text-callout font-semibold text-teal">
           {when(s.windowStart)}
           {s.windowEnd ? ` – ${when(s.windowEnd)}` : ""}
         </div>
       )}
-      {s?.notes && <div className="text-[13px] mt-1">📝 {s.notes}</div>}
-      {s?.contact && <div className="text-[13px] text-muted">☎ {s.contact}</div>}
+      {s?.notes && <div className="text-callout mt-1">📝 {s.notes}</div>}
+      {s?.contact && <div className="text-callout text-muted">☎ {s.contact}</div>}
       {s && (
         <a className="btn btn-sm mt-2" href={mapsHref(s)} target="_blank" rel="noreferrer">
           Navigate · Ir
@@ -320,22 +320,22 @@ function PayCard({ token, stub, onChanged }: { token: string; stub: PayStub; onC
     <div className="rounded-lg border border-line p-3">
       <button type="button" className="w-full flex items-center justify-between text-left" onClick={() => setOpen((o) => !o)} aria-expanded={open}>
         <div>
-          <div className="font-extrabold text-[14px]">
+          <div className="font-extrabold text-body">
             Week of {d(stub.periodStart)} – {d(new Date(new Date(stub.periodEnd).getTime() - 1).toISOString())}
           </div>
-          <div className={`text-[12px] font-semibold ${stub.state === "paid" ? "text-teal" : "text-muted"}`}>{PAY_STATE[stub.state] ?? stub.state}</div>
+          <div className={`text-footnote font-semibold ${stub.state === "paid" ? "text-teal" : "text-muted"}`}>{PAY_STATE[stub.state] ?? stub.state}</div>
         </div>
         <div className="text-right">
-          <div className="font-extrabold text-[16px]">{money(stub.netCents, stub.currency)}</div>
-          <div className="text-[11px] text-faint">net · neto</div>
+          <div className="font-extrabold text-headline">{money(stub.netCents, stub.currency)}</div>
+          <div className="text-caption text-faint">net · neto</div>
         </div>
       </button>
       {open && (
         <div className="mt-2 border-t border-line pt-2">
-          <a href={`/d/${token}/statement/${stub.id}`} target="_blank" rel="noreferrer" className="text-teal font-semibold text-[13px] block mb-2">
+          <a href={`/d/${token}/statement/${stub.id}`} target="_blank" rel="noreferrer" className="text-teal font-semibold text-callout block mb-2">
             Statement PDF · Recibo en PDF
           </a>
-          <ul className="space-y-1 text-[13px]">
+          <ul className="space-y-1 text-callout">
             {stub.lines.map((l) => (
               <li key={l.id}>
                 <div className="flex justify-between gap-2">
@@ -346,26 +346,26 @@ function PayCard({ token, stub, onChanged }: { token: string; stub: PayStub; onC
                   <span className={`font-semibold ${l.amountCents < 0 ? "text-red" : ""}`}>{money(l.amountCents, stub.currency)}</span>
                 </div>
                 {l.disputed ? (
-                  <div className="text-[12px] text-amber">
+                  <div className="text-footnote text-amber">
                     Disputed: {l.disputed}
                     {l.response ? ` — ${l.response}` : " (waiting for office · esperando oficina)"}
                   </div>
                 ) : stub.state !== "paid" ? (
-                  <button type="button" className="text-[12px] text-teal font-semibold" onClick={() => setDisputing(l.id)}>
+                  <button type="button" className="text-footnote text-teal font-semibold" onClick={() => setDisputing(l.id)}>
                     Something wrong? · ¿Algo mal?
                   </button>
                 ) : null}
               </li>
             ))}
           </ul>
-          <div className="mt-2 text-[12px] text-muted flex justify-between">
+          <div className="mt-2 text-footnote text-muted flex justify-between">
             <span>Gross · Bruto {money(stub.grossCents, stub.currency)}</span>
             <span>Deductions · Deducciones -{money(stub.deductionsCents, stub.currency)}</span>
           </div>
           {disputing && (
             <div className="mt-2">
               <textarea className="w-full" rows={2} placeholder="What is wrong? · ¿Qué está mal?" value={why} onChange={(e) => setWhy(e.target.value)} />
-              {err && <div className="text-red text-[12px]">{err}</div>}
+              {err && <div className="text-red text-footnote">{err}</div>}
               <div className="flex gap-2 mt-1">
                 <button
                   type="button"
@@ -455,12 +455,12 @@ function OwnDoc({ token, item, onDone }: { token: string; item: OwnItem; onDone:
         </span>
       </div>
       {item.pending ? (
-        <div className="text-[12.5px] text-teal">Sent {d(item.pending.at)} — the office is checking it. · Enviado, la oficina lo revisa.</div>
+        <div className="text-callout text-teal">Sent {d(item.pending.at)} — the office is checking it. · Enviado, la oficina lo revisa.</div>
       ) : (
         <>
-          {item.rejected && <div className="text-[12.5px] text-red">The office sent it back: {item.rejected.reason} · Rechazado, manda otra foto.</div>}
+          {item.rejected && <div className="text-callout text-red">The office sent it back: {item.rejected.reason} · Rechazado, manda otra foto.</div>}
           {item.documentTypeId && !open && (
-            <button type="button" className="text-[12.5px] text-teal font-semibold" onClick={() => setOpen(true)}>
+            <button type="button" className="text-callout text-teal font-semibold" onClick={() => setOpen(true)}>
               📷 Send the new one · Mandar el nuevo
             </button>
           )}
@@ -535,9 +535,9 @@ function Chat({ token, legId, thread, dispatchPhone, onDone }: { token: string; 
       {thread.length > 0 && (
         <div className="space-y-1.5 max-h-64 overflow-y-auto mb-2">
           {thread.map((m) => (
-            <div key={m.id} className={`text-[13px] rounded-lg px-3 py-1.5 max-w-[85%] ${m.who === "driver" ? "ml-auto bg-teal-soft" : "bg-ground"}`}>
+            <div key={m.id} className={`text-callout rounded-lg px-3 py-1.5 max-w-[85%] ${m.who === "driver" ? "ml-auto bg-teal-soft" : "bg-ground"}`}>
               <div>{m.body}</div>
-              <div className="text-[11px] text-faint">
+              <div className="text-caption text-faint">
                 {m.who === "driver" ? (m.seen ? "seen by dispatch · visto" : "sent · enviado") : "dispatch"} · {when(m.at)}
               </div>
             </div>

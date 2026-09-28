@@ -19,8 +19,8 @@ export default async function TemplatesPage() {
             </Link>{" "}
             / Templates
           </div>
-          <h1 className="text-[24px] font-extrabold tracking-tight">Load templates</h1>
-          <div className="text-muted text-[13px] mt-0.5">Lanes you run again and again. Build one load from the builder, or many at once for a run of dates.</div>
+          <h1 className="text-title2 font-extrabold tracking-tight">Load templates</h1>
+          <div className="text-muted text-callout mt-0.5">Lanes you run again and again. Build one load from the builder, or many at once for a run of dates.</div>
         </div>
         <Link href="/orders/new" className="btn btn-primary">
           + New load

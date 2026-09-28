@@ -57,23 +57,23 @@ export function CheckCallBox({ orderId, legId, zone, reefer, onDone }: { orderId
   return (
     <div className="space-y-2" data-testid="check-call">
       <div className="grid grid-cols-2 gap-2">
-        <select id="cc-status" aria-label="Check call status" className="select h-9 text-[13px]" value={f.status} onChange={(e) => setF({ ...f, status: e.target.value })}>
+        <select id="cc-status" aria-label="Check call status" className="select h-9 text-callout" value={f.status} onChange={(e) => setF({ ...f, status: e.target.value })}>
           {STATUSES.map(([v, l]) => (
             <option key={v} value={v}>
               {l}
             </option>
           ))}
         </select>
-        <input id="cc-location" aria-label="Where" className="input h-9 text-[13px]" placeholder="Where (blank = last GPS)" value={f.location} onChange={(e) => setF({ ...f, location: e.target.value })} />
-        <label className="col-span-2 flex items-center gap-2 text-[12px] text-muted">
+        <input id="cc-location" aria-label="Where" className="input h-9 text-callout" placeholder="Where (blank = last GPS)" value={f.location} onChange={(e) => setF({ ...f, location: e.target.value })} />
+        <label className="col-span-2 flex items-center gap-2 text-footnote text-muted">
           ETA ({abbr})
-          <input id="cc-eta" type="datetime-local" className="input h-9 text-[13px] flex-1" value={f.eta} onChange={(e) => setF({ ...f, eta: e.target.value })} />
-          {reefer && <input id="cc-temp" aria-label="Reefer °F" className="input h-9 text-[13px] w-16" inputMode="numeric" placeholder="°F" value={f.tempF} onChange={(e) => setF({ ...f, tempF: e.target.value })} />}
+          <input id="cc-eta" type="datetime-local" className="input h-9 text-callout flex-1" value={f.eta} onChange={(e) => setF({ ...f, eta: e.target.value })} />
+          {reefer && <input id="cc-temp" aria-label="Reefer °F" className="input h-9 text-callout w-16" inputMode="numeric" placeholder="°F" value={f.tempF} onChange={(e) => setF({ ...f, tempF: e.target.value })} />}
         </label>
-        <input id="cc-note" aria-label="Check call note" className="input h-9 text-[13px] col-span-2" placeholder="Note (what the driver said)" value={f.note} onChange={(e) => setF({ ...f, note: e.target.value })} />
+        <input id="cc-note" aria-label="Check call note" className="input h-9 text-callout col-span-2" placeholder="Note (what the driver said)" value={f.note} onChange={(e) => setF({ ...f, note: e.target.value })} />
       </div>
       <div className="flex items-center gap-2">
-        <label className="flex items-center gap-1.5 text-[12.5px] cursor-pointer mr-auto">
+        <label className="flex items-center gap-1.5 text-callout cursor-pointer mr-auto">
           <input id="cc-send" type="checkbox" className="accent-teal" checked={f.send} onChange={(e) => setF({ ...f, send: e.target.checked })} /> Email to the customer
         </label>
         <button className="btn btn-sm btn-primary" disabled={pending} onClick={save}>
@@ -82,12 +82,12 @@ export function CheckCallBox({ orderId, legId, zone, reefer, onDone }: { orderId
       </div>
       {err && <div className="error m-0">{err}</div>}
       {saved && !err && (
-        <div className="text-[12.5px] text-green font-semibold" role="status">
+        <div className="text-callout text-green font-semibold" role="status">
           {saved}
         </div>
       )}
       {calls && calls.length > 0 && (
-        <ul className="text-[12.5px] divide-y divide-line border-t border-line" data-testid="check-calls">
+        <ul className="text-callout divide-y divide-line border-t border-line" data-testid="check-calls">
           {calls.slice(0, 8).map((c) => (
             <li key={c.id} className="py-1.5">
               <div className="flex justify-between gap-2">

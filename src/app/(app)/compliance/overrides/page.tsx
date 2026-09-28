@@ -37,7 +37,7 @@ export default async function OverridesPage({ searchParams }: PageProps<"/compli
         Every time someone ran a load past a red finding: a paperwork block, a double booking, a crossing check, a rate-con mismatch. Who, when, on what, and why.
       </PageHeader>
       <SafetyNav role={ctx.role} />
-      <div className="px-7 pb-10">
+      <div className="px-gutter pb-10">
         <div className="flex items-center gap-1.5 flex-wrap mb-3">
           {KINDS.map(([k, l]) => (
             <Link key={k} href={q(k, days)} className="stage-tab" data-active={kind === k}>
@@ -86,8 +86,8 @@ export default async function OverridesPage({ searchParams }: PageProps<"/compli
                         r.subject
                       )}
                     </td>
-                    <td className="max-w-md text-[12.5px]">{r.what}</td>
-                    <td className="max-w-sm italic text-[12.5px]">{r.reason}</td>
+                    <td className="max-w-md text-callout">{r.what}</td>
+                    <td className="max-w-sm italic text-callout">{r.reason}</td>
                   </tr>
                 ))}
               </tbody>

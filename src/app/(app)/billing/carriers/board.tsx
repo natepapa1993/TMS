@@ -53,12 +53,12 @@ export function CarrierBills({ rows, role, totals1099 }: { rows: Row[]; role: st
                     <Link href={`/orders/${r.bill.orderId}`} className="mono hover:text-teal">
                       {r.orderNumber}
                     </Link>{" "}
-                    <span className="text-muted text-[12px]">leg {r.legSeq} {r.legType}</span>
+                    <span className="text-muted text-footnote">leg {r.legSeq} {r.legType}</span>
                   </td>
                   <td className="mono">{formatCents(r.check.expected, r.bill.currency)}</td>
                   <td className="mono">
                     {r.bill.invoicedCents != null ? formatCents(r.bill.invoicedCents, r.bill.currency) : <span className="text-faint">—</span>}
-                    {r.bill.carrierInvoiceNumber ? <span className="text-muted text-[12px]"> #{r.bill.carrierInvoiceNumber}</span> : null}
+                    {r.bill.carrierInvoiceNumber ? <span className="text-muted text-footnote"> #{r.bill.carrierInvoiceNumber}</span> : null}
                   </td>
                   <td className="space-x-1">
                     {r.bill.invoicedCents != null && (r.check.rateMatch ? <Pill tone="green">rate ✓</Pill> : <Pill tone="red">{(r.check.difference ?? 0) > 0 ? "+" : ""}{formatCents(r.check.difference ?? 0, r.bill.currency)}</Pill>)}
@@ -66,8 +66,8 @@ export function CarrierBills({ rows, role, totals1099 }: { rows: Row[]; role: st
                   </td>
                   <td className="mono">
                     {r.bill.paidCents != null ? formatCents(r.bill.paidCents, r.bill.currency) : r.bill.approvedCents != null ? formatCents(r.bill.approvedCents, r.bill.currency) : "—"}
-                    {r.bill.shortPayNote && <div className="text-[11.5px] text-amber">short-pay: {r.bill.shortPayNote}</div>}
-                    {r.bill.payDate && !r.bill.paidAt && <div className="text-[11.5px] text-muted">pay {r.bill.payDate.slice(0, 10)}</div>}
+                    {r.bill.shortPayNote && <div className="text-footnote text-amber">short-pay: {r.bill.shortPayNote}</div>}
+                    {r.bill.payDate && !r.bill.paidAt && <div className="text-footnote text-muted">pay {r.bill.payDate.slice(0, 10)}</div>}
                   </td>
                   <td>
                     <Pill tone={TONE[r.bill.state]}>{r.bill.state}</Pill>
@@ -98,7 +98,7 @@ export function CarrierBills({ rows, role, totals1099 }: { rows: Row[]; role: st
       {totals1099.length > 0 && (
         <div className="card p-4 mt-4">
           <div className="eyebrow mb-2">Paid this year (1099 / CFDI totals)</div>
-          <ul className="grid grid-cols-3 gap-2 text-[13px]">
+          <ul className="grid grid-cols-3 gap-2 text-callout">
             {totals1099.map((c) => (
               <li key={c.name} className="flex justify-between">
                 <span>
@@ -131,7 +131,7 @@ export function CarrierBills({ rows, role, totals1099 }: { rows: Row[]; role: st
       )}
       {popup?.kind === "approve" && (
         <Modal open onClose={() => setPopup(null)} title="Approve carrier bill" footer={<><button className="btn" onClick={() => setPopup(null)}>Cancel</button><button className="btn btn-primary" disabled={pending} onClick={() => run("Approved", () => approveBillAction(popup.row.bill.id, f))}>Approve</button></>}>
-          <div className="text-[13px] mb-3">
+          <div className="text-callout mb-3">
             Tender {formatCents(popup.row.check.expected, popup.row.bill.currency)} · carrier billed {formatCents(popup.row.check.invoiced ?? 0, popup.row.bill.currency)} · {popup.row.check.podPresent ? "POD on file" : <span className="text-amber font-semibold">no POD on the order</span>}
           </div>
           <div className="grid grid-cols-2 gap-2">
@@ -152,7 +152,7 @@ export function CarrierBills({ rows, role, totals1099 }: { rows: Row[]; role: st
               <input className="input" value={f.shortPayNote} onChange={(e) => setF({ ...f, shortPayNote: e.target.value })} />
             </div>
             {!popup.row.check.podPresent && (
-              <label className="col-span-2 flex items-center gap-2 text-[13px]">
+              <label className="col-span-2 flex items-center gap-2 text-callout">
                 <input type="checkbox" className="accent-teal" checked={f.allowNoPod} onChange={(e) => setF({ ...f, allowNoPod: e.target.checked })} /> Approve without a POD
               </label>
             )}

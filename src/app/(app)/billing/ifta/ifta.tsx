@@ -49,7 +49,7 @@ export function IftaScreen({ quarter, quarters, report, fuel, trips, rates, memb
       <div className="flex flex-wrap items-center gap-2">
         <div className="flex gap-1 flex-wrap">
           {quarters.map((q) => (
-            <Link key={q} href={`/billing/ifta?q=${q}`} className="stage-tab h-8 text-[12.5px]" data-active={q === quarter}>
+            <Link key={q} href={`/billing/ifta?q=${q}`} className="stage-tab h-8 text-callout" data-active={q === quarter}>
               {q.replace("Q", " Q")}
             </Link>
           ))}
@@ -76,18 +76,18 @@ export function IftaScreen({ quarter, quarters, report, fuel, trips, rates, memb
         ].map(([k, v]) => (
           <div key={k} className="card p-4">
             <div className="eyebrow">{k}</div>
-            <div className="text-[22px] font-extrabold tabular-nums">{v}</div>
+            <div className="text-title2 font-extrabold tabular-nums">{v}</div>
           </div>
         ))}
       </div>
       {Object.keys(report.sources).length > 0 && (
-        <div className="text-muted text-[12.5px]">
+        <div className="text-muted text-callout">
           Miles from {Object.entries(report.sources).map(([k, v]) => `${SOURCE[k] ?? k} ${n(v)}`).join(" · ")}
           {report.defGallons > 0 && ` · ${n(report.defGallons, 1)} gal DEF not counted`}
         </div>
       )}
       {report.warnings.length > 0 && (
-        <div className="card p-4 border-amber/40 bg-amber/5 text-[13px]" data-testid="ifta-warnings">
+        <div className="card p-4 border-amber/40 bg-amber/5 text-callout" data-testid="ifta-warnings">
           {report.warnings.map((w) => (
             <div key={w}>• {w}</div>
           ))}
@@ -106,7 +106,7 @@ export function IftaScreen({ quarter, quarters, report, fuel, trips, rates, memb
         <div className="card overflow-hidden">
           {canEdit && (
             <div className="flex items-center justify-between gap-3 px-4 py-3 border-b border-line">
-              <div className="text-[13px] text-muted">Rates in $ per gallon for {quarter.replace("Q", " Q")} from the IFTA rate matrix. They change every quarter.</div>
+              <div className="text-callout text-muted">Rates in $ per gallon for {quarter.replace("Q", " Q")} from the IFTA rate matrix. They change every quarter.</div>
               <div className="flex gap-2">
                 <button className="btn btn-sm" disabled={pending} onClick={() => run(() => copyIftaRatesAction(quarter), (d) => `${d.copied} rate(s) copied from last quarter — check them`)}>
                   Copy last quarter&apos;s rates
@@ -159,7 +159,7 @@ export function IftaScreen({ quarter, quarters, report, fuel, trips, rates, memb
                           (r.surcharge ?? "")
                         ))}
                     </td>
-                    <td className={`text-right mono font-semibold ${r.taxCents != null && r.taxCents < 0 ? "text-green-700" : ""}`}>{r.taxCents == null ? (r.member ? <span className="text-amber-700 text-[12px]">rate?</span> : "—") : r.taxCents < 0 ? `(${formatCents(-r.taxCents, "USD")})` : formatCents(r.taxCents, "USD")}</td>
+                    <td className={`text-right mono font-semibold ${r.taxCents != null && r.taxCents < 0 ? "text-green-700" : ""}`}>{r.taxCents == null ? (r.member ? <span className="text-amber-700 text-footnote">rate?</span> : "—") : r.taxCents < 0 ? `(${formatCents(-r.taxCents, "USD")})` : formatCents(r.taxCents, "USD")}</td>
                   </tr>
                 ))}
                 <tr>
@@ -174,7 +174,7 @@ export function IftaScreen({ quarter, quarters, report, fuel, trips, rates, memb
             </table>
           )}
           {canEdit && (
-            <details className="px-4 py-3 border-t border-line text-[13px]">
+            <details className="px-4 py-3 border-t border-line text-callout">
               <summary className="cursor-pointer text-muted">Add a rate for another jurisdiction</summary>
               <div className="flex gap-2 mt-2">
                 <select className="select w-28" aria-label="Jurisdiction for a rate" onChange={(e) => e.target.value && setRateDraft({ ...rateDraft, [e.target.value]: rateDraft[e.target.value] ?? { rate: "", surcharge: "" } })} defaultValue="">
@@ -194,7 +194,7 @@ export function IftaScreen({ quarter, quarters, report, fuel, trips, rates, memb
         <div className="card overflow-hidden">
           {canEdit && (
             <div className="flex items-center justify-between gap-3 px-4 py-3 border-b border-line">
-              <div className="text-[13px] text-muted">Import the fuel card&apos;s transaction export (.xlsx or .csv; EFS, Comdata, WEX, TCS, Love&apos;s, Pilot… columns matched by name) or add a receipt.</div>
+              <div className="text-callout text-muted">Import the fuel card&apos;s transaction export (.xlsx or .csv; EFS, Comdata, WEX, TCS, Love&apos;s, Pilot… columns matched by name) or add a receipt.</div>
               <div className="flex gap-2">
                 <input
                   ref={fileRef}
@@ -226,7 +226,7 @@ export function IftaScreen({ quarter, quarters, report, fuel, trips, rates, memb
             </div>
           )}
           {imported && (
-            <div className="px-4 py-3 border-b border-line text-[13px]" data-testid="fuel-import">
+            <div className="px-4 py-3 border-b border-line text-callout" data-testid="fuel-import">
               <span className="font-semibold">{imported.added} purchase{imported.added === 1 ? "" : "s"} imported.</span>
               {imported.skipped.length > 0 && <span className="text-muted"> Skipped: {imported.skipped.map((s) => `row ${s.row} — ${s.reason}`).join(" · ")}</span>}
             </div>
@@ -253,12 +253,12 @@ export function IftaScreen({ quarter, quarters, report, fuel, trips, rates, memb
                     <td>{f.date}</td>
                     <td className="mono">{f.unit}</td>
                     <td>
-                      <span className="font-semibold">{f.jurisdiction}</span> <span className="text-muted text-[12.5px]">{[f.vendor, f.city].filter(Boolean).join(", ")}</span>
+                      <span className="font-semibold">{f.jurisdiction}</span> <span className="text-muted text-callout">{[f.vendor, f.city].filter(Boolean).join(", ")}</span>
                     </td>
                     <td className="text-right tabular-nums">{n(f.gallons, 1)}</td>
                     <td>{f.fuelType === "def" ? <Pill tone="slate">DEF</Pill> : f.fuelType}</td>
                     <td className="text-right mono">{f.amountCents != null ? formatCents(f.amountCents, f.currency) : "—"}</td>
-                    <td className="text-muted text-[12.5px]">
+                    <td className="text-muted text-callout">
                       {f.receipt ?? ""} {f.source === "import" && <Pill tone="blue">card</Pill>}
                     </td>
                     <td className="text-right">
@@ -280,7 +280,7 @@ export function IftaScreen({ quarter, quarters, report, fuel, trips, rates, memb
         <div className="card overflow-hidden">
           {canEdit && (
             <div className="flex items-center justify-between gap-3 px-4 py-3 border-b border-line">
-              <div className="text-[13px] text-muted">Miles GPS and the loads can&apos;t see — a run to the shop, a deadhead without the app. They stay when miles are recalculated.</div>
+              <div className="text-callout text-muted">Miles GPS and the loads can&apos;t see — a run to the shop, a deadhead without the app. They stay when miles are recalculated.</div>
               <button className="btn btn-sm btn-primary" onClick={() => { setErr(null); setTripOpen(true); }}>
                 + Trip-sheet miles
               </button>

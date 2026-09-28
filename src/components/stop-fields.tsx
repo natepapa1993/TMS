@@ -78,7 +78,7 @@ function Group({ title, children }: { title: string; children: ReactNode }) {
   return (
     <section>
       <div className="flex items-center gap-3 mb-3">
-        <span className="text-[11px] font-bold uppercase tracking-[0.08em] text-faint">{title}</span>
+        <span className="text-caption font-bold text-faint">{title}</span>
         <span className="h-px flex-1 bg-line" />
       </div>
       {children}
@@ -171,7 +171,7 @@ export function StopFields({ stop, onChange, locations, index, invalid, companyZ
           </div>
         </div>
         {!stop.locationId && stop.name.trim() && (
-          <label className="flex items-center gap-2 mt-4 text-[13px] cursor-pointer text-muted">
+          <label className="flex items-center gap-2 mt-4 text-callout cursor-pointer text-muted">
             <input type="checkbox" className="accent-teal w-4 h-4" checked={stop.saveLocation} onChange={(e) => onChange({ saveLocation: e.target.checked })} /> Save &ldquo;{stop.name.trim()}&rdquo; as a location for next time
           </label>
         )}
@@ -183,7 +183,7 @@ export function StopFields({ stop, onChange, locations, index, invalid, companyZ
             [false, "Window · first come"],
             [true, "Appointment"],
           ] as const).map(([appt, l]) => (
-            <button key={l} type="button" aria-pressed={stop.appointment === appt} onClick={() => onChange({ appointment: appt })} className={`px-4 h-9 rounded-md text-[13px] font-semibold transition-colors ${stop.appointment === appt ? "bg-white text-ink shadow-sm" : "text-muted hover:text-ink"}`}>
+            <button key={l} type="button" aria-pressed={stop.appointment === appt} onClick={() => onChange({ appointment: appt })} className={`px-4 h-9 rounded-md text-callout font-semibold transition-colors ${stop.appointment === appt ? "bg-white text-ink shadow-sm" : "text-muted hover:text-ink"}`}>
               {l}
             </button>
           ))}

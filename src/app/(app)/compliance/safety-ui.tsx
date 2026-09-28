@@ -27,7 +27,7 @@ export function DqRecordButton({ driverId, itemKey, label, hint, primary }: { dr
   const [pending, start] = useTransition();
   return (
     <>
-      <button className={`btn btn-sm ${primary ? "btn-primary" : ""}`} onClick={() => { setNotRequired(false); setOpen(true); }} data-testid={`dq-record-${itemKey}`}>
+      <button className={`btn btn-sm ${primary ? "btn-primary" : "btn-tinted"}`} onClick={() => { setNotRequired(false); setOpen(true); }} data-testid={`dq-record-${itemKey}`}>
         Record
       </button>
       <Modal
@@ -62,7 +62,7 @@ export function DqRecordButton({ driverId, itemKey, label, hint, primary }: { dr
           }}
         >
           <div className="col-span-2 help">{hint}</div>
-          <label className="col-span-2 flex items-center gap-2 text-[13px] cursor-pointer">
+          <label className="col-span-2 flex items-center gap-2 text-callout cursor-pointer">
             <input type="checkbox" className="accent-teal" checked={notRequired} onChange={(e) => setNotRequired(e.target.checked)} id="dq-na" /> Not required for this driver
           </label>
           {!notRequired && (
@@ -403,7 +403,7 @@ export function DrawButton({ period, pool }: { period: string; pool: number }) {
           }
         >
           {result ? (
-            <div className="text-[13.5px] space-y-2" data-testid="draw-result">
+            <div className="text-body space-y-2" data-testid="draw-result">
               <div>
                 Pool of {result.poolSize}. <b>Drug:</b> {result.drug.join(", ") || "none"}. <b>Alcohol:</b> {result.alcohol.join(", ") || "none"}.
               </div>
@@ -593,7 +593,7 @@ export function InspectionButton({ drivers, trucks, trailers, edit, driverId, la
                 <option value="denied">Denied</option>
               </select>
             </div>
-            <label className="col-span-4 flex items-center gap-2 text-[13px] cursor-pointer">
+            <label className="col-span-4 flex items-center gap-2 text-callout cursor-pointer">
               <input type="checkbox" className="accent-teal" checked={f.hazmat} onChange={(e) => setF({ ...f, hazmat: e.target.checked })} /> Hazmat load (counts toward the HM BASIC)
             </label>
           </div>
@@ -617,10 +617,10 @@ export function InspectionButton({ drivers, trucks, trailers, edit, driverId, la
                   ))}
                 </select>
                 <input className="input" type="number" min={1} max={10} aria-label={`Violation ${i + 1} severity`} title="SMS severity weight, 1–10" placeholder="wt" value={v.severity} onChange={(e) => setV(i, { severity: e.target.value })} />
-                <label className="flex items-center gap-1 text-[12px] cursor-pointer" title="Out of service">
+                <label className="flex items-center gap-1 text-footnote cursor-pointer" title="Out of service">
                   <input type="checkbox" className="accent-red" checked={v.oos} onChange={(e) => setV(i, { oos: e.target.checked })} /> OOS
                 </label>
-                <label className="flex items-center gap-1 text-[12px] cursor-pointer" title="Removed by DataQs or dismissed: leaves the measures">
+                <label className="flex items-center gap-1 text-footnote cursor-pointer" title="Removed by DataQs or dismissed: leaves the measures">
                   <input type="checkbox" className="accent-teal" checked={v.removed} onChange={(e) => setV(i, { removed: e.target.checked })} /> removed
                 </label>
                 <button className="btn btn-ghost btn-sm text-muted" aria-label="Remove violation" onClick={() => setF({ ...f, violations: f.violations.filter((_, j) => j !== i) })}>

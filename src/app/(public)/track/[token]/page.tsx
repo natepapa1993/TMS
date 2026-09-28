@@ -50,7 +50,7 @@ export default async function TrackPage({ params, searchParams }: PageProps<"/tr
         <div className="eyebrow">
           {v.carrier} · {S.tracking}
         </div>
-        <a className="text-[12px] font-semibold text-teal" href={`?lang=${lang === "en" ? "es" : "en"}`} data-testid="lang">
+        <a className="text-footnote font-semibold text-teal" href={`?lang=${lang === "en" ? "es" : "en"}`} data-testid="lang">
           {S.other}
         </a>
       </div>
@@ -58,7 +58,7 @@ export default async function TrackPage({ params, searchParams }: PageProps<"/tr
         {v.order.orderNumber}
         <Pill tone={v.order.state === "delivered" || v.order.deliveredAt ? "green" : v.order.state === "cancelled" ? "slate" : "teal"}>{(lang === "es" ? STATE_LABEL_ES : STATE_LABEL)[v.order.state] ?? v.order.state}</Pill>
       </div>
-      <div className="text-muted text-[13px] mt-1">
+      <div className="text-muted text-callout mt-1">
         {[v.order.refs.po && `${S.po} ${v.order.refs.po}`, v.order.refs.shipment && `${S.shipment} ${v.order.refs.shipment}`, v.order.refs.reference && `${S.ref} ${v.order.refs.reference}`].filter(Boolean).join(" · ") || v.order.equipment.replace("_", " ")}
       </div>
 
@@ -82,11 +82,11 @@ export default async function TrackPage({ params, searchParams }: PageProps<"/tr
                       {s.city ? ` · ${s.city}${s.state ? `, ${s.state}` : ""}` : ""} · {s.country}
                     </span>
                   </div>
-                  <div className="text-[12.5px] text-muted">
+                  <div className="text-callout text-muted">
                     {lang === "es" ? (STOP_TYPE_ES[s.type] ?? s.type) : s.type.replace("_", " ")}
                     {s.windowStart ? ` · ${S.window} ${fmt(s.windowStart)}${s.windowEnd ? ` – ${fmt(s.windowEnd)}` : ""}` : ""}
                   </div>
-                  <div className="text-[12.5px]">
+                  <div className="text-callout">
                     {s.arrivedAt && <span className="text-teal font-semibold">{S.arrived} {fmt(s.arrivedAt)}</span>}
                     {s.departedAt && <span className="text-teal font-semibold"> · {S.departed} {fmt(s.departedAt)}</span>}
                     {next && !s.arrivedAt && <span className="text-amber font-semibold">{S.next}</span>}
@@ -110,25 +110,25 @@ export default async function TrackPage({ params, searchParams }: PageProps<"/tr
       <div className="card p-5 mt-4">
         <div className="flex items-center justify-between">
           <div className="eyebrow">{S.lastPos}</div>
-          {pos && <span className="text-[12px] text-muted">{fmt(pos.at)}</span>}
+          {pos && <span className="text-footnote text-muted">{fmt(pos.at)}</span>}
         </div>
         {pos ? (
           <>
             <div className="font-bold mt-1">{pos.place ?? `${Number(pos.lat).toFixed(3)}, ${Number(pos.lng).toFixed(3)}`}</div>
             <iframe title="map" className="w-full rounded-lg border border-line mt-3" style={{ height: 240 }} src={`https://www.openstreetmap.org/export/embed.html?bbox=${bbox}&layer=mapnik&marker=${pos.lat},${pos.lng}`} loading="lazy" />
-            <a className="text-[12.5px] text-teal font-semibold mt-2 inline-block" href={`https://www.google.com/maps/search/?api=1&query=${pos.lat},${pos.lng}`} target="_blank" rel="noreferrer">
+            <a className="text-callout text-teal font-semibold mt-2 inline-block" href={`https://www.google.com/maps/search/?api=1&query=${pos.lat},${pos.lng}`} target="_blank" rel="noreferrer">
               {S.openMaps}
             </a>
           </>
         ) : (
-          <div className="text-muted mt-1 text-[13.5px]">{S.noPos}</div>
+          <div className="text-muted mt-1 text-body">{S.noPos}</div>
         )}
       </div>
 
       {customerEvents.length > 0 && (
         <div className="card p-5 mt-4">
           <div className="eyebrow mb-2">{S.updates}</div>
-          <ul className="space-y-1.5 text-[13px]">
+          <ul className="space-y-1.5 text-callout">
             {customerEvents.slice(0, 12).map((e, i) => {
               // on a multi-leg move, say which stop a leg's step refers to ("Delivered" at the border yard is not the final delivery)
               const leg = v.legs.length > 1 ? v.legs.find((l) => l.id === e.legId) : null;
@@ -149,7 +149,7 @@ export default async function TrackPage({ params, searchParams }: PageProps<"/tr
           </ul>
         </div>
       )}
-      <div className="mt-4 text-[12px] text-faint text-center">
+      <div className="mt-4 text-footnote text-faint text-center">
         {S.times} {zoneAbbrev(zone)}. {S.questions(v.carrier)}
       </div>
     </div>
