@@ -772,7 +772,10 @@ export async function openBreakdowns(tx: Tx | typeof db, tenantId: string, truck
   return out;
 }
 
-export const breakdownFinding = (unit: string, b: { orderNumber: string; title: string }): Finding => ({ level: "red", code: "breakdown", message: `unit ${unit} is broken down (${b.title.replace(/^Breakdown\s*/i, "").trim() || "logged"} on ${b.orderNumber}) — clear the breakdown flag once it's fixed`, overridable: false });
+export const breakdownFinding = (unit: string, b: { orderNumber: string; title: string }): Finding => {
+  const near = b.title.includes(" near ") ? b.title.split(" near ").slice(1).join(" near ") : null;
+  return { level: "red", code: "breakdown", message: `unit ${unit} is broken down${near ? ` near ${near}` : ""} (${b.orderNumber}) — clear the breakdown flag once it's fixed`, overridable: false };
+};
 
 // ---------- POD before billing (M14) ----------
 
@@ -1107,7 +1110,8 @@ export async function acceptLeg(ctx: Ctx, legId: string, source: EventSource = "
   assertCtx(ctx);
   return db.transaction(async (tx) => {
     const leg = await loadLeg(tx, ctx, legId);
-    await assertNotHeld(tx, ctx, leg.orderId, "accept it");
+    // a carrier saying yes (or dispatch confirming by phone) is a commitment, not a move: allowed on hold;
+    // the driver app's own buttons are frozen in driverStep
     const after = await setLegState(tx, ctx, leg, "accepted", { source }, { acceptedAt: new Date() });
     await recomputeOrder(tx, ctx, leg.orderId);
     return after;

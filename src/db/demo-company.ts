@@ -410,13 +410,6 @@ async function build(a: Ctx, nowDate: Date) {
   await xb("cross-border: crossed, US leg rolling", "us_rolling", L.apodaca, L.sa);
 
   // ---------------- exceptions ----------------
-  await step("breakdown: 205 on the shoulder", async () => {
-    const o = await order(C.northstar, 215000, [stop("pickup", L.yard, appt(-1, 12)), stop("delivery", L.joliet, appt(1, 16))], { refs: { po: po() } });
-    await O.planLeg(a, o.legs[0].id, on(D.luz, R["5304"]), { plannedMiles: 1250, ...ov });
-    await walk(o.legs[0].id, "en_route", now - 14 * H, 20);
-    await ping(o.legs[0].id, D.luz, L.yard, L.joliet, 0.35, 0.5, 0);
-    await addCheckCall(a, o.order.id, { status: "breakdown", location: "I-35 N mm 294, Waco TX", note: "Blown air line — road service ETA 2 h" });
-  });
   await step("hold: customer paperwork", async () => {
     const o = await order(C.lonestar, 240000, [stop("pickup", L.sa, appt(0, 9)), stop("delivery", L.atlanta, appt(2, 9))], { refs: { po: po() } });
     await O.planLeg(a, o.legs[0].id, { kind: "carrier", carrierId: K.bluewater, carrierRateCents: 190000 }, { plannedMiles: 990, ...ov });
@@ -450,6 +443,14 @@ async function build(a: Ctx, nowDate: Date) {
   await done("delivered: for invoicing 4", C.maple, 176000, L.detroit, L.mississauga, D.priya, 9, ["POD"], 235);
   await done("delivered: for invoicing 5", C.summit, 205000, L.yard, L.dallas, D.rafael, 12, ["POD", "RATE_CON"], 430);
   await done("delivered: for invoicing 6", C.lonestar, 240000, L.houston, L.joliet, D.luz, 14, ["POD"], 1085);
+  // a breakdown takes its truck out of the planner until it's cleared: log it after 205's past loads are on file
+  await step("breakdown: 205 on the shoulder", async () => {
+    const o = await order(C.northstar, 215000, [stop("pickup", L.yard, appt(-1, 12)), stop("delivery", L.joliet, appt(1, 16))], { refs: { po: po() } });
+    await O.planLeg(a, o.legs[0].id, on(D.luz, R["5304"]), { plannedMiles: 1250, ...ov });
+    await walk(o.legs[0].id, "en_route", now - 14 * H, 20);
+    await ping(o.legs[0].id, D.luz, L.yard, L.joliet, 0.35, 0.5, 0);
+    await addCheckCall(a, o.order.id, { status: "breakdown", location: "I-35 N mm 294, Waco TX", note: "Blown air line — road service ETA 2 h" });
+  });
   const dq = delivered.find((x) => delivered.indexOf(x) === 4);
   await step("detention waiting approval", async () => {
     if (dq) await B.addCharge(a, dq.id, { kind: "detention", description: "Detention at Trinity DC — 2h 30m over 2 h free", qty: 250, unit: "h", rateCents: 7500 });

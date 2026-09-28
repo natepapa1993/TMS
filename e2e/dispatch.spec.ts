@@ -169,8 +169,8 @@ test("unit OOS from Fleet pulls the planned leg back to Pending; split makes a s
   await panel.locator("summary:has-text('Stops')").scrollIntoViewIfNeeded();
   await expect(panel).toContainText("San Antonio Yard");
 
-  // hold: only once something is sent
-  await expect(panel.locator("button:has-text('Hold')")).toBeDisabled();
+  // hold: at any stage, a booked load with no truck too (M8)
+  await expect(panel.locator("button:has-text('Hold')")).toBeEnabled();
   await panel.locator(".rounded-lg.border >> nth=0 >> button:has-text('Assign')").click();
   await page.getByRole("dialog").locator("button:has-text('Partner carrier')").click();
   await page.getByRole("dialog").locator("select").first().selectOption({ label: "Transportes Garza (MX)" });
