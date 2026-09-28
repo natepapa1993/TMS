@@ -1162,6 +1162,15 @@
       "tests": [
         "src/domain/flow2.test.ts"
       ]
+    },
+    {
+      "id": "F-34.3",
+      "name": "Planner availability as time windows: free now until the next booked pickup, the next loads listed, Available count kept when loads are booked ahead; ranking by the gap (makes the window and its next load), then empty miles, then free time",
+      "milestone": "M34",
+      "status": "done",
+      "tests": [
+        "src/domain/flow2.test.ts"
+      ]
     }
   ]
 }

@@ -11,7 +11,7 @@ import { rollup } from "./compliance-rules";
 import { NotFoundError, ValidationError, candidatesForLeg, openBreakdowns, type Candidate } from "./orders";
 import { tenantZone } from "./company";
 import { placeOf } from "./miles";
-import { reachability, REACH_PENALTY, type Reach } from "./planner-rules";
+import { reachability, availability, gapFor, compareRanked, driveMinutes, type Reach, type Booking, type Pt } from "./planner-rules";
 import { fmtWhen, stopZone } from "@/lib/time";
 
 /**
@@ -137,6 +137,10 @@ export type PlannerDriver = {
   availableLat: number | null;
   availableLng: number | null;
   next: { orderNumber: string; at: string | null; from: string; zone: string } | null;
+  /** free now (or from availableAt) until this booked load's pickup: "Free now until Wed 8 AM (26-00048)" (N3) */
+  until: { orderNumber: string; at: string | null; zone: string; from: string; leaveBy: string | null } | null;
+  /** the booked loads after it is free, in pickup order (a few) */
+  upcoming: { orderNumber: string; legType: string; at: string | null; zone: string; from: string; to: string }[];
   hos: { driveMin: number | null; shiftMin: number | null; cycleMin: number | null; at: string | null } | null;
   events: { id: string; kind: string; label: string; startsAt: string; endsAt: string; hard: boolean; note: string | null; subject: "driver" | "truck" }[];
 };
@@ -156,6 +160,11 @@ export type PlannerTruck = Omit<PlannerDriver, "driverId" | "name" | "driverType
 };
 
 export async function plannerData(ctx: Ctx, now = new Date()) {
+  return (await plannerCore(ctx, now)).data;
+}
+
+/** The planner, plus each truck's bookings and where it is now (for ranking a leg against its timeline). */
+async function plannerCore(ctx: Ctx, now: Date) {
   assertCtx(ctx);
   requirePermission(ctx, "orders.view");
   await (await import("./tenders")).expireTenders(new Date(), { tenantId: ctx.tenantId });
@@ -223,28 +232,42 @@ export async function plannerData(ctx: Ctx, now = new Date()) {
     })
     .sort((p, q) => (p.from.at ?? "9").localeCompare(q.from.at ?? "9"));
 
+  // one leg as a booking on a timeline: pickup and delivery times on the stops, places from the stops (N3)
+  const bookingOf = (l: (typeof legs)[number]): Booking => {
+    const a = stop.get(l.leg.fromStopId ?? "");
+    const b = stop.get(l.leg.toStopId ?? "");
+    const from = a ? placeOf(a) : null;
+    const to = b ? placeOf(b) : null;
+    const run = driveMinutes(from, to);
+    let start = a?.windowStart ?? l.leg.plannedStart ?? null;
+    let end = b?.windowEnd ?? b?.windowStart ?? l.leg.plannedEnd ?? null;
+    // a hand-off with no time (a yard): the pickup is the delivery less the drive, and the other way round
+    if (!start && end) start = new Date(end.getTime() - (run ?? 12 * 60) * 60_000);
+    if (start && !end) end = new Date(start.getTime() + (run ?? 12 * 60) * 60_000);
+    return { legId: l.leg.id, orderNumber: l.order.orderNumber, legType: l.leg.type, state: l.leg.state, moving: (MOVING as readonly string[]).includes(l.leg.state), start, startBy: a?.windowEnd ?? start, end, from, to, fromPlace: place(a), toPlace: place(b), fromZone: a ? stopZone(a, companyZone) : companyZone, toZone: b ? stopZone(b, companyZone) : companyZone };
+  };
+  /** where a truck or driver is now: the fresher of its last GPS position and its last delivery */
+  const hereOf = (match: (x: { truckId: string | null; driverId: string | null }) => boolean) => {
+    const pos = lastPos.find((p) => match({ truckId: p.truckId, driverId: p.driverId }));
+    const done = recentDone.find((r) => match({ truckId: r.truckId, driverId: r.driverId }));
+    const posC = pos ? coords(pos.lat, pos.lng) : null;
+    const doneC = done ? placeOf(done.stop) : null;
+    if (done && (!posC || !pos || (done.completedAt && done.completedAt >= pos.at))) return { pt: (doneC ?? posC) as Pt | null, place: place(done.stop) || null, zone: stopZone(done.stop, companyZone) };
+    if (posC) return { pt: posC as Pt, place: "last GPS position", zone: companyZone };
+    return { pt: null, place: null, zone: companyZone };
+  };
+  const whenOf = (b: Booking | null | undefined) => (b ? iso(b.start) : null);
+
   const outDrivers: PlannerDriver[] = drivers.map((d) => {
     const truck = trucks.find((t) => t.id === d.currentTruckId) ?? null;
     const mine = legs.filter((l) => (ACTIVE as readonly string[]).includes(l.leg.state) && (l.leg.driverId === d.id || l.leg.coDriverId === d.id || (truck && l.leg.truckId === truck.id)));
-    const end = (l: (typeof mine)[number]) => {
-      const b = stop.get(l.leg.toStopId ?? "");
-      return b?.windowEnd ?? b?.windowStart ?? l.leg.plannedEnd ?? null;
-    };
-    const start = (l: (typeof mine)[number]) => stop.get(l.leg.fromStopId ?? "")?.windowStart ?? l.leg.plannedStart ?? null;
-    const moving = mine.filter((l) => (MOVING as readonly string[]).includes(l.leg.state) || l.leg.state === "dispatched" || l.leg.state === "accepted");
-    const planned = mine.filter((l) => l.leg.state === "planned").sort((p, q) => (start(p)?.getTime() ?? 0) - (start(q)?.getTime() ?? 0));
-    const cur = moving.sort((p, q) => (end(q)?.getTime() ?? 0) - (end(p)?.getTime() ?? 0))[0];
-    const last = [...mine].sort((p, q) => (end(q)?.getTime() ?? 0) - (end(p)?.getTime() ?? 0))[0];
-    const done = last ? undefined : recentDone.find((r) => r.driverId === d.id || (truck && r.truckId === truck.id));
-    const lastStop = last ? stop.get(last.leg.toStopId ?? "") : done?.stop;
-    const pos = lastPos.find((p) => p.driverId === d.id || (truck && p.truckId === truck.id));
-    const posC = pos ? coords(pos.lat, pos.lng) : null;
-    const lastC = lastStop ? placeOf(lastStop) : null;
+    const av = availability(mine.map(bookingOf), now, hereOf((x) => x.driverId === d.id || (!!truck && x.truckId === truck.id)));
     const evs = events.filter((e) => (e.subjectKind === "driver" && e.subjectId === d.id) || (truck && e.subjectKind === "truck" && e.subjectId === truck.id));
     const offNow = evs.find((e) => e.hard && e.startsAt <= now && e.endsAt >= now);
-    const status: PlannerDriver["status"] = offNow || truck?.status === "oos" || (truck && broken.has(truck.id)) ? "off" : cur ? "on_load" : planned.length ? "planned" : "available";
-    const lastEnd = last ? end(last) : null;
-    const freeAt = offNow ? offNow.endsAt : lastEnd && lastEnd > now ? lastEnd : last ? now : now;
+    const cur = av.busyNow;
+    const status: PlannerDriver["status"] = offNow || truck?.status === "oos" || (truck && broken.has(truck.id)) ? "off" : cur && (cur.moving || ["dispatched", "accepted"].includes(cur.state)) ? "on_load" : cur ? "planned" : "available";
+    const freeAt = offNow ? offNow.endsAt : av.freeFrom;
+    const nx = av.until ?? av.upcoming[0] ?? null;
     return {
       driverId: d.id,
       name: d.name,
@@ -255,13 +278,15 @@ export async function plannerData(ctx: Ctx, now = new Date()) {
       truckStatus: truck?.status ?? null,
       dispatcher: d.dispatcherUserId ? (uName.get(d.dispatcherUserId) ?? null) : null,
       status,
-      current: cur ? { orderNumber: cur.order.orderNumber, state: cur.leg.state, to: place(stop.get(cur.leg.toStopId ?? "")) } : null,
+      current: cur ? { orderNumber: cur.orderNumber, state: cur.state, to: cur.toPlace } : null,
       availableAt: iso(freeAt),
-      availableZone: lastStop ? stopZone(lastStop, companyZone) : companyZone,
-      availableIn: lastStop ? place(lastStop) : pos ? `last seen ${pos.at.toISOString()}` : null,
-      availableLat: lastC?.lat ?? posC?.lat ?? null,
-      availableLng: lastC?.lng ?? posC?.lng ?? null,
-      next: planned[0] ? ((st) => ({ orderNumber: planned[0].order.orderNumber, at: iso(start(planned[0])), from: place(st), zone: st ? stopZone(st, companyZone) : companyZone }))(stop.get(planned[0].leg.fromStopId ?? "")) : null,
+      availableZone: av.freeZone ?? companyZone,
+      availableIn: av.freePlace,
+      availableLat: av.freeAt?.lat ?? null,
+      availableLng: av.freeAt?.lng ?? null,
+      next: nx ? { orderNumber: nx.orderNumber, at: whenOf(nx), from: nx.fromPlace, zone: nx.fromZone } : null,
+      until: av.until ? { orderNumber: av.until.orderNumber, at: whenOf(av.until), zone: av.until.fromZone, from: av.until.fromPlace, leaveBy: iso(av.leaveBy) } : null,
+      upcoming: av.upcoming.slice(0, 4).map((b) => ({ orderNumber: b.orderNumber, legType: b.legType, at: whenOf(b), zone: b.fromZone, from: b.fromPlace, to: b.toPlace })),
       hos: d.hosAt ? { driveMin: d.hosDriveMin, shiftMin: d.hosShiftMin, cycleMin: d.hosCycleMin, at: iso(d.hosAt) } : null,
       events: evs.map((e) => ({ id: e.id, kind: e.kind, label: EVENT_LABEL[e.kind], startsAt: e.startsAt.toISOString(), endsAt: e.endsAt.toISOString(), hard: e.hard, note: e.note, subject: e.subjectKind === "truck" ? ("truck" as const) : ("driver" as const) })),
     };
@@ -276,6 +301,7 @@ export async function plannerData(ctx: Ctx, now = new Date()) {
   const byOrder = new Map<string, typeof allLegCounts>();
   for (const l of allLegCounts) byOrder.set(l.orderId, [...(byOrder.get(l.orderId) ?? []), l]);
   const fmtUntil = (d: Date) => fmtWhen(d, companyZone, { style: "short", now }) ?? "";
+  const timeline = new Map<string, { bookings: Booking[]; here: ReturnType<typeof hereOf> }>();
   const outTrucks: PlannerTruck[] = trucks
     .map((t) => {
       const crewD = outDrivers.filter((d) => d.truckId === t.id);
@@ -291,6 +317,11 @@ export async function plannerData(ctx: Ctx, now = new Date()) {
       const allEvents = [...truckEvents, ...crewD.flatMap((d) => d.events.filter((e) => e.subject === "driver"))];
       const offNow = allEvents.find((e) => e.hard && new Date(e.startsAt) <= now && new Date(e.endsAt) >= now);
       const moving = truckLegs.some((l) => (MOVING as readonly string[]).includes(l.leg.state));
+      // the truck's own timeline: free now until its next booked pickup, not "busy until its last load" (N3)
+      const here = hereOf((x) => x.truckId === t.id || crewD.some((d) => d.driverId === x.driverId));
+      const av = availability(truckLegs.map(bookingOf), now, here);
+      timeline.set(t.id, { bookings: truckLegs.map(bookingOf), here });
+      const busy = av.busyNow;
       // its next load waits on freight that hasn't crossed: an earlier MX or crossing leg of the same order isn't done
       const waiting = truckLegs
         .filter((l) => ["planned", "dispatched", "accepted"].includes(l.leg.state))
@@ -300,7 +331,7 @@ export async function plannerData(ctx: Ctx, now = new Date()) {
           const lastDone = Math.max(0, ...all.filter((o) => o.seq < l.leg.seq && o.state === "completed").map((o) => o.seq));
           return { l, before: all.filter((o) => o.seq < l.leg.seq && o.seq > lastDone && (o.type === "mx" || o.type === "crossing") && o.state !== "completed" && o.state !== "cancelled") };
         })
-        .find((x) => x.before.length);
+        .find((x) => x.before.length && (x.l.leg.id === busy?.legId || !bookingOf(x.l).start));
       const tBlock = blockOf("truck", t.id);
       const dBlocks = crewD.map((d) => blockOf("driver", d.driverId));
       let status: PlannerTruck["status"] = "available";
@@ -313,7 +344,7 @@ export async function plannerData(ctx: Ctx, now = new Date()) {
       const blockText = tBlock ? `Truck: ${blockWhy(tBlock)}` : crewD.length && dBlocks.every(Boolean) ? `${crewD[0].name.split(" ")[0]}: ${blockWhy(dBlocks[0]!)}` : null;
       if (status === "unavailable") {
         /* set above */
-      } else if (moving || (lead?.status === "on_load" && !waiting)) {
+      } else if (moving || (busy && !waiting)) {
         // already on a load: paperwork that blocks the next dispatch shows as a warning
         status = "on_load";
         why = blockText;
@@ -326,7 +357,7 @@ export async function plannerData(ctx: Ctx, now = new Date()) {
         const cross = waiting.before.find((o) => o.type === "crossing");
         why = `${waiting.l.order.orderNumber} — ${mxOpen ? "freight still on the Mexican side" : cross && (MOVING as readonly string[]).includes(cross.state) ? "freight crossing the bridge now" : "waiting for the crossing"}`;
       }
-      const base = lead ?? ({ current: null, availableAt: iso(now), availableZone: companyZone, availableIn: null, availableLat: null, availableLng: null, next: null, hos: null, dispatcher: null } as Partial<PlannerDriver>);
+      const nx = av.until ?? av.upcoming[0] ?? null;
       return {
         truckId: t.id,
         unit: t.unitNumber,
@@ -334,65 +365,90 @@ export async function plannerData(ctx: Ctx, now = new Date()) {
         team: crewD.length > 1,
         status,
         why,
-        dispatcher: base.dispatcher ?? null,
-        current: base.current ?? null,
-        availableAt: status === "unavailable" && offNow ? offNow.endsAt : status === "unavailable" && t.oosUntil ? iso(t.oosUntil) : (base.availableAt ?? null),
-        availableZone: base.availableZone ?? companyZone,
-        availableIn: base.availableIn ?? null,
-        availableLat: base.availableLat ?? null,
-        availableLng: base.availableLng ?? null,
-        next: base.next ?? null,
-        hos: base.hos ?? null,
+        dispatcher: lead?.dispatcher ?? null,
+        current: busy ? { orderNumber: busy.orderNumber, state: busy.state, to: busy.toPlace } : null,
+        availableAt: status === "unavailable" && offNow ? offNow.endsAt : status === "unavailable" && t.oosUntil ? iso(t.oosUntil) : iso(av.freeFrom),
+        availableZone: av.freeZone ?? companyZone,
+        availableIn: av.freePlace,
+        availableLat: av.freeAt?.lat ?? null,
+        availableLng: av.freeAt?.lng ?? null,
+        next: nx ? { orderNumber: nx.orderNumber, at: whenOf(nx), from: nx.fromPlace, zone: nx.fromZone } : null,
+        until: av.until ? { orderNumber: av.until.orderNumber, at: whenOf(av.until), zone: av.until.fromZone, from: av.until.fromPlace, leaveBy: iso(av.leaveBy) } : null,
+        upcoming: av.upcoming.slice(0, 4).map((b) => ({ orderNumber: b.orderNumber, legType: b.legType, at: whenOf(b), zone: b.fromZone, from: b.fromPlace, to: b.toPlace })),
+        hos: lead?.hos ?? null,
         events: allEvents,
       };
     })
     .sort((p, q) => p.unit.localeCompare(q.unit, "en-US", { numeric: true }));
-  return { legs: openLegs, drivers: outDrivers.sort((p, q) => p.name.localeCompare(q.name)), trucks: outTrucks, now: now.toISOString() };
+  return { data: { legs: openLegs, drivers: outDrivers.sort((p, q) => p.name.localeCompare(q.name)), trucks: outTrucks, now: now.toISOString() }, timeline, bookingOf, legs };
 }
 
 /** Road miles from where the driver comes free to the leg's pickup, when both have coordinates. */
 export const deadhead = (d: { availableLat: number | null; availableLng: number | null }, l: { from: { lat: number | null; lng: number | null } }) =>
   d.availableLat != null && d.availableLng != null && l.from.lat != null && l.from.lng != null ? Math.round(roadMiles({ lat: d.availableLat, lng: d.availableLng }, { lat: l.from.lat, lng: l.from.lng })) : null;
 
-export type RankedCandidate = Candidate & { reach: { status: Reach["status"]; arriveAt: string | null; message: string | null } | null; pickupPassed: boolean };
+export type RankedCandidate = Candidate & {
+  reach: { status: Reach["status"]; arriveAt: string | null; message: string | null } | null;
+  pickupPassed: boolean;
+  /** the next booked load after this one, and whether the truck still makes it (N3) */
+  nextLoad: { orderNumber: string; at: string | null; zone: string; makes: boolean | null } | null;
+};
 
 /**
- * Trucks ranked for a leg, the way a dispatcher ranks them (M5): who may run it (eligibility, time off,
- * double booking, breakdown), then who can actually get to the pickup in time — when it comes free,
- * the empty miles from there at an average road speed plus time to hook and check in, and the driver's
- * hours from the ELD. A truck that can't make the appointment says when it would get there and sinks
- * below every truck that can. A pickup already in the past is said once, for the load.
+ * Trucks ranked for a leg, the way a dispatcher ranks them (M5, N3): who may run it (eligibility, time off, double
+ * booking, breakdown); then, from the gap in each truck's bookings this load falls in — where it comes free before
+ * it, and the load booked after it — who can get to the pickup in time and still make the next pickup. Among those,
+ * nearest empty first, then who is free soonest; the ones that can't make it after, with when they would get there.
+ * A pickup already in the past is said once, for the load.
  */
 export async function rankForLeg(ctx: Ctx, legId: string, now = new Date()): Promise<RankedCandidate[]> {
   const cands = await candidatesForLeg(ctx, legId, now);
-  const pd = await plannerData(ctx, now);
+  const core = await plannerCore(ctx, now);
   const [leg] = await db.select().from(s.legs).where(and(eq(s.legs.tenantId, ctx.tenantId), eq(s.legs.id, legId))).limit(1);
   if (!leg) throw new NotFoundError("leg", legId);
   const [from] = leg.fromStopId ? await db.select().from(s.stops).where(eq(s.stops.id, leg.fromStopId)).limit(1) : [];
   const [tenant] = await db.select({ zone: s.tenants.timeZone }).from(s.tenants).where(eq(s.tenants.id, ctx.tenantId)).limit(1);
   const zone = from ? stopZone(from, tenant?.zone ?? "America/Chicago") : (tenant?.zone ?? "America/Chicago");
   const pickup = from ? placeOf(from) : null;
-  const out: RankedCandidate[] = cands.map((c) => {
-    const t = pd.trucks.find((x) => x.truckId === c.truckId);
-    const dh = t && pickup && t.availableLat != null && t.availableLng != null ? Math.round(roadMiles({ lat: t.availableLat, lng: t.availableLng }, pickup)) : null;
-    const freeAt = t?.availableAt ? new Date(t.availableAt) : null;
+  const row = core.legs.find((l) => l.leg.id === legId);
+  const target = row ? core.bookingOf(row) : { legId, start: from?.windowStart ?? null, end: null, to: null };
+  const spoken = (d: Date, z: string) => fmtWhen(d, z, { style: "short", now }) ?? "";
+  const out = cands.map((c) => {
+    const tl = core.timeline.get(c.truckId) ?? { bookings: [], here: { pt: null, place: null, zone: null } };
+    const gap = gapFor(tl.bookings, target, now, tl.here);
+    const dh = gap.freeAt && pickup ? Math.round(roadMiles(gap.freeAt, pickup)) : null;
+    const t = core.data.trucks.find((x) => x.truckId === c.truckId);
     const hos = t?.hos ? { driveMin: t.hos.driveMin, shiftMin: t.hos.shiftMin, at: t.hos.at ? new Date(t.hos.at) : null } : null;
-    const r = reachability({ now, freeAt, deadheadMi: dh, pickupStart: from?.windowStart ?? null, pickupEnd: from?.windowEnd ?? null, zone, hos });
-    const late = r.status === "late";
-    const reason = !c.hardBlocked && c.ok && late && r.message ? r.message : c.reason;
+    const freeLater = gap.freeFrom.getTime() > now.getTime() + 15 * 60_000;
+    const r = reachability({ now, freeAt: freeLater ? gap.freeFrom : null, deadheadMi: dh, pickupStart: from?.windowStart ?? null, pickupEnd: from?.windowEnd ?? null, zone, hos });
+    const after = gap.after;
+    const running = tl.bookings.filter((b) => b.legId !== legId && (b.moving || (["dispatched", "accepted"].includes(b.state) && (!b.start || b.start <= now))));
+    let reason = c.reason;
+    if (!c.hardBlocked && c.ok) {
+      if (r.status === "late" && r.message) reason = r.message;
+      else if (gap.makesNext === false && after) reason = `Can't make its next load ${after.orderNumber} after this one — gets there ~${spoken(gap.nextArriveAt!, after.fromZone)}, pickup ${spoken((after.startBy ?? after.start)!, after.fromZone)}`;
+      else reason = `${freeLater ? `Free ${spoken(gap.freeFrom, gap.freeZone ?? zone)}${gap.freePlace ? ` at ${gap.freePlace}` : ""}` : "Free now"}${after?.start ? ` until ${spoken(after.start, after.fromZone)} (${after.orderNumber})` : ""}${r.message ? ` · ${r.message}` : ""}`;
+    }
     return {
       ...c,
+      busy: running.map((b) => ({ orderNumber: b.orderNumber, state: b.state as Candidate["busy"][number]["state"] })),
       reason,
-      score: c.score + REACH_PENALTY[r.status],
-      freeAt: t?.availableAt ?? null,
-      freeWhere: t?.availableIn ?? null,
-      freeZone: t?.availableZone ?? null,
+      freeAt: gap.freeFrom.toISOString(),
+      freeWhere: gap.freePlace,
+      freeZone: gap.freeZone,
       deadheadMi: dh,
       reach: { status: r.status, arriveAt: r.arriveAt?.toISOString() ?? null, message: r.message },
       pickupPassed: r.status === "past",
+      nextLoad: after ? { orderNumber: after.orderNumber, at: after.start?.toISOString() ?? null, zone: after.fromZone, makes: gap.makesNext } : null,
+      _free: gap.freeFrom.getTime(),
     };
   });
-  return out.sort((p, q) => p.score - q.score || (p.deadheadMi ?? 99999) - (q.deadheadMi ?? 99999) || p.unitNumber.localeCompare(q.unitNumber, undefined, { numeric: true }));
+  const sorted = out.sort((p, q) => compareRanked({ ...p, reach: p.reach.status, makesNext: p.nextLoad?.makes ?? null, freeFrom: p._free }, { ...q, reach: q.reach.status, makesNext: q.nextLoad?.makes ?? null, freeFrom: q._free }));
+  // the score is the rank: the planner sorts by it too
+  return sorted.map(({ _free, ...c }, i) => {
+    void _free;
+    return { ...c, score: i };
+  });
 }
 
 /** Everyone's events in a window, for a calendar. */
